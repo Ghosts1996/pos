@@ -89,6 +89,29 @@ class StaffDeviceService {
     } catch (_) {}
   }
 
+  /// Название этого устройства («Планшет у бара»); null — не удалось
+  /// узнать (нет связи, не SaaS, демо) — тогда и не спрашиваем.
+  Future<String?> deviceName() async {
+    if (!kSaasMode || _uid.isEmpty || AppScope.tenantId == null || AppScope.isDemo) return null;
+    try {
+      final d = await AppScope.col('devices').doc(_uid).get().timeout(const Duration(seconds: 10));
+      if (!d.exists) return null;
+      return '${d.data()?['deviceName'] ?? ''}'.trim();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Касса, подключённая без названия, называет себя один раз (правила
+  /// разрешают только пока названия нет); дальше переименовывает кабинет.
+  Future<void> setDeviceName(String name) async {
+    final n = name.trim();
+    await AppScope.col('devices').doc(_uid).update({
+      'deviceName': n.length > 40 ? n.substring(0, 40) : n,
+      'seenAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   /// Снять регистрацию (планшет выводится из зала).
   Future<void> unregister(String uid) => AppScope.col(_collection).doc(uid).delete();
 

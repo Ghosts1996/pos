@@ -4318,6 +4318,7 @@ function watchDashboardData(tenantId) {
           <div style="min-width:200px;flex:1 1 220px">
             <div style="font-weight:600">${esc(title(d))}${d.platform ? ` <span class="muted small">· ${esc(PLATFORM[d.platform] || d.platform)}</span>` : ''}</div>
             ${d.usage ? `<div class="small">${esc(d.usage)}</div>` : ''}
+            ${!d.deviceName && !off ? '<div class="small" style="color:var(--warning)">Без названия — касса спросит его при следующем входе, или нажмите «Переименовать»</div>' : ''}
             <div class="small muted">Подключено ${fmtDate(d.createdAt)}${seen ? ` · на связи ${fmtDateTime(seen)}` : ''}</div>
             ${off ? `<div class="small" style="color:var(--muted)">${d.removedAt ? `Удалено ${fmtDate(d.removedAt)}` : 'Удалено'} — касса на нём не работает, пока его не восстановить</div>` : ''}
             ${over ? '<div class="small" style="color:var(--warning)">Сверх лимита тарифа — касса на нём не работает</div>' : ''}

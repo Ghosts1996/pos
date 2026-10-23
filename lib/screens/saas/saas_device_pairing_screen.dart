@@ -6,6 +6,7 @@ import '../../build_info.dart';
 import '../../services/saas_device_join_service.dart';
 import '../../services/tenant_join_flow.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/device_name_field.dart';
 import '../../widgets/pin_pad.dart';
 import '../../theme/app_theme.dart';
 import '../image_preload_screen.dart';
@@ -52,6 +53,11 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
   /// не видел эти поля в обычном случае.
   bool _autoJoining = false;
 
+  /// Сборка заведения: коды уже внутри, спрашиваем только название
+  /// устройства — по нему владелец отличит устройства в кабинете.
+  bool _presetNaming = false;
+  String? _nameError;
+
   static bool get _presetBuild => kSaasPresetSlug.isNotEmpty && kSaasPresetInviteCode.isNotEmpty;
 
   /// Пересоздаём демо (а не подключаем заведение сборки).
@@ -62,10 +68,10 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
     super.initState();
     if (_presetBuild) {
       // Сборка заведения — к нему, даже если до неё на телефоне было демо.
-      _autoJoining = true;
+      // Коды уже в сборке, спрашиваем только название устройства.
+      _presetNaming = true;
       _slug.text = kSaasPresetSlug;
       _code.text = kSaasPresetInviteCode;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _join());
     } else if (widget.lostDemo) {
       // Демо прожило свои 3 дня — новое в исходном виде, без лишних
       // нажатий. Не вышло (нет сети) — обычный экран с кнопкой «Демо».
@@ -85,6 +91,9 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
   Future<void> _join() async {
     final slug = _slug.text.trim();
     final code = _code.text.trim();
+    final nameError = DeviceNameField.validate(_label.text);
+    setState(() => _nameError = nameError);
+    if (nameError != null) return;
     if (slug.isEmpty || code.isEmpty) {
       setState(() => _error = 'Заполните код заведения и код приглашения');
       return;
@@ -92,6 +101,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
     setState(() {
       _busy = true;
       _error = null;
+      if (_presetNaming) _autoJoining = true;
     });
     // Прежний вход могли выключить на сервере (устройство удаляли) — тогда
     // присоединение с ним получало «нет доступа». Сбрасываем и входим заново.
@@ -102,6 +112,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
       if (mounted) {
         setState(() {
           _busy = false;
+          _autoJoining = false;
           _error = 'Нет входа в Firebase — проверьте интернет и перезапустите приложение';
         });
       }
@@ -124,6 +135,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
         // с уже подставленными значениями, а не держим владельца на вечной
         // загрузке без объяснений.
         _autoJoining = false;
+        _presetNaming = false;
         _error = 'Не удалось присоединиться: ${humanError(e, lower: true)}';
       });
     }
@@ -213,6 +225,50 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
       );
     }
 
+    if (_presetNaming) {
+      return Scaffold(
+        backgroundColor: AppColors.background,
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const BrandMark(),
+                    const SizedBox(height: 26),
+                    Text('Как назвать это устройство?', textAlign: TextAlign.center, style: AppFonts.display(28)),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Каждое устройство с кассой считается отдельно. По названию владелец в кабинете поймёт, '
+                      'какое из них какое и что можно удалить.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 14),
+                    ),
+                    const SizedBox(height: 24),
+                    DeviceNameField(
+                      controller: _label,
+                      errorText: _nameError,
+                      autofocus: true,
+                      onSubmitted: (_) => _busy ? null : _join(),
+                    ),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      height: 50,
+                      child: FilledButton(onPressed: _busy ? null : _join, child: const Text('Подключить')),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -259,13 +315,10 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
                     onSubmitted: (_) => _busy ? null : _join(),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  DeviceNameField(
                     controller: _label,
-                    style: TextStyle(color: AppColors.textPrimary),
-                    decoration: const InputDecoration(
-                      labelText: 'Название устройства (необязательно)',
-                      hintText: 'Планшет у бара',
-                    ),
+                    errorText: _nameError,
+                    onSubmitted: (_) => _busy ? null : _join(),
                   ),
                   if (_error != null) ...[
                     const SizedBox(height: 16),

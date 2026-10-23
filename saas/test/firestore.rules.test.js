@@ -324,6 +324,19 @@ describe("Полный путь joinAsDevice() как реальный клие�
     await assertFails(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { status: "active" }));
   });
 
+  it("касса без названия называет себя один раз, дальше — только кабинет", async () => {
+    const db = ctxFor("device1");
+    await setDoc(doc(db, "tenants/tenantA/devices/device1"), {
+      inviteCode: "DEMO1234", deviceName: "", deviceType: "pos",
+      platform: "android", userId: "device1", status: "active",
+    });
+    await assertFails(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { deviceName: "x".repeat(41) }));
+    await assertFails(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { deviceName: "Касса", status: "active", inviteCode: "x" }));
+    await assertFails(updateDoc(doc(ctxFor("device2"), "tenants/tenantA/devices/device1"), { deviceName: "Чужое" }));
+    await assertSucceeds(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { deviceName: "Планшет у бара", seenAt: serverTimestamp() }));
+    await assertFails(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { deviceName: "Другое" }));
+  });
+
   it("шаг 2: после шага 1 устройство создаёт tenantMembers тем же uid", async () => {
     const db = ctxFor("device1");
     await setDoc(doc(db, "tenants/tenantA/devices/device1"), {

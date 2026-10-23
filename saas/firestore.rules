@@ -481,7 +481,14 @@ service cloud.firestore {
       allow update: if hasRole(tenantId, ['owner', 'admin']) ||
         (isSelf(deviceId) &&
          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['appBuild', 'piiReady', 'seenAt', 'usage']) &&
-         request.resource.data.get('usage', '') is string && request.resource.data.get('usage', '').size() <= 40);
+         request.resource.data.get('usage', '') is string && request.resource.data.get('usage', '').size() <= 40) ||
+        // Касса, подключённая раньше без названия, называет себя сама —
+        // один раз: дальше переименовывает только кабинет.
+        (isSelf(deviceId) &&
+         resource.data.get('deviceName', '') == '' &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deviceName', 'seenAt']) &&
+         request.resource.data.deviceName is string &&
+         request.resource.data.deviceName.size() > 0 && request.resource.data.deviceName.size() <= 40);
       allow delete: if hasRole(tenantId, ['owner', 'admin']);
     }
 

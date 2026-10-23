@@ -21,6 +21,7 @@ import '../utils/human_error.dart';
 import '../utils/constants.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_colors.dart';
+import '../widgets/device_name_field.dart';
 import '../widgets/pin_pad.dart';
 import '../widgets/shift_open_dialog.dart';
 import 'admin/admin_home_screen.dart';
@@ -107,7 +108,19 @@ class _LoginScreenState extends State<LoginScreen> {
     if (registered) {
       unawaited(_preselectLastRole());
       unawaited(_loadPoints());
+      unawaited(_askDeviceNameIfMissing());
     }
+  }
+
+  /// Касса подключена раньше без названия — один раз спрашиваем, как её
+  /// назвать: по названию владелец отличает устройства в кабинете.
+  static bool _nameAskedThisRun = false;
+  Future<void> _askDeviceNameIfMissing() async {
+    if (_nameAskedThisRun) return;
+    final name = await _staffDevice.deviceName();
+    if (name == null || name.isNotEmpty || !mounted) return;
+    _nameAskedThisRun = true;
+    await askDeviceName(context, _staffDevice.setDeviceName);
   }
 
   /// Точки сети с сервера. Нет сети — касса остаётся в своей точке, а по
