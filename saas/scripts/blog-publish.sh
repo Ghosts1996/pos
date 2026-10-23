@@ -36,12 +36,10 @@ else
   echo "$(date '+%F %T') новых постов нет"
 fi
 
-# Поисковикам — обо всех вышедших, о которых ещё не сообщали (в том числе
-# выложенных обычным обновлением сайта после пуша).
+# Поисковикам — обо всех новых и изменённых страницах карты сайта: посты,
+# темы, страницы блога, инструкция и частые вопросы (в том числе
+# выложенных обычным обновлением сайта после пуша). Карта sitemap.xml
+# пересобирается при каждой сборке — новые посты попадают в неё сами.
 STATE=/var/lib/zalpos-blog
 mkdir -p "$STATE"
-told="$(cat "$STATE/announced" 2>/dev/null || true)"
-fresh="$(added "$told" "$after")"
-if [[ -n "$fresh" ]]; then
-  node "$SAAS/scripts/build-blog.mjs" --indexnow="$fresh" && printf '%s\n' "$after" > "$STATE/announced"
-fi
+node "$SAAS/scripts/build-blog.mjs" --announce --state="$STATE/sitemap-announced" || true

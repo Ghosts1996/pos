@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { build, readPosts, markdown, readGuide, readFaq, guideArticles } from './build-blog.mjs';
+import { build, readPosts, markdown, readGuide, readFaq, guideArticles, changedUrls } from './build-blog.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SAAS = path.resolve(HERE, '..');
@@ -132,6 +132,24 @@ check('инструкция и частые вопросы — обычными 
   const map = fs.readFileSync(path.join(out, 'sitemap.xml'), 'utf8');
   assert.ok(map.includes('https://zalpos.ru/guide/</loc>') && map.includes('https://zalpos.ru/faq/</loc>'));
   assert.ok(map.includes(`https://zalpos.ru/guide/${arts[arts.length - 1].slug}/</loc>`));
+  fs.rmSync(out, { recursive: true, force: true });
+});
+
+check('карта сайта: посты сами, даты справки — по содержимому, поисковикам — только новое', () => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'zalpos-map-'));
+  build({ out, today: '2026-10-24', log: {} });
+  const first = fs.readFileSync(path.join(out, '.sitemap-urls'), 'utf8');
+  // Через неделю без правок: даты инструкции прежние, вышли новые посты.
+  build({ out, today: '2026-10-31', log: {} });
+  const second = fs.readFileSync(path.join(out, '.sitemap-urls'), 'utf8');
+  const guideLine = (t) => t.split('\n').find((l) => l.startsWith('https://zalpos.ru/guide/ '));
+  assert.equal(guideLine(second), guideLine(first), 'дата инструкции сменилась без правок');
+  const fresh = changedUrls(second, first);
+  assert.ok(fresh.some((u) => u.includes('/blog/')), 'новые посты не попали в объявление');
+  assert.ok(!fresh.some((u) => u.includes('/guide/') || u.includes('/faq/')), fresh.join(', '));
+  const map = fs.readFileSync(path.join(out, 'sitemap.xml'), 'utf8');
+  for (const p of readPosts().filter((q) => q.date <= '2026-10-31')) assert.ok(map.includes(`/blog/${p.slug}/</loc>`), p.slug);
+  assert.equal(changedUrls(second, second).length, 0);
   fs.rmSync(out, { recursive: true, force: true });
 });
 

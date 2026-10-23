@@ -34,3 +34,6 @@ saas/console/blog/
 saas/console/guide/
 saas/console/faq/
 saas/console/sitemap.xml
+saas/console/.sitemap-urls
+saas/console/.help-lastmod.json
+saas/console/sitemap.xml

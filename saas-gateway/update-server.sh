@@ -127,6 +127,8 @@ say "Сайт zalpos.ru (Firebase Hosting), правила и индексы б�
 if command -v firebase >/dev/null; then
   if (cd "$REPO/saas" && firebase deploy --only hosting,firestore --non-interactive); then
     echo "ok"
+    # Новые и изменённые страницы (инструкция, блог) — сразу Яндексу и IndexNow.
+    node "$REPO/saas/scripts/build-blog.mjs" --announce --state=/var/lib/zalpos-blog/sitemap-announced || true
   else
     echo "не вышло — выполните вручную: cd $REPO/saas && firebase login && firebase deploy --only hosting,firestore"
   fi

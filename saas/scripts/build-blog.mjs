@@ -13,6 +13,8 @@
 //   node scripts/build-blog.mjs --all             — все посты (предпросмотр)
 //   node scripts/build-blog.mjs --out=DIR         — собрать в другую папку
 //   node scripts/build-blog.mjs --indexnow=slug1,slug2 — сообщить поисковикам
+//   node scripts/build-blog.mjs --announce [--state=FILE] — сообщить о всех
+//       новых и изменённых страницах карты сайта (блог, темы, инструкция)
 //
 // Пост — блок в saas/blog/posts/*.md (в одном файле можно несколько):
 //
@@ -33,6 +35,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const SITE = 'https://zalpos.ru';
@@ -234,7 +237,7 @@ function layout({ title, description, canonical, body, ogType = 'website', extra
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(description)}">
-<meta name="robots" content="${noindex ? 'noindex, follow' : 'index, follow, max-image-preview:large'}">
+<meta name="robots" content="${noindex ? 'noindex, follow' : 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1'}">
 <link rel="canonical" href="${esc(canonical)}">
 <meta name="color-scheme" content="light dark">
 <script>try{var t=localStorage.getItem('zalpos-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
@@ -367,16 +370,40 @@ export function guideArticles(guide) {
   return list;
 }
 
+/** Дата изменения страницы справки — по её содержимому: пересобрали без
+ *  правок — дата прежняя. Поисковики (Google особенно) доверяют lastmod,
+ *  только когда он меняется вместе со страницей. Состояние — в
+ *  out/.help-lastmod.json (файлы с точкой хостинг не отдаёт). */
+function lastmodKeeper(out, today) {
+  const file = path.join(out, '.help-lastmod.json');
+  let prev = {};
+  try { prev = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) {}
+  const next = {};
+  return {
+    stamp(url, html) {
+      const hash = crypto.createHash('sha1').update(html).digest('hex').slice(0, 16);
+      const old = prev[url];
+      const lastmod = old && old.hash === hash ? old.lastmod : today;
+      next[url] = { hash, lastmod };
+      return lastmod;
+    },
+    save() { fs.writeFileSync(file, JSON.stringify(next, null, 1)); },
+  };
+}
+
 function buildHelpPages({ out, today }) {
   const urls = [];
-  const guideDir = path.join(out, 'guide');
-  const faqDir = path.join(out, 'faq');
-  for (const d of [guideDir, faqDir]) fs.rmSync(d, { recursive: true, force: true });
-  const put = (dir, rel, html) => {
+  const keep = lastmodKeeper(out, today);
+  // Страница и её адрес в карте сайта: дата — по содержимому.
+  const page = (dir, rel, url, html, priority) => {
     const f = path.join(dir, rel);
     fs.mkdirSync(path.dirname(f), { recursive: true });
     fs.writeFileSync(f, html);
+    urls.push({ loc: url, lastmod: keep.stamp(url, html), priority });
   };
+  const guideDir = path.join(out, 'guide');
+  const faqDir = path.join(out, 'faq');
+  for (const d of [guideDir, faqDir]) fs.rmSync(d, { recursive: true, force: true });
   const back = { href: '/guide/', wide: 'Вся инструкция', narrow: 'Инструкция' };
   const appCta = `<aside class="cta">
   <p>В кабинете ${BRAND} эта инструкция — с живыми видео: как выглядит каждый экран и куда нажимать, на телефоне и планшете.</p>
@@ -396,14 +423,13 @@ ${guide.map((sec) => `<section class="guide-sec">
   <ul class="guide-list">${arts.filter((a) => a.sec === sec).map((a) => `<li><a href="/guide/${a.slug}/">${typo(esc(a.it.title))}</a></li>`).join('')}</ul>
 </section>`).join('\n')}
 ${appCta}`;
-    put(guideDir, 'index.html', layout({
+    page(guideDir, 'index.html', `${SITE}/guide/`, layout({
       title: `Инструкция ${BRAND}: касса, зал, склад и гости`,
       description: intro,
       canonical: `${SITE}/guide/`,
       body,
       back: { href: '/', wide: 'На главную', narrow: 'Главная' },
-    }));
-    urls.push({ loc: `${SITE}/guide/`, lastmod: today, priority: '0.8' });
+    }), '0.8');
 
     for (const a of arts) {
       const { sec, it } = a;
@@ -440,15 +466,14 @@ ${near.length ? `<section class="related"><p class="block-title">${esc(sec.title
   <a class="rel" href="/guide/${x.slug}/"><span>${typo(esc(x.it.title))}</span></a>`).join('')}
 </section>` : ''}
 ${appCta}`;
-      put(guideDir, `${a.slug}/index.html`, layout({
+      page(guideDir, `${a.slug}/index.html`, url, layout({
         title: `${it.title} — инструкция ${BRAND}`,
         description,
         canonical: url,
         body,
         extraHead: head,
         back,
-      }));
-      urls.push({ loc: url, lastmod: today, priority: '0.6' });
+      }), '0.6');
     }
   }
 
@@ -466,16 +491,16 @@ ${appCta}`;
 ${faq.map((f) => `<h2>${uiText(f.q)}</h2>\n<p>${uiText(f.a)}</p>`).join('\n')}
 </div>
 ${appCta.replace('эта инструкция', 'есть подробная инструкция').replace('Открыть инструкцию с видео', 'Инструкция с видео')}`;
-    put(faqDir, 'index.html', layout({
+    page(faqDir, 'index.html', `${SITE}/faq/`, layout({
       title: `Частые вопросы о ${BRAND}`,
       description: intro,
       canonical: `${SITE}/faq/`,
       body,
       extraHead: head,
       back: { href: '/', wide: 'На главную', narrow: 'Главная' },
-    }));
-    urls.push({ loc: `${SITE}/faq/`, lastmod: today, priority: '0.7' });
+    }), '0.7');
   }
+  keep.save();
   return { urls, guide: arts.length, faq: faq.length };
 }
 
@@ -651,6 +676,9 @@ ${urls.map((u) => `<url><loc>${esc(u.loc)}</loc><lastmod>${u.lastmod}</lastmod><
 </urlset>
 `;
   fs.writeFileSync(path.join(out, 'sitemap.xml'), sitemap);
+  // Все адреса карты с датами — по ним --announce сообщает поисковикам о
+  // новых и изменённых страницах (файл с точкой хостинг не отдаёт).
+  fs.writeFileSync(path.join(out, '.sitemap-urls'), urls.map((u) => `${u.loc} ${u.lastmod}`).join('\n') + '\n');
 
   // Для автопубликации: какие посты вышли (файл с точкой хостинг не отдаёт).
   fs.writeFileSync(path.join(blogDir, '.published'), [...published].sort().join('\n') + '\n');
@@ -661,27 +689,71 @@ ${urls.map((u) => `<url><loc>${esc(u.loc)}</loc><lastmod>${u.lastmod}</lastmod><
 
 /** Сообщает Яндексу и IndexNow-поисковикам о новых страницах. */
 export async function pingIndexNow(slugs, { consoleDir = CONSOLE } = {}) {
+  return pingUrls([`${SITE}/blog/`, ...slugs.map((s) => `${SITE}/blog/${s}/`)], { consoleDir });
+}
+
+/** Адреса из карты сайта, которых нет в [announced] или у которых
+ *  сменилась дата: «url дата» построчно. */
+export function changedUrls(current, announced) {
+  const parse = (text) => new Map(String(text || '').split('\n').map((l) => l.trim().split(' ')).filter((p) => p[0]).map(([u, d]) => [u, d || '']));
+  const before = parse(announced);
+  return [...parse(current)].filter(([u, d]) => before.get(u) !== d).map(([u]) => u);
+}
+
+/** Сообщить поисковикам о новых и изменённых страницах всей карты сайта
+ *  (блог, темы, инструкция, частые вопросы). [state] — файл с тем, о чём
+ *  уже сообщали. Яндекс, Bing и другие участники IndexNow узнают сразу;
+ *  Google IndexNow не поддерживает — он берёт даты из sitemap.xml. */
+export async function announce({ state, consoleDir = CONSOLE } = {}) {
+  const current = fs.readFileSync(path.join(consoleDir, '.sitemap-urls'), 'utf8');
+  let told = '';
+  try { told = fs.readFileSync(state, 'utf8'); } catch (_) {}
+  const urls = changedUrls(current, told);
+  if (!urls.length) {
+    console.log('IndexNow: новых и изменённых страниц нет');
+    return 0;
+  }
+  // IndexNow принимает до 10 000 адресов за раз.
+  for (let i = 0; i < urls.length; i += 10000) {
+    const ok = await pingUrls(urls.slice(i, i + 10000), { consoleDir });
+    if (!ok) return -1; // не записываем — сообщим в следующий раз
+  }
+  fs.mkdirSync(path.dirname(state), { recursive: true });
+  fs.writeFileSync(state, current);
+  console.log(`IndexNow: сообщили о ${urls.length} страницах`);
+  return urls.length;
+}
+
+async function pingUrls(urlList, { consoleDir = CONSOLE } = {}) {
   const keyFile = fs.readdirSync(consoleDir).find((f) => INDEXNOW_KEY_FILE.test(f));
   if (!keyFile) throw new Error('нет файла ключа IndexNow в saas/console');
   const key = keyFile.replace(/\.txt$/, '');
-  const urlList = [`${SITE}/blog/`, ...slugs.map((s) => `${SITE}/blog/${s}/`)];
   const body = JSON.stringify({ host: 'zalpos.ru', key, keyLocation: `${SITE}/${keyFile}`, urlList });
+  let ok = false;
   for (const endpoint of ['https://yandex.com/indexnow', 'https://api.indexnow.org/indexnow']) {
     try {
       const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json; charset=utf-8' }, body });
       console.log(`IndexNow ${endpoint}: ${r.status}`);
+      // 200 — принято, 202 — принято, ключ проверят позже.
+      if (r.status === 200 || r.status === 202) ok = true;
     } catch (e) {
       console.log(`IndexNow ${endpoint}: ${e.message}`);
     }
   }
+  return ok;
 }
+
 
 // ---------- командная строка ----------
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const arg = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=').slice(1).join('=');
   const ping = arg('indexnow');
-  if (ping !== undefined) {
+  if (process.argv.includes('--announce')) {
+    const state = arg('state') || '/var/lib/zalpos-blog/sitemap-announced';
+    const n = await announce({ state }).catch((e) => { console.error(`IndexNow: ${e.message}`); return -1; });
+    if (n < 0) process.exitCode = 1;
+  } else if (ping !== undefined) {
     await pingIndexNow(ping.split(',').map((s) => s.trim()).filter(Boolean));
   } else {
     try {
