@@ -152,16 +152,16 @@ function telegramBoxHtml(st) {
         <button class="btn-link f-tg-del" data-i="${i}" style="color:var(--danger)">Убрать</button>
       </div>`).join('')}</div>` : '<p class="small" style="color:var(--danger);margin:0 0 8px">Список пуст — сначала впишите свой Telegram ID.</p>'}
     <div class="row" style="flex-wrap:wrap;gap:8px;align-items:flex-end">
-      <label class="field" style="flex:1 1 140px;margin:0"><span>Telegram ID</span>
+      <label class="field" style="flex:1 1 150px;min-width:0;margin:0"><span>Telegram ID</span>
         <input id="f-tg-uid" inputmode="numeric" autocomplete="off" maxlength="15" placeholder="123456789"></label>
-      <label class="field" style="flex:1 1 140px;margin:0"><span>Подпись (без ФИО)</span>
-        <input id="f-tg-uname" maxlength="40" placeholder="управляющий, курьер 1"></label>
-      <label class="field" style="flex:1 1 180px;margin:0"><span>Права</span>
+      <label class="field" style="flex:2 1 190px;min-width:0;margin:0"><span>Подпись (без ФИО)</span>
+        <input id="f-tg-uname" maxlength="40" placeholder="курьер 1"></label>
+      <label class="field" style="flex:1 1 230px;min-width:0;margin:0"><span>Права</span>
         <select id="f-tg-urole">
-          <option value="owner">Владелец, управляющий</option>
+          <option value="owner">Владелец / управляющий</option>
           <option value="staff">Сотрудник</option>
         </select></label>
-      <button class="btn btn-ghost" id="f-tg-add" style="width:auto">Добавить</button>
+      <button class="btn btn-ghost" id="f-tg-add" style="width:auto;flex:0 0 auto">Добавить</button>
     </div>
     <p class="small muted" style="margin:6px 0 0">Владелец и управляющий получают отчёты и уведомления: им достаточно открыть
       <b>@${esc(st.username)}</b> в Telegram и нажать «Запустить». Сотрудник — только нажимает кнопки заказов
