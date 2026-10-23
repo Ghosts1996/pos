@@ -2845,6 +2845,8 @@ function loadGuide() {
   return guidePromise;
 }
 
+// Кнопки и разделы в тексте статьи — жирным вместо «ёлочек» (guide-scenes.js).
+const guideUi = (s) => (guideScenes && guideScenes.uiText ? guideScenes.uiText(s) : esc(s));
 const guideNorm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/[ \s]+/g, ' ');
 
 // «Кабинет · Устройства» — в кабинете это ещё и переход на вкладку.
@@ -2885,11 +2887,11 @@ function guideBodyHtml(openSet, inCabinet) {
                   </summary>
                   <div class="guide-item-body${scene ? ' has-scene' : ''}${scene && guideScenes.isWideScene(scene) ? ' wide' : ''}">
                     <div class="guide-text">
-                      ${it.intro ? `<p class="guide-lede">${esc(it.intro)}</p>` : ''}
-                      <ol class="guide-steps">${(it.steps || []).map((st) => `<li>${esc(st)}</li>`).join('')}</ol>
-                      ${(it.tips || []).map((t) => `<p class="guide-tip">${esc(t)}</p>`).join('')}
+                      ${it.intro ? `<p class="guide-lede">${guideUi(it.intro)}</p>` : ''}
+                      <ol class="guide-steps">${(it.steps || []).map((st) => `<li>${guideUi(st)}</li>`).join('')}</ol>
+                      ${(it.tips || []).map((t) => `<p class="guide-tip">${guideUi(t)}</p>`).join('')}
                       ${(it.faq || []).length ? `<div class="guide-faq"><p class="guide-faq-title">Если что-то не так</p>
-                        ${it.faq.map(([q, a]) => `<p class="guide-q">${esc(q)}</p><p class="guide-a">${esc(a)}</p>`).join('')}</div>` : ''}
+                        ${it.faq.map(([q, a]) => `<p class="guide-q">${guideUi(q)}</p><p class="guide-a">${guideUi(a)}</p>`).join('')}</div>` : ''}
                       ${tab ? `<button type="button" class="btn-link f-dash-tab guide-go" data-tab="${esc(tab.id)}">Открыть «${esc(tab.label)}» ${LI.arrow}</button>` : ''}
                     </div>
                     ${scene ? `<figure class="gx" data-scene="${esc(scene)}"></figure>` : ''}

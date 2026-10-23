@@ -173,6 +173,9 @@
   color: var(--on-ink); background: var(--primary);
 }
 .gx-cap-t { flex: 1; min-width: 0; overflow-wrap: break-word; text-wrap: pretty; }
+/* Названия кнопок и разделов: в тексте — «ёлочки», на экране — жирным. */
+.gx-ui { font-weight: 600; color: var(--text); }
+.gx-ui.nw { white-space: nowrap; }
 .gx-cap-t.swap { animation: gx-cap .38s ease both; }
 @keyframes gx-cap { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .gx-ctrl { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
@@ -243,7 +246,9 @@
   border: 1px solid rgba(217, 168, 78, .55); background: rgba(217, 168, 78, .1); font-size: 13.5px; font-weight: 600;
 }
 .gx-banner .gx-mu { margin-left: auto; color: var(--pr); font-weight: 500; font-size: 12.5px; color: #D98A5C; }
-.gx-chips { display: flex; gap: 7px; padding: 0 14px; margin-bottom: 9px; white-space: nowrap; overflow: hidden; }
+/* В кассе ряд фильтров прокручивается вбок; в видео прокрутки нет — чипы
+   переносятся на вторую строку, чтобы ни один не обрезался краем экрана. */
+.gx-chips { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 14px; margin-bottom: 9px; white-space: nowrap; }
 .gx-chip {
   flex: none; height: 32px; padding: 0 13px; border-radius: 16px; display: inline-flex; align-items: center; gap: 6px;
   border: 1px solid var(--bd); font-size: 13px; color: var(--tx);
@@ -467,7 +472,9 @@
 .gx-wc-box.radio { border-radius: 50%; }
 .gx-wc.on .gx-wc-box.radio { background: var(--bg); box-shadow: inset 0 0 0 4px var(--pr); }
 .gx-cols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 12px; }
+.gx-cols.wide2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) auto; }
 .gx-web-narrow { max-width: 420px; }
+.gx-wf-wrap .gx-wf-box { height: auto; min-height: 40px; padding: 9px 12px; white-space: normal; line-height: 1.35; }
 .gx-web-hero { margin-bottom: 4px; }
 .gx-web-hero h3 { font-size: 28px; max-width: 520px; }
 .gx-web-brand.big { font-size: 22px; margin: 0 0 14px; }
@@ -539,6 +546,8 @@
   background: radial-gradient(circle at 1px 1px, rgba(242, 234, 223, .07) 1px, transparent 1.3px) 0 0 / 16px 16px, rgba(30, 26, 22, .6);
 }
 .gx-map-in { position: absolute; left: 50%; top: 14px; width: 336px; height: 340px; margin-left: -168px; }
+/* На телефоне фильтры зала занимают две строки (см. .gx-chips) — схема ниже. */
+.gx-screen:not(.tab):not(.web):not(.webm) .gx-map { top: 284px; }
 .gx-walls { position: absolute; inset: 0; width: 100%; height: 100%; }
 .gx-walls path { stroke: #D8CFC2; stroke-width: 5; stroke-linecap: round; opacity: .55; }
 .gx-map-lbl { position: absolute; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--mu); text-transform: uppercase; }

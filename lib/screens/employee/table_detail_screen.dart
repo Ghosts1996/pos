@@ -239,7 +239,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
             Text('За столом ${TimeCafe.durationLabel(TimeCafe.billedMinutes(sat))} · по тарифу ${calc.toStringAsFixed(0)} ₽ за гостя',
                 style: TextStyle(color: AppColors.textMuted)),
             const SizedBox(height: 14),
-            const Text('Гостей платят за время'),
+            const Text('Сколько гостей платят за время'),
             const SizedBox(height: 6),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
               IconButton.filledTonal(onPressed: n > 1 ? () => set(() => n--) : null, icon: const Icon(Icons.remove)),
@@ -312,7 +312,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
           builder: (ctx) => AlertDialog(
             title: const Text('Добавить время в счёт?'),
             content: Text('Гости за столом ${TimeCafe.durationLabel(TimeCafe.billedMinutes(DateTime.now().difference(session.startTime)))}. '
-                'Включено тайм-кафе — время ещё не в счёте.'),
+                'Тайм-кафе включено, а время ещё не добавлено в счёт.'),
             actions: [
               TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Без времени')),
               FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Добавить время')),

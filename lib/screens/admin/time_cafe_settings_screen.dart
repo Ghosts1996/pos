@@ -127,10 +127,10 @@ class _TimeCafeSettingsScreenState extends State<TimeCafeSettingsScreen> {
                 padding: const EdgeInsets.all(16),
                 children: [
                   Text(
-                    'Гость платит за время за столом. На экране стола видно, сколько уже набежало, '
-                    'кнопка «Тайм-кафе» добавляет время в счёт за нужное число гостей, а при '
-                    '«Закрыть стол» время пересчитывается на момент оплаты. Таймер стола настраивается '
-                    'отдельно — в «Длительности сеанса».',
+                    'Гость платит за время, проведённое за столом. На экране стола видно, сколько он уже '
+                    'должен. Кнопка «Тайм-кафе» добавляет время в счёт за нужное число гостей, а при '
+                    'закрытии стола время пересчитывается на момент оплаты. Таймер стола настраивается '
+                    'отдельно, в разделе «Длительность сеанса».',
                     style: TextStyle(fontSize: 13, color: AppColors.textMuted),
                   ),
                   const SizedBox(height: 8),
@@ -155,7 +155,7 @@ class _TimeCafeSettingsScreenState extends State<TimeCafeSettingsScreen> {
                       onChanged: (_) => setState(() {}),
                       decoration: const InputDecoration(
                         labelText: 'Цена первого часа, ₽ (необязательно)',
-                        hintText: 'Пусто — как остальные часы',
+                        hintText: 'По умолчанию как остальные часы',
                       ),
                     ),
                     _caption('Округлять время вверх до'),
@@ -170,7 +170,7 @@ class _TimeCafeSettingsScreenState extends State<TimeCafeSettingsScreen> {
                       onChanged: (_) => setState(() {}),
                       decoration: const InputDecoration(
                         labelText: 'Стоп-чек за гостя, ₽ (необязательно)',
-                        hintText: 'Больше этой суммы за визит не берём',
+                        hintText: 'Наибольшая сумма за один визит',
                       ),
                     ),
                     if (price > 0) ...[

@@ -817,10 +817,10 @@ function webTelegram() {
       <div class="gx-fold"${mk('bot')}><div class="gx-mu" style="font-size:12.5px;line-height:1.5;max-width:560px">Заказы с собой и доставки — в рабочую группу с кнопками статусов, владельцу — выручка, смены, отмены и итоги каждое утро. Имена, телефоны и адреса гостей в Telegram не уходят.</div>
         ${wField('Токен бота', { type: 'token', ph: '123456789:AA…' })}
         ${wBtn('Подключить бота', { tap: 'connect' })}</div>
-      <div class="gx-unfold"${mk('bot')} style="--max:420px"><div style="font-size:13.5px;line-height:1.8">Бот: <b>@kafe_leto_bot</b> · токен хранится зашифрованным</div>
+      <div class="gx-unfold"${mk('bot')} style="--max:640px"><div style="font-size:13.5px;line-height:1.8">Бот: <b>@kafe_leto_bot</b> · токен хранится зашифрованным</div>
         <div style="font-size:13.5px;font-weight:600;margin-top:8px">Кто управляет ботом</div>
         <div class="gx-unfold"${mk('acc')}><div class="gx-web-row" style="border-top:none"><span style="flex:1">Ольга · ID 123456789<br><span class="gx-mu" style="font-size:12px">владелец, управляющий</span></span><span class="gx-web-link">Убрать</span></div></div>
-        <div class="gx-cols" style="margin-top:6px">${wField('Telegram ID', { type: 'tgid', ph: '123456789' })}${wField('Права', { val: 'Владелец, управляющий' })}<div style="display:flex;align-items:flex-end">${wBtn('Добавить', { tap: 'addid', ghost: true })}</div></div>
+        <div class="gx-cols wide2" style="margin-top:6px">${wField('Telegram ID', { type: 'tgid', ph: '123456789' })}${wField('Права', { val: 'Владелец / управляющий' })}<div style="display:flex;align-items:flex-end">${wBtn('Добавить', { tap: 'addid', ghost: true })}</div></div>
         <div style="font-size:13.5px;line-height:1.8;margin-top:6px">Владелец: <span class="gx-show"${mk('own')}><span class="gx-mu">не подключён</span></span><span class="gx-alt"${mk('own')}><b>Ольга</b></span></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">${wBtn('Подключить мой Telegram', { tap: 'owner', ghost: true })}${wBtn('Подключить группу сотрудников', { tap: 'group', ghost: true })}</div>
         <div style="font-size:13px;margin-top:10px">Рабочая группа: <span class="gx-show"${mk('grp')}><span class="gx-mu">не подключена</span></span><span class="gx-alt"${mk('grp')}><b>Кухня и курьеры</b></span></div></div>
@@ -893,7 +893,7 @@ X.refundDialog = dialog('Возврат чека', '<p>Вернуть гостю
 X.cash = ({ done = false } = {}) => X.scr('Касса', `${X.card(`<div class="gx-mu" style="font-size:12px">Должно быть в кассе</div>
     <b style="font-size:30px"><span class="gx-show"${mk('out')}>${done ? '10 580 ₽' : '12 580 ₽'}</span><span class="gx-alt"${mk('out')}>10 580 ₽</span></b>
     <div class="gx-mu" style="font-size:12px;margin-top:2px">Размен 5 000 ₽ + наличные за чеки 7 580 ₽</div>`)}
-  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">${btn('Внесение', { kind: 'ghost sm', icon: 'plus' })}${btn('Выплата', { kind: 'ghost sm', icon: 'minus', tap: 'pay' })}${btn('Инкассация', { kind: 'ghost sm', icon: 'wallet' })}</div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">${btn('Внесение', { kind: 'ghost sm' })}${btn('Выплата', { kind: 'ghost sm', tap: 'pay' })}${btn('Инкассация', { kind: 'ghost sm' })}</div>
   ${X.h('Операции за смену')}
   <div class="gx-unfold"${mk('out')}>${X.card(`<div style="display:flex;justify-content:space-between"><b style="font-size:14px">Выплата · −2 000 ₽</b><span class="gx-mu" style="font-size:11.5px">21:20 · Ольга</span></div><div class="gx-mu" style="font-size:12px;margin:2px 0 8px">Курьер Сергей, доставка лимонов</div><span style="font-size:12.5px;color:#E07A5F">Отменить операцию</span>`)}</div>
   ${X.card(`<div style="display:flex;justify-content:space-between"><b style="font-size:14px">Внесение · +5 000 ₽</b><span class="gx-mu" style="font-size:11.5px">12:02 · Ольга</span></div><div class="gx-mu" style="font-size:12px;margin-top:2px">Размен из сейфа</div>`)}`);
@@ -955,16 +955,16 @@ X.sessionScreen = () => X.scr('Длительность сеанса', `<div cla
   }).join('')}
   <div style="margin-top:14px">${field('Своя длительность, часов', { ph: 'Например, 1,5' })}</div>`, { bottom: btn('Сохранить', { icon: 'check', tap: 'save' }) });
 /* ---- Тайм-кафе: оплата за время ---- */
-X.timeCafeScreen = () => X.scr('Тайм-кафе', `<div class="gx-mu" style="font-size:12px;line-height:1.4;margin-bottom:4px">Гость платит за время за столом. Таймер стола — отдельно, в «Длительности сеанса».</div>
+X.timeCafeScreen = () => X.scr('Тайм-кафе', `<div class="gx-mu" style="font-size:12px;line-height:1.4;margin-bottom:4px">Гость платит за время, проведённое за столом. Таймер стола настраивается отдельно.</div>
   ${switchRow('Включить тайм-кафе', '', { tap: 'on', mark: 'on' })}
   <div class="gx-unfold"${mk('on')} style="--max:520px">
-    ${field('Цена часа за гостя, ₽', { type: 'price', style: 'height:50px;margin-bottom:8px' })}
-    ${field('Цена первого часа, ₽ (необязательно)', { ph: 'Пусто — как остальные часы', style: 'height:50px;margin-bottom:6px' })}
+    ${field('Цена часа за гостя, ₽', { type: 'price', style: 'height:50px;margin:8px 0 14px' })}
+    ${field('Цена первого часа, ₽ (необязательно)', { ph: 'По умолчанию как остальные часы', style: 'height:50px;margin-bottom:10px' })}
     <div class="gx-mu" style="font-size:12px;margin:6px 2px">Округлять время вверх до</div>
     ${X.chips(['минуты', '5 мин', '15 мин', '30 мин', 'часа'], -1, 2, 'r15')}
     <div class="gx-mu" style="font-size:12px;margin:0 2px 6px">Минимальная оплата</div>
     ${X.chips(['нет', '30 мин', '1 ч'], 0)}
-    ${field('Стоп-чек за гостя, ₽ (необязательно)', { type: 'stop', style: 'height:50px;margin-bottom:8px' })}
+    ${field('Стоп-чек за гостя, ₽ (необязательно)', { type: 'stop', style: 'height:50px;margin:6px 0 12px' })}
     <div class="gx-unfold"${mk('ex')}>${X.card('<div style="font-size:12.5px;line-height:1.45">Сколько заплатит один гость:<br><b>20 мин — 105 ₽ · 1 ч — 300 ₽ · 1 ч 30 мин — 450 ₽ · 3 ч — 900 ₽</b></div>')}</div>
   </div>`, { bottom: btn('Сохранить', { icon: 'check', tap: 'save' }) });
 
@@ -977,13 +977,13 @@ X.cafeTable = ({ items = [], total = '0 ₽', tap = {}, recount = false } = {}) 
       <span class="gx-mu gx-small">с 18:18</span>
       <div style="margin-top:7px;display:flex;align-items:center;gap:6px;font-size:13.5px;font-weight:600;color:var(--br)">${ic('hourglass', 15)}<span>Тайм-кафе: 420 ₽ за гостя · 1 ч 25 мин</span></div></div>`)
     .replace(/<div class="gx-acts-grid">[\s\S]*?(?=<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 14px 10px">)/,
-      `<div class="gx-acts-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">${acts.map(([icn, t, sub, k], n) => `<div class="gx-act"${tp(k)}${n === 0 ? ' style="border-color:var(--pr)"' : ''}>
+      `<div class="gx-acts-grid">${acts.map(([icn, t, sub, k], n) => `<div class="gx-act"${tp(k)}${n === 0 ? ' style="border-color:var(--pr)"' : ''}>
       <span style="display:flex;align-items:center;gap:6px">${ic(icn, 15)}<b>${t}</b></span><span>${sub}</span></div>`).join('')}</div>
     `);
 };
 
 X.cafeDialog = dialog('Время в счёт', `<div class="gx-mu" style="font-size:12.5px;margin-bottom:10px">За столом 1 ч 25 мин · по тарифу 420 ₽ за гостя</div>
-  <div style="font-size:13.5px;margin-bottom:6px">Гостей платят за время</div>
+  <div style="font-size:13.5px;margin-bottom:6px">Сколько гостей платят за время</div>
   <div style="display:flex;align-items:center;justify-content:center;gap:18px;margin-bottom:10px">
     <span class="gx-mu" style="width:38px;height:38px;border-radius:50%;background:var(--el);display:flex;align-items:center;justify-content:center">${ic('minus', 18)}</span>
     <b style="font-size:28px;min-width:40px;text-align:center"><span class="gx-show"${mk('g2')}>1</span><span class="gx-alt"${mk('g2')}>2</span></b>
@@ -1153,7 +1153,7 @@ X.fiscal = () => X.integ('receipt', 'Онлайн-касса (54-ФЗ)', 'Фис
     <div style="display:flex;gap:8px">${field('Налогообложение', { val: 'УСН доходы', style: 'height:48px;flex:1' })}${field('НДС по умолчанию', { val: 'Без НДС', style: 'height:48px;flex:1' })}</div></div></div>
   ${btn('Проверить связь с регистратором', { kind: 'ghost sm', icon: 'check', tap: 'chk', style: 'margin-top:12px;width:100%' })}
   <div class="gx-unfold"${mk('ok')}><div style="color:var(--ok);font-size:12.5px;font-weight:600;line-height:1.4;margin-top:10px">✓ Регистратор на связи: смена открыта, ФН действителен до 03.2028</div></div>`);
-X.terminal = () => X.integ('card', 'Терминал оплаты', 'Подходит терминал любого банка, «терминал в телефоне» и табличка с QR СБП.',
+X.terminal = () => X.integ('card', 'Терминал оплаты', 'Подходит терминал любого банка, терминал в телефоне и табличка с QR СБП.',
   `${field('Способ', { val: 'Терминал любого банка', style: 'height:48px;margin-bottom:10px' })}
   <div class="gx-mu" style="font-size:12.5px;margin-bottom:6px">Какие терминалы стоят в заведении</div>
   <div style="display:flex;gap:6px;flex-wrap:wrap">${['Сбер', 'ВТБ', 'Альфа-Банк', 'Т-Банк', 'Газпромбанк', 'Точка', 'Другой банк'].map((b) => `<span class="gx-chip${b === 'Сбер' ? ' on' : ''}"${b === 'Т-Банк' ? tp('tb') + mk('tb') : ''} style="height:30px">${b === 'Т-Банк' ? `<span class="gx-alt" data-mark="tb">✓ </span>` : b === 'Сбер' ? '✓ ' : ''}${b}</span>`).join('')}</div>
@@ -1224,7 +1224,7 @@ X.winApp = () => `<div class="gx-app gx-wide">
     <div class="gx-map-pill">${ic('checks', 17, 2)}Показать список · 11</div>
   </div></div>`;
 X.webRkn = () => webPage(`<h3>Уведомление об обработке ПД</h3><div class="gx-mu" style="margin-bottom:10px">Схема формы на pd.rkn.gov.ru — подпись через Госуслуги</div>
-  <div class="gx-web-card gx-web-narrow" style="margin-top:0">
+  <div class="gx-web-card gx-web-narrow gx-wf-wrap" style="margin-top:0">
     ${wField('Цель обработки', { type: 'goal', ph: '' })}
     ${wField('Категории данных', { val: 'ФИО; должность; рабочее время и зарплата' })}
     ${wField('Субъекты', { val: 'работники' })}
@@ -1248,7 +1248,7 @@ X.notif = (title, body, k = 'n') => `<div class="gx-hide gx-buzz"${mk(k)} style=
   <div class="gx-mu" style="font-size:11px;display:flex;justify-content:space-between"><span>ZalPOS · касса</span><span>сейчас</span></div>
   <b style="display:block;font-size:14.5px;margin-top:2px">${title}</b><span style="font-size:12.5px">${body}</span>
   <div class="gx-mu" style="font-size:11px;margin-top:4px;display:flex;align-items:center;gap:5px">${ic('phone', 13)} вибрация: три длинных</div></div>`;
-X.hallReady = () => hall().replace('<div class="gx-app">', `<div class="gx-app" style="position:relative">${X.notif('Готово · Стол 5', 'Можно выносить: Паста карбонара ×2, Том ям')}`);
+X.hallReady = () => hall().replace('<div class="gx-app">', `<div class="gx-app">${X.notif('Готово · Стол 5', 'Можно выносить: Паста карбонара ×2, Том ям')}`);
 
 X.watch = (big, small, sub, k = 'w') => `<div class="gx-app" style="display:flex;align-items:center;justify-content:center;background:#0E0D0C">
   <div style="position:relative;width:236px;height:236px;border-radius:50%;background:#000;border:10px solid #2C2824;box-shadow:0 0 0 2px #3A352F;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:26px">
@@ -1308,7 +1308,7 @@ export const SCENES = {
     label: 'Вход в кассу по PIN',
     frames: [
       { screen: pinScreen(), cap: 'Наберите свой PIN — четыре цифры. Администратор сначала нажимает «Администратор», у него шесть цифр.', acts: DIGITS('2580') },
-      { screen: pinScreen(), over: { kind: 'dialog', html: startDialog() }, cap: 'Касса спросит про смену. Вы на работе — «Начать смену».', acts: [{ tap: 'go' }] },
+      { screen: pinScreen(), over: { kind: 'dialog', html: startDialog() }, cap: 'Касса спросит про смену. Если вы на работе, нажмите «Начать смену».', acts: [{ tap: 'go' }] },
       { screen: hall(), enter: 'fade', over: { kind: 'toast', html: toast('Ваша смена началась') }, cap: 'Готово: открылся зал, рабочее время пошло.', acts: [{ wait: 1300 }] },
     ],
   },
@@ -1318,8 +1318,8 @@ export const SCENES = {
     frames: [
       { screen: hall({ tapMenu: 'menu' }), cap: 'Откройте меню — кнопка ☰ слева вверху.', acts: [{ tap: 'menu' }] },
       { screen: hall(), over: { kind: 'drawer', html: drawer({ shift: 'off', tap: { my: 'my' } }) }, cap: 'Нажмите «Моя смена не начата».', acts: [{ tap: 'my' }] },
-      { screen: hall(), over: { kind: 'dialog', html: startDialog() }, cap: 'Подтвердите — «Начать смену».', acts: [{ tap: 'go' }] },
-      { screen: hall(), over: { kind: 'drawer', html: drawer({ shift: 'on', since: '18:02', tap: { my: 'my' } }) }, cap: 'Смена идёт. Уходя домой, нажмите сюда же — «Моя смена идёт».', acts: [{ wait: 900 }, { tap: 'my' }] },
+      { screen: hall(), over: { kind: 'dialog', html: startDialog() }, cap: 'Подтвердите кнопкой «Начать смену».', acts: [{ tap: 'go' }] },
+      { screen: hall(), over: { kind: 'drawer', html: drawer({ shift: 'on', since: '18:02', tap: { my: 'my' } }) }, cap: 'Смена идёт. Уходя домой, нажмите ту же строку «Моя смена идёт».', acts: [{ wait: 900 }, { tap: 'my' }] },
       {
         screen: hall(), over: { kind: 'dialog', html: dialog('Закончить вашу смену?', '<p>Смена началась в 18:02 · отработано 8 ч 10 мин.<br>Смена заведения продолжается — их касса, X-отчёт и вызовы гостей не изменятся.</p>', `${btn('Отмена', { kind: 'text' })}${btn('Закончить смену', { kind: 'sm', tap: 'end' })}`) },
         cap: '«Закончить смену» — время ухода касса запишет сама.', acts: [{ tap: 'end' }],
@@ -1368,7 +1368,7 @@ export const SCENES = {
     frames: [
       { screen: hall(), over: { kind: 'drawer', html: drawer({ name: 'Ильдар', role: 'ПОВАР', tap: { kitchen: 'kitchen' } }) }, cap: 'Меню ☰ → «Кухня и бар».', acts: [{ tap: 'kitchen' }] },
       { screen: kitchenScreen(), enter: 'push', cap: 'Столы с вашими позициями. Сверху — те, что ждут дольше всех: 15 минут подсвечиваются жёлтым.', acts: [{ wait: 1600 }] },
-      { screen: kitchenScreen(), cap: 'Приготовили — «Всё готово». Официант увидит в счёте зелёное «готово».', acts: [{ tap: 't1', mark: 't1' }, { wait: 1500 }] },
+      { screen: kitchenScreen(), cap: 'Когда всё приготовлено, нажмите «Всё готово». Официант увидит в счёте зелёную отметку «готово».', acts: [{ tap: 't1', mark: 't1' }, { wait: 1500 }] },
     ],
   },
 
@@ -1406,7 +1406,7 @@ export const SCENES = {
     frames: [
       { screen: hall(), over: { kind: 'drawer', html: drawer({ tap: { book: 'book' } }) }, cap: 'Меню ☰ → «Брони».', acts: [{ tap: 'book' }] },
       { screen: bookingsScreen(), enter: 'push', cap: 'Бронь из приложения пришла со статусом «Новая». Позвоните гостю, если нужно, и нажмите «Подтвердить».', acts: [{ wait: 600 }, { tap: 'confirm', mark: 'conf' }] },
-      { screen: bookingsScreen(), cap: 'Гость пришёл — «Посадить».', acts: [{ wait: 500 }, { tap: 'seat' }] },
+      { screen: bookingsScreen(), cap: 'Когда гость пришёл, нажмите «Посадить».', acts: [{ wait: 500 }, { tap: 'seat' }] },
       { screen: tableCheck({ name: 'Стол 6', who: 'Алина' }), enter: 'push', over: { kind: 'toast', html: toast('Гость посажен, чек открыт') }, cap: 'Стол занят, счёт открыт — дальше как обычно.', acts: [{ wait: 1600 }] },
     ],
   },
@@ -1417,7 +1417,7 @@ export const SCENES = {
       { screen: hall(), over: { kind: 'drawer', html: drawer({ tap: { venue: 'venue' } }) }, cap: 'В конце дня: меню ☰ → «Смена заведения открыта».', acts: [{ tap: 'venue' }] },
       { screen: hall(), over: { kind: 'sheet', html: venueSheet }, cap: 'Видно, кто ещё на смене. Нажмите «Закрыть смену заведения».', acts: [{ wait: 700 }, { tap: 'closev' }] },
       { screen: hall(), over: { kind: 'dialog', html: closeDialog() }, cap: 'Пересчитайте наличные в ящике и впишите сумму. Касса сравнит её с «Должно быть в кассе».', acts: [{ type: 'cnt', text: '12580' }, { mark: 'ok' }, { wait: 900 }] },
-      { screen: hall(), over: { kind: 'dialog', html: closeDialog() }, cap: 'Сколько оставить на размен, решаете вы, остальное — инкассация. «Закрыть смену».', acts: [{ tap: 'done' }] },
+      { screen: hall(), over: { kind: 'dialog', html: closeDialog() }, cap: 'Сколько оставить на размен, решаете вы, остальное уходит в инкассацию. Нажмите «Закрыть смену».', acts: [{ tap: 'done' }] },
       { screen: pinScreen(), enter: 'fade', cap: 'Смена закрыта, отчёт сохранён. Расхождение, если оно было, владелец увидит в кабинете.', acts: [{ wait: 1600 }] },
     ],
   },
@@ -1436,7 +1436,7 @@ export const SCENES = {
     frames: [
       { screen: employeesScreen({ tap: 'den' }), cap: 'Админ → «Сотрудники» → откройте сотрудника.', acts: [{ tap: 'den' }] },
       { screen: payForm(), enter: 'push', cap: 'В разделе «Зарплата» включите «Проценты с продаж».', acts: [{ tap: 'pct', mark: 'pct' }] },
-      { screen: payForm(), cap: 'Бармену — процент «С бара и напитков». Кальянщику — «С кальянов», официанту — «С чеков, которые он вёл».', acts: [{ type: 'bar', text: '5' }, { wait: 400 }, { tap: 'save' }] },
+      { screen: payForm(), cap: 'Бармену подходит процент «С бара и напитков», кальянщику «С кальянов», официанту «С чеков, которые он вёл».', acts: [{ type: 'bar', text: '5' }, { wait: 400 }, { tap: 'save' }] },
       { screen: employeesScreen(), enter: 'back', cap: 'Ставка действует с этой минуты: прошлые смены и чеки считаются по старой.', acts: [{ mark: 'saved' }, { wait: 1800 }] },
     ],
   },
@@ -1474,7 +1474,7 @@ export const SCENES = {
     label: 'Добавить стол на карту зала',
     frames: [
       { screen: hallEditor(), cap: 'Админ → «Карта зала». Нажмите «Стол» внизу справа.', acts: [{ wait: 500 }, { tap: 'add' }] },
-      { screen: hallEditor(), over: { kind: 'dialog', html: newTableDialog }, cap: 'Название, сколько мест и форма — «Сохранить».', acts: [{ type: 'tname', text: 'Стол 12' }, { tap: 'save' }] },
+      { screen: hallEditor(), over: { kind: 'dialog', html: newTableDialog }, cap: 'Укажите название, число мест и форму стола и нажмите «Сохранить».', acts: [{ type: 'tname', text: 'Стол 12' }, { tap: 'save' }] },
       { screen: hallEditor(), cap: 'Стол появился. Удерживайте его и тяните на место — схема сразу обновится на всех кассах и у гостей.', acts: [{ mark: 'newt' }, { wait: 500 }, { drag: 'drag', dx: -40, dy: -70 }, { wait: 1200 }] },
     ],
   },
@@ -1496,7 +1496,7 @@ export const SCENES = {
     device: 'web',
     frames: [
       { screen: webBranding(), cap: 'Кабинет → «Брендинг»: название, логотип и цвета приложения гостя. Выберите гамму.', acts: [{ wait: 600 }, { tap: 'sage', mark: 'sage' }] },
-      { screen: webBranding(), cap: 'Рядом сразу видно, как это будет выглядеть у гостя. «Сохранить брендинг».', acts: [{ wait: 900 }, { tap: 'save' }, { wait: 1200 }] },
+      { screen: webBranding(), cap: 'Рядом сразу видно, как это будет выглядеть у гостя. Нажмите «Сохранить брендинг».', acts: [{ wait: 900 }, { tap: 'save' }, { wait: 1200 }] },
     ],
   },
 
@@ -1516,7 +1516,7 @@ export const SCENES = {
     device: 'web',
     frames: [
       { screen: webOverview({ tap: { 'Команда': 'nav' } }), cap: 'В кабинете откройте «Команда».', acts: [{ wait: 400 }, { tap: 'nav' }] },
-      { screen: webTeam(), cap: '«Сотрудники кассы»: имя, PIN-код и специализация — и «Сохранить».', acts: [{ type: 'ename', text: 'Марина' }, { type: 'epin', text: '4821' }, { tap: 'pos', mark: 'pos' }, { tap: 'esave', mark: 'saved' }] },
+      { screen: webTeam(), cap: 'В разделе «Сотрудники кассы» укажите имя, PIN-код и специализацию и нажмите «Сохранить».', acts: [{ type: 'ename', text: 'Марина' }, { type: 'epin', text: '4821' }, { tap: 'pos', mark: 'pos' }, { tap: 'esave', mark: 'saved' }] },
       { screen: webTeam({ saved: true }), enter: 'none', cap: 'Сотрудник появился в списке и на всех кассах. Имя и PIN скажите ему лично.', acts: [{ wait: 2000 }] },
     ],
   },
@@ -1568,7 +1568,7 @@ export const SCENES = {
       { screen: hall({ takeaway: 1, tapTakeaway: 'bag' }), cap: 'Гость оформил доставку — у кнопки «С собой и доставка» в шапке зала появилась цифра. Нажмите её.', acts: [{ wait: 500 }, { tap: 'bag' }] },
       { screen: hall({ takeaway: 1 }), over: { kind: 'sheet', html: takeawaySheet() }, cap: 'Заказ из приложения ждёт звонка. Нажмите на телефон — касса наберёт гостя.', acts: [{ wait: 900 }, { tap: 'call' }] },
       { screen: callScreen(), enter: 'fade', cap: 'Сверьте состав, адрес и время доставки. Имя и номер гость указал сам.', acts: [{ wait: 1800 }] },
-      { screen: hall({ takeaway: 1 }), over: { kind: 'sheet', html: takeawaySheet() }, enter: 'fade', cap: 'Всё верно — «Подтвердить». Позиции встанут в чек, кухня увидит заказ, гость — «Принят».', acts: [{ tap: 'accept', mark: 'acc' }, { wait: 900 }] },
+      { screen: hall({ takeaway: 1 }), over: { kind: 'sheet', html: takeawaySheet() }, enter: 'fade', cap: 'Если всё верно, нажмите «Подтвердить». Позиции встанут в чек, кухня увидит заказ, а гость увидит статус «Принят».', acts: [{ tap: 'accept', mark: 'acc' }, { wait: 900 }] },
       { screen: hall({ takeaway: 1 }), over: { kind: 'sheet', html: takeawaySheet() }, cap: 'Дальше по шагам: «Начать готовить», «Передать курьеру», «Доставлен». Гость видит каждый шаг у себя.', acts: [{ wait: 600 }, { tap: 'cook' }, { wait: 900 }] },
     ],
   },
@@ -1619,14 +1619,14 @@ export const SCENES = {
     frames: [
       { screen: X.winDl(), win: { title: 'Кабинет ZalPOS — браузер', url: 'zalpos.ru' }, cap: 'В браузере на компьютере: кабинет → «Устройства» → «Скачать» у строки «Касса (Windows)». Запустите скачанный файл — права администратора не нужны.', acts: [{ wait: 400 }, { tap: 'win' }, { wait: 500 }] },
       { screen: X.winSmart(), win: { title: 'Windows SmartScreen' }, enter: 'fade', cap: 'Windows может показать «Система Windows защитила ваш компьютер» — нажмите «Подробнее», потом «Выполнить в любом случае».', acts: [{ tap: 'more', mark: 'more' }, { wait: 400 }, { tap: 'run' }] },
-      { screen: X.winApp(), win: { title: 'ZalPOS — Кафе «Лето»', icon: true }, enter: 'fade', cap: 'Ярлык ZalPOS появится на рабочем столе и в меню «Пуск», касса сама подключится к заведению. F11 — во весь экран. Принтер — по сети, сканер — «пистолет».', acts: [{ wait: 2400 }] },
+      { screen: X.winApp(), win: { title: 'ZalPOS — Кафе «Лето»', icon: true }, enter: 'fade', cap: 'Ярлык ZalPOS появится на рабочем столе и в меню «Пуск», касса сама подключится к заведению. F11 — во весь экран. Принтер подключается по сети, сканер штрихкодов по USB.', acts: [{ wait: 2400 }] },
     ],
   },
   updates: {
     label: 'Обновления кассы',
     frames: [
       { screen: hall({ tapMenu: 'menu' }), cap: 'Делать ничего не нужно: новая версия собирается сама. Проверить вручную — меню ☰.', acts: [{ tap: 'menu' }] },
-      { screen: hall(), over: { kind: 'drawer', html: X.drawerUpd('upd') }, cap: 'Внизу — «Обновления».', acts: [{ wait: 400 }, { tap: 'upd' }] },
+      { screen: hall(), over: { kind: 'drawer', html: X.drawerUpd('upd') }, cap: 'Внизу откройте «Обновления».', acts: [{ wait: 400 }, { tap: 'upd' }] },
       { screen: hall(), over: { kind: 'dialog', html: dialog('Доступна версия 1.42', '<p>Новое: бонусы за шаги выручки, отчёт по банкам терминала. Данные и настройки сохранятся.</p>', `${btn('Позже', { kind: 'text' })}${btn('Установить', { kind: 'sm', tap: 'go' })}`) }, cap: 'Нажмите «Установить». «Собрать APK» в кабинете нужно снова, только если поменяли логотип или название.', acts: [{ tap: 'go' }, { wait: 700 }] },
     ],
   },
@@ -1643,7 +1643,7 @@ export const SCENES = {
     frames: [
       { screen: menuEditor(), cap: 'Админ → «Меню». Новая категория — значок папки вверху справа. Откройте категорию.', acts: [{ wait: 1200 }] },
       { screen: X.catItems(), enter: 'push', cap: 'В категории нажмите «Добавить позицию».', acts: [{ wait: 400 }, { tap: 'add' }] },
-      { screen: X.itemForm(), enter: 'push', cap: '«Название», «Цена, ₽», «Состав / описание», фото и «Ставка НДС». Блюдо из нескольких продуктов — «Составная позиция (микс)».', acts: [{ type: 'iname', text: 'Кальян на грейпфруте' }, { type: 'iprice', text: '1800' }, { wait: 300 }, { tap: 'save' }] },
+      { screen: X.itemForm(), enter: 'push', cap: 'Заполните «Название», «Цена, ₽», «Состав / описание», добавьте фото и выберите «Ставка НДС». Для блюда из нескольких продуктов включите «Составная позиция (микс)».', acts: [{ type: 'iname', text: 'Кальян на грейпфруте' }, { type: 'iprice', text: '1800' }, { wait: 300 }, { tap: 'save' }] },
       { screen: X.catItems(), enter: 'back', over: { kind: 'toast', html: toast('Сохранено — меню обновилось на кассах и у гостей') }, cap: 'Меню сразу обновится на всех кассах и в приложении гостя.', acts: [{ wait: 1500 }] },
     ],
   },
@@ -1658,19 +1658,19 @@ export const SCENES = {
     label: 'Длительность сеанса',
     frames: [
       ADMIN_TO('Длительность сеанса'),
-      { screen: X.sessionScreen(), enter: 'push', cap: 'Сколько обычно длится посещение — или «Без ограничений». «Сохранить».', acts: [{ tap: 'two', mark: 'two' }, { wait: 300 }, { tap: 'save' }] },
-      { screen: tableCheck({ items: ORDER, total: '1 420 ₽', tap: { timer: 'time' } }), enter: 'push', cap: 'За столом идёт таймер. Прибавить или убавить — кнопка «Время»: ± 5, 10, 30 минут.', acts: [{ wait: 600 }, { tap: 'time' }, { wait: 900 }] },
+      { screen: X.sessionScreen(), enter: 'push', cap: 'Выберите, сколько обычно длится посещение, или «Без ограничений» и нажмите «Сохранить».', acts: [{ tap: 'two', mark: 'two' }, { wait: 300 }, { tap: 'save' }] },
+      { screen: tableCheck({ items: ORDER, total: '1 420 ₽', tap: { timer: 'time' } }), enter: 'push', cap: 'За столом идёт таймер. Кнопкой «Время» его можно продлить или сократить на 5, 10 или 30 минут.', acts: [{ wait: 600 }, { tap: 'time' }, { wait: 900 }] },
     ],
   },
   'time-cafe': {
     label: 'Тайм-кафе: оплата за время',
     frames: [
       ADMIN_TO('Тайм-кафе'),
-      { screen: X.timeCafeScreen(), enter: 'push', cap: 'Включите «Тайм-кафе» и впишите цену часа за гостя. По желанию — цену первого часа, округление, минимальную оплату и стоп-чек.', acts: [{ tap: 'on', mark: 'on' }, { wait: 400 }, { type: 'price', text: '300' }, { tap: 'r15', mark: 'r15' }] },
-      { screen: X.timeCafeScreen(), cap: 'Внизу видно, сколько заплатит один гость. Всё верно — «Сохранить»: цена сразу меняется на всех кассах.', acts: [{ mark: 'on' }, { type: 'stop', text: '900' }, { mark: 'ex' }, { wait: 900 }, { tap: 'save' }] },
-      { screen: X.cafeTable({ items: [CAFE_ORDER[1]], total: '250 ₽', tap: { cafe: 'cafe' } }), enter: 'push', cap: 'За столом видно, сколько уже набежало за время. Нажмите «Тайм-кафе» — время в счёт.', acts: [{ wait: 1000 }, { tap: 'cafe' }] },
-      { screen: X.cafeTable({ items: [CAFE_ORDER[1]], total: '250 ₽' }), over: { kind: 'dialog', html: X.cafeDialog }, cap: 'Сколько гостей платят за время — кнопками «−» и «+». Сумму за гостя можно поправить. «В счёт».', acts: [{ tap: 'plus', mark: 'g2' }, { wait: 700 }, { tap: 'ok' }] },
-      { screen: X.cafeTable({ items: CAFE_ORDER, total: '1 090 ₽', tap: { close: 'close' }, recount: true }), enter: 'fade', cap: 'Время — строкой в счёте. Нажмёте «Тайм-кафе» ещё раз — пересчитается та же строка. При «Закрыть стол» время пересчитается на момент оплаты.', acts: [{ wait: 1300 }, { tap: 'close' }] },
+      { screen: X.timeCafeScreen(), enter: 'push', cap: 'Включите «Тайм-кафе» и укажите цену часа за гостя. При желании задайте цену первого часа, округление, минимальную оплату и стоп-чек.', acts: [{ tap: 'on', mark: 'on' }, { wait: 400 }, { type: 'price', text: '300' }, { tap: 'r15', mark: 'r15' }] },
+      { screen: X.timeCafeScreen(), cap: 'Внизу видно, сколько заплатит один гость. Если всё верно, нажмите «Сохранить». Цена сразу изменится на всех кассах.', acts: [{ mark: 'on' }, { type: 'stop', text: '900' }, { mark: 'ex' }, { wait: 900 }, { tap: 'save' }] },
+      { screen: X.cafeTable({ items: [CAFE_ORDER[1]], total: '250 ₽', tap: { cafe: 'cafe' } }), enter: 'push', cap: 'На экране стола видно, сколько гость уже должен за время. Нажмите «Тайм-кафе», чтобы добавить время в счёт.', acts: [{ wait: 1000 }, { tap: 'cafe' }] },
+      { screen: X.cafeTable({ items: [CAFE_ORDER[1]], total: '250 ₽' }), over: { kind: 'dialog', html: X.cafeDialog }, cap: 'Кнопками «−» и «+» укажите, сколько гостей платят за время. Сумму за гостя можно поправить. Затем нажмите «В счёт».', acts: [{ tap: 'plus', mark: 'g2' }, { wait: 700 }, { tap: 'ok' }] },
+      { screen: X.cafeTable({ items: CAFE_ORDER, total: '1 090 ₽', tap: { close: 'close' }, recount: true }), enter: 'fade', cap: 'Время появилось в счёте отдельной строкой. Повторное нажатие «Тайм-кафе» пересчитает её, а при закрытии стола время пересчитается на момент оплаты.', acts: [{ wait: 1300 }, { tap: 'close' }] },
     ],
   },
   'venue-profile': {
@@ -1678,7 +1678,7 @@ export const SCENES = {
     frames: [
       GADMIN_TO('Профиль заведения'),
       { screen: X.venueProfile(), enter: 'push', cap: 'Тип заведения — касса подстроит слова: официант, бармен или кальянщик. Адрес, телефон и часы работы (пустое поле — выходной).', acts: [{ type: 'addr', text: 'ул. Ленина, 5' }, { wait: 400 }] },
-      { screen: X.venueProfile(), cap: 'Правила, частые вопросы и акции гости увидят в приложении. «Сохранить».', acts: [{ type: 'rules', text: 'Кальян с 18 лет, паспорт обязателен' }, { tap: 'save' }, { wait: 700 }] },
+      { screen: X.venueProfile(), cap: 'Правила, частые вопросы и акции гости увидят в приложении. Нажмите «Сохранить».', acts: [{ type: 'rules', text: 'Кальян с 18 лет, паспорт обязателен' }, { tap: 'save' }, { wait: 700 }] },
     ],
   },
   'venue-shift': {
@@ -1702,7 +1702,7 @@ export const SCENES = {
       DRAWER_TO('hist', 'Меню ☰ → «История чеков».'),
       { screen: X.receipts(), enter: 'push', cap: 'Найдите чек: «Сегодня», «7 дней», «30 дней» или «Свой период» — и откройте его.', acts: [{ wait: 500 }, { tap: 'r1' }] },
       { screen: X.receipt(), enter: 'push', cap: 'Нажмите «Возврат чека».', acts: [{ wait: 400 }, { tap: 'ret' }] },
-      { screen: X.receipt(), over: { kind: 'dialog', html: X.refundDialog }, cap: '«Оформить возврат». Он попадёт в X-отчёт, отчёты и журнал, процент сотрудников с этого чека пропадёт.', acts: [{ tap: 'do' }] },
+      { screen: X.receipt(), over: { kind: 'dialog', html: X.refundDialog }, cap: 'Нажмите «Оформить возврат». Возврат попадёт в X-отчёт, отчёты и журнал, а процент сотрудников с этого чека снимется.', acts: [{ tap: 'do' }] },
       { screen: X.receipt(), cap: 'Готово: на чеке отметка о возврате и кто его оформил.', acts: [{ mark: 'ref' }, { wait: 1500 }] },
     ],
   },
@@ -1710,9 +1710,9 @@ export const SCENES = {
     label: 'Наличные: внесение, выплата, инкассация',
     frames: [
       DRAWER_TO('cash', 'Меню ☰ → «Касса». Любые движения наличных проводите здесь — тогда сумма в ящике сойдётся.'),
-      { screen: X.cash(), enter: 'push', cap: '«Внесение» — размен из сейфа. «Выплата» — поставщику, курьеру, аванс. «Инкассация» — забрали в сейф или владельцу.', acts: [{ wait: 700 }, { tap: 'pay' }] },
+      { screen: X.cash(), enter: 'push', cap: '«Внесение» нужно для размена из сейфа, «Выплата» для поставщика, курьера или аванса, «Инкассация», когда деньги забрали в сейф или отдали владельцу.', acts: [{ wait: 700 }, { tap: 'pay' }] },
       { screen: X.cash(), over: { kind: 'dialog', html: X.payoutDialog }, cap: 'В выплате обязательно напишите, кому и за что.', acts: [{ type: 'sum', text: '2000' }, { type: 'why', text: 'Курьер Сергей, лимоны' }, { tap: 'ok' }] },
-      { screen: X.cash(), cap: 'Сумма в ящике пересчиталась. Ошиблись — «Отменить операцию».', acts: [{ mark: 'out' }, { wait: 1600 }] },
+      { screen: X.cash(), cap: 'Сумма в ящике пересчиталась. Если ошиблись, нажмите «Отменить операцию».', acts: [{ mark: 'out' }, { wait: 1600 }] },
     ],
   },
   'x-report': {
@@ -1720,16 +1720,16 @@ export const SCENES = {
     frames: [
       DRAWER_TO('x', 'Меню ☰ → «X-отчёт (текущая смена)».'),
       { screen: X.xreport(), enter: 'push', cap: 'Продажи и оплаты без закрытия смены: наличные, карта, терминал по банкам, агрегаторы, возвраты, чаевые.', acts: [{ wait: 1800 }, { mark: 'cash' }] },
-      { screen: X.xreport(), cap: '«Распечатать» — на чековый принтер, «Скопировать» — в мессенджер. Прошлые смены — во вкладке «Прошлые смены».', acts: [{ tap: 'copy' }, { wait: 1200 }] },
+      { screen: X.xreport(), cap: '«Распечатать» отправит отчёт на чековый принтер, «Скопировать» поможет переслать его в мессенджер. Прошлые смены лежат во вкладке «Прошлые смены».', acts: [{ tap: 'copy' }, { wait: 1200 }] },
     ],
   },
   waitlist: {
     label: 'Лист ожидания',
     frames: [
       DRAWER_TO('wait', 'Все столы заняты — меню ☰ → «Лист ожидания».'),
-      { screen: X.waitlist(), enter: 'push', cap: '«Записать гостя»: имя и телефон.', acts: [{ tap: 'new' }] },
-      { screen: X.waitlist(), over: { kind: 'dialog', html: X.waitDialog }, cap: 'Имя и телефон — «Записать».', acts: [{ type: 'wname', text: 'Андрей' }, { type: 'wtel', text: '+7 999 000-12-45' }, { tap: 'save' }] },
-      { screen: X.waitlist(), cap: 'Освободился стол — «Стол готов», гость сел — «Посадили». Хочет позже — «В бронь», ушёл — «Ушёл».', acts: [{ mark: 'add' }, { wait: 600 }, { tap: 'ready', mark: 'ready' }, { wait: 1200 }] },
+      { screen: X.waitlist(), enter: 'push', cap: 'Нажмите «Записать гостя» и укажите имя и телефон.', acts: [{ tap: 'new' }] },
+      { screen: X.waitlist(), over: { kind: 'dialog', html: X.waitDialog }, cap: 'Укажите имя и телефон и нажмите «Записать».', acts: [{ type: 'wname', text: 'Андрей' }, { type: 'wtel', text: '+7 999 000-12-45' }, { tap: 'save' }] },
+      { screen: X.waitlist(), cap: 'Когда стол освободился, нажмите «Стол готов», когда гость сел, «Посадили». Если гость хочет позже, нажмите «В бронь», если ушёл, «Ушёл».', acts: [{ mark: 'add' }, { wait: 600 }, { tap: 'ready', mark: 'ready' }, { wait: 1200 }] },
     ],
   },
   'table-qr': {
@@ -1737,7 +1737,7 @@ export const SCENES = {
     frames: [
       GADMIN_TO('QR-коды столов'),
       { screen: X.qrGrid(), enter: 'push', cap: 'Распечатайте коды и наклейте каждый на свой стол. Гость наводит камеру — открывается меню и счёт этого стола.', acts: [{ wait: 1200 }, { tap: 'renew' }] },
-      { screen: X.qrGrid(), over: { kind: 'dialog', html: X.qrDialog }, cap: 'Наклейку сфотографировали или унесли — «Новый код». Старый перестанет работать.', acts: [{ tap: 'yes' }] },
+      { screen: X.qrGrid(), over: { kind: 'dialog', html: X.qrDialog }, cap: 'Если наклейку сфотографировали или унесли, нажмите «Новый код». Старый перестанет работать.', acts: [{ tap: 'yes' }] },
       { screen: X.qrGrid(), cap: 'Распечатайте новую наклейку и замените.', acts: [{ mark: 'new' }, { wait: 1500 }] },
     ],
   },
@@ -1752,7 +1752,7 @@ export const SCENES = {
     label: 'Кто какой процент получает',
     frames: [
       { screen: X.attrCheck(), cap: 'Касса сама записывает, кто добавил каждую позицию, — по PIN. Отсюда и проценты.', acts: [{ wait: 1200 }] },
-      { screen: X.attrCheck(), cap: 'Кальянщик — с кальянов, которые добавил сам. Бармен — со своих напитков и поровну с остального бара. Официант — со столов, которые открыл.', acts: [{ mark: 'hk' }, { wait: 700 }, { mark: 'br' }, { wait: 700 }, { mark: 'wt' }, { wait: 1300 }] },
+      { screen: X.attrCheck(), cap: 'Кальянщик получает процент с кальянов, которые добавил сам, бармен со своих напитков и поровну с остального бара, официант со столов, которые открыл.', acts: [{ mark: 'hk' }, { wait: 700 }, { mark: 'br' }, { wait: 700 }, { mark: 'wt' }, { wait: 1300 }] },
     ],
   },
   'anti-fraud': {
@@ -1766,15 +1766,15 @@ export const SCENES = {
     label: 'Смены сотрудников (табель)',
     frames: [
       ADMIN_TO('Смены сотрудников'),
-      { screen: X.shifts(), enter: 'push', cap: 'Кто, когда и сколько работал. Кто-то не закончил смену — «Закрыть».', acts: [{ wait: 700 }, { tap: 'close' }] },
+      { screen: X.shifts(), enter: 'push', cap: 'Здесь видно, кто, когда и сколько работал. Если кто-то не закончил смену, нажмите «Закрыть».', acts: [{ wait: 700 }, { tap: 'close' }] },
       { screen: X.shifts(), over: { kind: 'dialog', html: X.closeShiftDialog }, cap: 'Укажите, когда человек ушёл. Правка подпишется вашим именем.', acts: [{ type: 'end', text: '02:30' }, { tap: 'ok' }] },
-      { screen: X.shifts(), cap: 'Забыл отметиться — «Добавить смену». Ошиблись — карандаш или «Отменить запись».', acts: [{ mark: 'closed' }, { wait: 800 }, { tap: 'addsh' }, { wait: 600 }] },
+      { screen: X.shifts(), cap: 'Если сотрудник забыл отметиться, нажмите «Добавить смену». Ошибку исправит карандаш или кнопка «Отменить запись».', acts: [{ mark: 'closed' }, { wait: 800 }, { tap: 'addsh' }, { wait: 600 }] },
     ],
   },
   tips: {
     label: 'Чаевые',
     frames: [
-      { screen: payment({ total: '2 030' }).replace('Добавить чаевые</div>', '<span data-tap="tips">Добавить чаевые</span></div>'), cap: 'При оплате — «Добавить чаевые».', acts: [{ wait: 500 }, { tap: 'tips' }] },
+      { screen: payment({ total: '2 030' }).replace('Добавить чаевые</div>', '<span data-tap="tips">Добавить чаевые</span></div>'), cap: 'При оплате нажмите «Добавить чаевые».', acts: [{ wait: 500 }, { tap: 'tips' }] },
       { screen: payment({ total: '2 030' }), over: { kind: 'dialog', html: X.tipsDialog }, cap: '«Кому» — конкретному сотруднику или «Всей смене (поровну)», и сумма. Чаевые — не выручка, в зарплате они отдельной строкой.', acts: [{ tap: 'who', mark: 'all' }, { type: 'tip', text: '300' }, { tap: 'ok' }] },
       { screen: X.stepsPayroll().replace('Алина', 'Алина').replace(X.line('С чеков · 3% от 214 000 ₽', '6 420 ₽'), X.line('С чеков · 3% от 214 000 ₽', '6 420 ₽') + X.line('Чаевые · от гостей, не зарплата', '4 300 ₽', { mu: true })), enter: 'fade', cap: 'В приложении гостя — включите «Чаевые» в профиле заведения. Своя ссылка (Нетмонет, CloudTips) — в карточке сотрудника.', acts: [{ wait: 2000 }] },
     ],
@@ -1800,8 +1800,8 @@ export const SCENES = {
       { screen: employeesScreen().replace(`${'<div class="gx-card" style="display:flex;align-items:center;gap:12px;padding:12px;margin-bottom:9px">'}
     <div class="gx-ava" style="width:40px;height:40px;font-size:16px">А</div>`, `<div class="gx-card" style="display:flex;align-items:center;gap:12px;padding:12px;margin-bottom:9px" data-tap="al">
     <div class="gx-ava" style="width:40px;height:40px;font-size:16px">А</div>`), cap: 'Админ → «Сотрудники» → откройте сотрудника.', acts: [{ tap: 'al' }] },
-      { screen: X.stepsForm(), enter: 'push', cap: 'В «Зарплате» — «Бонус за выручку заведения» → «Добавить». Шаг: порог выручки и бонус — фиксированная сумма.', acts: [{ tap: 'add', mark: 's1' }, { type: 't1', text: '300000' }, { type: 'v1', text: '3000' }] },
-      { screen: X.stepsForm(), cap: 'Шагов может быть несколько. Второй — «Процент от выручки»: 1% со всей выручки, если она дошла до 500 000 ₽. «Сохранить».', acts: [{ tap: 'add', mark: 's2' }, { type: 't2', text: '500000' }, { tap: 'pct', mark: 'pct' }, { type: 'v2', text: '1' }, { tap: 'save' }] },
+      { screen: X.stepsForm(), enter: 'push', cap: 'В разделе «Зарплата» откройте «Бонус за выручку заведения» и нажмите «Добавить». Шаг состоит из порога выручки и бонуса в виде фиксированной суммы.', acts: [{ tap: 'add', mark: 's1' }, { type: 't1', text: '300000' }, { type: 'v1', text: '3000' }] },
+      { screen: X.stepsForm(), cap: 'Шагов может быть несколько. Второй шаг здесь «Процент от выручки»: 1% со всей выручки, если она дошла до 500 000 ₽. Нажмите «Сохранить».', acts: [{ tap: 'add', mark: 's2' }, { type: 't2', text: '500000' }, { tap: 'pct', mark: 'pct' }, { type: 'v2', text: '1' }, { tap: 'save' }] },
       { screen: X.stepsPayroll(), enter: 'push', cap: 'В «Зарплате» за период — строка «Бонус за выручку»: сколько шагов пройдено и сумма. Каждый пройденный шаг платится отдельно.', acts: [{ wait: 800 }, { mark: 'b' }, { wait: 1800 }] },
     ],
   },
@@ -1817,7 +1817,7 @@ export const SCENES = {
     label: 'Скидочные карты',
     frames: [
       GADMIN_TO('Скидочные карты'),
-      { screen: X.cards(), enter: 'push', cap: '«Новая карта».', acts: [{ wait: 500 }, { tap: 'new' }] },
+      { screen: X.cards(), enter: 'push', cap: 'Нажмите «Новая карта».', acts: [{ wait: 500 }, { tap: 'new' }] },
       { screen: X.cards(), over: { kind: 'dialog', html: X.cardDialog }, cap: 'Номер, имя гостя (без фамилии и телефона) и скидка в процентах.', acts: [{ type: 'cn', text: '0160' }, { type: 'cname', text: 'Аня' }, { type: 'cpct', text: '10' }, { tap: 'save', mark: 'saved' }] },
       { screen: tableCheck({ items: ORDER3, total: '2 030 ₽', tap: { card: 'disc' } }), enter: 'push', cap: 'За столом сотрудник нажимает «Скидка» и вводит номер карты.', acts: [{ wait: 400 }, { tap: 'disc' }] },
       { screen: tableCheck({ items: ORDER3, total: '2 030 ₽' }), over: { kind: 'dialog', html: X.discDialog }, cap: 'Скидка сразу в счёте и в предчеке.', acts: [{ type: 'dn', text: '0160' }, { mark: 'found' }, { wait: 500 }, { tap: 'apply' }] },
@@ -1827,7 +1827,7 @@ export const SCENES = {
     label: 'Сертификаты и бонусные коды',
     frames: [
       GADMIN_TO('Сертификаты'),
-      { screen: X.certs(), enter: 'push', cap: '«Выпустить сертификат».', acts: [{ wait: 400 }, { tap: 'new' }] },
+      { screen: X.certs(), enter: 'push', cap: 'Нажмите «Выпустить сертификат».', acts: [{ wait: 400 }, { tap: 'new' }] },
       { screen: X.certs(), over: { kind: 'dialog', html: X.certDialog }, cap: 'Сколько бонусов начислить, сколько человек успеют им воспользоваться и сколько дней он действует.', acts: [{ type: 'b', text: '500' }, { type: 'n', text: '50' }, { type: 'd', text: '14' }, { tap: 'go', mark: 'iss' }] },
       { screen: X.certs(), cap: '«Скопировать код» или «Скопировать пост» — готовый текст для канала. Гость вводит код в «Профиле» приложения.', acts: [{ wait: 600 }, { tap: 'post', mark: 'post' }, { wait: 1200 }] },
     ],
@@ -1836,7 +1836,7 @@ export const SCENES = {
     label: 'Лента для гостей',
     frames: [
       GADMIN_TO('Лента для гостей'),
-      { screen: X.stories(), enter: 'push', cap: 'Порядок — «Выше в ленте» и «Ниже в ленте». Новая — «Новая карточка».', acts: [{ wait: 600 }, { tap: 'new' }] },
+      { screen: X.stories(), enter: 'push', cap: 'Порядок меняют кнопки «Выше в ленте» и «Ниже в ленте». Новую карточку добавляет «Новая карточка».', acts: [{ wait: 600 }, { tap: 'new' }] },
       { screen: X.storyForm(), enter: 'push', cap: 'Заголовок, текст и фото — новость, событие, новое блюдо. Кнопка ведёт в меню, на бронь или никуда. Рекламу табака касса не пропустит.', acts: [{ type: 'st', text: 'Живая музыка в субботу' }, { type: 'sx', text: 'С 20:00, вход свободный' }, { tap: 'book', mark: 'book' }, { tap: 'save' }] },
     ],
   },
@@ -1852,7 +1852,7 @@ export const SCENES = {
     frames: [
       GADMIN_TO('Гости'),
       { screen: X.guests(), enter: 'push', cap: 'Поиск по имени или телефону: уровень, визиты и бонусы гостя.', acts: [{ type: 'q', text: 'Аня' }, { mark: 'found' }, { wait: 800 }] },
-      { screen: X.guests(), cap: 'Гость сменил номер — «Сменить номер». Новый телефон — «Объединить с новым устройством», бонусы перенесутся.', acts: [{ tap: 'merge' }] },
+      { screen: X.guests(), cap: 'Если гость сменил номер, нажмите «Сменить номер». Если у гостя новый телефон, нажмите «Объединить с новым устройством», и бонусы перенесутся.', acts: [{ tap: 'merge' }] },
       { screen: X.guests(), over: { kind: 'dialog', html: X.mergeDialog }, cap: 'По просьбе гостя данные удаляются кнопкой «Удалить гостя».', acts: [{ type: 'mc', text: '4821-77' }, { tap: 'ok' }, { wait: 500 }] },
     ],
   },
@@ -1860,10 +1860,10 @@ export const SCENES = {
     label: 'Склад: остатки и движения',
     frames: [
       ADMIN_TO('Склад'),
-      { screen: X.stock(), enter: 'push', cap: 'Остатки и «мало» — сразу видно. Новая позиция — «Новая позиция склада».', acts: [{ wait: 800 }, { tap: 'new' }] },
+      { screen: X.stock(), enter: 'push', cap: 'Остатки и отметка «мало» видны сразу. Новую позицию добавляет кнопка «Новая позиция склада».', acts: [{ wait: 800 }, { tap: 'new' }] },
       { screen: X.stock(), over: { kind: 'dialog', html: X.stockDialog }, cap: 'Название, категория, единица измерения и порог, после которого касса скажет «мало».', acts: [{ type: 'sn', text: 'Мята свежая' }, { type: 'thr', text: '0,2' }, { tap: 'save', mark: 'new' }] },
       { screen: X.stock({ added: true }), enter: 'none', cap: 'Откройте позицию.', acts: [{ wait: 500 }, { tap: 'dk' }] },
-      { screen: X.stockItem(), enter: 'push', cap: '«Приход» — поставка, «Списание» — порча или угощение. «История движений» — каждое изменение и кто его сделал.', acts: [{ tap: 'in', mark: 'in' }, { wait: 1600 }] },
+      { screen: X.stockItem(), enter: 'push', cap: '«Приход» оформляет поставку, «Списание» порчу или угощение. В «Истории движений» видно каждое изменение и кто его сделал.', acts: [{ tap: 'in', mark: 'in' }, { wait: 1600 }] },
     ],
   },
   'auto-writeoff': {
@@ -1891,7 +1891,7 @@ export const SCENES = {
   fiscal: {
     label: 'Онлайн-касса (54-ФЗ)',
     frames: [
-      { screen: X.fiscal(), cap: 'Админ → «Интеграции» → «Онлайн-касса (54-ФЗ)». Свой регистратор АТОЛ — «Регистратор АТОЛ в заведении». Нет ККТ — облачная касса (АТОЛ Онлайн, OrangeData).', acts: [{ wait: 500 }, { tap: 'mode', mark: 'mode' }, { wait: 400 }] },
+      { screen: X.fiscal(), cap: 'Откройте Админ → «Интеграции» → «Онлайн-касса (54-ФЗ)». Для своего регистратора АТОЛ выберите «Регистратор АТОЛ в заведении». Если своей ККТ нет, подойдёт облачная касса (АТОЛ Онлайн, OrangeData).', acts: [{ wait: 500 }, { tap: 'mode', mark: 'mode' }, { wait: 400 }] },
       { screen: X.fiscal(), cap: 'Адрес веб-сервера из драйвера АТОЛ 10, налогообложение и НДС. «Проверить связь с регистратором» — и проверьте чек в кабинете ОФД.', acts: [{ type: 'atol', text: 'http://127.0.0.1:16732' }, { tap: 'chk', mark: 'ok' }, { wait: 1600 }] },
     ],
   },
@@ -1980,7 +1980,7 @@ export const SCENES = {
   'relay-wiring': {
     label: 'Как подключить реле к звонку',
     frames: [
-      { screen: X.wire([['Сеть 220 В · L', 'L', 'Shelly 1 · L и вход SW', ''], ['Сеть 220 В · N', 'N', 'Shelly 1 · N', ''], ['Сеть 220 В · L', 'перемычка', 'Shelly 1 · I', ''], ['Shelly 1 · O', 'провод', 'Звонок · вывод 1', ''], ['Звонок · вывод 2', 'N', 'Сеть 220 В · N', '']], 'Звонок 220 В через Shelly 1'), cap: 'Звонок 220 В: питание реле — L и N; вход I соединить с L; выход O — на звонок; второй провод звонка — на ноль. Подключает электрик, минут десять.', acts: [{ wait: 3600 }] },
+      { screen: X.wire([['Сеть 220 В · L', 'L', 'Shelly 1 · L и вход SW', ''], ['Сеть 220 В · N', 'N', 'Shelly 1 · N', ''], ['Сеть 220 В · L', 'перемычка', 'Shelly 1 · I', ''], ['Shelly 1 · O', 'провод', 'Звонок · вывод 1', ''], ['Звонок · вывод 2', 'N', 'Сеть 220 В · N', '']], 'Звонок 220 В через Shelly 1'), cap: 'Звонок 220 В: питание реле подключают к L и N, вход I соединяют с L, выход O ведут на звонок, второй провод звонка на ноль. Электрик справится минут за десять.', acts: [{ wait: 3600 }] },
       { screen: X.wire([['Блок питания 12 В · +', '+12 В', 'Shelly 1 · I', ''], ['Shelly 1 · O', '+12 В', 'Маячок или звонок 12 В · +', ''], ['Маячок · −', '−', 'Блок питания 12 В · −', ''], ['Shelly 1 · питание', '12 В DC', 'тот же блок питания', '']], 'Маячок или звонок 12 В'), cap: 'Маячок или звонок на 12 В: контакты I и O у Shelly 1 «сухие» — они просто замыкают провод от блока питания к лампе.', acts: [{ wait: 3600 }] },
     ],
   },
@@ -1988,7 +1988,7 @@ export const SCENES = {
     label: 'Часы-пейджеры официантов',
     frames: [
       { screen: X.wire([['Кнопка вызова · контакт 1', 'провод', 'Shelly 1 · I', ''], ['Кнопка вызова · контакт 2', 'провод', 'Shelly 1 · O', ''], ['Shelly 1 · питание', '220 В или 12 В', 'розетка / блок питания', '']], 'Кнопка системы вызова + реле'), cap: 'Возьмите одну кнопку от системы вызова (iBells, Retekess и др.) и припаяйте к контактам её кнопки два провода — на вход I и выход O реле.', acts: [{ wait: 3400 }] },
-      { screen: X.watch('Кухня · 05', 'Заберите заказ', 'вызов с кнопки №5'), enter: 'fade', cap: 'Повар нажал «Всё готово» — реле на секунду «нажимает» эту кнопку, и часы официантов вибрируют с её номером. Работает без интернета.', acts: [{ wait: 300 }, { mark: 'w' }, { wait: 2200 }] },
+      { screen: X.watch('Кухня · 05', 'Заберите заказ', 'вызов с кнопки №5'), enter: 'fade', cap: 'Повар нажал «Всё готово» — реле на секунду нажимает эту кнопку, и часы официантов вибрируют с её номером. Работает без интернета.', acts: [{ wait: 300 }, { mark: 'w' }, { wait: 2200 }] },
     ],
   },
   'printer-beep': {
@@ -2159,7 +2159,7 @@ class Player {
     probe.style.cssText = `position:absolute;visibility:hidden;width:${w}px`;
     this.capT.parentNode.appendChild(probe);
     let h = 0;
-    for (const f of this.frames) { probe.textContent = f.cap || ''; h = Math.max(h, probe.offsetHeight); }
+    for (const f of this.frames) { probe.innerHTML = uiText(f.cap); h = Math.max(h, probe.offsetHeight); }
     probe.remove();
     this.capT.parentNode.style.minHeight = `${h}px`;
   }
@@ -2303,7 +2303,7 @@ class Player {
       this.win.querySelector('.gx-win-icon').classList.toggle('on', Boolean(w.icon));
     }
     this.capN.textContent = String(i + 1);
-    this.capT.textContent = f.cap || '';
+    this.capT.innerHTML = uiText(f.cap);
     if (animate) { this.capT.classList.remove('swap'); void this.capT.offsetWidth; this.capT.classList.add('swap'); }
     this.segs.forEach((s, j) => {
       s.classList.toggle('done', j < i);
@@ -2511,4 +2511,16 @@ export function unmountScene(fig) {
 }
 
 export const hasScene = (id) => Boolean(id && SCENES[id]);
+
+/** Текст для экрана: названия кнопок и разделов в «ёлочках» — жирным, без кавычек. */
+export function uiText(s) {
+  let out = String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  // Изнутри наружу: «Открыть «Склад»» — сперва «Склад».
+  for (let prev = ''; prev !== out;) {
+    prev = out;
+    // Короткое название не рвём на строки («Тайм-кафе» не делится по дефису).
+    out = out.replace(/«([^«»]+)»/g, (_, t) => `<b class="gx-ui${t.length <= 18 ? ' nw' : ''}">${t}</b>`);
+  }
+  return out;
+}
 export const isWideScene = (id) => Boolean(id && SCENES[id] && (['web', 'windows'].includes(SCENES[id].device) || deviceChoice() === 'tablet'));
