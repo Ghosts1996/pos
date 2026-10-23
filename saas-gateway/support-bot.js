@@ -169,6 +169,12 @@ const HUMAN_TRIGGERS = [
   [/(?<![а-я])(не помогл|не помогает|не помог(?![а-я])|бесполезн|ты не понимаешь|вы не понимаете|тупо(й|е) бот|глуп[а-я]* бот|опять не работает|вс[её] равно не)/, "ИИ не помог"],
 ];
 
+// Просьбы позвать человека, которые на сайте сначала уточняем.
+const SOFT_HUMAN = /^(просит живого человека|не хочет общаться с ботом)$/;
+const HUMAN_CONFIRM = "Специалист-человек отвечает в течение 24 часов, а я знаю о ZalPOS всё то же самое и отвечу сразу: тарифы, установка, настройка, оплата, перенос данных, законы. Позвать специалиста? Напишите «да» — позову. Или задайте вопрос мне.";
+// Нет ответа в знаниях там, где человека звать не нужно (сайт, клиент сам позвал бота).
+const NO_ANSWER = "Точного ответа на этот вопрос у меня нет — не хочу вводить вас в заблуждение. Я помогаю со всем, что касается ZalPOS: возможности кассы, тарифы, демо, установка, настройка, оплата и перенос данных. Если вопрос про ZalPOS — уточните, пожалуйста, что именно нужно, и я помогу. Нужен специалист — напишите «оператор».";
+
 const URGENT = /(?<![а-я])(срочно|горит|стоим|не можем работать|не работает вообще|ничего не работает|гости ждут|очередь|касса не открывается|не можем пробить)/;
 
 /** Причина передать человеку или "" — по тексту клиента. */
@@ -269,7 +275,8 @@ function smallTalk(text) {
   if (!t) return "ack";
   if (/^(спасибо|спс|благодарю|большое спасибо|спасибо большое|спасибо,? помогло|помогло|супер|отлично|класс|понял,? спасибо|все понятно,? спасибо|thanks|thank you)$/.test(t)) return "thanks";
   // «Понятно спасибо», «ок, спасибо большое», «ясно, благодарю за помощь».
-  if (/^((ок|окей|ага|понятно|ясно|понял|поняла|все понятно|хорошо|отлично|супер|класс)[,!]?\s*)?(спасибо|спс|благодарю|thanks|thank you)(\s*(большое|огромное|за помощь|за ответ|помогло))?$/.test(t)) return "thanks";
+  // «Да спасибо», «ок, благодарю вас», «спасибо, понятно», «огромное спасибо за помощь».
+  if (/^((да|ну|ок|окей|ага|понятно|ясно|понял|поняла|все понятно|все ясно|хорошо|отлично|супер|класс|круто|здорово|теперь понятно|все работает|работает|получилось)[,!.]*\s*)*(большое |огромное |спасибо большое |)(спасибо|спс|спасибочки|благодарю|благодарим|thanks|thank you|thx)([,!.\s]+(вам|вас|тебе|большое|огромное|за помощь|за ответ|за информацию|за подсказку|помогло|понятно|ясно|понял|поняла|все понятно|разобрался|разобралась|работает|получилось|все работает|хорошего дня|до свидания))*[,!.]*$/.test(t)) return "thanks";
   if (/^(ок|окей|ok|ага|понял|поняла|понятно|ясно|хорошо|угу|да|ладно)$/.test(t)) return "ack";
   if (/^(привет|здравствуйте|здравствуй|добрый (день|вечер|утро)|доброе утро|добрый|здрасте|hello|hi)$/.test(t)) return "hello";
   return "";
@@ -530,6 +537,8 @@ const stripTags = (s) => String(s || "").replace(/<[^>]+>/g, "");
 // Совпадение вопроса с шаблоном (0…1): доля общих основ слов, взвешенных по
 // редкости, и с той, и с другой стороны. Уверенно — отвечаем шаблоном без
 // ИИ; частично — шаблон идёт ИИ подсказкой.
+// Выученное решение отвечает само при совпадении построже, чем шаблон.
+const LEARNED_DIRECT = 0.72;
 const TPL_DIRECT = 0.62;
 const TPL_MARGIN = 0.12;
 const TPL_HINT = 0.5;
@@ -690,6 +699,14 @@ const SYSTEM_PROMPT = [
   "- Не называй и не упоминай другие компании и программы, не сравнивай с ними и не оценивай их («у других дороже», «у них нет»). Клиент сам назвал конкурента — не обсуждай его: скажи, что рассказываешь только о ZalPOS, и дай факты. Так требуют закон «О рекламе» (ст. 5 38-ФЗ: некорректное сравнение, недостоверное превосходство) и закон «О защите конкуренции» (ст. 14.1, 14.3 135-ФЗ).",
   "- Без превосходных степеней и обещаний без подтверждения: нельзя «лучший», «самый дешёвый», «№1», «единственный», «гарантируем рост выручки». Можно проверяемое: «процент с продаж не берём», «приложение гостя входит в тариф», «устройства не ограничены», «7 дней бесплатно без карты».",
   "- Не дави и не торопи. Не знаешь, подойдёт ли, — честно скажи, что проверить проще всего в демо или пробном периоде.",
+  "- «Насколько выгоднее, чем …», «чем лучше …», «а у … дешевле» — специалиста не зови и не уходи от ответа. Одной фразой: другие программы не оцениваю, расскажу точно о ZalPOS. Затем цены ZalPOS из «Тарифы сейчас», что входит, и короткий список, по которому клиент сравнит сам: что входит в ежемесячную цену, берут ли процент с продаж, платят ли за каждое устройство, входят ли приложение гостя, меню по QR, склад и техкарты, есть ли бесплатный период. В конце — демо или 7 дней бесплатно.",
+  "",
+  "## 5г. Доверие и сомнения",
+  "- «Это не обман?», «точно получу программу?», «проверь, не обманут ли меня» — отвечай прямо и спокойно, фактами, без «не могу гарантировать отсутствие рисков». ZalPOS работает по публичной оферте (zalpos.ru → «Оферта»), реквизиты продавца — в оферте и внизу сайта; оплата — только в кабинете через платёжный сервис Robokassa, после оплаты приходит кассовый чек; подписка открывает тариф сразу после оплаты, кассу скачиваете в кабинете → «Устройства»; до оплаты всё можно проверить в демо-кассе и 7 дней бесплатно без карты; условия возврата — «Оплата и возврат». Предупреди: ZalPOS не просит пароли и коды и не принимает оплату переводом на карту.",
+  "",
+  "## 5д. Ты эксперт",
+  "- Ты одновременно продуктовый эксперт ZalPOS, маркетолог общепита, юрист-консультант по законам РФ для заведений и инженер по кассовому оборудованию и сетям. Отвечай на уровне опытного специалиста: конкретно, с цифрами и путями из знаний, с оговорками там, где закон или цены меняются.",
+  "- Вопрос не про ZalPOS и не про работу заведения (бытовой, личный, развлекательный) — вежливо одной-двумя фразами скажи, что помогаешь с ZalPOS и делами заведения, и предложи, чем можешь помочь. Специалиста не зови.",
   "",
   "## 6. Когда звать человека",
   "- Специалист-человек отвечает обычно в течение 24 часов, ты — сразу и знаешь продукт так же, как специалисты. Спрашивают, когда ответит человек, — так и скажи и предложи помочь прямо сейчас.",
@@ -1272,6 +1289,11 @@ function createSupportBot(deps) {
 
   async function loadKnowledge() {
     const snap = await knowledgeCol().limit(800).get();
+    // Проверенные решения (клиенту помогло или внесли сотрудники) — готовые
+    // ответы: на тот же вопрос бот отвечает из базы, без ИИ.
+    state.learnedTpl = tplIndex(snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      .filter((k) => k.q && k.a && String(k.a).length <= 2500 && ((Number(k.helpful) || 0) >= 1 || ["manual", "auto:specialist", "staff"].includes(k.source)))
+      .map((k) => ({ id: `k_${k.id}`, kid: k.id, q: [String(k.q)], a: String(k.a), audience: "any", direct: true, status: "active", source: "learned" })));
     state.learned = snap.docs.map((d) => {
       const k = d.data();
       return indexDoc({ id: d.id, kind: "learned", title: k.q || "", text: `${k.a || ""}${(k.tags || []).length ? `\nТеги: ${k.tags.join(", ")}` : ""}`, boost: (Number(k.helpful) || 0) + (Number(k.uses) || 0) / 5 });
@@ -1308,6 +1330,23 @@ function createSupportBot(deps) {
       bp[p.id] = { calls: cur.calls + 1, tokens: cur.tokens + (Number(tokens) || 0) };
     }
     quiet(db().collection("supportBot").doc("usage").set(JSON.parse(JSON.stringify(state.usage))), "учёт");
+  }
+  // Свой суточный лимит у каждого клиента (заведение, посетитель сайта,
+  // человек в Telegram): один говорливый собеседник не выберет общий лимит,
+  // и остальные не останутся без ответа.
+  const clientUse = new Map();
+  const aiClientKey = (t) => (t.tenantId ? `t:${t.tenantId}` : t.visitorHash ? `v:${t.visitorHash}` : t.tgUserId ? `u:${t.tgUserId}` : `k:${t.id}`);
+  const clientLimit = (t) => Number(state.cfg && state.cfg.clientDailyAiLimit) || (t.tenantId ? 60 : 30);
+  function clientOver(t) {
+    const u = clientUse.get(aiClientKey(t));
+    return !!u && u.day === today() && u.n >= clientLimit(t);
+  }
+  function clientCount(t) {
+    const k = aiClientKey(t);
+    const day = today();
+    const u = clientUse.get(k);
+    if (clientUse.size > 5000) clientUse.clear();
+    clientUse.set(k, { day, n: u && u.day === day ? u.n + 1 : 1 });
   }
   function overDailyLimit() {
     const limit = Number(state.cfg && state.cfg.dailyAiLimit) || DEFAULT_DAILY_LIMIT;
@@ -1686,6 +1725,18 @@ function createSupportBot(deps) {
     }
 
     const trig = humanTrigger(question);
+    // Сайт: человека зовём после подтверждения — специалист отвечает до 24 ч,
+    // а бот знает то же и отвечает сразу. Жалобы, деньги, суд — без вопросов.
+    const lastSupport = [...history.slice(0, i)].reverse().find((m) => m.authorRole !== "owner" && m.authorRole !== "note");
+    const confirming = t.channel === "site" && !t.escalated && now() - toMs(t.humanAskAt) < 30 * 60e3
+      && lastSupport && String(lastSupport.text || "").startsWith(HUMAN_CONFIRM.slice(0, 40));
+    if (confirming && (trig || /^(да|ага|угу|позовите|зовите|позови|давайте|давай|нужен|да,? позовите|да,? нужен|да,? позови)[\s!.]*$/.test(norm(question)))) {
+      return escalate(t, "просит живого человека (подтвердил)");
+    }
+    if (trig && t.channel === "site" && SOFT_HUMAN.test(trig) && !t.escalated && !confirming) {
+      await patch(t, { humanAskAt: ts(now()) });
+      return deliver(t, HUMAN_CONFIRM);
+    }
     if (trig) return escalate(t, trig);
     // Клиент зовёт бота — ИИ снова в разговоре, пока специалист не напишет.
     const calledAi = aiCall(question);
@@ -1797,9 +1848,34 @@ function createSupportBot(deps) {
       await movePanel(t, note);
       return;
     }
+    // Проверенное решение из базы — тоже без ИИ, но с порогом построже.
+    const lrnMatch = !imagesNow && !afterSoft && !askedBack && !newsHit && question.length >= 8 && question.length <= 240
+      && kinds.filter((k) => !k).length === 1 && state.learnedTpl
+      ? matchTemplate(question, state.learnedTpl, { audience }) : null;
+    if (lrnMatch && lrnMatch.score >= LEARNED_DIRECT && lrnMatch.score - lrnMatch.second >= TPL_MARGIN
+      && !UNHAPPY.test(norm(question)) && !isUrgent(question) && !deceitSignals(question).length && !suspiciousLinks(question).length) {
+      const reply = parseAiReply(lrnMatch.template.a);
+      await deliver(t, reply.text, { html: mdToHtml(reply.md), md: reply.md });
+      quiet(knowledgeCol().doc(lrnMatch.template.kid).set({ uses: admin.firestore.FieldValue.increment(1) }, { merge: true }), "база");
+      await patch(t, { lastTemplate: "", lastAiKnowledge: [lrnMatch.template.kid], tplReplies: (Number(t.tplReplies) || 0) + 1 });
+      countTpl();
+      const note = await toTopicHtml(t, `📚 <b>Ответ из базы решений</b> <i>· без ИИ · совпадение ${Math.round(lrnMatch.score * 100)} %</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>`,
+        { reply_markup: { inline_keyboard: [[{ text: "🗑 Удалить из базы", callback_data: `sb:kdel:${lrnMatch.template.kid}` }]] } });
+      await movePanel(t, note);
+      return;
+    }
     if (talk === "hello") return deliver(t, "Здравствуйте! Опишите, пожалуйста, что случилось или что хотите настроить — помогу. Позвать человека можно в любой момент словом «оператор».");
     if (!aiReady()) return escalate(t, "ИИ не настроен", { tellClient: !t.waitNoticeAt });
     if (overDailyLimit()) return escalate(t, "исчерпан суточный лимит ИИ");
+    if (clientOver(t)) {
+      if (t.channel === "site" || t.tenantId) {
+        if (now() - toMs(t.limitNoticeAt) < 60 * 60e3) return;
+        await patch(t, { limitNoticeAt: ts(now()) });
+        await toTopicHtml(t, "⏳ <b>Клиент исчерпал свой дневной лимит ответов ИИ</b> — ответьте в теме, если нужно.");
+        return deliver(t, "Сегодня я уже ответил на много ваших вопросов, и на сегодня мой лимит для этого диалога исчерпан. Ответы на частые вопросы по-прежнему приходят сразу, а с остальными продолжим завтра. Если вопрос срочный — напишите «оператор».");
+      }
+      return escalate(t, "клиент исчерпал свой дневной лимит ИИ");
+    }
     if ((Number(t.aiReplies) || 0) >= TICKET_AI_LIMIT) return escalate(t, "длинный диалог — нужен человек");
 
     if (t.channel === "telegram") quiet(tg("sendChatAction", { chat_id: t.tgChatId, action: "typing" }), "печатает");
@@ -1872,6 +1948,9 @@ function createSupportBot(deps) {
     if (afterSoft) {
       messages.push({ role: "system", content: "По прошлому вопросу клиента уже позван специалист. Ответь на новое сообщение клиента. Если это тот же вопрос и уверенного ответа в знаниях нет — одной фразой скажи, что специалист уже подключён и ответит здесь." });
     }
+    if (calledAi || t.channel === "site") {
+      messages.push({ role: "system", content: "Не зови специалиста и не ставь [[ОПЕРАТОР]]: клиент ждёт ответа от тебя. Ответь сам лучшим, что знаешь; где не уверен — так и скажи и подскажи, где проверить. Вопрос не про ZalPOS и не про работу заведения — вежливо одной-двумя фразами скажи, что помогаешь только с ZalPOS и делами заведения, и предложи, чем можешь помочь." });
+    }
     if (calledAi) {
       messages.push({ role: "system", content: "Клиент позвал тебя (ИИ-ассистента), чтобы ответил ты, а не специалист. Не здоровайся и не переспрашивай, что случилось: найди в переписке его последний нерешённый вопрос и ответь на него по шагам. Если ответ уже давал специалист — продолжи с того места." });
     }
@@ -1918,6 +1997,14 @@ function createSupportBot(deps) {
       return;
     }
     await doneTyping();
+    // На сайте и когда клиент сам позвал бота ИИ человека не зовёт: честно
+    // говорит, что точного ответа нет, а сотрудники видят тему и могут вмешаться.
+    const selfOnly = t.channel === "site" || calledAi;
+    if (!reply.text && selfOnly) {
+      await deliver(t, NO_ANSWER);
+      await toTopicHtml(t, `🤔 <b>ИИ не нашёл точного ответа</b>${reply.reason ? ` — ${h(reply.reason)}` : ""}. Можно ответить клиенту в этой теме.`);
+      return;
+    }
     if (!reply.text) return escalate(t, reply.reason || "ИИ не нашёл ответа", { byAi: true });
     // Обещать деньги, скидки, бесплатный период и сроки может только человек —
     // даже если ИИ уговорили, такой ответ клиенту не уходит.
@@ -1933,6 +2020,7 @@ function createSupportBot(deps) {
     // Подсказка-шаблон: «спасибо» на этот ответ засчитается шаблону.
     await patch(t, {
       ...(tplHint ? { lastTemplate: tplHint.id, lastTemplateAt: ts(now()) } : { lastTemplate: "" }),
+      ...(clientCount(t), {}),
       aiReplies: (Number(t.aiReplies) || 0) + 1, lastAiKnowledge: learned.map((d) => d.id), lastTier: used.tier || "",
       aiBurst: burst + 1, aiBurstAt: burst ? t.aiBurstAt : ts(now()),
     });
@@ -1947,7 +2035,8 @@ function createSupportBot(deps) {
           { reply_markup: { inline_keyboard: [[{ text: "↩️ Это не мусор", callback_data: `sb:nzoff:${noiseId(noiseKey(question))}` }]] } });
       }
     }
-    if (reply.escalate) await escalate(t, reply.reason, { tellClient: false, byAi: true });
+    if (reply.escalate && !selfOnly) await escalate(t, reply.reason, { tellClient: false, byAi: true });
+    else if (reply.escalate) await toTopicHtml(t, `🤔 <b>ИИ не уверен в ответе</b>${reply.reason ? ` — ${h(reply.reason)}` : ""}. Проверьте, пожалуйста.`);
     else if (deceit >= DECEIT_LIMIT && wary) await escalate(t, "несколько попыток обойти правила — нужен человек", { tellClient: false });
   }
 

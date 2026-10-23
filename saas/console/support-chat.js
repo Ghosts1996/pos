@@ -98,8 +98,10 @@ function link(url) {
 /** Текст ответа → HTML: **жирный**, ссылки, переносы строк. */
 function richText(text) {
   const parts = String(text).split(/(https?:\/\/[^\s<>"«»]+[^\s<>"«».,;:!?)]|(?:[a-z0-9-]+\.)*zalpos\.ru(?:\/[^\s<>"«»]*[^\s<>"«».,;:!?)])?)/g);
-  return parts.map((p, i) => (i % 2 ? link(p) : esc(p).replace(/\*\*([^*\n]{1,120})\*\*/g, '<b>$1</b>')))
-    .join('').replace(/\n/g, '<br>');
+  // Жирное — после ссылок: «**zalpos.ru**» тоже станет жирной ссылкой; лишние «**» не показываем.
+  return parts.map((p, i) => (i % 2 ? link(p) : esc(p))).join('')
+    .replace(/\*\*((?:(?!\*\*)[^\n]){1,200}?)\*\*/g, '<b>$1</b>').replace(/\*\*/g, '')
+    .replace(/\n/g, '<br>');
 }
 
 function load(key) {
@@ -233,7 +235,7 @@ export function mountSupportChat({ gatewayUrl, getToken = async () => null, priv
       body.scrollTop = nearBottom || stick ? body.scrollHeight : keep;
       stick = false;
     }
-    $('sc-status').textContent = waitingHuman ? 'Подключаем специалиста — ответ придёт сюда' : T.status;
+    $('sc-status').textContent = waitingHuman ? 'Специалист ответит здесь' : T.status;
     $('sc-legal').textContent = T.legal;
     $('sc-restart').hidden = !conv;
     sendBtn.disabled = sending || !input.value.trim();

@@ -182,7 +182,9 @@ test("ИИ: старые настройки, автовыбор моделей, 
   assert.strictEqual(ai.needsHeavy("как добавить официанта"), false);
   assert.strictEqual(ai.needsHeavy("нужна ли лицензия на алкоголь и какой штраф"), true);
   assert.strictEqual(ai.needsHeavy("сравни тарифы и посчитай, что выгоднее"), true);
-  assert.strictEqual(ai.needsHeavy("ок", [{ authorRole: "ai" }, { authorRole: "ai" }, { authorRole: "ai" }]), true);
+  // Третий ответ в диалоге — ещё не повод для дорогой модели; очень длинный диалог — повод.
+  assert.strictEqual(ai.needsHeavy("ок", [{ authorRole: "ai" }, { authorRole: "ai" }, { authorRole: "ai" }]), false);
+  assert.strictEqual(ai.needsHeavy("ок", Array.from({ length: 10 }, () => ({ authorRole: "ai" }))), true);
   assert.strictEqual(ai.classifyError(402, "").kind, "exhausted");
   assert.strictEqual(ai.classifyError(400, "Your credit balance is too low").kind, "exhausted");
   assert.strictEqual(ai.classifyError(403, "insufficient_quota").kind, "exhausted");
@@ -1614,17 +1616,19 @@ test("шаблоны: из подтверждённого решения бот 
   assert.ok(sends(h.calls, GROUP).some((c) => /Новый шаблон ответа/.test(c.body.text)));
   const id = saved[0][0].split("/")[1];
 
-  // Кандидат не отвечает сам, пока не подтверждён.
+  // Решение специалиста уже проверено — похожий вопрос получает его из базы, без ИИ.
   const n = h.aiCalls.length;
   await h.bot.handleUpdate(pm("Можно подключить весы?", 47));
   await h.bot.idle();
-  assert.strictEqual(h.aiCalls.length, n + 1, "кандидат ответил без проверки");
+  assert.strictEqual(h.aiCalls.length, n, "проверенное решение потратило токены");
+  assert.ok(sends(h.calls, 47).some((c) => /вес вводят вручную/.test(c.body.text)));
+  assert.ok(sends(h.calls, GROUP).some((c) => /Ответ из базы решений/.test(c.body.text)));
   // Сотрудник включил — дальше отвечает без ИИ.
   await h.bot.handleUpdate({ callback_query: { id: "cq1", from: { id: 7 }, data: `sb:tplon:${id}`, message: { message_id: 5, chat: { id: GROUP } } } });
   assert.strictEqual(h.store.get(`supportTemplates/${id}`).status, "active");
   await h.bot.handleUpdate(pm("Можно подключить весы?", 48));
   await h.bot.idle();
-  assert.strictEqual(h.aiCalls.length, n + 1, "включённый шаблон потратил токены");
+  assert.strictEqual(h.aiCalls.length, n, "включённый шаблон потратил токены");
 });
 
 test("одна буква («Р») — без ИИ; после вопроса бота «а или б?» — это ответ, решает ИИ", async () => {
@@ -1718,6 +1722,54 @@ test("объявления платформы: бот знает действу�
   assert.ok(!JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages).includes("Действующие объявления"));
   h.store.set("broadcasts/b1", { ...h.store.get("broadcasts/b1"), active: false });
   assert.strictEqual(await h.bot.loadNews(), 0);
+});
+
+test("сайт: «оператор» — сначала уточняем, «да» — зовём; ИИ без ответа не зовёт человека; «бот помоги» не зацикливается", async () => {
+  const h = harness();
+  await setup(h);
+  const req = (body, ip = "10.3.0.1") => ({ body, headers: { "x-real-ip": ip } });
+  const visitor = "z".repeat(30);
+  await h.bot.handleSiteSend(req({ text: "Позовите оператора", consent: true, visitor }), {});
+  const { ticketId, token } = h.sent.body;
+  await h.bot.idle();
+  let t = tickets(h.store).find((x) => x.id === ticketId);
+  assert.ok(!t.escalated, "сразу позвал человека");
+  const msgs = async () => { await h.bot.handleSiteMessages(req({ ticketId, token, after: 0 }), {}); return h.sent.body.messages; };
+  assert.ok((await msgs()).some((m) => /Позвать специалиста\? Напишите «да»/.test(m.text)));
+  assert.strictEqual(h.aiCalls.length, 0);
+  await h.bot.handleSiteSend(req({ ticketId, token, text: "да" }), {});
+  await h.bot.idle();
+  t = tickets(h.store).find((x) => x.id === ticketId);
+  assert.strictEqual(t.escalated, true, "после «да» не позвал");
+
+  // Бот позван — отвечает сам; ИИ без ответа (только маркер) не зовёт человека снова.
+  h.aiReplies.push("[[ОПЕРАТОР: нет в знаниях]]");
+  await h.bot.handleSiteSend(req({ ticketId, token, text: "Бот помоги: что взять собаке?" }), {});
+  await h.bot.idle();
+  t = tickets(h.store).find((x) => x.id === ticketId);
+  assert.ok(!t.escalated, "ИИ снова позвал человека");
+  const last = await msgs();
+  assert.ok(/Точного ответа на этот вопрос у меня нет/.test(last[last.length - 1].text));
+  assert.ok(!last.some((m) => /Позвал специалиста.*Позвал специалиста/s.test(m.text)));
+  const sys = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
+  assert.ok(sys.includes("Не зови специалиста") && sys.includes("Доверие и сомнения") && sys.includes("Насколько выгоднее"));
+});
+
+test("«да спасибо», «благодарю вас», «спасибо, понятно» — без ИИ; лимит ИИ — у каждого клиента свой", async () => {
+  for (const q of ["Да спасибо", "благодарю вас", "Спасибо, понятно", "огромное спасибо за помощь"]) assert.strictEqual(sb.smallTalk(q), "thanks", q);
+  assert.strictEqual(sb.smallTalk("спасибо, а как добавить сотрудника?"), "");
+  const h = harness();
+  await setup(h);
+  h.bot._state.cfg.clientDailyAiLimit = 2;
+  for (const q of ["Как собрать APK?", "Как подключить принтер?", "Как добавить стол?"]) {
+    await h.bot.handleUpdate(pm(q, 91));
+    await h.bot.idle();
+  }
+  assert.strictEqual(h.aiCalls.length, 2, "лимит клиента не сработал");
+  // Другой клиент отвечается как обычно.
+  await h.bot.handleUpdate(pm("Как собрать APK?", 92));
+  await h.bot.idle();
+  assert.strictEqual(h.aiCalls.length, 3);
 });
 
 (async () => {

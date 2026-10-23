@@ -561,7 +561,9 @@ function richText(text, { bold = false } = {}) {
       `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer" class="rich-link">${esc(url)}</a>`;
     last = m.index + url.length;
   }
-  return out + fmt(src.slice(last));
+  out += fmt(src.slice(last));
+  // «**zalpos.ru**» — жирная ссылка; оставшиеся «**» не показываем.
+  return bold ? out.replace(/\*\*((?:(?!\*\*)[^\n]){1,200}?)\*\*/g, '<b>$1</b>').replace(/\*\*/g, '') : out;
 }
 
 // 1×1 прозрачный GIF — заглушка для <img src> логотипа, пока своего нет:
