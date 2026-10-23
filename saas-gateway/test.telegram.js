@@ -118,6 +118,9 @@ const fetchImpl = async (url, opts) => {
     const [id, username] = { 111: [111, "venue_a_bot"], 222: [222, "venue_b_bot"] }[k] || [Number(k), `bot${k}_bot`];
     return { json: async () => ({ ok: true, result: { id, username } }) };
   }
+  // Группа -900 — с «Темами»: бот заводит разделы.
+  if (method === "getChat") return { json: async () => ({ ok: true, result: { id: raw.chat_id, type: "supergroup", is_forum: raw.chat_id === -900 } }) };
+  if (method === "createForumTopic") return { json: async () => ({ ok: true, result: { message_thread_id: ++msgId, name: raw.name } }) };
   return { json: async () => ({ ok: true, result: { message_id: ++msgId } }) };
 };
 
@@ -210,6 +213,24 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   assert.ok(!/Иван|\+7900|Ленина/.test(card.body.text), "в карточке нет ПДн гостя");
   assert.ok(card.token.startsWith("111"), "карточка отправлена ботом А");
   assert.equal(card.body.reply_markup.inline_keyboard[0][0].callback_data, "s:s1abcd:accepted");
+  // Группа с темами: разделы созданы, доставка — в «Доставки».
+  const topics = store.get("telegramBots/A").staffChat.topics;
+  assert.ok(topics && topics.kitchen && topics.delivery && topics.cash, `темы не созданы: ${JSON.stringify(topics)}`);
+  assert.equal(card.body.message_thread_id, topics.delivery, "карточка не в теме «Доставки»");
+  // Новая позиция за столом — в «Кухню», напиток — в «Бар»; старое не повторяется.
+  sent.length = 0;
+  store.set("tenants/A/sessions/h1", { tableId: "t5", tableName: "5", status: "active", orderItems: [{ menuItemId: "m1", name: "Борщ", price: 400, qty: 1, kind: "kitchen" }], startTime: new Date() });
+  fire(); await tick(); await tick();
+  store.set("tenants/A/sessions/h1", { ...store.get("tenants/A/sessions/h1"), orderItems: [
+    { menuItemId: "m1", name: "Борщ", price: 400, qty: 2, kind: "kitchen", note: "без сметаны" },
+    { menuItemId: "m2", name: "Морс", price: 150, qty: 1, kind: "bar" },
+    { menuItemId: "timecafe", name: "Время в тайм-кафе", price: 300, qty: 1 }] });
+  fire(); await tick(); await tick();
+  const kitchen = sent.filter((m) => m.method === "sendMessage" && m.body.message_thread_id === topics.kitchen);
+  const bar = sent.filter((m) => m.method === "sendMessage" && m.body.message_thread_id === topics.bar);
+  assert.ok(kitchen.some((m) => /Стол «5»/.test(m.body.text) && /Борщ ×1/.test(m.body.text) && /без сметаны/.test(m.body.text)), "кухня не получила добавку");
+  assert.ok(bar.some((m) => /Морс ×1/.test(m.body.text)), "бар не получил напиток");
+  assert.ok(!sent.some((m) => /тайм-кафе/.test(m.body.text || "")), "время ушло на кухню");
   assert.ok(sent.every((m) => m.body.chat_id !== 777), "в чаты Б ничего не ушло");
 
   // Человек из группы, которого нет в списке, кнопку нажать не может

@@ -707,6 +707,46 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     return { chat: null, shared: false };
   }
 
+  // ---- темы рабочей группы: в группе с «Темами» бот сам заводит разделы
+  // и раскладывает сообщения по ним — кухня, бар, кальяны, доставки,
+  // самовывоз, касса. Группа без тем — всё в общий чат, как раньше.
+
+  const GROUP_TOPICS = [
+    ["kitchen", "🍳 Кухня", 0xFFD67E],
+    ["bar", "🍸 Бар", 0x6FB9F0],
+    ["hookah", "💨 Кальяны", 0xCB86DB],
+    ["delivery", "🛵 Доставки", 0x8EEE98],
+    ["pickup", "🥡 Самовывоз", 0xFF93B2],
+    ["cash", "💰 Касса и отчёты", 0xFB6F5F],
+  ];
+
+  /** Номер темы группы для вида сообщения (0 — общий чат). */
+  const threadOf = (staff, key) => Number(staff && staff.topics && staff.topics[key]) || 0;
+  const inThread = (staff, key) => (threadOf(staff, key) ? { message_thread_id: threadOf(staff, key) } : {});
+
+  /** Группа с темами — завести недостающие разделы и запомнить их номера.
+   *  [field] — поле настроек: staffChat или staffChats.<точка>. */
+  async function ensureGroupTopics(bot, staff, field) {
+    if (!staff || !staff.id) return staff;
+    const have = staff.topics || {};
+    if (GROUP_TOPICS.every(([k]) => have[k]) || Date.now() - (staff.topicsCheckedAt || 0) < 6 * 3600 * 1000) return staff;
+    const chat = await api(bot.token, "getChat", { chat_id: staff.id }).catch(() => null);
+    const topics = { ...have };
+    if (chat && chat.is_forum) {
+      for (const [key, name, color] of GROUP_TOPICS) {
+        if (topics[key]) continue;
+        const t = await api(bot.token, "createForumTopic", { chat_id: staff.id, name, icon_color: color }).catch((e) => {
+          console.error(`telegram topics (${bot.tenantId}):`, e.message);
+          return null;
+        });
+        if (t && t.message_thread_id) topics[key] = t.message_thread_id;
+      }
+    }
+    const next = { ...staff, topics, topicsCheckedAt: Date.now() };
+    await botsCol().doc(bot.tenantId).update({ [field]: next }).catch(() => {});
+    return next;
+  }
+
   const hookUrl = (tenantId) => (HOOK_BASE ? `${HOOK_BASE}/${tenantId}` : `${publicUrl}/tgHook/${tenantId}`);
 
   // ------------------------------------------------------------ кабинет
@@ -850,6 +890,7 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     const n = body.notify || {};
     const notify = {
       delivery: n.delivery !== false, shifts: n.shifts !== false, alerts: n.alerts !== false, summary: n.summary !== false,
+      stations: n.stations !== false, groupCash: n.groupCash !== false,
     };
     await botsCol().doc(botId).update({ notify });
     sendJson(res, 200, { notify });
@@ -1177,12 +1218,17 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       if (link.kind === "staff") {
         if (!group) return say(bot, chat.id, "Эту ссылку нужно открыть, добавляя бота в рабочую группу сотрудников.");
         if (role !== "owner") return say(bot, chat.id, `Подключить группу может только владелец или управляющий из списка. ${noAccess(userId)}`);
-        const staff = { id: chat.id, title: chat.title || "Группа" };
-        await botsCol().doc(bot.tenantId).update(point === bot.tenantId ? { staffChat: staff } : { [`staffChats.${point}`]: staff });
+        const field = point === bot.tenantId ? "staffChat" : `staffChats.${point}`;
+        let staff = { id: chat.id, title: chat.title || "Группа" };
+        await botsCol().doc(bot.tenantId).update({ [field]: staff });
         await ref.delete();
+        staff = await ensureGroupTopics(bot, staff, field);
         const others = multi(bot) && point === bot.tenantId
           ? "\nСюда же придут заказы точек сети, у которых нет своей группы." : "";
-        return say(bot, chat.id, `Группа подключена к «${pointName(bot, point)}». Сюда будут приходить заказы с собой и доставки — с кнопками статусов.${others}`);
+        const topics = Object.keys(staff.topics || {}).length
+          ? "\n\nРазделы созданы: кухня, бар, кальяны — новые позиции заказов; доставки и самовывоз — карточки с кнопками; касса — итоги дня и важные события."
+          : "\n\nСовет: включите в настройках группы «Темы» и подключите группу ещё раз — бот разложит сообщения по разделам: кухня, бар, кальяны, доставки, самовывоз, касса.";
+        return say(bot, chat.id, `Группа подключена к «${pointName(bot, point)}». Сюда будут приходить заказы с собой и доставки — с кнопками статусов.${others}${topics}`);
       }
       if (group) return say(bot, chat.id, "Эта ссылка — для личного чата владельца, а не для группы.");
       // Ссылку могли переслать: подключается только ID из списка владельцев.
@@ -2108,11 +2154,12 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     const markup = deliveryKeyboard(s, s.orderType === "delivery" ? addressUrl(tid, s.id) : null);
     const sig = `${s.deliveryStatus || "new"}|${s.courierName || ""}|${s.courierSet ? 1 : 0}|${(s.orderItems || []).length}|${sessionBill(s)}|${pending.length}|${Number(s.guestPaidTotal) || 0}|${s.status}`;
     if (!card || card.chatId !== staff.id) {
-      const m = await apiHtml(bot.token, "sendMessage", { chat_id: staff.id, text, reply_markup: markup }).catch((e) => {
+      const where = inThread(staff, s.orderType === "delivery" ? "delivery" : "pickup");
+      const m = await apiHtml(bot.token, "sendMessage", { chat_id: staff.id, text, reply_markup: markup, ...where }).catch((e) => {
         console.error(`telegram card (${tid}):`, e.message);
         return null;
       });
-      if (m) await cardRef.set({ chatId: staff.id, messageId: m.message_id, sig, tenantId: tid });
+      if (m) await cardRef.set({ chatId: staff.id, messageId: m.message_id, sig, tenantId: tid, ...(where.message_thread_id ? { threadId: where.message_thread_id } : {}) });
       return;
     }
     if (!force && card.sig === sig) return;
@@ -2134,7 +2181,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         ? `✅ №${orderNo(sessionId, s && s.orderNo)} ${type === "delivery" ? "доставлен" : "выдан"}`
         : `✅ №${orderNo(sessionId, s && s.orderNo)} закрыт на кассе`;
     await api(bot.token, "editMessageReplyMarkup", { chat_id: card.chatId, message_id: card.messageId, reply_markup: { inline_keyboard: [] } }).catch(() => {});
-    await api(bot.token, "sendMessage", { chat_id: card.chatId, text, reply_to_message_id: card.messageId }).catch(() => {});
+    await api(bot.token, "sendMessage", { chat_id: card.chatId, text, reply_to_message_id: card.messageId, ...(card.threadId ? { message_thread_id: card.threadId } : {}) }).catch(() => {});
     await cardRef.delete();
   }
 
@@ -2178,6 +2225,46 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     const takeaway = t.collection("sessions").where("tableId", "==", TAKEAWAY_TABLE);
     watch("active", takeaway.where("status", "==", "active"));
     watch("open", takeaway.where("deliveryOpen", "==", true));
+
+    // Новые позиции заказов — в темы группы «Кухня», «Бар», «Кальяны» (если
+    // в группе есть темы): что добавили, за каким столом, с пожеланием.
+    // Первый снимок — только запоминаем: после перезапуска не повторяем старое.
+    const seenItems = new Map(); // sessionId → Map(строка → штук)
+    let primed = false;
+    unsubs.push(t.collection("sessions").where("status", "==", "active").onSnapshot((snap) => {
+      const staff = staffChatOf(bot.cfg, tid, bot.tenantId).chat;
+      const live = primed && on("stations") && ["kitchen", "bar", "hookah"].some((k) => threadOf(staff, k));
+      for (const ch of snap.docChanges()) {
+        if (ch.type === "removed") { seenItems.delete(ch.doc.id); continue; }
+        const s = ch.doc.data() || {};
+        const prev = seenItems.get(ch.doc.id) || new Map();
+        const next = new Map();
+        const added = { kitchen: [], bar: [], hookah: [] };
+        for (const it of Array.isArray(s.orderItems) ? s.orderItems : []) {
+          if (!it || !it.menuItemId || it.menuItemId === "timecafe") continue;
+          const mods = Array.isArray(it.mods) ? it.mods : [];
+          const key = mods.length ? `${it.menuItemId}|${mods.join("|")}` : it.menuItemId;
+          const qty = Number(it.qty) || 0;
+          next.set(key, (next.get(key) || 0) + qty);
+          const more = (next.get(key) || 0) - (prev.get(key) || 0);
+          if (more <= 0 || !live) continue;
+          const kind = ["kitchen", "bar", "hookah"].includes(it.kind) ? it.kind : it.noPromo ? "hookah" : "kitchen";
+          const name = `${it.name || "Позиция"}${mods.length ? ` (${mods.join(", ")})` : ""}`.replace(/[<>&]/g, "");
+          added[kind].push(`• ${name} ×${more}${it.note ? ` — <i>${String(it.note).slice(0, 80).replace(/[<>&]/g, "")}</i>` : ""}`);
+        }
+        seenItems.set(ch.doc.id, next);
+        if (!live) continue;
+        const place = s.tableId === TAKEAWAY_TABLE
+          ? `${s.orderType === "delivery" ? "Доставка" : "С собой"} №${orderNo(ch.doc.id, s.orderNo)}`
+          : `Стол «${String(s.tableName || "—").slice(0, 30)}»`;
+        const head = `${label() ? `${label()} · ` : ""}${place}`;
+        for (const [kind, lines] of Object.entries(added)) {
+          if (!lines.length || !threadOf(staff, kind)) continue;
+          say(bot, staff.id, `🆕 <b>${head}</b>\n${lines.join("\n")}`, inThread(staff, kind));
+        }
+      }
+      primed = true;
+    }, (e) => { console.error(`telegram stations (${tid}):`, e.message); bot.broken = Date.now(); }));
 
     // Журнал кассы: сигналы владельцу — с курсора, без повторов после рестарта.
     const cursor = (bot.cfg.auditCursors || {})[tid] || (tid === bot.tenantId ? bot.cfg.auditCursor : null) || bot.startedAt;
@@ -2305,6 +2392,11 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       attach(bot.tenantId, bot.cfg);
       return false;
     }
+    // Группы, подключённые до тем, получают разделы сами (раз в 6 часов проверка).
+    if (bot.cfg.staffChat && bot.cfg.staffChat.id) await ensureGroupTopics(bot, bot.cfg.staffChat, "staffChat").catch(() => {});
+    for (const [point, chat] of Object.entries(bot.cfg.staffChats || {})) {
+      if (chat && chat.id) await ensureGroupTopics(bot, chat, `staffChats.${point}`).catch(() => {});
+    }
     if (!bot.cfg.hookSecret || Date.now() - (bot.hookCheckAt || 0) < HOOK_CHECK_MS) return true;
     bot.hookCheckAt = Date.now();
     const info = await api(bot.token, "getWebhookInfo").catch(() => null);
@@ -2349,6 +2441,9 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         await botsCol().doc(bot.tenantId).update({ lastSummaryDay: lb.key });
         bot.cfg.lastSummaryDay = lb.key;
         for (const c of owners) await say(bot, c.id, text, { reply_markup: keyboardFor(bot, c.id) });
+        // Группа с темами — итоги и в «Касса и отчёты».
+        const staff = staffChatOf(bot.cfg, bot.tenantId, bot.tenantId).chat;
+        if (threadOf(staff, "cash") && (!bot.cfg.notify || bot.cfg.notify.groupCash !== false)) await say(bot, staff.id, text, inThread(staff, "cash"));
       } catch (e) {
         console.error(`telegram summary (${bot.tenantId}):`, e.message || e);
       }

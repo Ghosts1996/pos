@@ -180,6 +180,9 @@ function telegramBoxHtml(st) {
     ${cb('shifts', 'Начало и конец смен — владельцу')}
     ${cb('alerts', 'Отмены, закрытие без оплаты, возвраты, скидки от 20% — владельцу')}
     ${cb('summary', chain ? 'Итоги дня в 10:00 — по сети и каждой точке, владельцу' : 'Итоги смены в 10:00 — владельцу')}
+    ${cb('stations', 'Группа с темами: новые позиции заказов — в «Кухню», «Бар» и «Кальяны»')}
+    ${cb('groupCash', 'Группа с темами: итоги дня — и в «Касса и отчёты»')}
+    <p class="small muted" style="margin:4px 0 0">Включите в настройках группы Telegram «Темы» — бот сам создаст разделы: кухня, бар, кальяны, доставки, самовывоз, касса — и разложит сообщения по ним.</p>
     <button class="btn btn-ghost" id="f-tg-unlink" style="margin-top:8px;color:var(--danger)">Отключить бота</button>
     <div id="f-tg-msg" class="small" style="margin-top:8px"></div>`;
 }
