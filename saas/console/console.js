@@ -5046,8 +5046,8 @@ function watchDashboardData(tenantId) {
       if (imp.step === 'pick' || !kinds) {
         return `${intro}
           <div class="card" style="margin-top:10px">
-            <label class="field"><span>Файл выгрузки (.xlsx или .csv)</span>
-              <input type="file" id="f-imp-file" accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label>
+            <label class="field"><span>Файл выгрузки: Excel (.xlsx, .xls), .ods, .xml или CSV</span>
+              <input type="file" id="f-imp-file" accept=".xlsx,.xls,.ods,.xml,.htm,.html,.csv,.txt,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet"></label>
             ${imp.busy ? '<p class="small muted">Читаю файл…</p>' : ''}
             ${imp.error ? `<p class="small" style="color:var(--danger)">${esc(imp.error)}</p>` : ''}
           </div>${history}`;

@@ -1,4 +1,5 @@
-// Перенос данных из другой кассы: чтение выгрузок (Excel .xlsx, CSV) и
+// Перенос данных из другой кассы: чтение выгрузок (Excel .xlsx и .xls, .ods,
+// таблица XML 2003, «Excel»-страница с таблицей, CSV) и
 // разбор в меню, склад, техкарты, сотрудников и скидочные карты ZalPOS.
 // Только разбор и план — запись делает кабинет (console.js). Без внешних
 // библиотек: .xlsx — это zip с XML, распаковываем встроенным в браузер
@@ -19,9 +20,9 @@ export const KINDS = {
     label: 'Меню',
     hint: 'Номенклатура или прайс: название, цена продажи, категория (группа).',
     fields: [
-      F('name', 'Название', ['наименование', 'название', 'блюдо', 'товар', 'позиция', 'номенклатура', 'наименование блюда', 'name', 'item', 'title'], { required: true }),
-      F('price', 'Цена продажи, ₽', ['цена', 'цена продажи', 'цена руб', 'стоимость', 'розничная цена', 'цена в меню', 'базовая цена', 'price', 'sale price'], { required: true }),
-      F('category', 'Категория', ['категория', 'группа', 'раздел', 'папка', 'родительская группа', 'группа меню', 'категория меню', 'category', 'group']),
+      F('name', 'Название', ['наименование', 'название', 'блюдо', 'товар', 'позиция', 'номенклатура', 'наименование блюда', 'наименование товара', 'название товара', 'товар услуга', 'name', 'item', 'title'], { required: true }),
+      F('price', 'Цена продажи, ₽', ['цена', 'цена продажи', 'цена руб', 'стоимость', 'розничная цена', 'цена в меню', 'базовая цена', 'цена реализации', 'продажная цена', 'розница', 'price', 'sale price'], { required: true }),
+      F('category', 'Категория', ['категория', 'группа', 'раздел', 'папка', 'родительская группа', 'группа меню', 'категория меню', 'группа товаров', 'категория товара', 'category', 'group']),
       F('description', 'Описание / состав', ['описание', 'состав', 'комментарий', 'description']),
     ],
   },
@@ -31,8 +32,8 @@ export const KINDS = {
     fields: [
       F('name', 'Продукт', ['наименование', 'название', 'продукт', 'товар', 'номенклатура', 'ингредиент', 'сырье', 'name', 'item', 'product'], { required: true }),
       F('unit', 'Единица', ['ед', 'ед изм', 'единица', 'единица измерения', 'ед измерения', 'unit', 'uom']),
-      F('quantity', 'Остаток', ['остаток', 'количество', 'кол во', 'конечный остаток', 'остаток на складе', 'остаток на конец', 'qty', 'quantity', 'stock']),
-      F('cost', 'Цена закупки, ₽', ['себестоимость', 'закупочная цена', 'цена закупки', 'учетная цена', 'средняя цена', 'цена', 'cost', 'purchase price']),
+      F('quantity', 'Остаток', ['остаток', 'количество', 'кол во', 'конечный остаток', 'остаток на складе', 'остаток на конец', 'фактический остаток', 'остаток на дату', 'qty', 'quantity', 'stock']),
+      F('cost', 'Цена закупки, ₽', ['себестоимость', 'закупочная цена', 'цена закупки', 'учетная цена', 'средняя цена', 'цена поставщика', 'последняя закупочная цена', 'цена', 'cost', 'purchase price']),
       F('min', 'Мин. остаток', ['мин остаток', 'минимальный остаток', 'минимум', 'неснижаемый остаток', 'min']),
       F('category', 'Категория', ['категория', 'группа', 'раздел', 'category', 'group']),
     ],
@@ -41,8 +42,8 @@ export const KINDS = {
     label: 'Техкарты',
     hint: 'Каждая строка — продукт в блюде: блюдо, продукт, количество, единица.',
     fields: [
-      F('dish', 'Блюдо', ['блюдо', 'техкарта', 'тех карта', 'технологическая карта', 'наименование блюда', 'готовое блюдо', 'позиция меню', 'dish', 'recipe'], { required: true }),
-      F('ingredient', 'Продукт', ['ингредиент', 'продукт', 'сырье', 'компонент', 'ингредиенты', 'товар', 'ingredient', 'product'], { required: true }),
+      F('dish', 'Блюдо', ['блюдо', 'техкарта', 'тех карта', 'технологическая карта', 'наименование блюда', 'готовое блюдо', 'позиция меню', 'наименование техкарты', 'блюдо заготовка', 'dish', 'recipe'], { required: true }),
+      F('ingredient', 'Продукт', ['ингредиент', 'продукт', 'сырье', 'компонент', 'ингредиенты', 'товар', 'наименование ингредиента', 'ингредиент полуфабрикат', 'ingredient', 'product'], { required: true }),
       F('amount', 'Количество', ['количество', 'кол во', 'брутто', 'нетто', 'вес', 'расход', 'норма', 'норма закладки', 'amount', 'qty']),
       F('unit', 'Единица', ['ед', 'ед изм', 'единица', 'единица измерения', 'unit']),
       F('loss', 'Отход, %', ['отход', 'отход %', 'процент отхода', 'потери', 'отходы', 'loss']),
@@ -169,7 +170,7 @@ async function unzip(bytes) {
   for (let i = u8.length - 22; i >= Math.max(0, u8.length - 66000); i--) {
     if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
   }
-  if (eocd < 0) throw new Error('файл повреждён или это не .xlsx');
+  if (eocd < 0) throw new Error('файл повреждён или это не таблица Excel');
   const entries = dv.getUint16(eocd + 10, true);
   let p = dv.getUint32(eocd + 16, true);
   const out = new Map();
@@ -183,7 +184,7 @@ async function unzip(bytes) {
     const local = dv.getUint32(p + 42, true);
     const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nameLen));
     p += 46 + nameLen + extraLen + commentLen;
-    if (!/^xl\/(sharedStrings\.xml|workbook\.xml|_rels\/workbook\.xml\.rels|worksheets\/sheet\d+\.xml)$/.test(name)) continue;
+    if (!/^(xl\/(sharedStrings\.xml|workbook\.xml|_rels\/workbook\.xml\.rels|worksheets\/sheet\d+\.xml)|content\.xml)$/.test(name)) continue;
     const lNameLen = dv.getUint16(local + 26, true);
     const lExtraLen = dv.getUint16(local + 28, true);
     const data = u8.subarray(local + 30 + lNameLen + lExtraLen, local + 30 + lNameLen + lExtraLen + size);
@@ -245,16 +246,306 @@ export async function readXlsx(bytes) {
   }).filter((s) => s.rows.length);
 }
 
-/** Файл выгрузки → листы. .xls (старый Excel) не читаем — подскажем, как пересохранить. */
+/** OpenDocument (.ods — LibreOffice, «Мой офис») → листы. */
+export async function readOds(bytes) {
+  const files = await unzip(bytes);
+  const xml = files.has('content.xml') ? new TextDecoder().decode(files.get('content.xml')) : '';
+  if (!xml) throw new Error('файл повреждён или это не таблица');
+  const sheets = [];
+  for (const t of xml.matchAll(/<table:table\b([^>]*)>([\s\S]*?)<\/table:table>/g)) {
+    const name = unxml((t[1].match(/table:name="([^"]*)"/) || [])[1] || `Лист ${sheets.length + 1}`);
+    const rows = [];
+    for (const r of t[2].matchAll(/<table:table-row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/table:table-row>)/g)) {
+      const row = [];
+      for (const c of (r[2] || '').matchAll(/<table:(?:covered-)?table-cell\b([^>]*?)(?:\/>|>([\s\S]*?)<\/table:(?:covered-)?table-cell>)/g)) {
+        const attrs = c[1];
+        const value = (attrs.match(/office:value="([^"]*)"/) || [])[1];
+        const text = [...(c[2] || '').matchAll(/<text:p\b[^>]*>([\s\S]*?)<\/text:p>/g)]
+          .map((p) => unxml(p[1].replace(/<text:s\b[^>]*\/>/g, ' ').replace(/<text:tab\b[^>]*\/>/g, '\t').replace(/<[^>]+>/g, ''))).join('\n');
+        const val = (value != null && /float|percentage|currency/.test(attrs) ? value : text).trim();
+        // Повторы: пустые хвосты строк бывают «повторить 16000 раз» — их не разворачиваем.
+        const rep = Math.min(Number((attrs.match(/table:number-columns-repeated="(\d+)"/) || [])[1]) || 1, val ? 200 : 1);
+        for (let i = 0; i < rep; i++) row.push(val);
+      }
+      while (row.length && row[row.length - 1] === '') row.pop();
+      if (row.some((x) => x !== '')) rows.push(row);
+      if (rows.length > MAX_ROWS + 50) break;
+    }
+    if (rows.length) sheets.push({ name, rows });
+  }
+  return sheets;
+}
+
+const HTML_ENT = { ...XML_ENT, nbsp: ' ', laquo: '«', raquo: '»', mdash: '—', ndash: '–', hellip: '…', rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”', times: '×', deg: '°', euro: '€', copy: '©', reg: '®', shy: '' };
+const unhtml = (s) => String(s).replace(/&(#x?[0-9a-f]+|\w+);/gi, (m, e) => {
+  if (e[0] === '#') return String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10));
+  return HTML_ENT[e.toLowerCase()] ?? m;
+});
+
+/** «Excel», который на деле веб-страница с таблицей: так выгружают многие
+ *  облачные кассы и учётные системы (файл .xls, внутри <table>). */
+export function readHtmlTables(text) {
+  const src = String(text).replace(/<!--[\s\S]*?-->/g, '').replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, '');
+  const sheets = [];
+  for (const t of src.matchAll(/<table\b[^>]*>([\s\S]*?)<\/table>/gi)) {
+    const rows = [];
+    for (const r of t[1].matchAll(/<tr\b[^>]*>([\s\S]*?)(?=<tr\b|<\/table>|$)/gi)) {
+      const row = [];
+      for (const c of r[1].matchAll(/<t([dh])\b([^>]*)>([\s\S]*?)(?=<t[dh]\b|<\/tr>|$)/gi)) {
+        const val = unhtml(c[3].replace(/<\/t[dh]>[\s\S]*$/i, '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')).replace(/[ \t ]+/g, ' ').trim();
+        const span = Math.min(Number((c[2].match(/colspan\s*=\s*["']?(\d+)/i) || [])[1]) || 1, 50);
+        row.push(val);
+        for (let i = 1; i < span; i++) row.push('');
+      }
+      if (row.some((x) => x !== '')) rows.push(row);
+    }
+    if (rows.length) sheets.push({ name: `Таблица ${sheets.length + 1}`, rows });
+  }
+  return sheets;
+}
+
+/** Таблица XML 2003 (SpreadsheetML): «Сохранить как → Таблица XML». */
+export function readSpreadsheetXml(text) {
+  const sheets = [];
+  for (const w of String(text).matchAll(/<(?:\w+:)?Worksheet\b([^>]*)>([\s\S]*?)<\/(?:\w+:)?Worksheet>/g)) {
+    const name = unxml((w[1].match(/(?:\w+:)?Name="([^"]*)"/) || [])[1] || `Лист ${sheets.length + 1}`);
+    const rows = [];
+    for (const r of w[2].matchAll(/<(?:\w+:)?Row\b[^>]*?(?:\/>|>([\s\S]*?)<\/(?:\w+:)?Row>)/g)) {
+      const row = [];
+      for (const c of (r[1] || '').matchAll(/<(?:\w+:)?Cell\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?Cell>)/g)) {
+        const idx = Number((c[1].match(/(?:\w+:)?Index="(\d+)"/) || [])[1]) || 0;
+        while (idx && row.length < Math.min(idx - 1, 500)) row.push('');
+        const data = (c[2] || '').match(/<(?:\w+:)?Data\b[^>]*>([\s\S]*?)<\/(?:\w+:)?Data>/);
+        row.push(data ? unxml(data[1].replace(/<[^>]+>/g, '')).trim() : '');
+      }
+      if (row.some((x) => x !== '')) rows.push(row);
+    }
+    if (rows.length) sheets.push({ name, rows });
+  }
+  return sheets;
+}
+
+// ---- старый Excel (.xls, BIFF8 в составном файле OLE)
+
+/** Составной файл OLE (CFB) → поток с именем из [names]. */
+function cfbStream(u8, names) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const ss = 1 << dv.getUint16(0x1e, true);
+  const mss = 1 << dv.getUint16(0x20, true);
+  const cutoff = dv.getUint32(0x38, true);
+  const sector = (n) => (n + 1) * ss;
+  const END = 0xfffffffe;
+  // Таблица размещения: сначала список её секторов (DIFAT).
+  const difat = [];
+  for (let i = 0; i < 109; i++) difat.push(dv.getUint32(0x4c + i * 4, true));
+  let next = dv.getUint32(0x44, true);
+  for (let guard = 0; next < END && guard < 10000; guard++) {
+    const off = sector(next);
+    if (off + ss > u8.length) break;
+    for (let i = 0; i < ss / 4 - 1; i++) difat.push(dv.getUint32(off + i * 4, true));
+    next = dv.getUint32(off + ss - 4, true);
+  }
+  const fat = [];
+  for (const s of difat) {
+    if (s >= END) continue;
+    const off = sector(s);
+    if (off + ss > u8.length) continue;
+    for (let i = 0; i < ss / 4; i++) fat.push(dv.getUint32(off + i * 4, true));
+  }
+  const chain = (start, table, limit) => {
+    const out = [];
+    for (let s = start; s < END && out.length < limit; s = table[s] ?? END) out.push(s);
+    return out;
+  };
+  const readChain = (start, size) => {
+    const parts = chain(start, fat, Math.ceil(size / ss) + 1).map((s) => u8.subarray(sector(s), sector(s) + ss));
+    const out = new Uint8Array(parts.length * ss);
+    parts.forEach((p, i) => out.set(p, i * ss));
+    return out.subarray(0, size);
+  };
+  // Каталог: записи по 128 байт.
+  const dirBytes = readChain(dv.getUint32(0x30, true), fat.length * ss);
+  const ddv = new DataView(dirBytes.buffer, dirBytes.byteOffset, dirBytes.byteLength);
+  const entries = [];
+  for (let off = 0; off + 128 <= dirBytes.length; off += 128) {
+    const len = ddv.getUint16(off + 0x40, true);
+    const type = dirBytes[off + 0x42];
+    if (!type) continue;
+    let name = '';
+    for (let i = 0; i < Math.max(0, len / 2 - 1); i++) name += String.fromCharCode(ddv.getUint16(off + i * 2, true));
+    entries.push({ name, type, start: ddv.getUint32(off + 0x74, true), size: ddv.getUint32(off + 0x78, true) });
+  }
+  const root = entries.find((e) => e.type === 5);
+  const want = entries.find((e) => e.type === 2 && names.includes(e.name));
+  if (!want) return null;
+  if (want.size >= cutoff || !root) return readChain(want.start, want.size);
+  // Маленький поток — в «мини-потоке» корня, по своей таблице.
+  const mini = readChain(root.start, root.size);
+  const mfatBytes = readChain(dv.getUint32(0x3c, true), dv.getUint32(0x40, true) * ss);
+  const mdv = new DataView(mfatBytes.buffer, mfatBytes.byteOffset, mfatBytes.byteLength);
+  const mfat = [];
+  for (let i = 0; i + 4 <= mfatBytes.length; i += 4) mfat.push(mdv.getUint32(i, true));
+  const out = new Uint8Array(want.size);
+  let pos = 0;
+  for (const s of chain(want.start, mfat, Math.ceil(want.size / mss) + 1)) {
+    const part = mini.subarray(s * mss, s * mss + mss);
+    out.set(part.subarray(0, Math.min(part.length, want.size - pos)), pos);
+    pos += part.length;
+    if (pos >= want.size) break;
+  }
+  return out;
+}
+
+/** Excel 97–2003 (.xls) → листы: строки, числа, формулы (их значения). */
+export function readXls(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const wb = cfbStream(u8, ['Workbook', 'Book']);
+  if (!wb) throw new Error('в файле нет таблицы Excel');
+  const dv = new DataView(wb.buffer, wb.byteOffset, wb.byteLength);
+  const records = [];
+  for (let p = 0; p + 4 <= wb.length;) {
+    const type = dv.getUint16(p, true);
+    const len = dv.getUint16(p + 2, true);
+    records.push({ type, off: p + 4, len });
+    p += 4 + len;
+  }
+  const u16 = (o) => dv.getUint16(o, true);
+  const u32 = (o) => dv.getUint32(o, true);
+  const latin = (o, n) => { let s = ''; for (let i = 0; i < n; i++) s += String.fromCharCode(wb[o + i]); return s; };
+  const wide = (o, n) => { let s = ''; for (let i = 0; i < n; i++) s += String.fromCharCode(u16(o + i * 2)); return s; };
+  const str16 = (o) => { const n = u16(o); return (wb[o + 2] & 1) ? wide(o + 3, n) : latin(o + 3, n); };
+  const rk = (v) => {
+    let n;
+    if (v & 2) n = v >> 2;
+    else {
+      const b = new DataView(new ArrayBuffer(8));
+      b.setUint32(4, v & 0xfffffffc, true);
+      n = b.getFloat64(0, true);
+    }
+    return v & 1 ? n / 100 : n;
+  };
+  const num = (n) => (Number.isFinite(n) ? String(Math.round(n * 1e9) / 1e9) : '');
+  const bof = records[0];
+  if (!bof || bof.type !== 0x0809 || u16(bof.off) !== 0x0600) throw new Error('это очень старый Excel (5.0/95) — откройте файл в Excel и сохраните как .xlsx');
+  if (records.some((r) => r.type === 0x002f)) throw new Error('файл защищён паролем — снимите пароль в Excel и сохраните заново');
+
+  // Общие строки (SST) с продолжениями (CONTINUE): строка может переходить в
+  // следующую запись, и там заново указано, однобайтные символы или двухбайтные.
+  const sst = [];
+  const si = records.findIndex((r) => r.type === 0x00fc);
+  if (si >= 0) {
+    const segs = [records[si]];
+    for (let j = si + 1; j < records.length && records[j].type === 0x003c; j++) segs.push(records[j]);
+    let seg = 0;
+    let p = segs[0].off + 8;
+    const left = () => segs[seg].off + segs[seg].len - p;
+    const nextSeg = () => { seg++; if (seg >= segs.length) throw new RangeError('sst'); p = segs[seg].off; };
+    const need = (n) => { while (left() < n) { if (left() > 0) throw new RangeError('sst'); nextSeg(); } };
+    const skip = (n) => { while (n > 0) { if (!left()) nextSeg(); const k = Math.min(n, left()); p += k; n -= k; } };
+    const total = u32(segs[0].off + 4);
+    try {
+      for (let k = 0; k < total; k++) {
+        need(3);
+        let cch = u16(p);
+        let high = wb[p + 2] & 1;
+        const flags = wb[p + 2];
+        p += 3;
+        let runs = 0;
+        let ext = 0;
+        if (flags & 8) { need(2); runs = u16(p); p += 2; }
+        if (flags & 4) { need(4); ext = u32(p); p += 4; }
+        let s = '';
+        while (cch > 0) {
+          if (!left()) { nextSeg(); high = wb[p] & 1; p += 1; }
+          const can = high ? Math.floor(left() / 2) : left();
+          const n = Math.min(cch, can);
+          s += high ? wide(p, n) : latin(p, n);
+          p += n * (high ? 2 : 1);
+          cch -= n;
+        }
+        skip(runs * 4 + ext);
+        sst.push(s);
+      }
+    } catch (e) {
+      if (!(e instanceof RangeError)) throw e;
+    }
+  }
+
+  const sheets = [];
+  for (const r of records.filter((x) => x.type === 0x0085)) {
+    if (wb[r.off + 5] !== 0) continue; // не лист с ячейками (диаграмма, макрос)
+    const start = u32(r.off);
+    const n = wb[r.off + 6];
+    const name = (wb[r.off + 7] & 1) ? wide(r.off + 8, n) : latin(r.off + 8, n);
+    const grid = new Map();
+    const put = (row, col, v) => {
+      if (row > MAX_ROWS + 50 || col > 500) return;
+      if (!grid.has(row)) grid.set(row, []);
+      grid.get(row)[col] = String(v).trim();
+    };
+    let i = records.findIndex((x) => x.off - 4 === start);
+    if (i < 0) continue;
+    let pendingFormula = null;
+    for (i++; i < records.length && records[i].type !== 0x000a; i++) {
+      const { type, off } = records[i];
+      if (type === 0x00fd) put(u16(off), u16(off + 2), sst[u32(off + 6)] ?? '');
+      else if (type === 0x0204) put(u16(off), u16(off + 2), str16(off + 6));
+      else if (type === 0x0203) put(u16(off), u16(off + 2), num(dv.getFloat64(off + 6, true)));
+      else if (type === 0x027e) put(u16(off), u16(off + 2), num(rk(u32(off + 6))));
+      else if (type === 0x00bd) {
+        const row = u16(off);
+        const first = u16(off + 2);
+        const cnt = (records[i].len - 6) / 6;
+        for (let k = 0; k < cnt; k++) put(row, first + k, num(rk(u32(off + 4 + k * 6 + 2))));
+      } else if (type === 0x0006) {
+        const row = u16(off);
+        const col = u16(off + 2);
+        if (u16(off + 12) === 0xffff) {
+          const kind = wb[off + 6];
+          if (kind === 0) pendingFormula = { row, col };
+          else if (kind === 1) put(row, col, wb[off + 8] ? 'ИСТИНА' : 'ЛОЖЬ');
+        } else put(row, col, num(dv.getFloat64(off + 6, true)));
+      } else if (type === 0x0207 && pendingFormula) {
+        put(pendingFormula.row, pendingFormula.col, str16(off));
+        pendingFormula = null;
+      } else if (type === 0x0205 && !wb[off + 7]) put(u16(off), u16(off + 2), wb[off + 6] ? 'ИСТИНА' : 'ЛОЖЬ');
+    }
+    const rows = [...grid.keys()].sort((a, b) => a - b).map((k) => Array.from(grid.get(k), (x) => x ?? ''))
+      .filter((row) => row.some((x) => x !== ''));
+    if (rows.length) sheets.push({ name, rows });
+  }
+  return sheets;
+}
+
+/** Файл выгрузки → листы. Понимает .xlsx, .xls (Excel 97–2003), .ods,
+ *  «xls» в виде веб-страницы, таблицу XML 2003 и CSV/TXT в любой кодировке. */
 export async function readTable(bytes, filename = '') {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const name = String(filename).toLowerCase();
-  if (u8[0] === 0x50 && u8[1] === 0x4b) return readXlsx(u8);
-  if (u8[0] === 0xd0 && u8[1] === 0xcf) throw new Error('это старый формат Excel (.xls) — откройте файл в Excel и сохраните как .xlsx или CSV');
-  if (/\.(xls|ods|numbers)$/.test(name)) throw new Error('сохраните таблицу как .xlsx или CSV');
-  const rows = parseCsv(decodeText(u8));
-  if (!rows.length) throw new Error('в файле нет данных');
-  return [{ name: filename || 'CSV', rows }];
+  let sheets;
+  if (u8[0] === 0x50 && u8[1] === 0x4b) {
+    const head = new TextDecoder().decode(u8.subarray(30, 120));
+    sheets = /opendocument\.spreadsheet/.test(head) || /\.ods$/.test(name) ? await readOds(u8) : await readXlsx(u8);
+  } else if (u8[0] === 0xd0 && u8[1] === 0xcf && u8[2] === 0x11 && u8[3] === 0xe0) {
+    try {
+      sheets = readXls(u8);
+    } catch (e) {
+      if (/паролем|очень старый/.test(e?.message || '')) throw e;
+      throw new Error('файл .xls не читается: он повреждён или сохранён нестандартно — откройте его в Excel и сохраните как .xlsx');
+    }
+  } else {
+    if (/\.numbers$/.test(name)) throw new Error('файл Numbers — экспортируйте таблицу в Excel или CSV');
+    const text = decodeText(u8);
+    const start = text.slice(0, 4000).toLowerCase();
+    if (/<(?:\w+:)?workbook\b/.test(start) && /urn:schemas-microsoft-com:office:spreadsheet/.test(start)) sheets = readSpreadsheetXml(text);
+    else if (/<(table|html|tr)\b/.test(start)) sheets = readHtmlTables(text);
+    else {
+      const rows = parseCsv(text);
+      sheets = rows.length ? [{ name: filename || 'CSV', rows }] : [];
+    }
+  }
+  if (!sheets.length) throw new Error('в файле нет данных — проверьте, что выгрузили таблицу');
+  return sheets;
 }
 
 // ---------------------------------------------------------------- столбцы

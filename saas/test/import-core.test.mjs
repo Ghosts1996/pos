@@ -1,6 +1,7 @@
 // Перенос данных: разбор выгрузок других касс. Запуск: node saas/test/import-core.test.mjs
 import assert from 'node:assert/strict';
 import * as I from '../console/import-core.js';
+import { readFileSync } from 'node:fs';
 
 let passed = 0;
 const tests = [];
@@ -190,6 +191,38 @@ test('шаблоны CSV открываются в Excel и сами распо�
     assert.equal(errors.length, 0, `${kind}: ${JSON.stringify(errors)}`);
     assert.equal(items.length, 2, kind);
   }
+});
+
+test('выгрузки любых систем: .xls (Excel 97–2003), .ods, таблица XML 2003, «xls»-страница — читаются одинаково', async () => {
+  const fx = (f) => new Uint8Array(readFileSync(new URL(`./fixtures/${f}`, import.meta.url)));
+  const expectRows = (rows) => {
+    assert.equal(rows.length, 185);
+    assert.deepEqual(rows[0], ['Наименование', 'Цена продажи', 'Группа']);
+    assert.deepEqual(rows[2], ['Раф', '280', 'Кофе'], 'значение формулы');
+    assert.deepEqual(rows[3], ['Чай & мёд', '199.9', 'Чай']);
+    assert.equal(rows[100][0], 'Позиция №97 «особая» с очень длинным названием для проверки продолжения строк');
+    assert.deepEqual(rows[184], ['Last ёжик', '1', 'Ω-группа']);
+  };
+  // Файлы сохранены LibreOffice: общие строки .xls переходят в записи-продолжения.
+  for (const f of ['menu.xls', 'menu.ods']) {
+    const sheets = await I.readTable(fx(f), f);
+    expectRows(sheets[0].rows);
+    assert.equal(I.guessKind(sheets[0].rows[0]), 'menu', f);
+  }
+  const xml = `<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="Склад"><Table>
+    <Row><Cell><Data ss:Type="String">Наименование</Data></Cell><Cell><Data ss:Type="String">Ед. изм.</Data></Cell><Cell><Data ss:Type="String">Остаток</Data></Cell></Row>
+    <Row><Cell><Data ss:Type="String">Мука &amp; соль</Data></Cell><Cell ss:Index="3"><Data ss:Type="Number">12.5</Data></Cell></Row></Table></Worksheet></Workbook>`;
+  const xs = await I.readTable(new TextEncoder().encode(xml), 'stock.xml');
+  assert.equal(xs[0].name, 'Склад');
+  assert.deepEqual(xs[0].rows[1], ['Мука & соль', '', '12.5']);
+  const html = '<html><body><table><tr><th>ФИО</th><th>Должность</th></tr><tr><td>Анна&nbsp;</td><td>Официант<br>старший</td></tr><tr><td colspan="2">итого</td></tr></table></body></html>';
+  const hs = await I.readTable(new TextEncoder().encode(html), 'staff.xls');
+  assert.equal(I.guessKind(hs[0].rows[0]), 'staff');
+  assert.deepEqual(hs[0].rows[1], ['Анна', 'Официант\nстарший']);
+  assert.deepEqual(hs[0].rows[2], ['итого', '']);
+  // Синонимы столбцов разных систем.
+  assert.deepEqual(I.guessMapping('menu', ['Наименование товара', 'Цена реализации', 'Группа товаров']), { name: 0, price: 1, category: 2 });
+  assert.equal(I.guessMapping('stock', ['Товар', 'Фактический остаток', 'Цена поставщика']).quantity, 1);
 });
 
 for (const [name, fn] of tests) {
