@@ -44,7 +44,7 @@ class AdminHomeScreen extends StatelessWidget {
       'Работа заведения': [
         _AdminTile('Отчёты', Icons.bar_chart, (ctx) => const ReportsScreen()),
         _AdminTile('Карта зала', Icons.table_bar, (ctx) => const FloorPlanEditorScreen()),
-        _AdminTile('Длительность сеанса', Icons.schedule, (ctx) => const SessionSettingsScreen()),
+        _AdminTile('Тайм-кафе', Icons.schedule, (ctx) => const SessionSettingsScreen()),
         _AdminTile('Меню', Icons.restaurant_menu, (ctx) => const MenuEditorScreen()),
         _AdminTile('Склад', Icons.inventory_2_outlined,
             (ctx) => InventoryScreen(employee: employee)),

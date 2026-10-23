@@ -61,7 +61,7 @@ class AppShadows {
 
   static List<BoxShadow> get card => [
         BoxShadow(
-          color: AppColors.isLight ? const Color(0x14301E0E) : const Color(0x66000000),
+          color: AppColors.isLight ? const Color(0x1F301E0E) : const Color(0x66000000),
           blurRadius: 12,
           offset: const Offset(0, 4),
         ),

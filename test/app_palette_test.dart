@@ -38,6 +38,18 @@ void main() {
     });
   }
 
+  // Светлая тема не «выцветает» на дневном свету: подсказки и неактивное
+  // читаются, карточки и границы отделяются от фона.
+  test('светлая палитра: неактивный текст, границы и фон различимы', () {
+    const p = AppPalette.light;
+    for (final bg in [p.background, p.surface, p.surfaceElevated]) {
+      expect(_contrast(p.disabledText, bg), greaterThanOrEqualTo(3.4));
+      expect(_contrast(p.textMuted, bg), greaterThanOrEqualTo(6.5));
+    }
+    expect(_contrast(p.border, p.surface), greaterThanOrEqualTo(1.5));
+    expect(_contrast(p.background, p.surface), greaterThanOrEqualTo(1.15));
+  });
+
   test('тема собирается по текущей палитре', () {
     AppColors.palette = AppPalette.light;
     final light = AppTheme.current;

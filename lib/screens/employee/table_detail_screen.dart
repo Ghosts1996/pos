@@ -24,6 +24,7 @@ import '../../services/venue_service.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
 import '../../utils/kitchen_slips.dart';
+import '../../utils/time_cafe.dart';
 
 class TableDetailScreen extends StatefulWidget {
   final TableModel table;
@@ -220,8 +221,80 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
 
   static String _hhmm(DateTime d) => '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
+  /// Тайм-кафе: сколько гостей за столом — для строки «Время в тайм-кафе».
+  Future<int?> _askGuests(int initial) => showDialog<int>(
+        context: context,
+        builder: (ctx) {
+          var n = initial < 1 ? 1 : initial;
+          return StatefulBuilder(builder: (ctx, set) => AlertDialog(
+                title: const Text('Время в счёт'),
+                content: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text('Сколько гостей платят за время?', style: TextStyle(color: AppColors.textMuted)),
+                  const SizedBox(height: 12),
+                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    IconButton.filledTonal(onPressed: n > 1 ? () => set(() => n--) : null, icon: const Icon(Icons.remove)),
+                    SizedBox(width: 64, child: Text('$n', textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700))),
+                    IconButton.filledTonal(onPressed: n < 50 ? () => set(() => n++) : null, icon: const Icon(Icons.add)),
+                  ]),
+                ]),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+                  FilledButton(onPressed: () => Navigator.pop(ctx, n), child: const Text('Добавить')),
+                ],
+              ));
+        },
+      );
+
+  /// «Время в счёт»: строка со временем за столом, повторно — пересчёт.
+  Future<bool> _addTime(SessionModel session) async {
+    final guests = await _askGuests(TimeCafe.guestsIn(session));
+    if (guests == null) return false;
+    try {
+      final sat = DateTime.now().difference(session.startTime);
+      await _fs.setTimeCafeLine(session.id, sat, guests);
+      if (mounted) {
+        final sum = TimeCafe.costPerGuest(sat) * guests;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Время в счёте: ${TimeCafe.durationLabel(TimeCafe.billedMinutes(sat))} · ${sum.toStringAsFixed(0)} ₽'),
+          duration: const Duration(seconds: 2),
+        ));
+      }
+      return true;
+    } catch (e) {
+      _showError('Не удалось добавить время — проверьте интернет');
+      return false;
+    }
+  }
+
   /// «Закрыть стол» открывает PaymentScreen — закрытие происходит там.
-  Future<void> _openPayment(SessionModel session) async {
+  /// Тайм-кафе: время в счёте пересчитывается на момент оплаты, а если его
+  /// не добавляли — спрашиваем.
+  Future<void> _openPayment(SessionModel session, {bool takeaway = false}) async {
+    if (TimeCafe.ready && !takeaway) {
+      if (TimeCafe.hasLine(session)) {
+        try {
+          await _fs.setTimeCafeLine(session.id, DateTime.now().difference(session.startTime), TimeCafe.guestsIn(session));
+        } catch (_) {}
+      } else {
+        final add = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Добавить время в счёт?'),
+            content: Text('Гости за столом ${TimeCafe.durationLabel(TimeCafe.billedMinutes(DateTime.now().difference(session.startTime)))}. '
+                'Включено тайм-кафе — время ещё не в счёте.'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Без времени')),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Добавить время')),
+            ],
+          ),
+        );
+        if (add == null || !mounted) return;
+        if (add && !await _addTime(session)) return;
+      }
+      final fresh = await _fs.sessionStream(session.id).first.catchError((_) => null);
+      if (fresh != null) session = fresh;
+      if (!mounted) return;
+    }
     final done = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => PaymentScreen(session: session)),
     );
@@ -770,6 +843,14 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
           hint: '± 5 · 10 · 30 мин',
           onTap: () => _extend(session),
         ),
+      if (TimeCafe.ready && !t.isTakeaway)
+        _TableAction(
+          icon: Icons.timer_outlined,
+          label: TimeCafe.hasLine(session) ? 'Пересчитать время' : 'Время в счёт',
+          hint: '${TimeCafe.pricePerHour.toStringAsFixed(0)} ₽/ч за гостя',
+          accent: true,
+          onTap: () => _addTime(session),
+        ),
       _TableAction(
         icon: Icons.local_offer_outlined,
         label: session.guestTag.isEmpty ? 'Подписать' : 'Подпись',
@@ -831,7 +912,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
           _TotalBar(
             session: session,
             side: side,
-            onPay: () => _openPayment(session),
+            onPay: () => _openPayment(session, takeaway: t.isTakeaway),
             onPrecheck: session.orderItems.isEmpty ? null : () => _printPrecheck(session),
           ),
         ],
@@ -1098,6 +1179,12 @@ class _SessionStatusCard extends StatelessWidget {
                       fontFeatures: const [FontFeature.tabularFigures()],
                     )),
                 Text(sub, style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                if (TimeCafe.ready) ...[
+                  const SizedBox(height: 6),
+                  Text('⏱ Тайм-кафе: ${TimeCafe.costPerGuest(sat).toStringAsFixed(0)} ₽ за гостя · '
+                      '${TimeCafe.durationLabel(TimeCafe.billedMinutes(sat))}',
+                      style: TextStyle(color: AppColors.brass, fontSize: 14, fontWeight: FontWeight.w600)),
+                ],
               ],
             );
           }),

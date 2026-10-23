@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'app_scope.dart';
 import 'people_directory.dart';
 import 'signals/signal_hub.dart';
+import '../utils/time_cafe.dart';
 import '../utils/parse.dart';
 import '../utils/pin_hash.dart';
 import '../utils/shared_stream.dart';
@@ -828,6 +829,15 @@ class FirestoreService {
     SignalHub.instance.itemAdded(sessionId,
         station: kind, lineId: lineId, name: chosen.isEmpty ? menuItem.name : '${menuItem.name} (${chosen.join(', ')})', qty: qty);
   }
+
+  /// Тайм-кафе: строка «Время в тайм-кафе» по времени за столом и числу
+  /// гостей. Уже есть — пересчитываем её же (см. TimeCafe.line).
+  Future<void> setTimeCafeLine(String sessionId, Duration sat, int guests) =>
+      _editCheckItems(sessionId, (items) {
+        items.removeWhere((i) => i.menuItemId == TimeCafe.lineId);
+        items.add(TimeCafe.line(sat, guests));
+        return true;
+      });
 
   /// Позиции от гостя по текущему меню — см. [priceGuestItems].
   Future<List<OrderItem>> menuPricedItems(List<OrderItem> items) async {
