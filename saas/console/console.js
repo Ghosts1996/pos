@@ -2201,7 +2201,7 @@ function screenLanding() {
         </div>
         <nav class="l-footer-cols" aria-label="Разделы сайта">
           <div><div class="l-footer-h">Продукт</div>
-            <a href="#/guide">Инструкция</a><a href="/blog/">Блог</a><a href="#/faq">Частые вопросы</a><a href="#/status">Статус сервиса</a></div>
+            <a href="/guide/">Инструкция</a><a href="/blog/">Блог</a><a href="/faq/">Частые вопросы</a><a href="#/status">Статус сервиса</a></div>
           <div><div class="l-footer-h">Документы</div>
             <a href="#/legal/offer">Оферта</a><a href="#/legal/payment">Оплата и возврат</a><a href="#/legal/privacy">Конфиденциальность</a></div>
           <div><div class="l-footer-h">Доверие</div>
@@ -2445,8 +2445,9 @@ function publicFooterLinksHtml() {
       <a href="#/legal/payment">Оплата и возврат</a> ·
       <a href="#/legal/privacy">Конфиденциальность</a> ·
       <a href="#/status">Статус</a> ·
-      <a href="#/guide">Инструкция</a> ·
-      <a href="#/faq">FAQ</a>
+      <a href="/guide/">Инструкция</a> ·
+      <a href="/faq/">FAQ</a> ·
+      <a href="/blog/">Блог</a>
     </p>
     <p class="small center muted" style="margin-top:4px">${PAYMENT_METHODS_TEXT}</p>
   `;

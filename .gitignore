@@ -30,4 +30,7 @@ key.properties
 
 # Блог собирается при выкладке сайта (saas/scripts/build-blog.mjs) — в репозиторий не кладём.
 saas/console/blog/
+# Инструкция и частые вопросы обычными страницами — тоже при выкладке.
+saas/console/guide/
+saas/console/faq/
 saas/console/sitemap.xml

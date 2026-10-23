@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { build, readPosts, markdown } from './build-blog.mjs';
+import { build, readPosts, markdown, readGuide, readFaq, guideArticles } from './build-blog.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SAAS = path.resolve(HERE, '..');
@@ -115,6 +115,24 @@ check('текст экранируется, чужие ссылки открыв
   assert.ok(html.includes('<a href="/blog/a-post/">'));
   assert.ok(html.includes('rel="noopener" target="_blank"'));
   assert.ok(!html.includes('next-post'));
+});
+
+check('инструкция и частые вопросы — обычными страницами в карте сайта', () => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'zalpos-help-'));
+  build({ out, log: {} });
+  const arts = guideArticles(readGuide());
+  assert.ok(arts.length >= 50, 'мало статей инструкции');
+  assert.equal(new Set(arts.map((a) => a.slug)).size, arts.length, 'адреса статей повторяются');
+  const page = fs.readFileSync(path.join(out, 'guide', arts[0].slug, 'index.html'), 'utf8');
+  assert.ok(page.includes('<link rel="canonical" href="https://zalpos.ru/guide/'));
+  assert.ok(page.includes('"@type":"HowTo"'));
+  assert.ok(fs.existsSync(path.join(out, 'guide', 'index.html')));
+  const faq = fs.readFileSync(path.join(out, 'faq', 'index.html'), 'utf8');
+  assert.ok(faq.includes('"@type":"FAQPage"') && readFaq().length > 3);
+  const map = fs.readFileSync(path.join(out, 'sitemap.xml'), 'utf8');
+  assert.ok(map.includes('https://zalpos.ru/guide/</loc>') && map.includes('https://zalpos.ru/faq/</loc>'));
+  assert.ok(map.includes(`https://zalpos.ru/guide/${arts[arts.length - 1].slug}/</loc>`));
+  fs.rmSync(out, { recursive: true, force: true });
 });
 
 check('robots.txt и ключ IndexNow', () => {

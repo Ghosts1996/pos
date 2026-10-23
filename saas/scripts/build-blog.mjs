@@ -32,6 +32,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const SITE = 'https://zalpos.ru';
@@ -224,7 +225,8 @@ const CSS_VERSION = () => {
   try { return String(fs.statSync(path.join(ASSETS_DIR, 'blog.css')).size); } catch (_) { return '1'; }
 };
 
-function layout({ title, description, canonical, body, ogType = 'website', extraHead = '', noindex = false }) {
+function layout({ title, description, canonical, body, ogType = 'website', extraHead = '', noindex = false,
+  back = { href: '/blog/', wide: 'Все статьи', narrow: 'Статьи' } }) {
   return `<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -257,13 +259,14 @@ ${extraHead}</head>
 <body>
 <header class="top"><div class="wrap">
   <a class="logo" href="/">${BRAND}</a>
-  <nav><a href="/blog/">← <span class="wide">Все статьи</span><span class="narrow">Статьи</span></a><a class="cta-mini" href="/">Подключить бесплатно</a></nav>
+  <nav><a href="${back.href}">← <span class="wide">${back.wide}</span><span class="narrow">${back.narrow}</span></a><a class="cta-mini" href="/">Подключить бесплатно</a></nav>
 </div></header>
 <main class="wrap">
 ${body}
 </main>
 <footer class="foot"><div class="wrap">
   <p><a href="/">${BRAND}</a> — касса, зал, склад и гости для кафе, ресторанов, баров и лаунжей.</p>
+  <p class="foot-links"><a href="/blog/">Блог</a> · <a href="/guide/">Инструкция</a> · <a href="/faq/">Частые вопросы</a> · <a href="/#/legal/offer">Оферта</a> · <a href="/#/legal/privacy">Конфиденциальность</a></p>
   <p class="muted">Материалы блога носят справочный характер. Законы и цены меняются — сверяйтесь с первоисточниками и консультируйтесь с бухгалтером или юристом.</p>
 </div></footer>
 </body>
@@ -296,7 +299,7 @@ function pager(page, pages, base) {
 const CTA = `<aside class="cta">
   <p>${BRAND} — касса и управление заведением: карта зала, оплата и фискальные чеки, склад, брони, бонусы и приложение гостя. Подходит кофейне, ресторану и сети из десятков точек. Касса на Android и Windows, кабинет в браузере. 7 дней бесплатно, карта не нужна.</p>
   <a class="btn" href="/">Подключить бесплатно на zalpos.ru</a>
-  <a class="btn btn-ghost" href="/#/guide">Как всё устроено</a>
+  <a class="btn btn-ghost" href="/guide/">Как всё устроено</a>
 </aside>`;
 
 /** «Читайте также»: заголовок и дата, как список ссылок. */
@@ -308,6 +311,172 @@ function relatedBlock(list) {
 
 function readingMinutes(text) {
   return Math.max(2, Math.round(text.split(/\s+/).length / 180));
+}
+
+// ---------- инструкция и частые вопросы ----------
+// В кабинете они живут за «#/guide» и «#/faq» — такие адреса поисковики не
+// видят. Здесь те же тексты (saas/console/guide.js и FAQ_ITEMS в
+// console.js) — обычными страницами /guide/… и /faq/ для поиска.
+
+/** Инструкция из saas/console/guide.js — только данные, без браузера. */
+export function readGuide(file = path.join(CONSOLE, 'guide.js')) {
+  const src = fs.readFileSync(file, 'utf8').replace(/^export const GUIDE =/m, 'GUIDE =');
+  const ctx = { GUIDE: null };
+  vm.runInNewContext(src, ctx, { timeout: 1000 });
+  return Array.isArray(ctx.GUIDE) ? ctx.GUIDE : [];
+}
+
+/** Частые вопросы кабинета: массив FAQ_ITEMS в console.js — чистые литералы. */
+export function readFaq(file = path.join(CONSOLE, 'console.js')) {
+  const src = fs.readFileSync(file, 'utf8');
+  const start = src.indexOf('const FAQ_ITEMS = [');
+  if (start < 0) return [];
+  const from = src.indexOf('[', start);
+  const end = src.indexOf('\n];', from);
+  if (end < 0) return [];
+  try {
+    const items = vm.runInNewContext(`(${src.slice(from, end + 2)})`, {}, { timeout: 500 });
+    return Array.isArray(items) ? items.filter((i) => i && i.q && i.a) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+/** Текст статьи: названия кнопок в «ёлочках» — жирным, как в кабинете. */
+function uiText(s) {
+  let out = esc(String(s || ''));
+  for (let prev = ''; prev !== out;) {
+    prev = out;
+    out = out.replace(/«([^«»]+)»/g, '<b>$1</b>');
+  }
+  return typo(out);
+}
+
+/** Адреса статей инструкции: /guide/<slug>/, без повторов. */
+export function guideArticles(guide) {
+  const used = new Set();
+  const list = [];
+  for (const sec of guide) {
+    for (const it of sec.items || []) {
+      let slug = slugify(it.title) || `${sec.id}-${list.length + 1}`;
+      if (used.has(slug)) slug = `${slug}-${sec.id}`;
+      used.add(slug);
+      list.push({ sec, it, slug });
+    }
+  }
+  return list;
+}
+
+function buildHelpPages({ out, today }) {
+  const urls = [];
+  const guideDir = path.join(out, 'guide');
+  const faqDir = path.join(out, 'faq');
+  for (const d of [guideDir, faqDir]) fs.rmSync(d, { recursive: true, force: true });
+  const put = (dir, rel, html) => {
+    const f = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, html);
+  };
+  const back = { href: '/guide/', wide: 'Вся инструкция', narrow: 'Инструкция' };
+  const appCta = `<aside class="cta">
+  <p>В кабинете ${BRAND} эта инструкция — с живыми видео: как выглядит каждый экран и куда нажимать, на телефоне и планшете.</p>
+  <a class="btn" href="/#/guide">Открыть инструкцию с видео</a>
+  <a class="btn btn-ghost" href="/">Подключить бесплатно</a>
+</aside>`;
+
+  const guide = readGuide();
+  const arts = guideArticles(guide);
+  if (arts.length) {
+    // Главная инструкции: разделы и статьи.
+    const intro = `Инструкция по ${BRAND}: как подключить заведение, поставить кассу на Android и Windows, вести зал, заказы, оплату, склад, смены и зарплату, работать с гостями и бонусами.`;
+    const body = `<nav class="crumbs"><a href="/">Главная</a> / Инструкция</nav>
+<header class="list-head"><h1>Инструкция ${BRAND}</h1><p>${typo(esc(intro))}</p></header>
+${guide.map((sec) => `<section class="guide-sec">
+  <h2>${typo(esc(sec.title))}</h2>${sec.lead ? `\n  <p class="muted">${typo(esc(sec.lead))}</p>` : ''}
+  <ul class="guide-list">${arts.filter((a) => a.sec === sec).map((a) => `<li><a href="/guide/${a.slug}/">${typo(esc(a.it.title))}</a></li>`).join('')}</ul>
+</section>`).join('\n')}
+${appCta}`;
+    put(guideDir, 'index.html', layout({
+      title: `Инструкция ${BRAND}: касса, зал, склад и гости`,
+      description: intro,
+      canonical: `${SITE}/guide/`,
+      body,
+      back: { href: '/', wide: 'На главную', narrow: 'Главная' },
+    }));
+    urls.push({ loc: `${SITE}/guide/`, lastmod: today, priority: '0.8' });
+
+    for (const a of arts) {
+      const { sec, it } = a;
+      const url = `${SITE}/guide/${a.slug}/`;
+      const text = [it.intro, ...(it.steps || [])].filter(Boolean).join(' ');
+      const description = (text.replace(/\s+/g, ' ').slice(0, 150).replace(/\s\S*$/, '') || it.title) + '…';
+      const steps = it.steps || [];
+      const head = ldJson({
+        '@context': 'https://schema.org',
+        '@type': 'HowTo',
+        name: it.title,
+        description,
+        inLanguage: 'ru-RU',
+        step: steps.map((st, i) => ({ '@type': 'HowToStep', position: i + 1, text: String(st).replace(/[«»]/g, '"') })),
+      }) + ldJson({
+        '@context': 'https://schema.org',
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          { '@type': 'ListItem', position: 1, name: BRAND, item: `${SITE}/` },
+          { '@type': 'ListItem', position: 2, name: 'Инструкция', item: `${SITE}/guide/` },
+          { '@type': 'ListItem', position: 3, name: it.title, item: url },
+        ],
+      });
+      const near = arts.filter((x) => x.sec === sec && x !== a).slice(0, 6);
+      const body = `<nav class="crumbs"><a href="/">Главная</a> / <a href="/guide/">Инструкция</a> / ${esc(sec.title)}</nav>
+<article class="post">
+  <h1>${typo(esc(it.title))}</h1>
+${it.where ? `  <p class="meta">Где: ${uiText(it.where)}</p>\n` : ''}  <div class="content">
+${it.intro ? `<p>${uiText(it.intro)}</p>\n` : ''}${steps.length ? `<ol>${steps.map((st) => `<li>${uiText(st)}</li>`).join('')}</ol>\n` : ''}${(it.tips || []).map((t) => `<blockquote><p>${uiText(t)}</p></blockquote>`).join('\n')}
+${(it.faq || []).length ? `<h2>Если что-то не так</h2>\n${it.faq.map(([q, ans]) => `<h3>${uiText(q)}</h3>\n<p>${uiText(ans)}</p>`).join('\n')}` : ''}
+  </div>
+</article>
+${near.length ? `<section class="related"><p class="block-title">${esc(sec.title)}: ещё по теме</p>${near.map((x) => `
+  <a class="rel" href="/guide/${x.slug}/"><span>${typo(esc(x.it.title))}</span></a>`).join('')}
+</section>` : ''}
+${appCta}`;
+      put(guideDir, `${a.slug}/index.html`, layout({
+        title: `${it.title} — инструкция ${BRAND}`,
+        description,
+        canonical: url,
+        body,
+        extraHead: head,
+        back,
+      }));
+      urls.push({ loc: url, lastmod: today, priority: '0.6' });
+    }
+  }
+
+  const faq = readFaq();
+  if (faq.length) {
+    const intro = `Ответы на частые вопросы о ${BRAND}: пробный период и оплата, устройства и установка кассы, онлайн-касса и 54-ФЗ, данные гостей, перенос из другой программы.`;
+    const head = ldJson({
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      mainEntity: faq.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })),
+    });
+    const body = `<nav class="crumbs"><a href="/">Главная</a> / Частые вопросы</nav>
+<header class="list-head"><h1>Частые вопросы о ${BRAND}</h1><p>${typo(esc(intro))}</p></header>
+<div class="content">
+${faq.map((f) => `<h2>${uiText(f.q)}</h2>\n<p>${uiText(f.a)}</p>`).join('\n')}
+</div>
+${appCta.replace('эта инструкция', 'есть подробная инструкция').replace('Открыть инструкцию с видео', 'Инструкция с видео')}`;
+    put(faqDir, 'index.html', layout({
+      title: `Частые вопросы о ${BRAND}`,
+      description: intro,
+      canonical: `${SITE}/faq/`,
+      body,
+      extraHead: head,
+      back: { href: '/', wide: 'На главную', narrow: 'Главная' },
+    }));
+    urls.push({ loc: `${SITE}/faq/`, lastmod: today, priority: '0.7' });
+  }
+  return { urls, guide: arts.length, faq: faq.length };
 }
 
 // ---------- сборка ----------
@@ -467,6 +636,15 @@ ${p.tags.map((t) => `<category>${esc(t)}</category>`).join('')}
   for (let n = 2; n <= blogPages; n++) urls.push({ loc: `${SITE}/blog/page/${n}/`, lastmod: latest, priority: '0.3' });
   for (const p of posts) urls.push({ loc: `${SITE}/blog/${p.slug}/`, lastmod: p.updated || p.date, priority: '0.7' });
   for (const [s, t] of tags) urls.push({ loc: `${SITE}/blog/tema/${s}/`, lastmod: t.posts[0].date, priority: '0.5' });
+  // Инструкция и частые вопросы — обычными страницами. Не собрались — блог
+  // и карта сайта всё равно выходят.
+  try {
+    const help = buildHelpPages({ out, today });
+    urls.push(...help.urls);
+    log.log?.(`справка: инструкция ${help.guide} статей, частых вопросов ${help.faq}`);
+  } catch (e) {
+    warn(`инструкция и частые вопросы не собрались: ${e.message}`);
+  }
   const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 ${urls.map((u) => `<url><loc>${esc(u.loc)}</loc><lastmod>${u.lastmod}</lastmod><priority>${u.priority}</priority></url>`).join('\n')}
