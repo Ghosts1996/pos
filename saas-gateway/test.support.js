@@ -1037,11 +1037,12 @@ test("автообучение: без ответа человека и без �
 test("тема: понятно, кто пишет; ответ сотрудника — 👍 и кнопки под ним; документы в кабинет — ссылкой", async () => {
   const h = harness();
   await setup(h);
-  await h.bot.handleUpdate(pm("Не печатает чек"));
+  // Вопрос без готового шаблона — отвечает ИИ.
+  await h.bot.handleUpdate(pm("Касса не видит сканер штрихкодов"));
   await h.bot.idle();
   const [t] = tickets(h.store);
   const group = h.calls.filter((c) => c.method === "sendMessage" && Number(c.body.chat_id) === GROUP);
-  assert.ok(group.some((c) => /💬 <b>Клиент · Анна<\/b>\n<blockquote>Не печатает чек<\/blockquote>/.test(c.body.text)), "сообщение клиента не подписано");
+  assert.ok(group.some((c) => /💬 <b>Клиент · Анна<\/b>\n<blockquote>Касса не видит сканер штрихкодов<\/blockquote>/.test(c.body.text)), "сообщение клиента не подписано");
   assert.ok(group.some((c) => /🤖 <b>ИИ ответил клиенту<\/b>/.test(c.body.text) && /<blockquote expandable>/.test(c.body.text) && c.body.reply_markup), "ответ ИИ без кнопок");
   await h.bot.handleUpdate(inTopic("Проверьте бумагу", t.topicId));
   await h.bot.idle();
@@ -1519,7 +1520,7 @@ test("чат сайта: вошёл без заведения, менеджер 
     await h.bot.idle();
     return JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
   };
-  let p = await send({ text: "Как создать заведение?", consent: true, page: "Создание заведения", role: "account" }, "u1");
+  let p = await send({ text: "Я зарегистрировался, а заведения в кабинете нет — что дальше делать?", consent: true, page: "Создание заведения", role: "account" }, "u1");
   assert.ok(p.includes("вошёл в аккаунт, но заведения у него ещё нет"), "аккаунт без заведения");
   assert.ok(p.includes("раздел сайта: «Создание заведения»"));
   p = await send({ text: "Официант не видит вызовы гостей на телефоне", consent: true, role: "manager" }, "u2");
@@ -1574,10 +1575,11 @@ test("шаблоны: частый вопрос — ответ без ИИ; по
   await h.bot.handleUpdate(pm("опять не то", 43));
   await h.bot.idle();
   assert.strictEqual(h.store.get("supportTemplates/b_close-shift").status, "off");
-  const before = h.aiCalls.length;
   await h.bot.handleUpdate(pm("Как закрыть смену?", 44));
   await h.bot.idle();
-  assert.strictEqual(h.aiCalls.length, before + 1, "выключенный шаблон всё ещё отвечает");
+  // Выключенный шаблон молчит; ответит статья инструкции или ИИ.
+  assert.ok(!sends(h.calls, 44).some((c) => /Оставить на размен» на завтра/.test(c.body.text)), "выключенный шаблон всё ещё отвечает");
+  assert.ok(sends(h.calls, 44).length >= 1, "клиент остался без ответа");
 
   // «Спасибо» на шаблон засчитывается победой.
   await h.bot.handleUpdate(pm("Забыл пин код", 45));
@@ -1587,7 +1589,7 @@ test("шаблоны: частый вопрос — ответ без ИИ; по
   assert.strictEqual(tpl("b_forgot-pin").wins, 1);
 
   // Частичное совпадение — без прямого ответа, шаблон в подсказке ИИ.
-  await h.bot.handleUpdate(pm("Как поменять логотип в приложении гостя для сети?", 46));
+  await h.bot.handleUpdate(pm("Поменять логотип и цвета для сети заведений", 46));
   await h.bot.idle();
   const prompt = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
   assert.ok(prompt.includes("Проверенный шаблон ответа"), "нет подсказки-шаблона");
@@ -1646,7 +1648,7 @@ test("одна буква («Р») — без ИИ; после вопроса б
   const h2 = harness();
   await setup(h2);
   h2.aiReplies.push("Касса будет на Android или на Windows? Напишите «а» или «б».");
-  await h2.bot.handleUpdate(pm("Как поставить кассу?"));
+  await h2.bot.handleUpdate(pm("Хочу поставить кассу у себя в зале"));
   await h2.bot.idle();
   await h2.bot.handleUpdate(pm("а"));
   await h2.bot.idle();
@@ -1770,6 +1772,34 @@ test("«да спасибо», «благодарю вас», «спасибо, 
   await h.bot.handleUpdate(pm("Как собрать APK?", 92));
   await h.bot.idle();
   assert.strictEqual(h.aiCalls.length, 3);
+});
+
+test("без ИИ: подбор тарифа по числу сотрудников и точек, сравнение с другой программой, кнопки-подсказки, iPhone", async () => {
+  const P = "Тарифы сейчас:\nСтарт: 1 790 ₽/мес, 9 590 ₽/6 мес, 17 190 ₽/год; сотрудников до 5; ИИ нет; пробный период 7 дн.\nБизнес: 2 390 ₽/мес, 12 890 ₽/6 мес, 22 890 ₽/год; сотрудников до 10; ИИ есть; пробный период 7 дн.\nСеть (сеть): 2 590 ₽/мес, 13 890 ₽/6 мес, 24 790 ₽/год; каждая следующая точка 990 ₽/мес; сотрудников до 10; ИИ есть; пробный период 7 дн.\nПро: 3 490 ₽/мес, 18 790 ₽/6 мес, 33 490 ₽/год; сотрудников без ограничений; ИИ есть; приоритетная поддержка; пробный период 7 дн.";
+  assert.ok(/тариф \*\*Про\*\*/.test(sb.planAdvice("А если сотрудников 12", P)));
+  assert.ok(/тариф \*\*Старт\*\*/.test(sb.planAdvice("Одна точка, 4 сотрудника", P)));
+  assert.ok(/Для 2 точек.*\*\*Сеть\*\*/.test(sb.planAdvice("у нас 2 точки и 8 человек", P)) && /3\s580 ₽\/мес\*\* за 2 точки/.test(sb.planAdvice("у нас 2 точки и 8 человек", P)));
+  assert.strictEqual(sb.planAdvice("Как добавить 3 сотрудников", P), "");
+  assert.ok(/\*\*Бизнес\*\*/.test(sb.planAdvice("7", P, { askedStaff: true })));
+  assert.ok(sb.comparesWithOther("На сколько выгоднее и лучше чем r keeper") && !sb.comparesWithOther("Как выгрузить меню"));
+
+  const h = harness();
+  await setup(h);
+  for (const [q, id, re] of [
+    ["На сколько выгоднее и лучше чем r keeper", 61, /Другие программы я не оцениваю/],
+    ["Демо без регистрации", 62, /Демо/],
+    ["Могу ли я на Афон 16 про установить приложение кассы", 63, /Кассы для iPhone, iPad и Mac нет/],
+    ["Это точно не обман?", 64, /публичной оферте/],
+    // Статья инструкции кабинета — тоже готовый ответ.
+    ["Как открыть стол", 65, /^1\. /m],
+  ]) {
+    await h.bot.handleUpdate(pm(q, id));
+    await h.bot.idle();
+    assert.ok(sends(h.calls, id).some((c) => re.test(c.body.text)), q);
+  }
+  assert.strictEqual(h.aiCalls.length, 0, "потрачены токены на готовые ответы");
+  const out = sends(h.calls, 61).map((c) => c.body.text).join("\n");
+  assert.ok(!/keeper|кипер/i.test(out), "в ответе назван конкурент");
 });
 
 (async () => {

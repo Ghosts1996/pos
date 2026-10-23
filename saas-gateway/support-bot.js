@@ -33,7 +33,10 @@
  * supportMemory/{tenantId | tg:<id>}.
  */
 const crypto = require("crypto");
-const { TEMPLATES } = require("./support-templates");
+const { TEMPLATES: BASE_TEMPLATES } = require("./support-templates");
+const { MORE_TEMPLATES } = require("./support-templates-more");
+// Встроенные шаблоны: основные и дополнительные (одинаковые id — побеждает основной).
+const TEMPLATES = [...BASE_TEMPLATES, ...MORE_TEMPLATES.filter((m) => !BASE_TEMPLATES.some((b) => b.id === m.id))];
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
@@ -199,7 +202,7 @@ const UNHAPPY = /(не то|не так|не понял|не поняла|неп
 // во внутренних знаниях есть ответ: правила меняются.
 const NEWSY = /(закон|фз|постановлени|штраф|налог|фнс|роскомнадзор|роспотреб|санпин|лицензи|нов(ые|ое|ая) правил|с 20\d\d|изменени|актуальн|сколько стоит|цен[аы] |где купить)/;
 // Вопрос про внешний мир — повод заглянуть в интернет.
-const EXTERNAL = /(закон|фз|постановлени|штраф|налог|фнс|налогов|nalog|офд|егаис|честн|маркировк|роскомнадзор|роспотреб|санпин|меркурий|лицензи|банк|сбер|т-банк|тинькофф|альфа|втб|эквайринг|терминал|атол|orangedata|ferma|эвотор|evotor|штрих|принтер|сканер|драйвер|модел[ья]|цен[аы]|стоимост|сколько стоит|где купить|купить|сайт|ссылк|актуальн|нов(ые|ое) правил|с 20\d\d|изменени|код ошибки|ошибка \d|error|госуслуг|кэп|эцп|рутокен|окв[эе]д|ип |ооо )/;
+const EXTERNAL = /((выгруз|экспорт|перенос|перенест|перейти)[а-я]* (из|с|со) [а-яa-z]|фз|постановлени|штраф|налог|фнс|налогов|nalog|офд|егаис|честн|маркировк|роскомнадзор|роспотреб|санпин|меркурий|лицензи|банк|сбер|т-банк|тинькофф|альфа|втб|эквайринг|терминал|атол|orangedata|ferma|эвотор|evotor|штрих|принтер|сканер|драйвер|модел[ья]|цен[аы]|стоимост|сколько стоит|где купить|купить|сайт|ссылк|актуальн|нов(ые|ое) правил|с 20\d\d|изменени|код ошибки|ошибка \d|error|госуслуг|кэп|эцп|рутокен|окв[эе]д|ип |ооо )/;
 
 // Клиент зовёт именно бота: «бот, помоги», «ИИ ответь», «пусть ответит бот»,
 // «нет, бот». Просто слово «бот» (Telegram-бот заведения не работает) — не зов.
@@ -477,6 +480,7 @@ const STOP = new Set(("как что это для где мне нет при �
 
 // Как клиенты пишут названия по-русски — к одному слову с базой знаний.
 const SYNONYMS = [
+  [/(?<![а-я])(зал ?пос|залпос)(?![а-я])/g, "zalpos"], [/(?<![а-я])афон[а-я]*/g, "iphone"], [/(?<![а-я])зп(?![а-я])/g, "зарплата"],
   [/айфон[а-я]*/g, "iphone"], [/айпад[а-я]*/g, "ipad"], [/андро[и]?й?д[а-я]*/g, "android"], [/(виндовс|винд[аоуеы])[а-я]*/g, "windows"],
   [/(?<![а-я])апк(?![а-я])/g, "apk"], [/макбук[а-я]*|(?<![а-я])мак(?![а-я])/g, "mac"], [/(?<![а-я])сбп(?![а-я])/g, "сбп qr"],
   [/(?<![а-я])пин(?![а-я])|пин-код[а-я]*/g, "pin"], [/(?<![а-я])ркн(?![а-я])/g, "роскомнадзор"], [/(?<![а-я])пдн(?![а-я])/g, "персональные данные"],
@@ -537,9 +541,11 @@ const stripTags = (s) => String(s || "").replace(/<[^>]+>/g, "");
 // Совпадение вопроса с шаблоном (0…1): доля общих основ слов, взвешенных по
 // редкости, и с той, и с другой стороны. Уверенно — отвечаем шаблоном без
 // ИИ; частично — шаблон идёт ИИ подсказкой.
+// Ответ из инструкции — только при очень уверенном совпадении.
+const GUIDE_DIRECT = 0.78;
 // Выученное решение отвечает само при совпадении построже, чем шаблон.
 const LEARNED_DIRECT = 0.72;
-const TPL_DIRECT = 0.62;
+const TPL_DIRECT = 0.65;
 const TPL_MARGIN = 0.12;
 const TPL_HINT = 0.5;
 
@@ -579,6 +585,83 @@ function matchTemplate(question, index, { audience = "any", exclude = [] } = {})
   return { template: scored[0].t, score: scored[0].score, second: scored[1] ? scored[1].score : 0 };
 }
 
+/** Тарифы из «Тарифы сейчас»: [{ name, chain, month, half, year, extra, staff (0 — без ограничений), ai, priority }]. */
+function parsePlans(platform) {
+  const m = String(platform || "").match(/Тарифы сейчас:\n([\s\S]*?)(?:\n(?:Объявление|Сервер)|$)/);
+  if (!m) return [];
+  const rub = (re, l) => { const x = l.match(re); return x ? Number(x[1].replace(/\D/g, "")) : 0; };
+  return m[1].trim().split("\n").map((l) => {
+    const name = (l.match(/^([^:(]+?)(?: \(сеть\))?:/) || [])[1];
+    if (!name) return null;
+    const staff = /сотрудников без ограничений/.test(l) ? 0 : Number((l.match(/сотрудников до (\d+)/) || [])[1]) || 0;
+    return {
+      name: name.trim(), chain: /\(сеть\):/.test(l), staff, ai: /ИИ есть/.test(l), priority: /приоритетная поддержка/.test(l),
+      month: rub(/: ([\d\s ]+) ₽\/мес/, l), half: rub(/([\d\s ]+) ₽\/6 мес/, l), year: rub(/([\d\s ]+) ₽\/год/, l),
+      extra: rub(/следующая точка ([\d\s ]+) ₽\/мес/, l),
+    };
+  }).filter(Boolean);
+}
+
+const WORD_NUM = { один: 1, одна: 1, одну: 1, два: 2, две: 2, три: 3, четыре: 4, пять: 5, шесть: 6, семь: 7, восемь: 8, девять: 9, десять: 10 };
+/** Сколько сотрудников и точек назвал клиент: { staff, points } (0 — не назвал). */
+function countsFrom(text) {
+  const t = norm(text).replace(/(\d+)\s*-?\s*(х|ти|ть|ми|и|ро|ре|е)(?![а-я])/g, "$1");
+  const num = (w) => (/^\d+$/.test(w) ? Number(w) : WORD_NUM[w] || 0);
+  const N = "(\\d{1,3}|один|одна|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять)";
+  const staffRe = [new RegExp(`${N}\\s+(?:[а-я]+\\s+)?(сотрудник|человек|работник|официант|кальянщик|повар|бармен|чел(?![а-я]))`), new RegExp(`(сотрудник[а-я]*|человек|работник[а-я]*)\\s+(?:будет\\s+|у нас\\s+|всего\\s+)?${N}(?![а-я\\d])`)];
+  const pointRe = [new RegExp(`${N}\\s+(точ|заведени|кафе|филиал|ресторан|кофейн|кальянн|бар(?![а-я]))`), new RegExp(`(точ[а-я]*|заведени[а-я]*|филиал[а-я]*)\\s+(?:будет\\s+|у нас\\s+|всего\\s+)?${N}(?![а-я\\d])`)];
+  const pick = (res) => { for (const re of res) { const m = t.match(re); if (m) return num(/^\d+$|^[а-я]+$/.test(m[1]) && num(m[1]) ? m[1] : m[2]); } return 0; };
+  return { staff: pick(staffRe), points: pick(pointRe) };
+}
+
+/** Совет по тарифу без ИИ: «А если сотрудников 12», «у нас 2 точки и 8 человек». */
+function planAdvice(question, platform, { askedStaff = false } = {}) {
+  const q = norm(question);
+  if (q.length > 140 || /добав|удал|как (завести|внести)|пин|зарплат|смен/.test(q)) return "";
+  let { staff, points } = countsFrom(question);
+  if (!staff && askedStaff && /^\d{1,3}$/.test(q.replace(/[^\d]/g, "")) && q.replace(/[\d\s.!?]/g, "").length <= 12) staff = Number(q.replace(/\D/g, ""));
+  if (!staff || staff > 500) return "";
+  const plans = parsePlans(platform);
+  if (!plans.length) return "";
+  const wantAi = /(?<![а-я])(ии|ai|нейросет|искусствен)/.test(q);
+  const chain = (points || 1) >= 2;
+  const fit = plans.filter((p) => p.chain === chain && (!p.staff || p.staff >= staff) && (!wantAi || p.ai)).sort((a, b) => a.month - b.month)[0];
+  if (!fit) return "";
+  const rub = (v) => `${Math.round(v).toLocaleString("ru-RU")} ₽`;
+  // «для 2 точек» (родительный), «за 2 точки» (винительный).
+  const gen = (n) => (n % 10 === 1 && n % 100 !== 11 ? "точки" : "точек");
+  const acc = (n) => (n % 10 === 1 && n % 100 !== 11 ? "точку" : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? "точки" : "точек");
+  const where = chain ? `${points} ${gen(points)} и до ${staff} ${staff % 10 === 1 && staff % 100 !== 11 ? "сотрудника" : "сотрудников"} на точке` : `одной точки и ${staff} ${staff % 10 === 1 && staff % 100 !== 11 ? "сотрудника" : "сотрудников"}`;
+  const lines = [`Для ${where} подойдёт тариф **${fit.name}**: ${fit.staff ? `до ${fit.staff} сотрудников на точке` : "сотрудники без ограничений"}${fit.ai ? ", ИИ-помощники включены" : ""}${fit.priority ? ", приоритетная поддержка" : ""}.`, ""];
+  if (chain && fit.extra) {
+    const total = fit.month + fit.extra * (points - 1);
+    lines.push(`Цена: **${rub(fit.month)}/мес** за первую точку + **${rub(fit.extra)}/мес** за каждую следующую — итого **${rub(total)}/мес** за ${points} ${acc(points)}.`);
+  } else {
+    lines.push(`Цена: **${rub(fit.month)}/мес**${fit.half ? `, **${rub(fit.half)}** за 6 месяцев` : ""}${fit.year ? ` или **${rub(fit.year)}** за год` : ""}.`);
+  }
+  const bigger = plans.filter((p) => p.chain === chain && p.month > fit.month && (!p.staff || p.staff > (fit.staff || Infinity))).sort((a, b) => a.month - b.month)[0];
+  if (fit.staff && staff >= fit.staff - 1 && bigger) lines.push(`Вы почти у лимита — с запасом на сезон и подмены подойдёт **${bigger.name}** (${bigger.staff ? `до ${bigger.staff}` : "без ограничений"}).`);
+  lines.push("", "Попробовать можно 7 дней бесплатно, карта не нужна: zalpos.ru → **Попробовать бесплатно**.");
+  return lines.join("\n");
+}
+
+// Названия других программ — только чтобы понять, что клиент просит
+// сравнение. В ответах бот их не называет (38-ФЗ, 135-ФЗ).
+const OTHER_POS = /(iiko|айко|r[_ -]?keeper|р[_ -]?кипер|кипер|keeper|quick ?resto|квик ?ресто|poster|постер|saby|саби|сбис|эвотор|evotor|frontpad|фронтпад|restik|рестик|tillypad|тилипад|litebox|лайтбокс|paloma|палома|jowi|джови|1с[: ]?общепит|мойсклад|контур\.?маркет|starter|стартер)/;
+const COMPARE = /(лучше|выгодн|дешевл|дороже|сравн|отлича|чем у|чем в|vs|против|вместо|чем ваш|а не)/;
+/** «Чем вы лучше iiko», «насколько выгоднее r_keeper» — сравнение с другой программой. */
+const comparesWithOther = (text) => { const t = norm(text); return OTHER_POS.test(t) && COMPARE.test(t); };
+
+// Кнопки-подсказки окна чата: нажатие — сразу готовый ответ, без ИИ.
+const CHIP_TEMPLATES = {
+  "сколько стоит?": "price", "какой тариф мне подойдёт?": "plan-pick", "почему zalpos?": "why", "демо без регистрации": "demo",
+  "как начать работу?": "start", "как создать заведение?": "start", "с чего начать настройку?": "start", "как поставить кассу?": "install-android",
+  "подключить онлайн-кассу": "kassa-which", "оплата картой и сбп": "acquiring", "склад и рецепты": "recipes", "принтеры и бегунки": "printers",
+  "как закрыть смену?": "close-shift", "как провести инвентаризацию?": "inventory", "забыли pin": "forgot-pin",
+  "как поставить кассу на планшет?": "install-android", "как сменить логотип и цвета?": "branding", "как оплатить по счёту для ип?": "pay-legal",
+  "как добавить сотрудника?": "staff-pin", "как подключить ии-помощника?": "ai-key", "как подключить telegram-бота?": "telegram-bot",
+};
+
 /** «Тарифы сейчас» из состояния платформы — для {{plans}} в шаблоне. */
 function plansFrom(platform) {
   const m = String(platform || "").match(/Тарифы сейчас:\n([\s\S]*?)(?:\n(?:Объявление|Сервер)|$)/);
@@ -603,8 +686,43 @@ function faqDocs(src) {
   } catch (_) {
     return [];
   }
-  return (Array.isArray(items) ? items : []).filter((x) => x && x.q && x.a)
-    .map((x, i) => indexDoc({ id: `faq:${i}`, kind: "faq", title: `Частый вопрос: ${x.q}`, text: String(x.a) }));
+  const list = (Array.isArray(items) ? items : []).filter((x) => x && x.q && x.a);
+  const docs = list.map((x, i) => indexDoc({ id: `faq:${i}`, kind: "faq", title: `Частый вопрос: ${x.q}`, text: String(x.a) }));
+  docs.items = list;
+  return docs;
+}
+
+/** Кнопки в тексте инструкции — «Сохранить» → **Сохранить**, как в ответах бота. */
+const boldButtons = (t) => stripTags(String(t || "")).replace(/«([^«»\n]{1,40})»/g, "**$1**");
+const lowerFirst = (t) => (t ? t[0].toLowerCase() + t.slice(1) : t);
+
+/** Статьи и частые вопросы инструкции → готовые ответы без ИИ. Отвечают
+ *  только при очень уверенном совпадении (GUIDE_DIRECT): инструкция общая,
+ *  а не про конкретное заведение. */
+function guideTemplates(guide, faqItems = []) {
+  const out = [];
+  for (const sec of Array.isArray(guide) ? guide : []) {
+    (sec.items || []).forEach((it, i) => {
+      if (!it.title || !(it.steps || []).length) return;
+      const steps = it.steps.slice(0, 8).map((st, j) => `${j + 1}. ${boldButtons(st)}`);
+      const a = [
+        it.where ? `Где: **${stripTags(it.where).replace(/ · /g, "** · **")}**` : "",
+        it.intro ? boldButtons(it.intro) : "",
+        "",
+        ...steps,
+        (it.tips || [])[0] ? `\n${boldButtons(it.tips[0])}` : "",
+      ].filter((x, k) => x || k === 2).join("\n").replace(/^\n+/, "").trim();
+      const title = stripTags(it.title);
+      out.push({ id: `g_${sec.id}_${i}`, q: [title, `Как ${lowerFirst(title)}`, `${title} как настроить`], a, audience: "any", direct: true, status: "active", source: "guide" });
+      (it.faq || []).forEach(([fq, fa], k) => {
+        if (fq && fa) out.push({ id: `gf_${sec.id}_${i}_${k}`, q: [stripTags(fq)], a: boldButtons(fa), audience: "any", direct: true, status: "active", source: "guide" });
+      });
+    });
+  }
+  faqItems.forEach((x, i) => {
+    if (x && x.q && x.a) out.push({ id: `cf_${i}`, q: [String(x.q)], a: String(x.a), audience: "any", direct: true, status: "active", source: "guide" });
+  });
+  return out;
 }
 
 /** Статьи инструкции кабинета (saas/console/guide.js) → документы поиска. */
@@ -696,6 +814,7 @@ const SYSTEM_PROMPT = [
   "",
   "## 5в. «Почему ZalPOS» — только законно",
   "- На «почему вы», «чем вы лучше», «почему не другие» отвечай фактами о ZalPOS из статьи «Почему ZalPOS» и тарифов: что входит, сколько стоит, что не берём, как начать. 3–5 пунктов под вопрос клиента, затем предложи пробный период или демо.",
+  "- Клиент спрашивает, как выгрузить данные из своей прежней программы, — это не сравнение: можно назвать её и дать шаги по её официальной справке (раздел «Из интернета»), без оценок.",
   "- Не называй и не упоминай другие компании и программы, не сравнивай с ними и не оценивай их («у других дороже», «у них нет»). Клиент сам назвал конкурента — не обсуждай его: скажи, что рассказываешь только о ZalPOS, и дай факты. Так требуют закон «О рекламе» (ст. 5 38-ФЗ: некорректное сравнение, недостоверное превосходство) и закон «О защите конкуренции» (ст. 14.1, 14.3 135-ФЗ).",
   "- Без превосходных степеней и обещаний без подтверждения: нельзя «лучший», «самый дешёвый», «№1», «единственный», «гарантируем рост выручки». Можно проверяемое: «процент с продаж не берём», «приложение гостя входит в тариф», «устройства не ограничены», «7 дней бесплатно без карты».",
   "- Не дави и не торопи. Не знаешь, подойдёт ли, — честно скажи, что проверить проще всего в демо или пробном периоде.",
@@ -1103,6 +1222,7 @@ function createSupportBot(deps) {
    *  кабинета кладёт update-server.sh в kb/; в репозитории — рядом. */
   async function loadGuide() {
     let guide = [];
+    let guideRaw = [];
     const guideFiles = [deps.guidePath, path.join(__dirname, "kb", "guide.mjs"), path.join(__dirname, "..", "saas", "console", "guide.js")].filter(Boolean);
     for (const file of guideFiles) {
       try {
@@ -1110,6 +1230,7 @@ function createSupportBot(deps) {
         const src = fs.readFileSync(file, "utf8");
         const mod = await import(`data:text/javascript;base64,${Buffer.from(src).toString("base64")}`);
         guide = guideDocs(mod.GUIDE);
+        guideRaw = mod.GUIDE;
         break;
       } catch (e) {
         console.error(`support-bot: инструкция ${file}: ${e.message || e}`);
@@ -1124,6 +1245,8 @@ function createSupportBot(deps) {
       } catch (_) {}
     }
     state.guide = [...guide, ...kbDocs(), ...faq];
+    state.guideTpls = guideTemplates(guideRaw, faq.items || []);
+    if (state.templates) await loadTemplates().catch(() => {});
     state.knowledgeAt = now();
     await loadCode();
     return state.guide.length;
@@ -1188,8 +1311,13 @@ function createSupportBot(deps) {
       const o = over.get(`b_${t.id}`) || {};
       return { ...t, id: `b_${t.id}`, source: "builtin", status: o.status || "active", wins: Number(o.wins) || 0, fails: Number(o.fails) || 0 };
     });
+    // Ответы из инструкции — после встроенных; выключенные сотрудниками помним по отметке в базе.
+    for (const g of state.guideTpls || []) {
+      const o = over.get(g.id) || docs.find((d) => d.id === g.id) || {};
+      list.push({ ...g, status: o.status || "active", wins: Number(o.wins) || 0, fails: Number(o.fails) || 0 });
+    }
     for (const d of docs) {
-      if (d.source === "builtin" || !Array.isArray(d.q) || !d.q.length || !d.a) continue;
+      if (d.source === "builtin" || d.source === "guide" || !Array.isArray(d.q) || !d.q.length || !d.a) continue;
       list.push({ id: d.id, q: d.q, a: d.a, audience: d.audience || "any", direct: d.direct !== false, source: d.source || "auto", status: d.status || "candidate", wins: Number(d.wins) || 0, fails: Number(d.fails) || 0 });
     }
     state.templates = tplIndex(list);
@@ -1202,14 +1330,14 @@ function createSupportBot(deps) {
     if (!t) return;
     t[field] = (Number(t[field]) || 0) + 1;
     quiet(templatesCol().doc(id).set({
-      ...(t.source === "builtin" ? { source: "builtin" } : {}),
+      ...(t.source === "builtin" || t.source === "guide" ? { source: t.source } : {}),
       [field]: admin.firestore.FieldValue.increment(1), lastAt: ts(now()), ...extra,
     }, { merge: true }), "шаблон");
   }
   async function tplStatus(id, status) {
     const t = tplById(id);
     if (t) t.status = status;
-    await templatesCol().doc(id).set({ ...(t && t.source === "builtin" ? { source: "builtin" } : {}), status, statusAt: ts(now()) }, { merge: true });
+    await templatesCol().doc(id).set({ ...(t && (t.source === "builtin" || t.source === "guide") ? { source: t.source } : {}), status, statusAt: ts(now()) }, { merge: true });
   }
 
   // ---- объявления платформы (кабинет → «Объявления»): бот знает действующие
@@ -1825,14 +1953,43 @@ function createSupportBot(deps) {
     // Частый вопрос — готовым проверенным ответом, без ИИ (ноль токенов).
     const audience = t.channel === "site" ? "site" : t.channel === "telegram" ? "any" : "cabinet";
     const tplPlans = plansFrom(await platformStatus().catch(() => ""));
-    const tplMatch = !imagesNow && !afterSoft && question.length >= 6 && question.length <= 240
-      && kinds.filter((k) => !k).length === 1
-      ? matchTemplate(question, state.templates, { audience, exclude: lastTpl ? [lastTpl] : [] }) : null;
     const tplFill = (a) => a.replace("{{plans}}", tplPlans || "");
+    // Кнопка-подсказка или сравнение с другой программой — сразу готовый ответ.
+    const forced = !imagesNow && fresh.length === 1
+      ? (CHIP_TEMPLATES[norm(question).replace(/ё/g, "е")] || CHIP_TEMPLATES[norm(question)] || (comparesWithOther(question) ? "compare" : ""))
+      : "";
+    const forcedTpl = forced ? tplById(forced.startsWith("b_") ? forced : `b_${forced}`) : null;
+    // Тарифы в таком ответе — дополнение: нет данных о ценах — ответ без них (кроме самого «Сколько стоит?»).
+    if (forcedTpl && forcedTpl.status !== "off" && (forced !== "price" || tplPlans)) {
+      const reply = parseAiReply(tplFill(forcedTpl.a).trim());
+      await deliver(t, reply.text, { html: mdToHtml(reply.md), md: reply.md });
+      await patch(t, { lastTemplate: forcedTpl.id, lastTemplateAt: ts(now()), tplReplies: (Number(t.tplReplies) || 0) + 1 });
+      tplCount(forcedTpl.id, "uses");
+      countTpl();
+      await movePanel(t, await toTopicHtml(t, `📋 <b>Ответ по шаблону</b> <i>· без ИИ</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>`));
+      return;
+    }
+    // Готовый ответ — только на вопрос хотя бы из двух значимых слов: «Как настроить?» слишком общий.
+    const meaningful = new Set(stems(question).filter((w) => w[0] !== "~")).size;
+    const tplMatch = !imagesNow && !afterSoft && question.length >= 6 && question.length <= 240
+      && kinds.filter((k) => !k).length === 1 && meaningful >= 2
+      ? matchTemplate(question, state.templates, { audience, exclude: lastTpl ? [lastTpl] : [] }) : null;
+    // Подбор тарифа по числу сотрудников и точек — расчётом, без ИИ.
+    const advice = !imagesNow
+      ? planAdvice(question, await platformStatus().catch(() => ""), { askedStaff: !!(prevBot && /сотрудник/i.test(String(prevBot.text || "").slice(-300)) && askedBack) })
+      : "";
+    if (advice && !UNHAPPY.test(norm(question))) {
+      const reply = parseAiReply(advice);
+      await deliver(t, reply.text, { html: mdToHtml(reply.md), md: reply.md });
+      countTpl();
+      await movePanel(t, await toTopicHtml(t, `🧮 <b>Подбор тарифа</b> <i>· без ИИ</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>`));
+      return;
+    }
     // Вопрос про действующее объявление (акцию) — отвечает ИИ по его тексту, не шаблон.
     const newsHit = rankDocs(question, state.news, 1, 3).length > 0;
+    const guideTpl = tplMatch && tplMatch.template.source === "guide";
     if (tplMatch && tplMatch.template.status === "active" && tplMatch.template.direct
-      && tplMatch.score >= TPL_DIRECT && tplMatch.score - tplMatch.second >= TPL_MARGIN
+      && tplMatch.score >= (guideTpl ? GUIDE_DIRECT : TPL_DIRECT) && tplMatch.score - tplMatch.second >= (guideTpl ? 0.15 : TPL_MARGIN)
       && !askedBack && !newsHit && !UNHAPPY.test(norm(question)) && !isUrgent(question)
       && !deceitSignals(question).length && !suspiciousLinks(question).length
       && (!tplMatch.template.a.includes("{{plans}}") || tplPlans)) {
@@ -1849,7 +2006,7 @@ function createSupportBot(deps) {
       return;
     }
     // Проверенное решение из базы — тоже без ИИ, но с порогом построже.
-    const lrnMatch = !imagesNow && !afterSoft && !askedBack && !newsHit && question.length >= 8 && question.length <= 240
+    const lrnMatch = !imagesNow && !afterSoft && !askedBack && !newsHit && meaningful >= 2 && question.length >= 8 && question.length <= 240
       && kinds.filter((k) => !k).length === 1 && state.learnedTpl
       ? matchTemplate(question, state.learnedTpl, { audience }) : null;
     if (lrnMatch && lrnMatch.score >= LEARNED_DIRECT && lrnMatch.score - lrnMatch.second >= TPL_MARGIN
@@ -4062,6 +4219,6 @@ function createSupportBot(deps) {
 }
 
 module.exports = {
-  createSupportBot, matchTemplate, tplIndex, plansFrom, parseStaff, topicLink, topicKeyboard, humanTrigger, aiCall, gibberish, noiseKind, isUrgent, smallTalk, secretKinds, maskSecrets, scrubPii, parseAiReply, plain,
+  createSupportBot, matchTemplate, planAdvice, comparesWithOther, CHIP_TEMPLATES, guideTemplates, parsePlans, countsFrom, tplIndex, plansFrom, parseStaff, topicLink, topicKeyboard, humanTrigger, aiCall, gibberish, noiseKind, isUrgent, smallTalk, secretKinds, maskSecrets, scrubPii, parseAiReply, plain,
   boldUi, stems, rankDocs, indexDoc, guideDocs, faqDocs, buildMessages, guardReply, mdToHtml, deceitSignals, suspiciousLinks, neutralize, promisesSomething, venueCard, venueBrief, venueIssues, fmtDate, fmtWhen, aiPaused, topicTitle, siteWho, splitText, HOOK_ID, SYSTEM_PROMPT,
 };
