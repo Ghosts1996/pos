@@ -5,7 +5,9 @@ import '../models/cash_op.dart';
 import '../models/employee.dart';
 import '../models/session_model.dart';
 import '../models/shift_model.dart';
+import '../services/atol_local_kassa.dart';
 import '../services/firestore_service.dart';
+import '../services/kassa_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/human_error.dart';
 import '../utils/money.dart';
@@ -29,11 +31,21 @@ Future<bool> closeShiftWithCashCount(BuildContext context, {required ShiftModel 
   final cash = choice.cash;
   try {
     await fs.closeShift(shift.id, employee.name, employeeId: employee.id, cash: cash);
+    // Регистратор в заведении — закрываем смену и на нём (Z-отчёт ККТ):
+    // иначе через 24 часа он перестанет пробивать чеки. Облачную кассу
+    // закрывает провайдер сам.
+    final kkt = kassaService;
+    String fiscalNote = '';
+    if (kkt is AtolLocalKassaService && kkt.isAvailable) {
+      final f = await kkt.closeShift(uuid: 'z-${shift.id}');
+      await fs.saveZFiscal(shift.id, f).catchError((Object _) {});
+      fiscalNote = f.ok ? ' · смена на ККТ закрыта' : ' · ККТ: ${f.error}. Повторите в Админ → Z-отчёт';
+    }
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(cash != null && cash.collect > 0
+        content: Text('${cash != null && cash.collect > 0
             ? 'Смена закрыта · инкассация ${rub(cash.collect)}, на размен ${rub(cash.leave)}'
-            : 'Смена закрыта'),
+            : 'Смена закрыта'}$fiscalNote'),
       ));
     }
     return true;

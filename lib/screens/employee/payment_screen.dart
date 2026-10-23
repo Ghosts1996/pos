@@ -267,7 +267,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
     // Гость из приложения, сидящий за этим чеком, — нужен для
     // бонусов и реферальной программы. Если приложения у гостя нет,
     // панель бонусов просто предложит найти его по телефону.
-    GuestLinkService().findBySession(widget.session.id).then((profile) {
+    // Переоткрытый чек: гость уже ушёл от стола, но кешбэк и бонусы — его.
+    final link = GuestLinkService();
+    link.findBySession(widget.session.id).then((found) async => found ??
+        (widget.session.loyaltyClientUid.isEmpty ? null : await link.profileOnce(widget.session.loyaltyClientUid))).then((profile) {
       if (profile == null || !mounted) return;
       setState(() {
         _clientUid = profile.uid;

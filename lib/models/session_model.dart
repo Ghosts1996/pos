@@ -495,6 +495,18 @@ class SessionModel {
   /// нет: они не считаются ни в приход, ни в расход наличных.
   final bool refundCashOut;
 
+  // ---- Переоткрытие (Админ → «Чеки», см. ReopenCheck) ----
+  /// Этот чек переоткрыли: по нему оформлен возврат, позиции перенесены в
+  /// новый чек [reopenedTo]. Пусто — обычный чек.
+  final String reopenedTo;
+
+  /// Чек создан переоткрытием чека [reopenedFrom].
+  final String reopenedFrom;
+
+  /// Гость из приложения, которому начислялся кешбэк за этот чек. В
+  /// переоткрытом чеке — тот же гость: при новой оплате бонусы вернутся ему.
+  final String loyaltyClientUid;
+
   SessionModel({
     required this.id,
     required this.tableId,
@@ -544,6 +556,9 @@ class SessionModel {
     this.refunded = false,
     this.refundedAt,
     this.refundCashOut = false,
+    this.reopenedTo = '',
+    this.reopenedFrom = '',
+    this.loyaltyClientUid = '',
   }) : _guestContact = guestContact, _employeeName = employeeName, _customerPhone = customerPhone, _deliveryAddress = deliveryAddress, _courierName = courierName, _courierPhone = courierPhone, _customerName = customerName, _deliveryComment = deliveryComment;
 
   factory SessionModel.fromDoc(DocumentSnapshot doc) {
@@ -604,6 +619,9 @@ class SessionModel {
       refunded: data['refunded'] ?? false,
       refundedAt: data['refundedAt'] != null ? (data['refundedAt'] as Timestamp).toDate() : null,
       refundCashOut: data['refundCashOut'] == true,
+      reopenedTo: asText(data['reopenedTo']),
+      reopenedFrom: asText(data['reopenedFrom']),
+      loyaltyClientUid: asText(data['loyaltyClientUid']),
     );
   }
 

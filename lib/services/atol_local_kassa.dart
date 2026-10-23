@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:http/http.dart' as http;
 
 import '../models/fiscal_receipt.dart';
+import '../utils/z_report.dart';
 import 'kassa_service.dart';
 
 /// Фискальный регистратор АТОЛ, который стоит в заведении, — через
@@ -196,6 +197,48 @@ class AtolLocalKassaService implements KassaService {
             'Регистратор АТОЛ не отвечает по адресу $baseUrl — проверьте, что он включён и веб-сервер запущен');
       }
       return FiscalReceiptResult.failure('Ошибка обмена с регистратором: $e');
+    }
+  }
+
+  /// Отчёт о закрытии смены на регистраторе (Z-отчёт ККТ). Регистратор
+  /// печатает его сам и отправляет в ОФД. Смена уже закрыта — тоже успех:
+  /// закрывать нечего.
+  Future<ZFiscal> closeShift({String uuid = ''}) async {
+    if (!isAvailable) return const ZFiscal(ok: false, error: 'Не указан адрес веб-сервера АТОЛ');
+    final id = uuid.isEmpty ? 'z-${DateTime.now().millisecondsSinceEpoch}' : uuid;
+    try {
+      final resp = await _post(id, {
+        'type': 'closeShift',
+        if (cashierName.isNotEmpty) 'operator': {'name': cashierName, if (cashierInn.isNotEmpty) 'vatin': cashierInn},
+      });
+      if (resp.statusCode != 201 && resp.statusCode != 200 && resp.statusCode != 409) {
+        return ZFiscal(ok: false, error: 'Веб-сервер АТОЛ не принял задание (HTTP ${resp.statusCode})');
+      }
+      final r = await _waitResult(id);
+      if (r == null) return const ZFiscal(ok: false, error: 'Регистратор не ответил. Проверьте, что он включён, и повторите');
+      if (r['status'] == 'error') {
+        final text = _error(r);
+        // «Смена закрыта» — Z на ККТ уже снят (или чеков в смене не было).
+        if (RegExp(r'смена закрыта|shift.*closed', caseSensitive: false).hasMatch(text)) {
+          return const ZFiscal(ok: true, error: 'смена на ККТ уже была закрыта');
+        }
+        return ZFiscal(ok: false, error: 'Регистратор отказал: $text');
+      }
+      final result = r['result'];
+      final fp = result is Map && result['fiscalParams'] is Map ? result['fiscalParams'] as Map : const {};
+      return ZFiscal(
+        ok: true,
+        shiftNumber: (fp['shiftNumber'] as num?)?.toInt() ?? 0,
+        documentNumber: fp['fiscalDocumentNumber']?.toString() ?? '',
+        fiscalSign: fp['fiscalDocumentSign']?.toString() ?? '',
+        fnNumber: fp['fnNumber']?.toString() ?? '',
+      );
+    } catch (e) {
+      return ZFiscal(
+          ok: false,
+          error: isNetworkError(e)
+              ? 'Регистратор АТОЛ не отвечает по адресу $baseUrl'
+              : 'Ошибка обмена с регистратором: $e');
     }
   }
 

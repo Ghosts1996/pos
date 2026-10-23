@@ -369,8 +369,15 @@ class _XReportScreenState extends State<XReportScreen> {
                           ],
                           if (refunded.isNotEmpty) ...[
                             const Divider(height: 24),
-                            _countRow('Возвратов за период', refunded.length),
-                            _totalRow('Сумма возвратов', refunded.fold(0.0, (s, e) => s + e.totalWithDiscount)),
+                            // Переоткрытый чек — тоже возврат, но деньги не
+                            // уходили гостю: они пришли исправленным чеком.
+                            if (refunded.any((e) => e.reopenedTo.isEmpty)) ...[
+                              _countRow('Возвратов за период', refunded.where((e) => e.reopenedTo.isEmpty).length),
+                              _totalRow('Сумма возвратов',
+                                  refunded.where((e) => e.reopenedTo.isEmpty).fold(0.0, (s, e) => s + e.totalWithDiscount)),
+                            ],
+                            if (refunded.any((e) => e.reopenedTo.isNotEmpty))
+                              _countRow('Переоткрыто и исправлено чеков', refunded.where((e) => e.reopenedTo.isNotEmpty).length),
                           ],
                           // Сама касса — инкассация, внесение, выплата,
                           // операции и пересчёты — на отдельном экране «Касса».

@@ -38,6 +38,8 @@ import '../utils/guest_items.dart';
 import '../utils/loyalty_refund.dart';
 import '../utils/recipe_math.dart';
 import '../utils/checkout_checks.dart';
+import '../utils/reopen_check.dart';
+import '../utils/z_report.dart';
 import '../utils/streams.dart';
 import '../models/client_models.dart';
 import 'guest_link_service.dart';
@@ -1314,14 +1316,14 @@ class FirestoreService {
 
   /// Вернуть на склад продукты по возвращённому чеку — если товар вернулся
   /// целым (закрытая бутылка, банка). Повторно не возвращает.
-  Future<int> restockRefundedSession(String sessionId, {String employeeName = ''}) async {
+  Future<int> restockRefundedSession(String sessionId, {String employeeName = '', String reason = 'Возврат чека'}) async {
     final ref = AppScope.col('sessions').doc(sessionId);
     final snap = await ref.get();
     final data = snap.data();
     if (data == null || data['refunded'] != true || data['refundRestocked'] == true) return 0;
     await ref.update({'refundRestocked': true});
     final s = SessionModel.fromDoc(snap);
-    return _applyDraws(s.orderItems, employeeName, sign: 1, type: 'refund', reason: 'Возврат чека');
+    return _applyDraws(s.orderItems, employeeName, sign: 1, type: 'refund', reason: reason);
   }
 
   /// Отменили позицию, которую уже приготовили: продукты потрачены —
@@ -1542,6 +1544,77 @@ class FirestoreService {
     }
   }
 
+  /// Переоткрыть закрытый чек стола (Админ → «Чеки», см. [ReopenCheck]):
+  /// возврат по старому чеку и новый открытый чек того же стола с теми же
+  /// позициями, скидкой и гостем. Возвращает id нового чека.
+  ///
+  /// Склад: продукты старого чека возвращаются и спишутся заново при новой
+  /// оплате — по исправленному составу. Наличные: возврат записан расходом,
+  /// новая оплата придёт приходом, итог в кассе сходится. Бонусы: кешбэк
+  /// старого чека снят, потраченные бонусы вернулись гостю — при новой
+  /// оплате их можно списать и начислить снова.
+  Future<String> reopenSession(SessionModel s, {required String employeeName, String employeeId = ''}) async {
+    if (!NetStatus.online.value) {
+      throw StateError('Нет связи с интернетом. Переоткрыть чек можно, когда связь вернётся');
+    }
+    final problem = ReopenCheck.problem(s, openShift: await currentOpenShift());
+    if (problem != null) throw StateError(problem);
+    final tableDoc = await AppScope.col('tables').doc(s.tableId).get();
+    if (!tableDoc.exists) throw StateError('Стола «${s.tableName}» больше нет на схеме зала');
+    final table = TableModel.fromDoc(tableDoc);
+    if (table.activeSessionIds.length >= table.maxOpenSessions) {
+      throw StateError('На столе «${table.name}» уже открыто чеков: ${table.activeSessionIds.length} из '
+          '${table.maxOpenSessions}. Закройте один из них и переоткройте чек снова');
+    }
+    // Гостя узнаём до возврата: возврат снимает с него кешбэк этого чека.
+    final uid = s.loyaltyClientUid.isNotEmpty ? s.loyaltyClientUid : await _loyaltyClientOf(s.id);
+    if (!await refundSession(s.id, employeeName: employeeName, employeeId: employeeId)) {
+      throw StateError('Чек уже вернули или переоткрыли на другом устройстве');
+    }
+    final String newId;
+    try {
+      newId = await openSession(
+        table: table,
+        employeeName: s.employeeName,
+        employeeId: s.employeeId,
+        guestTag: s.guestTag,
+        tableName: s.tableName,
+      );
+    } catch (_) {
+      // Новый чек не открылся — отменяем возврат, старый чек остаётся как был.
+      await undoRefundSession(s.id, employeeName: employeeName).catchError((Object _) {});
+      rethrow;
+    }
+    final now = DateTime.now();
+    await AppScope.col('sessions').doc(newId).update({
+      'orderItems': ReopenCheck.items(s.orderItems).map((e) => e.toMap()).toList(),
+      'discountCardId': s.discountCardId,
+      'discountPercent': s.discountPercent,
+      // Время за столом считается с настоящего начала визита.
+      'startTime': Timestamp.fromDate(s.startTime),
+      'plannedEnd': Timestamp.fromDate(s.plannedEnd.isAfter(now) ? s.plannedEnd : now.add(const Duration(minutes: 30))),
+      'reopenedFrom': s.id,
+      if (uid.isNotEmpty) 'loyaltyClientUid': uid,
+    });
+    await AppScope.col('sessions').doc(s.id).update({
+      'reopenedTo': newId,
+      'reopenedAt': Timestamp.fromDate(now),
+      'reopenedBy': Pd.who(employeeName),
+    });
+    unawaited(syncTableBusyUntil(table.id).catchError((Object _) {}));
+    await restockRefundedSession(s.id, employeeName: employeeName, reason: 'Чек переоткрыт')
+        .catchError((Object _) => 0);
+    unawaited(AuditLogService.instance.log(
+      action: 'check_reopened',
+      employeeName: employeeName,
+      sessionId: s.id,
+      tableName: s.tableName,
+      amount: s.totalWithDiscount,
+      details: {'newSessionId': newId},
+    ));
+    return newId;
+  }
+
   /// Гость, которому за чек начислялся кешбэк. У новых чеков он записан
   /// при оплате; у старых ищем по истории бонусов, а если кешбэка не было
   /// (одни кальяны) — по отметке bonusAccruedFor в профиле.
@@ -1691,6 +1764,15 @@ class FirestoreService {
     final now = DateTime.now();
     final shiftRef = AppScope.col('shifts').doc(shiftId);
     final stateRef = AppScope.col('meta').doc('shiftState');
+    // Данные для Z-отчёта — до транзакции (внутри неё запросы нельзя). Не
+    // собрались (нет связи) — смену всё равно закрываем, отчёт тогда
+    // соберётся по чекам при просмотре.
+    ZReportInput? zIn;
+    try {
+      zIn = await _zReportInput(shiftId, now);
+    } catch (e) {
+      debugPrint('closeShift: данные Z-отчёта не собраны: $e');
+    }
     final closed = await _db.runTransaction<bool>((tx) async {
       final shiftDoc = await tx.get(shiftRef);
       final stateDoc = await tx.get(stateRef);
@@ -1701,7 +1783,40 @@ class FirestoreService {
       if (!shiftDoc.exists || (shiftDoc.data()?['status'] ?? 'open') != 'open') {
         return false;
       }
+      final state = stateDoc.data();
+      final lastZ = asNum(state?['lastZ'])?.toInt() ?? 0;
+      final grand = asNum(state?['grandTotal'])?.toDouble() ?? 0;
+      final collectOp = cash != null && cash.collect > 0
+          ? CashOp(
+              id: '',
+              shiftId: shiftId,
+              type: CashOpType.collection,
+              amount: cash.collect,
+              comment: 'При закрытии смены',
+              employeeName: employeeName,
+              employeeId: employeeId,
+              createdAt: now,
+            )
+          : null;
+      final z = zIn == null
+          ? null
+          : ZReport.build(
+              number: lastZ + 1,
+              shift: ShiftModel.fromDoc(shiftDoc),
+              closedAt: now,
+              closedBy: employeeName,
+              sold: zIn.sold,
+              refunds: zIn.refunds,
+              ops: [...zIn.ops, if (collectOp != null) collectOp],
+              grandTotalBefore: grand,
+              countedCash: cash?.counted,
+              leftCash: cash?.leave,
+              voidsCount: zIn.voidsCount,
+              voidsTotal: zIn.voidsTotal,
+            );
       tx.update(shiftRef, {
+        if (z != null) 'zNumber': z.number,
+        if (z != null) 'z': z.toMap(),
         'status': 'closed',
         'closedAt': Timestamp.fromDate(now),
         'closedBy': Pd.who(employeeName),
@@ -1734,11 +1849,70 @@ class FirestoreService {
             if (data?['openShiftId'] == shiftId) 'openShiftId': null,
             // Что оставили в кассе — размен следующей смены.
             if (cash != null) 'cashLeft': cash.leave,
+            // Счётчик Z-отчётов и необнуляемый итог заведения.
+            if (z != null) 'lastZ': z.number,
+            if (z != null) 'grandTotal': z.grandTotal,
           },
           SetOptions(merge: true));
       return true;
     });
     if (!closed) throw StateError('Смена уже закрыта на другом устройстве');
+  }
+
+  Future<ZReportInput> _zReportInput(String shiftId, DateTime end) async {
+    final shift = ShiftModel.fromDoc(await AppScope.col('shifts').doc(shiftId).get());
+    final till = end.add(const Duration(seconds: 1));
+    final results = await Future.wait([
+      closedSessionsInRange(shift.openedAt, till),
+      refundedSessionsInRange(shift.openedAt, till),
+      cashOpsForShift(shiftId),
+    ]);
+    final voids = await AuditLogService.instance.voidsBetween(shift.openedAt, till);
+    return ZReportInput(
+      sold: results[0] as List<SessionModel>,
+      refunds: results[1] as List<SessionModel>,
+      ops: results[2] as List<CashOp>,
+      voidsCount: voids?.$1 ?? 0,
+      voidsTotal: voids?.$2 ?? 0,
+    );
+  }
+
+  /// Z-отчёт закрытой смены: снимок из документа, а у смен, закрытых до
+  /// Z-отчётов или без связи, — собранный по чекам (без номера).
+  Future<ZReport> zReportOf(ShiftModel shift) async {
+    if (shift.z != null) return shift.z!;
+    final end = shift.closedAt ?? DateTime.now();
+    final input = await _zReportInput(shift.id, end);
+    return ZReport.build(
+      number: 0,
+      shift: shift,
+      closedAt: end,
+      closedBy: shift.closedBy ?? '',
+      sold: input.sold,
+      refunds: input.refunds,
+      ops: input.ops,
+      countedCash: shift.closingCountedCash,
+      leftCash: shift.closingLeftCash,
+      voidsCount: input.voidsCount,
+      voidsTotal: input.voidsTotal,
+    );
+  }
+
+  /// Закрытые смены с Z-отчётами — архив, свежие сверху.
+  Future<List<ShiftModel>> closedShifts({int limit = 60}) async =>
+      (await recentShifts(limit: limit)).where((s) => !s.isOpen).toList();
+
+  /// Записать результат закрытия смены на ККТ в Z-отчёт смены.
+  Future<void> saveZFiscal(String shiftId, ZFiscal fiscal) =>
+      AppScope.col('shifts').doc(shiftId).update({'zFiscal': fiscal.toMap()});
+
+  /// Чеки, возвращённые за период [start; end) — по дате возврата.
+  Future<List<SessionModel>> refundedSessionsInRange(DateTime start, DateTime end) async {
+    final snap = await AppScope.col('sessions')
+        .where('refundedAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('refundedAt', isLessThan: Timestamp.fromDate(end))
+        .get();
+    return snap.docs.map((d) => SessionModel.fromDoc(d)).toList();
   }
 
   // ---------- ЗАРПЛАТА: ПРЕМИИ, ШТРАФЫ, ВЫПЛАТЫ ----------
@@ -2863,4 +3037,14 @@ class ShiftCashClose {
   final double leave;
 
   const ShiftCashClose({required this.expected, required this.counted, required this.collect, required this.leave});
+}
+
+/// Что нужно Z-отчёту из базы: чеки, возвраты, касса и отмены смены.
+class ZReportInput {
+  final List<SessionModel> sold;
+  final List<SessionModel> refunds;
+  final List<CashOp> ops;
+  final int voidsCount;
+  final double voidsTotal;
+  const ZReportInput({required this.sold, required this.refunds, required this.ops, this.voidsCount = 0, this.voidsTotal = 0});
 }

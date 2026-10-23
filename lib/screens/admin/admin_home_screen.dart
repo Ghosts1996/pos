@@ -30,6 +30,8 @@ import 'loyalty_settings_screen.dart';
 import 'session_settings_screen.dart';
 import 'time_cafe_settings_screen.dart';
 import '../login_screen.dart';
+import '../employee/receipts_history_screen.dart';
+import 'z_report_screen.dart';
 import '../../utils/adaptive.dart';
 
 /// Главный экран администратора. Плитки сгруппированы по смыслу: сначала
@@ -44,6 +46,8 @@ class AdminHomeScreen extends StatelessWidget {
     final groups = <String, List<_AdminTile>>{
       'Работа заведения': [
         _AdminTile('Отчёты', Icons.bar_chart, (ctx) => const ReportsScreen()),
+        _AdminTile('Чеки', Icons.receipt_long, (ctx) => ReceiptsHistoryScreen(employee: employee, admin: true)),
+        _AdminTile('Z-отчёт', Icons.summarize_outlined, (ctx) => ZReportScreen(employee: employee)),
         _AdminTile('Карта зала', Icons.table_bar, (ctx) => const FloorPlanEditorScreen()),
         _AdminTile('Длительность сеанса', Icons.schedule, (ctx) => const SessionSettingsScreen()),
         _AdminTile('Тайм-кафе', Icons.hourglass_bottom_rounded, (ctx) => const TimeCafeSettingsScreen()),

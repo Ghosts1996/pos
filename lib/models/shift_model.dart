@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/people_directory.dart';
+import '../utils/z_report.dart';
 
 /// Модель кассовой смены. Смена — это не календарный день, а период между
 /// открытием и закрытием кассы: официант/админ открывает смену при входе в
@@ -34,6 +35,14 @@ class ShiftModel {
   final double? closingCollected;
   final double? closingLeftCash;
 
+  /// Z-отчёт, снятый при закрытии смены (см. [ZReport]); null — смена ещё
+  /// открыта или закрыта до появления Z-отчётов.
+  final ZReport? z;
+
+  /// Закрытие смены на регистраторе АТОЛ: null — касса облачная или не
+  /// подключена, закрывать на ККТ из приложения нечего.
+  final ZFiscal? zFiscal;
+
   ShiftModel({
     required this.id,
     required this.openedAt,
@@ -47,6 +56,8 @@ class ShiftModel {
     this.closingCountedCash,
     this.closingCollected,
     this.closingLeftCash,
+    this.z,
+    this.zFiscal,
   }) : _openedBy = openedBy, _closedBy = closedBy;
 
   /// Недостача (<0) или излишек (>0) при пересчёте, если он был.
@@ -72,6 +83,8 @@ class ShiftModel {
       closingCountedCash: (data['closingCountedCash'] as num?)?.toDouble(),
       closingCollected: (data['closingCollected'] as num?)?.toDouble(),
       closingLeftCash: (data['closingLeftCash'] as num?)?.toDouble(),
+      z: data['z'] is Map ? ZReport.fromMap(Map<String, dynamic>.from(data['z'] as Map)) : null,
+      zFiscal: data['zFiscal'] is Map ? ZFiscal.fromMap(Map<String, dynamic>.from(data['zFiscal'] as Map)) : null,
     );
   }
 

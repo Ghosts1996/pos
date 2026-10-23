@@ -3,11 +3,11 @@ import 'dart:async';
 import '../../theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import '../../models/employee.dart';
-import '../../models/fiscal_receipt.dart';
 import '../../models/session_model.dart';
 import '../../services/firestore_service.dart';
-import '../../services/fiscal_queue.dart';
-import '../../services/kassa_service.dart';
+import '../../services/fiscal_refund.dart';
+import '../../models/shift_model.dart';
+import '../../utils/reopen_check.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
 import '../../utils/adaptive.dart';
@@ -19,7 +19,11 @@ enum _Period { today, week, month, custom }
 /// на чек открывается его состав с кнопкой оформления возврата.
 class ReceiptsHistoryScreen extends StatefulWidget {
   final Employee employee;
-  const ReceiptsHistoryScreen({super.key, required this.employee});
+
+  /// Открыто из админки: кроме возврата можно переоткрыть чек текущей
+  /// смены, если его закрыли неправильно (см. ReopenCheck).
+  final bool admin;
+  const ReceiptsHistoryScreen({super.key, required this.employee, this.admin = false});
 
   @override
   State<ReceiptsHistoryScreen> createState() => _ReceiptsHistoryScreenState();
@@ -145,7 +149,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
         await _fs.restockRefundedSession(s.id, employeeName: widget.employee.name).catchError((Object _) => 0);
       }
       _load();
-      final fiscalError = done && s.fiscalReceiptPrinted ? await _sendFiscalRefund(s) : null;
+      final fiscalError = done && s.fiscalReceiptPrinted ? await sendFiscalRefund(s, fs: _fs) : null;
       if (!mounted) return;
       if (fiscalError != null) {
         await showDialog<void>(
@@ -169,25 +173,68 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
     }
   }
 
-  /// Чек «возврат прихода» по чеку, сохранённому при оплате. Текст
-  /// ошибки — если возврат придётся пробить вручную.
-  Future<String?> _sendFiscalRefund(SessionModel s) async {
-    String? error;
+  /// Переоткрыть чек: возврат по нему и новый открытый чек на том же столе.
+  Future<void> _confirmReopen(SessionModel s) async {
+    ShiftModel? shift;
     try {
-      final saved = await _fs.fiscalReceiptOf(s.id);
-      if (saved == null) {
-        error = 'чек продажи пробит до обновления кассы, и его состава нет в базе';
-      } else if (!kassaService.isAvailable) {
-        error = 'касса не настроена (Настройки → Интеграции)';
+      shift = await _fs.currentOpenShift();
+    } catch (_) {}
+    if (!mounted) return;
+    final problem = ReopenCheck.problem(s, openShift: shift);
+    if (problem != null) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Переоткрыть нельзя'),
+          content: Text(problem),
+          actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Понятно'))],
+        ),
+      );
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        scrollable: true,
+        title: const Text('Переоткрыть чек?'),
+        content: Text('Чек ${s.tableName} на ${rub(s.totalWithDiscount)} снова откроется на столе со всеми позициями. '
+            'Добавьте недостающее, выберите правильный способ оплаты и закройте стол заново.\n\n'
+            'По старому чеку касса оформит возврат'
+            '${s.fiscalReceiptPrinted ? ' и отправит на ККТ чек возврата прихода' : ''}'
+            '${s.paymentCash > 0 ? ', наличные ${rub(s.paymentCash)} останутся в кассе и придут новой оплатой' : ''}. '
+            'Бонусы гостя и склад пересчитаются, на кухню позиции повторно не уйдут.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Переоткрыть')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await _fs.reopenSession(s, employeeName: widget.employee.name, employeeId: widget.employee.id);
+      final fiscalError = s.fiscalReceiptPrinted ? await sendFiscalRefund(s, fs: _fs) : null;
+      _load();
+      if (!mounted) return;
+      if (fiscalError != null) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Чек возврата не пробит'),
+            content: Text('Чек переоткрыт, но $fiscalError.\n\n'
+                'Пробейте на ККТ чек возврата прихода на ${rub(s.totalWithDiscount)} вручную.'),
+            actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Понятно'))],
+          ),
+        );
       } else {
-        final result = await FiscalQueue.send(FiscalReceipt.fromJson(saved).asRefund());
-        if (!result.success && !result.queued) error = 'касса отклонила чек возврата: ${result.errorMessage ?? 'без описания'}';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Чек снова открыт на столе ${s.tableName}. Исправьте его и закройте заново')));
       }
     } catch (e) {
-      error = 'не удалось отправить чек возврата: ${humanError(e, lower: true)}';
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Не удалось переоткрыть чек: ${humanError(e, lower: true)}')));
+      }
     }
-    unawaited(_fs.markFiscalRefund(s.id, error: error).catchError((Object _) {}));
-    return error;
   }
 
   void _openDetails(SessionModel s) {
@@ -241,11 +288,22 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
               ),
               const SizedBox(height: 12),
               if (s.refunded)
-                const Chip(
-                  label: Text('Возврат оформлен'),
-                  avatar: Icon(Icons.undo, size: 16),
+                Chip(
+                  label: Text(s.reopenedTo.isNotEmpty ? 'Чек переоткрыт и исправлен' : 'Возврат оформлен'),
+                  avatar: Icon(s.reopenedTo.isNotEmpty ? Icons.edit_note : Icons.undo, size: 16),
                 )
-              else
+              else ...[
+                if (widget.admin) ...[
+                  FilledButton.tonalIcon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _confirmReopen(s);
+                    },
+                    icon: const Icon(Icons.edit_note),
+                    label: const Text('Переоткрыть чек'),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 FilledButton.icon(
                   style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
                   onPressed: () {
@@ -255,6 +313,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                   icon: const Icon(Icons.undo),
                   label: const Text('Оформить возврат'),
                 ),
+              ],
             ],
           ),
         ),
@@ -270,7 +329,7 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('История чеков')),
+      appBar: AppBar(title: Text(widget.admin ? 'Чеки' : 'История чеков')),
       body: CenteredBody(
         maxWidth: 760,
         child: Column(
@@ -342,7 +401,8 @@ class _ReceiptsHistoryScreenState extends State<ReceiptsHistoryScreen> {
                           title: Text('${s.tableName} · ${s.employeeName}'),
                           subtitle: Text(
                             '${_formatDateTime(s.startTime)} — ${s.closedAt != null ? _formatDateTime(s.closedAt!) : ''}'
-                            '${s.refunded ? '  ·  возврат оформлен' : ''}',
+                            '${s.refunded ? (s.reopenedTo.isNotEmpty ? '  ·  переоткрыт' : '  ·  возврат оформлен') : ''}'
+                            '${s.reopenedFrom.isNotEmpty ? '  ·  исправленный' : ''}',
                           ),
                           trailing: Text(
                             rub(s.totalWithDiscount),
