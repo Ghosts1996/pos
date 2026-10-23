@@ -204,7 +204,12 @@ export function mountSupportChat({ gatewayUrl, getToken = async () => null, priv
     return json || {};
   };
   const pollPath = () => (isCab() ? 'supportCabinetMessages' : 'supportSiteMessages');
-  const pollBody = () => (isCab() ? { ticketId: conv.ticketId, after: conv.last || 0 } : { ticketId: conv.ticketId, token: conv.token, after: conv.last || 0 });
+  // Экран пуст (перезагрузили страницу, вернулись на сайт) — вся история
+  // диалога, иначе только новое.
+  const pollBody = () => {
+    const after = messages.some((m) => !m.local) ? conv.last || 0 : 0;
+    return isCab() ? { ticketId: conv.ticketId, after } : { ticketId: conv.ticketId, token: conv.token, after };
+  };
 
   let lastHtml = '';
   let stick = false; // после своего сообщения — всегда вниз

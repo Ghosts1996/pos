@@ -870,10 +870,19 @@ function memberLabel(m, knownEmail) {
   return m.email || knownEmail || `Устройство · ${(m.userId || '').slice(-4).toUpperCase()}`;
 }
 
+// Кириллица → латиница (как в загранпаспорте, упрощённо): «Колибри» → kolibri.
+const TRANSLIT = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm',
+  н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'kh', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'shch',
+  ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+};
+
 function slugify(s) {
   return String(s ?? '')
     .toLowerCase()
     .trim()
+    .replace(/[а-яё]/g, (c) => TRANSLIT[c] ?? '')
+    .replace(/[_.]+/g, '-')
     .replace(/[^a-z0-9\s-]/g, '')
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
@@ -3307,9 +3316,12 @@ function screenOnboarding() {
   $('f-submit').onclick = async () => {
     const isChain = $('f-is-chain').checked;
     const name = nameEl.value.trim();
-    const slug = slugEl.value.trim();
+    // Код вписали по-русски или с пробелами — приводим к латинице сами.
+    const slug = slugify(slugEl.value);
     const chainName = chainNameEl.value.trim();
-    const chainSlug = chainSlugEl.value.trim();
+    const chainSlug = slugify(chainSlugEl.value);
+    if (slug) slugEl.value = slug;
+    if (chainSlug) chainSlugEl.value = chainSlug;
     const label = $('f-brand-name').value.trim();
     const errEl = $('f-error');
     errEl.textContent = '';
@@ -3897,7 +3909,39 @@ function watchDashboardData(tenantId) {
   let replySending = '';
   // Подписка на переписку меняется при выборе тикета (selectTicket), поэтому
   // не через sub(onSnapshot). Здесь только закрываем её при уходе с экрана.
-  sub(() => { if (unsubTicketMessages) unsubTicketMessages(); });
+  sub(() => { if (unsubTicketMessages) unsubTicketMessages(); clearTimeout(ticketPollTimer); ticketPollTimer = null; });
+  // Страховка живой переписки: у части клиентов (VPN, прокси провайдера)
+  // поток Firestore не доходит, и ответ виден только после перезагрузки.
+  // Раз в 15 с (после своего сообщения — каждые 4 с) читаем один документ
+  // обращения; изменился — перечитываем сообщения.
+  let ticketPollTimer = null;
+  let ticketPollFastUntil = 0;
+  let ticketSeenAt = 0;
+  const ticketPoll = () => {
+    clearTimeout(ticketPollTimer);
+    ticketPollTimer = null;
+    if (!selectedTicketId) return;
+    const id = selectedTicketId;
+    ticketPollTimer = setTimeout(async () => {
+      if (selectedTicketId !== id) return;
+      if (document.visibilityState === 'visible') {
+        try {
+          const t = await getDoc(doc(state.db, 'supportTickets', id));
+          const at = Math.max(t.data()?.updatedAt?.toMillis?.() || 0, t.data()?.aiTypingAt?.toMillis?.() || 0);
+          if (selectedTicketId === id && at > ticketSeenAt) {
+            const snap = await getDocs(query(collection(state.db, 'supportTickets', id, 'messages'), orderBy('createdAt', 'asc')));
+            if (selectedTicketId !== id) return;
+            ticketSeenAt = at;
+            const list = snap.docs.map((d) => d.data());
+            const ticket = (supportTickets || []).find((x) => x.id === id);
+            if (ticket && t.exists()) Object.assign(ticket, t.data());
+            if (!ticketMessages || list.length !== ticketMessages.length || ticket) { ticketMessages = list; draw(); }
+          }
+        } catch (_) { /* сеть — попробуем позже */ }
+      }
+      ticketPoll();
+    }, Date.now() < ticketPollFastUntil ? 4000 : 15000);
+  };
   // null — первый снапшот ещё не пришёл, не путать с нулём.
   let liveOpenSessions = null;
   let liveOnShift = null;
@@ -3924,7 +3968,10 @@ function watchDashboardData(tenantId) {
     if (unsubTicketMessages) { unsubTicketMessages(); unsubTicketMessages = null; }
     selectedTicketId = ticketId;
     ticketMessages = null;
+    // Время сервера, а не часы компьютера: они могут спешить.
+    ticketSeenAt = (supportTickets || []).find((x) => x.id === ticketId)?.updatedAt?.toMillis?.() || 0;
     replyDraftFiles.splice(0);
+    ticketPoll();
     if (ticketId) {
       unsubTicketMessages = onSnapshot(
         query(collection(state.db, 'supportTickets', ticketId, 'messages'), orderBy('createdAt', 'asc')),
@@ -4205,7 +4252,6 @@ function watchDashboardData(tenantId) {
       ` : ''}
       <h2>Быстрый доступ</h2>
       <div class="quick-actions">
-        ${quickAction('guide', 'book', '', 'Инструкция', 'Как всё настроить и работать каждый день')}
         ${quickAction('devices', 'device', '#0EA5E9', 'Устройства', 'Код приглашения и сборка APK')}
         ${quickAction('billing', 'card', '#F59E0B', 'Оплата', 'Продление и счета')}
         ${quickAction('branding', 'palette', '#EC4899', 'Брендинг', 'Логотип и цвета приложения')}
@@ -4415,8 +4461,27 @@ function watchDashboardData(tenantId) {
             в любой момент в разделе «Оплата» (<a href="#/legal/payment" target="_blank">условия</a>).</span>
           </label>
           <div id="f-checkout-error" class="small" style="color:var(--danger);margin-top:6px"></div>
+          <p class="small muted" style="margin:10px 0 0">🛡 Страница оплаты долго грузится или не открывается? Выключите VPN
+          на время оплаты: платёжные страницы российских банков и Robokassa через VPN часто открываются медленно или блокируются.</p>
         ` : '<p class="small muted">Тарифы пока не заданы платформой.</p>'}
       </div>
+      ${role === 'owner' && tenant.chainId && !tenant.demo && plans && sellablePlans(plans, false).length ? `
+        <h2 style="margin-top:24px">Перейти на тариф для одного заведения</h2>
+        <p class="small muted" style="margin-top:-4px">${state.tenants.filter((t) => t.chainId === tenant.chainId).length > 1
+          ? 'В сети несколько точек — на обычный тариф можно перейти, когда останется одна точка (лишние удаляются в разделе «Заведение» каждой точки).'
+          : 'Сеть из одной точки можно сделать обычным заведением: оплаченный срок сохранится, гости, бонусы и брендинг останутся, дальше — по цене выбранного тарифа.'}</p>
+        ${state.tenants.filter((t) => t.chainId === tenant.chainId).length > 1 ? '' : `<div class="card">
+          ${sellablePlans(plans, false).map((p) => `
+            <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+              <div class="grow">
+                <div>${esc(p.name || p.id)}</div>
+                <div class="small muted">${(Number(p.priceRub) || 0).toLocaleString('ru-RU')} ₽/мес</div>
+              </div>
+              <button class="btn btn-ghost f-convert-to-single" data-plan="${esc(p.id)}" data-name="${esc(p.name || p.id)}" style="width:auto">Перейти</button>
+            </div>
+          `).join('')}
+        </div>`}
+      ` : ''}
       ${role === 'owner' && !tenant.chainId && plans && plans.some((p) => p.isChainPlan) ? `
         <h2 style="margin-top:24px">Перейти на тариф сети</h2>
         <p class="small muted" style="margin-top:-4px">Если планируете открыть ещё точки — можно перевести
@@ -5562,6 +5627,10 @@ function watchDashboardData(tenantId) {
           // Через сервер в РФ: текст обезличивается до записи в базу.
           const sent = await callSaasGateway('supportSend', { ticketId: ticket.id, text, attachments });
           if (sent.data.masked) toast('Личные данные в тексте скрыты — они не нужны поддержке');
+          // Ответ ассистента обычно приходит за 5–30 с — проверяем чаще.
+          ticketPollFastUntil = Date.now() + 3 * 60 * 1000;
+          ticketSeenAt = 0;
+          ticketPoll();
           dropPreviews(files);
         } catch (e) {
           replyDraftFiles.unshift(...files);
@@ -6016,6 +6085,22 @@ function watchDashboardData(tenantId) {
     });
     document.querySelectorAll('.f-convert-to-chain').forEach((el) => {
       el.onclick = () => convertTenantToChain(tenantId, tenant, el.dataset.plan);
+    });
+    document.querySelectorAll('.f-convert-to-single').forEach((el) => {
+      el.onclick = async () => {
+        if (!confirm(`Перевести сеть на тариф «${el.dataset.name}» для одного заведения? Оплаченный срок сохранится, гости и бонусы останутся в заведении. Добавить точки потом можно, снова перейдя на тариф сети.`)) return;
+        el.disabled = true;
+        try {
+          await callSaasGateway('convertChainToSingle', { tenantId, planId: el.dataset.plan });
+          const entry = state.tenants.find((t) => t.id === tenantId);
+          if (entry) { entry.chainId = null; entry.chainName = ''; }
+          toast('Готово: заведение на обычном тарифе');
+          route();
+        } catch (e) {
+          el.disabled = false;
+          toast(`Не удалось перейти: ${e?.message || e}`);
+        }
+      };
     });
     if ($('f-request-build')) {
       $('f-request-build').onclick = () => requestBuild(tenantId);
@@ -7191,6 +7276,19 @@ function watchAdminSupportTickets() {
   let messages = null;
   let unsubMessages = null;
   const adminDraftFiles = [];
+  // Папки: вопросы клиентов из кабинета, посетителей лендинга и из Telegram.
+  const FOLDERS = [
+    ['platform', '🏪 Вопросы с платформы'],
+    ['site', '🌐 Вопросы с лендинга'],
+    ['telegram', '✈️ Telegram'],
+  ];
+  const folderOf = (t) => (t.channel === 'site' ? 'site' : t.tenantId || t.channel !== 'telegram' ? 'platform' : 'telegram');
+  let folder = 'platform';
+  // «Гость 4821» — постоянный номер браузера посетителя (не имя).
+  const ticketWho = (t) => (t.channel === 'site'
+    ? `Сайт · ${t.visitorTag ? `Гость ${t.visitorTag}` : 'посетитель'}${t.siteUid ? ' · вошёл в аккаунт' : ''}`
+    : t.tenantId ? (tenantNames.get(t.tenantId) || t.tenantId)
+      : t.channel === 'telegram' ? `Telegram${t.tgName ? ` · ${t.tgName}` : ''}` : 'Заведение не указано');
 
   const selectTicket = (ticketId) => {
     if (unsubMessages) { unsubMessages(); unsubMessages = null; }
@@ -7216,16 +7314,20 @@ function watchAdminSupportTickets() {
     // Открытые наверх, среди них — с приоритетной поддержкой по тарифу;
     // sort стабильный, так что внутри групп остаётся порядок запроса —
     // новые сверху.
-    const sorted = tickets.slice().sort((a, b) => {
+    const sorted = tickets.filter((t) => folderOf(t) === folder).sort((a, b) => {
       const rank = (t) => (t.status === 'closed' ? 2 : isPriority(t) ? 0 : 1);
       return rank(a) - rank(b);
     });
-    renderKeepingInputs(body, `<div class="card">${sorted.map((t) => `
+    const openIn = (f) => tickets.filter((t) => folderOf(t) === f && t.status !== 'closed').length;
+    const folders = FOLDERS.filter(([f]) => f !== 'telegram' || tickets.some((t) => folderOf(t) === f));
+    const foldersHtml = `<div class="sec-tabs" role="tablist" style="margin-bottom:10px">${folders.map(([f, label]) => `
+      <button type="button" class="sec-tab f-admin-folder${f === folder ? ' active' : ''}" role="tab" aria-selected="${f === folder}" data-folder="${f}">${label}${openIn(f) ? ` <span class="muted">(${openIn(f)})</span>` : ''}</button>`).join('')}</div>`;
+    renderKeepingInputs(body, `${foldersHtml}<div class="card">${sorted.length ? '' : '<p class="small muted" style="margin:0">В этой папке обращений нет.</p>'}${sorted.map((t) => `
       <div style="padding:8px 0;border-bottom:1px solid var(--border)">
         <div class="row f-admin-ticket-open" data-id="${esc(t.id)}" style="justify-content:space-between;align-items:center;cursor:pointer">
           <div class="small grow" style="min-width:0">
-            ${isPriority(t) ? '<span class="cab-plan-badge" style="margin-right:6px">Приоритет</span>' : ''}${t.no ? `<span class="muted">#${esc(String(t.no))}</span> ` : ''}<b>${esc(t.subject || '')}</b> · ${esc(t.tenantId ? (tenantNames.get(t.tenantId) || t.tenantId) : `Telegram${t.tgName ? ` · ${t.tgName}` : ''}`)}
-            <div class="muted">${fmtDateTime(t.updatedAt || t.createdAt)}${t.channel === 'telegram' && t.tenantId ? ' · Telegram' : ''}</div>
+            ${isPriority(t) ? '<span class="cab-plan-badge" style="margin-right:6px">Приоритет</span>' : ''}${t.no ? `<span class="muted">#${esc(String(t.no))}</span> ` : ''}<b>${esc(t.subject || '')}</b> · ${esc(ticketWho(t))}
+            <div class="muted">${fmtDateTime(t.updatedAt || t.createdAt)}${t.channel === 'telegram' && t.tenantId ? ' · через Telegram' : t.channel === 'site' && t.tenantId ? ' · с сайта' : ''}</div>
           </div>
           ${t.status === 'closed' ? '<div class="small muted">Решено</div>'
             : t.escalated ? '<div class="small" style="color:var(--danger);font-weight:700;white-space:nowrap">🔴 Нужен человек</div>'
@@ -7236,7 +7338,7 @@ function watchAdminSupportTickets() {
           <div style="margin-top:10px">
             ${messages === null ? '<div class="spinner"></div>' : (messages.length ? messages.map((m) => `
               <div style="margin:6px 0;padding:8px 10px;border-radius:10px;background:${m.authorRole === 'super_admin' || m.authorRole === 'ai' ? 'var(--surface-2)' : 'transparent'};border:1px solid var(--border)">
-                <div class="small muted">${esc(m.authorRole === 'ai' ? '🤖 ИИ-ассистент' : m.authorRole === 'super_admin' ? (m.authorName ? `${m.authorName} · платформа` : 'Платформа') : (m.authorName ? `${m.authorName} · клиент` : 'Владелец'))} · ${fmtDateTime(m.createdAt)}</div>
+                <div class="small muted">${esc(m.authorRole === 'ai' ? '🤖 ИИ-ассистент' : m.authorRole === 'super_admin' ? (m.authorName ? `${m.authorName} · платформа` : 'Платформа') : (m.authorName ? `${m.authorName} · клиент` : t.channel === 'site' ? 'Посетитель сайта' : 'Владелец'))} · ${fmtDateTime(m.createdAt)}</div>
                 ${m.text ? `<div class="small rich-text" style="margin-top:2px">${richText(m.text, { bold: m.authorRole !== 'owner' })}</div>` : ''}
                 ${attachmentsHtml(t.id, m.attachments)}
               </div>
@@ -7258,6 +7360,9 @@ function watchAdminSupportTickets() {
 
     document.querySelectorAll('.f-admin-ticket-open').forEach((el) => {
       el.onclick = () => selectTicket(el.dataset.id);
+    });
+    document.querySelectorAll('.f-admin-folder').forEach((el) => {
+      el.onclick = () => { folder = el.dataset.folder; if (expandedId) selectTicket(expandedId); else draw(); };
     });
     bindAttachments(body);
     bindAttachPicker({ button: $('f-admin-attach'), input: $('f-admin-files'), pasteInto: expandedId ? $(`f-admin-reply-${expandedId}`) : null, list: adminDraftFiles, redraw: draw });
@@ -9795,8 +9900,8 @@ async function convertTenantToChain(tenantId, tenant, planId) {
   const trimmedName = name.trim();
   let slug = prompt('Код сети (латиница, цифры, дефис):', slugify(trimmedName));
   if (slug === null) return;
-  slug = slug.trim();
-  if (!slug) { toast('Код сети не может быть пустым'); return; }
+  slug = slugify(slug);
+  if (slug.length < 3) { toast('Код сети — от 3 символов латиницей или цифрами, например «leto»'); return; }
   if (!confirm(`Перевести «${tenant?.name || tenantId}» в сеть «${trimmedName}»? Заведение останется первой точкой сети со всеми гостями и бонусами — отменить это действие потом будет нельзя.`)) return;
   try {
     const res = await callSaasGateway('convertTenantToChain', { tenantId, name: trimmedName, slug, planId });
@@ -9821,10 +9926,10 @@ async function addChainLocation(chainId) {
   const name = prompt('Название новой точки сети:');
   if (!name || !name.trim()) return;
   const trimmedName = name.trim();
-  let slug = prompt('Код точки (латиница, цифры, дефис) — используется в ссылках и как основа имени Android-приложения:', slugify(trimmedName));
+  let slug = prompt('Код точки (латиница, цифры, дефис) — используется в ссылках и как основа имени Android-приложения. Можно по-русски — переведу в латиницу:', slugify(trimmedName));
   if (slug === null) return;
-  slug = slug.trim();
-  if (!slug) { toast('Код точки не может быть пустым'); return; }
+  slug = slugify(slug);
+  if (slug.length < 3) { toast('Код точки — от 3 символов латиницей или цифрами, например «leto-centr»'); return; }
   let quote;
   try {
     quote = (await callSaasGateway('chainLocationQuote', { chainId })).data;

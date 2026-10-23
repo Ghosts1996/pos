@@ -71,6 +71,8 @@ const KB_RELOAD_MS = 10 * 60 * 1000;
 const LEARN_AFTER_HUMAN_MS = 15 * 60 * 1000;
 // Клиент ждёт ответа человека дольше — обращение следующему сотруднику.
 const SLA_MS = 15 * 60 * 1000;
+// Приоритетная поддержка по тарифу (Про, Сеть Про): человек — за 5 минут.
+const PRIORITY_SLA_MS = 5 * 60 * 1000;
 const LEARN_SWEEP_MS = 5 * 60 * 1000;
 const CLIENT_RATE = { max: 20, windowMs: 60 * 1000 };
 const DEFAULT_POLICY_URL = "https://zalpos.ru/#/legal/privacy";
@@ -962,7 +964,7 @@ function topicTitle(t, venueName = "") {
   const who = t.channel === "site" ? `🌐 Сайт · ${siteWho(t)}`
     : t.channel === "telegram" ? `✈️ ${venueName || t.tgName || "Telegram"}`
       : `🏪 ${venueName || "Кабинет"}`;
-  return clip(`${icon} #${t.no || "?"} · ${who} · ${t.subject || "обращение"}`, 120);
+  return clip(`${icon}${t.priority ? "⭐" : ""} #${t.no || "?"} · ${who} · ${t.subject || "обращение"}`, 120);
 }
 
 // ------------------------------------------------------------ оформление (HTML Telegram)
@@ -1137,7 +1139,7 @@ function createSupportBot(deps) {
   const hookUrl = () => (HOOK_BASE ? `${HOOK_BASE}/${HOOK_ID}` : `${publicUrl}/tgHook/${HOOK_ID}`);
 
   const state = {
-    cfg: null, token: "", aiKeys: new Map(), awaiting: new Map(), staffDir: {}, rr: 0, guide: [], code: [], learned: [], topicToTicket: new Map(),
+    cfg: null, token: "", aiKeys: new Map(), awaiting: new Map(), staffDir: {}, rr: 0, guide: [], code: [], learned: [], topicToTicket: new Map(), prio: new Map(),
     usage: { day: "", calls: 0, tokens: 0 }, rate: new Map(), lastError: "", noise: new Map(), news: [],
     templates: tplIndex(TEMPLATES.map((t) => ({ ...t, id: `b_${t.id}`, source: "builtin", status: "active" }))),
   };
@@ -1697,9 +1699,23 @@ function createSupportBot(deps) {
     return prev ? { key, topicId: prev.topicId } : { key, topicId: null };
   }
 
+  /** Приоритетная поддержка по тарифу заведения (кэш 10 минут). */
+  async function markPriority(t) {
+    if (!t.tenantId || typeof deps.tenantPriority !== "function") return !!t.priority;
+    const hit = state.prio.get(t.tenantId);
+    let on = hit && now() - hit.at < 10 * 60 * 1000 ? hit.on : null;
+    if (on === null) {
+      on = await Promise.resolve(deps.tenantPriority(t.tenantId)).then((v) => v === true).catch(() => !!t.priority);
+      state.prio.set(t.tenantId, { on, at: now() });
+    }
+    if (on !== !!t.priority) await patch(t, { priority: on });
+    return on;
+  }
+
   async function ensureTopic(t, history = []) {
     if (t.topicId || !state.cfg.groupChatId) return t.topicId || null;
     if (!t.no) await patch(t, { no: await nextNo() });
+    await markPriority(t).catch(() => {});
     const vname = await venueName(t);
     const known = await clientTopic(t).catch(() => null);
     let reused = false;
@@ -1738,6 +1754,7 @@ function createSupportBot(deps) {
     const lines = [`${reused ? "📋" : "🆕"} <b>Обращение #${t.no}</b> · ${t.channel === "telegram" ? "Telegram" : t.channel === "site" ? "чат на сайте" : "из кабинета"}`];
     if (t.channel === "telegram") lines.push(`👤 ${h(t.tgName || "Клиент")}${t.tgUsername ? ` (@${h(t.tgUsername)})` : ""} · ID <code>${h(t.tgUserId)}</code>`);
     lines.push(`💬 Тема: <i>${h(t.subject || "—")}</i>`, "");
+    if (t.priority) lines.push("⭐ <b>Приоритетная поддержка</b> по тарифу — человек отвечает в первую очередь, до 5 минут.", "");
     if (t.tenantId) {
       const info = await venueStatus(t.tenantId).catch(() => null);
       lines.push(info ? venueCard(info, { staff: true, now: now() }) : `🏪 ${h(vname || t.tenantId)}`);
@@ -1791,6 +1808,7 @@ function createSupportBot(deps) {
     if (t.escalated) return;
     await patch(t, { escalated: true, escalatedReason: reason, escalatedAt: ts(now()), escalatedBy: byAi ? "ai" : "" });
     Object.assign(t, { escalated: true, escalatedAt: ts(now()), escalatedBy: byAi ? "ai" : "" });
+    await markPriority(t).catch(() => {});
     await renameTopic(t);
     // Обращение ведёт один сотрудник: назначаем по очереди, остальные — на подхвате.
     const who = Number(t.assigneeId) || nextStaff([]);
@@ -1814,7 +1832,8 @@ function createSupportBot(deps) {
     for (const s of staff) {
       const mine = Number(s.id) === Number(assigneeId);
       const text = [
-        `${head} · #${t.no || "?"}${t.tgName ? ` · ${h(t.tgName)}` : ""}`.replace(/^(\S+) (.*)$/, "$1 <b>$2</b>"),
+        `${t.priority ? "⭐ " : ""}${head} · #${t.no || "?"}${t.tgName ? ` · ${h(t.tgName)}` : ""}`.replace(/^((?:⭐ )?\S+) (.*)$/, "$1 <b>$2</b>"),
+        t.priority ? "Приоритетная поддержка по тарифу — ответить в первую очередь." : "",
         h(reason),
         `💬 <i>${h(t.subject || "—")}</i>`,
         assigneeId ? (mine ? "👉 <b>Назначено вам</b> — ответьте клиенту в теме." : `👤 Ведёт: ${mention(assigneeId)} · вы — на подхвате`) : "",
@@ -1866,7 +1885,8 @@ function createSupportBot(deps) {
       const t = { id: d.id, ...d.data() };
       if (t.lastAuthorRole !== "owner" || !(t.escalated || aiPaused(t, now()))) continue;
       const waitFrom = Math.max(toMs(t.clientAt) || toMs(t.updatedAt), toMs(t.assignedAt));
-      if (toMs(t.humanAt) > toMs(t.clientAt) || now() - waitFrom < SLA_MS || now() - toMs(t.slaPingAt) < SLA_MS) continue;
+      const sla = t.priority ? PRIORITY_SLA_MS : SLA_MS;
+      if (toMs(t.humanAt) > toMs(t.clientAt) || now() - waitFrom < sla || now() - toMs(t.slaPingAt) < sla) continue;
       const rounds = (Number(t.slaRounds) || 0) + 1;
       const mins = Math.round((now() - (toMs(t.clientAt) || waitFrom)) / 60000);
       const prev = Number(t.assigneeId) || 0;
@@ -1874,9 +1894,9 @@ function createSupportBot(deps) {
       await patch(t, { slaPingAt: ts(now()), slaRounds: rounds });
       if (next && next !== prev) {
         await assignTo(t, next, { silent: true });
-        await toTopicHtml(t, `⏰ <b>Клиент ждёт ${mins} мин</b>${prev ? ` — ${mention(prev)} не ответил, передаю` : " — назначаю"} ${mention(next)}`);
+        await toTopicHtml(t, `⏰ <b>${t.priority ? "⭐ Приоритетный клиент" : "Клиент"} ждёт ${mins} мин</b>${prev ? ` — ${mention(prev)} не ответил, передаю` : " — назначаю"} ${mention(next)}`);
       } else {
-        await toTopicHtml(t, `⏰ <b>Клиент ждёт ${mins} мин</b> — ${next ? mention(next) : "ответьте"}, пожалуйста`);
+        await toTopicHtml(t, `⏰ <b>${t.priority ? "⭐ Приоритетный клиент" : "Клиент"} ждёт ${mins} мин</b> — ${next ? mention(next) : "ответьте"}, пожалуйста`);
       }
       notifyStaff(t, `клиент ждёт ответа ${mins} мин`, next, "⏰ Клиент ждёт");
     }
@@ -2222,7 +2242,7 @@ function createSupportBot(deps) {
     let used;
     try {
       // Низкая температура — меньше фантазии в путях и названиях кнопок.
-      used = await aiFull(messages, { tier: wary ? "heavy" : pickTier({ question, history, images: imagesNow, web: !!webData, askedBack, sure: sure || !!tplHint, lastTier: t.lastTier || "" }), temperature: 0.15 });
+      used = await aiFull(messages, { tier: wary ? "heavy" : pickTier({ question, history, images: imagesNow, web: !!webData, askedBack, sure: sure || !!tplHint, lastTier: t.lastTier || "", priority: !!t.priority }), temperature: 0.15 });
       reply = parseAiReply(used.text);
       reply.text = guardReply(reply.text);
       reply.md = guardReply(reply.md);
@@ -2294,14 +2314,15 @@ function createSupportBot(deps) {
    *  medium — обычный ответ;
    *  heavy  — законы и расчёты, найденное в интернете, недовольство, долгий разговор;
    *  max    — сильная модель уже отвечала, а клиент всё ещё недоволен. */
-  function pickTier({ question, history, images, web: usedWeb, askedBack: answering, sure = false, lastTier = "" }) {
+  function pickTier({ question, history, images, web: usedWeb, askedBack: answering, sure = false, lastTier = "", priority = false }) {
     const mode = routing();
     if (mode === "light" || mode === "heavy") return mode;
     const unhappy = UNHAPPY.test(norm(question));
     if (unhappy && (lastTier === "heavy" || lastTier === "max")) return "max";
     if (aiMod.needsHeavy(question, history) || images || usedWeb || unhappy) return "heavy";
     if (answering && history.filter((m) => m.authorRole === "ai").length >= 2) return "heavy";
-    if (sure && question.length < 160) return "light";
+    // Приоритетная поддержка — не ниже обычной модели.
+    if (sure && question.length < 160 && !priority) return "light";
     return "medium";
   }
 
@@ -2781,7 +2802,7 @@ function createSupportBot(deps) {
         .filter((t) => t.escalated || t.lastAuthorRole === "owner").sort((a, b) => toMs(a.updatedAt) - toMs(b.updatedAt)).slice(0, 10);
       const rows = open.map((t) => {
         const link = topicLink(c.groupChatId, t.topicId);
-        return link ? [{ text: `${t.escalated ? "🔴" : "⏳"} #${t.no || "?"} · ${clip(t.subject || "", 40)}`, url: link }] : null;
+        return link ? [{ text: `${t.escalated ? "🔴" : "⏳"}${t.priority ? "⭐" : ""} #${t.no || "?"} · ${clip(t.subject || "", 40)}`, url: link }] : null;
       }).filter(Boolean);
       return { text: open.length ? `🔴 <b>Ждут ответа: ${open.length}</b>\n\n${open.map((t) => `${t.escalated ? "🔴" : "⏳"} <b>#${t.no || "?"}</b> ${h(clip(t.subject || "", 60))}${t.escalatedReason ? ` — <i>${h(t.escalatedReason)}</i>` : ""} · ${fmtWhen(toMs(t.updatedAt), now())}`).join("\n")}` : "🎉 <b>Никто не ждёт ответа</b>",
         rows: [...rows, back()] };
@@ -2965,13 +2986,13 @@ function createSupportBot(deps) {
   async function sendWaiting(chatId) {
     const snap = await ticketsCol().where("status", "==", "open").limit(300).get();
     const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((t) => t.escalated || t.lastAuthorRole === "owner")
-      .sort((a, b) => toMs(a.updatedAt) - toMs(b.updatedAt)).slice(0, 10);
+      .sort((a, b) => (b.priority === true) - (a.priority === true) || toMs(a.updatedAt) - toMs(b.updatedAt)).slice(0, 10);
     if (!list.length) return send(chatId, "🎉 Никто не ждёт ответа.", { reply_markup: staffKb(chatId) });
     const rows = list.map((t) => {
       const link = topicLink(state.cfg.groupChatId, t.topicId);
-      return link ? [{ text: `${t.escalated ? "🔴" : "⏳"} #${t.no || "?"} · ${clip(t.subject || "", 40)}`, url: link }] : null;
+      return link ? [{ text: `${t.escalated ? "🔴" : "⏳"}${t.priority ? "⭐" : ""} #${t.no || "?"} · ${clip(t.subject || "", 40)}`, url: link }] : null;
     }).filter(Boolean);
-    const text = `Ждут ответа: ${list.length}\n\n${list.map((t) => `${t.escalated ? "🔴" : "⏳"} #${t.no || "?"} · ${clip(t.subject || "", 60)}${t.escalatedReason ? ` — ${t.escalatedReason}` : ""}`).join("\n")}`;
+    const text = `Ждут ответа: ${list.length}\n\n${list.map((t) => `${t.escalated ? "🔴" : "⏳"}${t.priority ? "⭐" : ""} #${t.no || "?"} · ${clip(t.subject || "", 60)}${t.escalatedReason ? ` — ${t.escalatedReason}` : ""}`).join("\n")}`;
     return send(chatId, text, rows.length ? { reply_markup: { inline_keyboard: rows } } : {});
   }
 

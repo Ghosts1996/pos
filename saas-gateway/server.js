@@ -994,6 +994,76 @@ async function handleConvertTenantToChain(req, res) {
 }
 
 /**
+ * Обратный перевод: сеть из одной точки снова становится обычным
+ * заведением на тарифе не для сетей. Оплаченный срок сохраняется (дальше —
+ * по цене нового тарифа), гости, бонусы и брендинг сети возвращаются в
+ * заведение. Точек больше одной — нельзя: их данные некуда деть.
+ */
+async function handleConvertChainToSingle(req, res) {
+  const decoded = await verifyAuth(req);
+  const uid = decoded.uid;
+  const { tenantId, planId } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !tenantId.trim()) throw new HttpError(400, "tenantId обязателен");
+  if (typeof planId !== "string" || !planId.trim()) throw new HttpError(400, "Выберите тариф");
+  await requireTenantRole(tenantId, uid, ["owner"]);
+
+  const firestore = db();
+  const tenantRef = firestore.collection("tenants").doc(tenantId);
+  const tenant = (await tenantRef.get()).data();
+  if (!tenant) throw new HttpError(404, "Заведение не найдено");
+  const chainId = tenant.chainId;
+  if (!chainId) throw new HttpError(409, "Заведение и так не в сети");
+  if (tenant.demo === true) throw new HttpError(409, "Демо-сеть не переводится");
+  const chainRef = firestore.collection("chains").doc(chainId);
+  const chain = (await chainRef.get()).data() || {};
+  if (chain.ownerUserId && chain.ownerUserId !== uid) throw new HttpError(403, "Перевести может только владелец сети");
+  const points = (await firestore.collection("tenants").where("chainId", "==", chainId).get()).docs
+    .filter((d) => d.data().status !== "deleted");
+  if (points.length !== 1 || points[0].id !== tenantId) {
+    throw new HttpError(409, `В сети ${points.length} точки — сначала удалите лишние точки, тогда сеть можно перевести на обычный тариф`);
+  }
+  const planSnap = await firestore.collection("plans").doc(planId.trim()).get();
+  const plan = planSnap.exists ? planSnap.data() : null;
+  if (!plan || plan.isChainPlan || plan.archived === true) throw new HttpError(400, "Этот тариф нельзя выбрать — выберите тариф для одного заведения");
+
+  const subRef = firestore.collection("subscriptions");
+  const chainSub = (await subRef.doc(chainId).get()).data() || null;
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const status = chainSub && ["trial", "active", "past_due"].includes(chainSub.status) ? chainSub.status : "active";
+
+  const batch = firestore.batch();
+  batch.set(subRef.doc(tenantId), {
+    tenantId, chainId: null, planId: planSnap.id, status,
+    provider: chainSub ? chainSub.provider || null : null,
+    externalSubscriptionId: chainSub ? chainSub.externalSubscriptionId || null : null,
+    startedAt: (chainSub && chainSub.startedAt) || now,
+    trialEndsAt: (chainSub && chainSub.trialEndsAt) || null,
+    currentPeriodStart: (chainSub && chainSub.currentPeriodStart) || now,
+    currentPeriodEnd: (chainSub && chainSub.currentPeriodEnd) || null,
+    cancelAtPeriodEnd: !!(chainSub && chainSub.cancelAtPeriodEnd),
+    supersededByChainId: admin.firestore.FieldValue.delete(),
+    updatedAt: now,
+  }, { merge: true });
+  if (chainSub) batch.set(subRef.doc(chainId), { status: "superseded", supersededByTenantId: tenantId, updatedAt: now }, { merge: true });
+  batch.set(chainRef, { status: "dissolved", dissolvedAt: now, updatedAt: now }, { merge: true });
+  batch.update(tenantRef, {
+    chainId: admin.firestore.FieldValue.delete(), planId: planSnap.id,
+    status: tenant.status === "suspended" ? "suspended" : status, subscriptionStatus: status, updatedAt: now,
+  });
+  await batch.commit();
+
+  // Гости, бонусы и брендинг сети — обратно в заведение.
+  for (const colName of CHAIN_SUBCOLLECTIONS) {
+    await migrateCollectionDocs(firestore, chainRef.collection(colName), tenantRef.collection(colName));
+  }
+  const members = await firestore.collection("chainMembers").where("chainId", "==", chainId).get();
+  await Promise.all(members.docs.map((d) => d.ref.set({ status: "removed", updatedAt: now }, { merge: true })));
+  await syncCapabilities({ tenantId }).catch((e) => console.error(`saas-gateway: возможности тарифа ${tenantId}:`, e.message || e));
+  await writeAuditLog({ tenantId, actorId: uid, action: "chainConvertedToSingle", metadata: { chainId, planId: planSnap.id } });
+  sendJson(res, 200, { ok: true, tenantId, planId: planSnap.id });
+}
+
+/**
  * Приглашение по email во вкладке «Команда». uid по email находит только
  * Admin SDK. Роли owner/admin так не выдаются — как и в правилах.
  */
@@ -7370,6 +7440,14 @@ function supportRecentErrors(tenantId) {
     .slice(-8).map((e) => `${supportFmt(e.at)}: ${e.text}`);
 }
 
+/** Приоритетная поддержка — в тарифе заведения (у точки сети — тарифа сети). */
+async function supportTenantPriority(tenantId) {
+  const t = await db().collection("tenants").doc(tenantId).get();
+  if (!t.exists) return false;
+  const plan = (await db().collection("plans").doc(await effectivePlanId(t)).get()).data();
+  return !!(plan && plan.prioritySupport === true);
+}
+
 const supportBot = createSupportBot({
   db,
   admin,
@@ -7390,6 +7468,7 @@ const supportBot = createSupportBot({
   platformStatus: supportPlatformStatus,
   recentErrors: supportRecentErrors,
   docData: supportDocData,
+  tenantPriority: supportTenantPriority,
   clientIp,
 });
 
@@ -7554,6 +7633,7 @@ const ROUTES = {
   "/createBuildJob": handleCreateBuildJob,
   "/setBillingEventTest": handleSetBillingEventTest,
   "/chainPoints": handleChainPoints,
+  "/convertChainToSingle": handleConvertChainToSingle,
   "/chainPointJoin": handleChainPointJoin,
   "/chainLocationQuote": handleChainLocationQuote,
   "/chainLocationCheckout": handleChainLocationCheckout,

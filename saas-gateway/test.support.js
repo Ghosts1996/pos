@@ -332,6 +332,7 @@ function harness() {
     platformStatus: async () => "Сервер работает",
     recentErrors: () => ["12:00: build failed for t1"],
     docData: async (tid) => ({ venue: tid ? { name: "Колибри", sellerName: "ООО «Колибри»", sellerInn: "7701234567" } : {}, platform: {} }),
+    tenantPriority: async (tid) => tid === "tprio",
     debounceMs: 0,
     guidePath: require("path").join(__dirname, "..", "saas", "console", "guide.js"),
   });
@@ -1797,6 +1798,31 @@ test("технический бот: описание, кнопки команд
   assert.strictEqual(await h.bot.checkHook({ force: true }), "fixed");
   assert.strictEqual(h.calls.filter((c) => c.method === "setWebhook").length, n + 1);
   assert.ok(h.calls.filter((c) => c.method === "setWebhook").pop().body.url.endsWith("/tgHook/_support"));
+});
+
+test("приоритетная поддержка по тарифу: ⭐ в теме и карточке, человек — за 5 минут, а не 15", async () => {
+  const h = harness();
+  await setup(h);
+  const at = { toMillis: () => Date.now() };
+  for (const [id, tid] of [["p1", "tprio"], ["p2", "t2"]]) {
+    h.store.set(`supportTickets/${id}`, { tenantId: tid, channel: "cabinet", subject: "Не печатает чек", status: "open", createdBy: "owner1", lastAuthorRole: "owner", createdAt: at, updatedAt: at });
+    h.store.set(`supportTickets/${id}/messages/m1`, { text: "Позовите оператора", authorRole: "owner", authorUid: "owner1", createdAt: at });
+    h.bot.onTicketDoc(id, h.store.get(`supportTickets/${id}`));
+  }
+  await h.bot.idle();
+  const [p1, p2] = ["p1", "p2"].map((id) => tickets(h.store).find((x) => x.id === id));
+  assert.strictEqual(p1.priority, true);
+  assert.ok(!p2.priority);
+  assert.ok(h.calls.some((c) => /^(createForumTopic|editForumTopic)$/.test(c.method) && c.body.message_thread_id !== p2.topicId && /⭐ #/.test(c.body.name)), "нет ⭐ в имени темы");
+  assert.ok(sends(h.calls, GROUP).some((c) => /Приоритетная поддержка/.test(c.body.text)));
+  assert.ok(sends(h.calls, 555000111).some((c) => /^⭐ /.test(c.body.text)), "сотруднику без пометки приоритета");
+  // Через 6 минут ожидания напоминание — только приоритетному.
+  const six = { toMillis: () => Date.now() - 6 * 60 * 1000 };
+  for (const id of ["p1", "p2"]) h.store.set(`supportTickets/${id}`, { ...h.store.get(`supportTickets/${id}`), clientAt: six, updatedAt: six, assignedAt: six, escalated: true, lastAuthorRole: "owner" });
+  await h.bot.sweepSla();
+  const pings = sends(h.calls, GROUP).filter((c) => /ждёт \d+ мин/.test(c.body.text));
+  assert.ok(pings.some((c) => c.body.message_thread_id === p1.topicId && /Приоритетный клиент/.test(c.body.text)), "приоритет не поднят за 5 минут");
+  assert.ok(!pings.some((c) => c.body.message_thread_id === p2.topicId), "обычному напомнили раньше 15 минут");
 });
 
 test("объявления платформы: бот знает действующую акцию и отвечает по ней, снятую — забывает", async () => {
