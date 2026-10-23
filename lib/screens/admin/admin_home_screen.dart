@@ -28,6 +28,7 @@ import 'gift_cards_screen.dart';
 import 'guests_screen.dart';
 import 'loyalty_settings_screen.dart';
 import 'session_settings_screen.dart';
+import 'time_cafe_settings_screen.dart';
 import '../login_screen.dart';
 import '../../utils/adaptive.dart';
 
@@ -44,7 +45,8 @@ class AdminHomeScreen extends StatelessWidget {
       'Работа заведения': [
         _AdminTile('Отчёты', Icons.bar_chart, (ctx) => const ReportsScreen()),
         _AdminTile('Карта зала', Icons.table_bar, (ctx) => const FloorPlanEditorScreen()),
-        _AdminTile('Тайм-кафе', Icons.schedule, (ctx) => const SessionSettingsScreen()),
+        _AdminTile('Длительность сеанса', Icons.schedule, (ctx) => const SessionSettingsScreen()),
+        _AdminTile('Тайм-кафе', Icons.hourglass_bottom_rounded, (ctx) => const TimeCafeSettingsScreen()),
         _AdminTile('Меню', Icons.restaurant_menu, (ctx) => const MenuEditorScreen()),
         _AdminTile('Склад', Icons.inventory_2_outlined,
             (ctx) => InventoryScreen(employee: employee)),

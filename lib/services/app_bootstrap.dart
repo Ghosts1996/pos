@@ -3,6 +3,7 @@ import 'fiscal_queue.dart';
 import 'net_status.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/client_models.dart';
+import '../utils/time_cafe.dart';
 import '../utils/constants.dart';
 import 'hall_watch_service.dart';
 import 'printer_service.dart';
@@ -53,6 +54,9 @@ void startBackgroundServices() {
   // lib/screens/admin/session_settings_screen.dart) — без неё касса
   // продолжает открывать сеансы на дефолтные 1.5 часа.
   unawaited(loadSessionDurationSettings());
+  // Тайм-кафе (settings/timeCafe) — живьём: цену поменяли на одной кассе,
+  // остальные считают по новой сразу.
+  TimeCafe.watch();
 
   // Локальные уведомления зала: брони, вызовы гостей, угли через 35 минут,
   // конец сеанса через 10. Слежение ведёт фоновая служба (HallWatchService):

@@ -35,6 +35,20 @@ void main() {
     expect(l.name, 'Время в тайм-кафе · 1 ч 25 мин');
   });
 
+  test('первый час по своей цене, минимальная оплата', () {
+    TimeCafe.apply({'enabled': true, 'pricePerHour': 200, 'firstHourPrice': 400, 'minMinutes': 60, 'roundMinutes': 1});
+    expect(TimeCafe.costPerGuest(const Duration(minutes: 20)), 400, reason: 'минимум — час');
+    expect(TimeCafe.costPerGuest(const Duration(minutes: 90)), 500, reason: '400 за первый час + 100 за полчаса');
+  });
+
+  test('сумму поправили вручную — строка помечена, при оплате не пересчитывается', () {
+    TimeCafe.apply({'enabled': true, 'pricePerHour': 300});
+    final l = TimeCafe.line(const Duration(minutes: 60), 2, perGuest: 250);
+    expect(l.price, 250);
+    expect(l.name.endsWith(' · вручную'), isTrue);
+    expect(TimeCafe.line(const Duration(minutes: 60), 2).name.contains('вручную'), isFalse);
+  });
+
   test('неверные значения настроек — безопасные', () {
     TimeCafe.apply({'enabled': true, 'pricePerHour': '-5', 'roundMinutes': 7, 'stopCheck': 'abc'});
     expect(TimeCafe.pricePerHour, 0);

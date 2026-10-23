@@ -1,4 +1,3 @@
-import 'time_cafe.dart';
 import '../services/app_scope.dart';
 import '../services/venue_service.dart';
 
@@ -258,8 +257,6 @@ Future<void> loadSessionDurationSettings() async {
   try {
     final doc = await AppScope.col('settings').doc('sessionDuration').get();
     final data = doc.data();
-    // Тайм-кафе (оплата за время) — в том же документе.
-    TimeCafe.apply(data?['timeCafe']);
     if (data == null) {
       // Владелец длительность не настраивал. Ресторану, кафе и бару таймер
       // на полтора часа не нужен — стол занят, пока его не закроют.

@@ -76,6 +76,163 @@ class AiContextService {
     return buf.toString();
   }
 
+  // ---------- БЛЮДА: СОСТАВ, СЕБЕСТОИМОСТЬ, СТОП-ЛИСТ, ДОПРОДАЖА ----------
+
+  Future<Map<String, InventoryItem>> _stockMap() async {
+    final snap = await AppScope.col('inventoryItems').get();
+    return {for (final d in snap.docs) d.id: InventoryItem.fromDoc(d)};
+  }
+
+  static String _amount(double v, InventoryUnit u) =>
+      '${v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(1).replaceAll('.', ',')} ${u.label}';
+
+  /// Состав блюда: описание, выход, техкарта (продукты склада и сколько на
+  /// порцию), модификаторы с доплатами. [withCost] — себестоимость и фудкост
+  /// (только персоналу). Ищет по id или по части названия.
+  Future<String> dishDetails(String query, {bool withCost = false}) async {
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) return 'Укажите блюдо: название или id.';
+    final items = (await AppScope.col('menuItems').get()).docs.map(MenuItem.fromDoc).toList();
+    final hit = items.where((i) => i.id == query.trim()).toList();
+    final found = hit.isNotEmpty ? hit : items.where((i) => i.name.toLowerCase().contains(q)).take(3).toList();
+    if (found.isEmpty) return 'Блюда «$query» нет в меню.';
+    final stock = await _stockMap();
+    final buf = StringBuffer();
+    for (final i in found) {
+      buf.writeln('## ${i.name} — ${money(i.price)}${i.available ? '' : ' (сейчас в стоп-листе)'}');
+      if (i.weight > 0) buf.writeln('Выход: ${_amount(i.weight, i.weightUnit)}');
+      if (i.description.isNotEmpty) buf.writeln('Описание и состав от заведения: ${i.description}');
+      final lines = i.isComposite
+          ? [for (final c in i.components) if (c.inventoryItemId.isNotEmpty) c]
+          : (i.hasInventoryLink ? i.perPortion : const <MenuItemComponent>[]);
+      if (lines.isNotEmpty) {
+        final n = i.recipePortions < 1 ? 1 : i.recipePortions;
+        buf.writeln('Техкарта${n > 1 ? ' (на $n порц.)' : ''}:');
+        for (final c in lines) {
+          final inv = stock[c.inventoryItemId];
+          buf.writeln('- ${inv?.name ?? 'продукт склада'}: ${_amount(c.weight, c.weightUnit)}'
+              '${c.lossPercent > 0 ? ' (отход ${c.lossPercent.toStringAsFixed(0)}%)' : ''}');
+        }
+      } else if (i.description.isEmpty) {
+        buf.writeln('Состав не заполнен — уточните у кухни, не придумывайте.');
+      }
+      for (final g in i.modifierGroups) {
+        buf.writeln('Модификаторы «${g.name}»: ${g.options.map((o) => o.price > 0 ? '${o.name} +${money(o.price)}' : o.name).join(', ')}');
+      }
+      if (withCost) {
+        final cost = i.costPrice(stock);
+        final fc = i.foodCostPercent(stock);
+        buf.writeln(cost == null
+            ? 'Себестоимость: не посчитать — нет техкарты или цены закупки у продукта.'
+            : 'Себестоимость порции: ${money(cost)} · фудкост ${fc!.toStringAsFixed(0)}% · наценка ${money(i.price - cost)}');
+      }
+    }
+    return buf.toString();
+  }
+
+  /// Фудкост меню: самые «тяжёлые» по себестоимости блюда и те, где её не
+  /// посчитать. [over] — порог, %, выше которого блюдо в зоне внимания.
+  Future<String> foodCostReport({double over = 35}) async {
+    final items = (await AppScope.col('menuItems').get()).docs.map(MenuItem.fromDoc).where((i) => i.price > 0).toList();
+    final stock = await _stockMap();
+    final rows = <(MenuItem, double, double)>[];
+    var unknown = 0;
+    for (final i in items) {
+      final c = i.costPrice(stock);
+      if (c == null) {
+        unknown++;
+        continue;
+      }
+      rows.add((i, c, c / i.price * 100));
+    }
+    if (rows.isEmpty) return 'Себестоимость не посчитать ни по одному блюду: заполните техкарты и цены закупки на складе.';
+    rows.sort((a, b) => b.$3.compareTo(a.$3));
+    final avg = rows.fold<double>(0, (a, r) => a + r.$3) / rows.length;
+    final buf = StringBuffer('Средний фудкост: ${avg.toStringAsFixed(0)}% по ${rows.length} блюдам'
+        '${unknown > 0 ? ' (ещё $unknown без техкарты или цен закупки)' : ''}.\n');
+    final high = rows.where((r) => r.$3 >= over).take(15).toList();
+    buf.writeln(high.isEmpty ? 'Блюд с фудкостом от ${over.toStringAsFixed(0)}% нет.' : 'Фудкост от ${over.toStringAsFixed(0)}%:');
+    for (final r in high) {
+      buf.writeln('- ${r.$1.name}: себестоимость ${money(r.$2)} при цене ${money(r.$1.price)} — ${r.$3.toStringAsFixed(0)}%');
+    }
+    final low = rows.reversed.take(5).toList();
+    buf.writeln('Самые выгодные: ${low.map((r) => '${r.$1.name} ${r.$3.toStringAsFixed(0)}%').join(', ')}');
+    return buf.toString();
+  }
+
+  /// Стоп-лист: что сейчас не продаётся и почему (продукт закончился).
+  Future<String> stopList() async {
+    final items = (await AppScope.col('menuItems').get()).docs.map(MenuItem.fromDoc).toList();
+    final off = items.where((i) => !i.available).toList();
+    final stock = await _stockMap();
+    final buf = StringBuffer();
+    buf.writeln(off.isEmpty ? 'В стоп-листе ничего нет.' : 'В стоп-листе (${off.length}):');
+    for (final i in off.take(40)) {
+      buf.writeln('- ${i.name}');
+    }
+    // Ещё в меню, но продукта по техкарте нет на складе — скоро в стоп.
+    final risky = <String>[];
+    for (final i in items.where((i) => i.available)) {
+      for (final c in i.perPortion) {
+        final inv = stock[c.inventoryItemId];
+        if (inv != null && inv.active && inv.quantity <= 0) {
+          risky.add('${i.name} (нет «${inv.name}»)');
+          break;
+        }
+      }
+    }
+    if (risky.isNotEmpty) buf.writeln('Продаётся, но продукта нет на складе: ${risky.take(20).join(', ')}');
+    return buf.toString();
+  }
+
+  /// Что закупить: продукты ниже минимума и сколько взять, чтобы
+  /// остаток стал двойным минимумом; с ценой закупки — примерная сумма.
+  Future<String> reorderList() async {
+    final items = (await _stockMap()).values.where((i) => i.active && i.minQuantity > 0 && i.quantity <= i.minQuantity).toList()
+      ..sort((a, b) => (a.quantity / a.minQuantity).compareTo(b.quantity / b.minQuantity));
+    if (items.isEmpty) return 'Всё выше минимума — закупать срочно нечего.';
+    final buf = StringBuffer('Закупить (до двойного минимума):\n');
+    var total = 0.0;
+    for (final i in items.take(40)) {
+      final need = i.minQuantity * 2 - i.quantity;
+      final sum = i.costPrice > 0 ? i.costOf(need, i.unit) : 0.0;
+      total += sum;
+      buf.writeln('- ${i.name}: остаток ${_amount(i.quantity, i.unit)}, мин. ${_amount(i.minQuantity, i.unit)} → взять ${_amount(need, i.unit)}'
+          '${sum > 0 ? ' ≈ ${money(sum)}' : ''}');
+    }
+    if (total > 0) buf.writeln('Примерно на ${money(total)} по последним ценам закупки.');
+    return buf.toString();
+  }
+
+  /// Допродажа к столу: популярные позиции из категорий, которых в чеке
+  /// ещё нет (табак сами не предлагаем — PromoPolicy).
+  Future<String> upsellFor(String sessionId) async {
+    if (sessionId.isEmpty) return 'Откройте экран стола — подскажу, что предложить к этому заказу.';
+    final doc = await AppScope.col('sessions').doc(sessionId).get();
+    if (!doc.exists) return 'Чек не найден.';
+    final session = SessionModel.fromDoc(doc);
+    final cats = {for (final c in (await AppScope.col('menuCategories').get()).docs) c.id: MenuCategory.fromDoc(c)};
+    final items = (await AppScope.col('menuItems').get()).docs.map(MenuItem.fromDoc).where((i) => i.available).toList();
+    final inCheck = session.orderItems.map((o) => o.menuItemId).toSet();
+    final usedCats = items.where((i) => inCheck.contains(i.id)).map((i) => i.categoryId).toSet();
+    final pool = items.where((i) => !inCheck.contains(i.id) && !usedCats.contains(i.categoryId)
+        && !PromoPolicy.menuTobacco(i, cats[i.categoryId]?.name ?? '')).toList()
+      ..sort((a, b) => (a.popularRank > 0 ? a.popularRank : 999).compareTo(b.popularRank > 0 ? b.popularRank : 999));
+    final pick = <MenuItem>[];
+    final seen = <String>{};
+    for (final i in pool) {
+      if (seen.add(i.categoryId)) pick.add(i);
+      if (pick.length >= 4) break;
+    }
+    if (pick.isEmpty) return 'В чеке уже есть всё основное — можно предложить десерт или напиток на выбор гостя.';
+    final buf = StringBuffer('В чеке: ${session.orderItems.isEmpty ? 'пока пусто' : session.orderItems.map((o) => o.displayName).take(8).join(', ')}.\n');
+    buf.writeln('Предложить:');
+    for (final i in pick) {
+      buf.writeln('- ${i.name} — ${money(i.price)} (${cats[i.categoryId]?.name ?? 'меню'}${i.popularRank > 0 ? ', хит №${i.popularRank}' : ''}) [id:${i.id}]');
+    }
+    return buf.toString();
+  }
+
   // ---------- СКЛАД ----------
 
   Future<String> stockSnapshot({bool onlyProblems = false}) async {

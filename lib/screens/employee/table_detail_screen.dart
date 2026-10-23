@@ -221,39 +221,66 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
 
   static String _hhmm(DateTime d) => '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
-  /// Тайм-кафе: сколько гостей за столом — для строки «Время в тайм-кафе».
-  Future<int?> _askGuests(int initial) => showDialog<int>(
-        context: context,
-        builder: (ctx) {
-          var n = initial < 1 ? 1 : initial;
-          return StatefulBuilder(builder: (ctx, set) => AlertDialog(
-                title: const Text('Время в счёт'),
-                content: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Text('Сколько гостей платят за время?', style: TextStyle(color: AppColors.textMuted)),
-                  const SizedBox(height: 12),
-                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    IconButton.filledTonal(onPressed: n > 1 ? () => set(() => n--) : null, icon: const Icon(Icons.remove)),
-                    SizedBox(width: 64, child: Text('$n', textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700))),
-                    IconButton.filledTonal(onPressed: n < 50 ? () => set(() => n++) : null, icon: const Icon(Icons.add)),
-                  ]),
-                ]),
-                actions: [
-                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
-                  FilledButton(onPressed: () => Navigator.pop(ctx, n), child: const Text('Добавить')),
-                ],
-              ));
-        },
-      );
+  /// Тайм-кафе: сколько гостей платят за время и сколько с каждого. Сумма
+  /// по тарифу подставлена — её можно поправить (скидка, договорились).
+  Future<(int, double?)?> _askTime(SessionModel session) {
+    final sat = DateTime.now().difference(session.startTime);
+    final calc = TimeCafe.costPerGuest(sat);
+    final sumCtrl = TextEditingController(text: calc.toStringAsFixed(0));
+    var n = TimeCafe.guestsIn(session);
+    return showDialog<(int, double?)>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, set) {
+        final per = double.tryParse(sumCtrl.text.replaceAll(',', '.').trim());
+        return AlertDialog(
+          scrollable: true,
+          title: const Text('Время в счёт'),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('За столом ${TimeCafe.durationLabel(TimeCafe.billedMinutes(sat))} · по тарифу ${calc.toStringAsFixed(0)} ₽ за гостя',
+                style: TextStyle(color: AppColors.textMuted)),
+            const SizedBox(height: 14),
+            const Text('Гостей платят за время'),
+            const SizedBox(height: 6),
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              IconButton.filledTonal(onPressed: n > 1 ? () => set(() => n--) : null, icon: const Icon(Icons.remove)),
+              SizedBox(width: 64, child: Text('$n', textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700))),
+              IconButton.filledTonal(onPressed: n < 50 ? () => set(() => n++) : null, icon: const Icon(Icons.add)),
+            ]),
+            const SizedBox(height: 10),
+            TextField(
+              controller: sumCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              onChanged: (_) => set(() {}),
+              decoration: const InputDecoration(labelText: 'Сумма за гостя, ₽'),
+            ),
+            const SizedBox(height: 8),
+            Text(per == null || per < 0 ? 'Введите сумму' : 'Итого за время: ${(per.roundToDouble() * n).toStringAsFixed(0)} ₽',
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+            FilledButton(
+              onPressed: per == null || per < 0
+                  ? null
+                  : () => Navigator.pop(ctx, (n, per.roundToDouble() == calc ? null : per)),
+              child: const Text('В счёт'),
+            ),
+          ],
+        );
+      }),
+    ).whenComplete(sumCtrl.dispose);
+  }
 
   /// «Время в счёт»: строка со временем за столом, повторно — пересчёт.
   Future<bool> _addTime(SessionModel session) async {
-    final guests = await _askGuests(TimeCafe.guestsIn(session));
-    if (guests == null) return false;
+    final r = await _askTime(session);
+    if (r == null) return false;
+    final (guests, perGuest) = r;
     try {
       final sat = DateTime.now().difference(session.startTime);
-      await _fs.setTimeCafeLine(session.id, sat, guests);
+      await _fs.setTimeCafeLine(session.id, sat, guests, perGuest: perGuest);
       if (mounted) {
-        final sum = TimeCafe.costPerGuest(sat) * guests;
+        final sum = (perGuest ?? TimeCafe.costPerGuest(sat)).roundToDouble() * guests;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('Время в счёте: ${TimeCafe.durationLabel(TimeCafe.billedMinutes(sat))} · ${sum.toStringAsFixed(0)} ₽'),
           duration: const Duration(seconds: 2),
@@ -272,9 +299,13 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   Future<void> _openPayment(SessionModel session, {bool takeaway = false}) async {
     if (TimeCafe.ready && !takeaway) {
       if (TimeCafe.hasLine(session)) {
-        try {
-          await _fs.setTimeCafeLine(session.id, DateTime.now().difference(session.startTime), TimeCafe.guestsIn(session));
-        } catch (_) {}
+        // Время в счёте — на момент оплаты; сумму, поправленную вручную, не трогаем.
+        final manual = session.orderItems.any((i) => i.menuItemId == TimeCafe.lineId && i.name.endsWith(' · вручную'));
+        if (!manual) {
+          try {
+            await _fs.setTimeCafeLine(session.id, DateTime.now().difference(session.startTime), TimeCafe.guestsIn(session));
+          } catch (_) {}
+        }
       } else {
         final add = await showDialog<bool>(
           context: context,

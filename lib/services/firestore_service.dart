@@ -832,10 +832,10 @@ class FirestoreService {
 
   /// Тайм-кафе: строка «Время в тайм-кафе» по времени за столом и числу
   /// гостей. Уже есть — пересчитываем её же (см. TimeCafe.line).
-  Future<void> setTimeCafeLine(String sessionId, Duration sat, int guests) =>
+  Future<void> setTimeCafeLine(String sessionId, Duration sat, int guests, {double? perGuest}) =>
       _editCheckItems(sessionId, (items) {
         items.removeWhere((i) => i.menuItemId == TimeCafe.lineId);
-        items.add(TimeCafe.line(sat, guests));
+        items.add(TimeCafe.line(sat, guests, perGuest: perGuest));
         return true;
       });
 

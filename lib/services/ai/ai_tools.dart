@@ -86,8 +86,8 @@ class AiToolRegistry {
   static final AiToolRegistry instance = AiToolRegistry._();
 
   final _ctx = AiContextService();
-  final _reservations = ReservationService();
-  final _link = GuestLinkService();
+  late final _reservations = ReservationService();
+  late final _link = GuestLinkService();
 
   static Map<String, dynamic> _params(Map<String, dynamic> props, [List<String> required = const []]) =>
       {'type': 'object', 'properties': props, 'required': required};
@@ -112,6 +112,53 @@ class AiToolRegistry {
             .join('\n');
         return lines.isEmpty ? 'Ничего не найдено по запросу «$q».' : lines;
       },
+    ),
+
+    AiTool(
+      name: 'get_dish_details',
+      description: 'Состав блюда: описание, выход, техкарта (продукты и граммы), модификаторы. '
+          'Персоналу — ещё себестоимость и фудкост. Вызывай на вопросы о составе, аллергенах, граммовке.',
+      parameters: _params({
+        'dish': {'type': 'string', 'description': 'Название блюда или его id'},
+      }, ['dish']),
+      scopes: {AiToolScope.staff, AiToolScope.guest},
+      run: (args, ctx) => _ctx.dishDetails('${args['dish'] ?? ''}', withCost: ctx.scope == AiToolScope.staff),
+    ),
+
+    AiTool(
+      name: 'get_food_cost',
+      description: 'Фудкост меню: средний, блюда с высоким фудкостом и самые выгодные. Для вопросов о наценке и ценах.',
+      parameters: _params({
+        'over_percent': {'type': 'number', 'description': 'Порог фудкоста, %, по умолчанию 35'},
+      }),
+      scopes: {AiToolScope.staff},
+      run: (args, ctx) => _ctx.foodCostReport(over: (args['over_percent'] as num?)?.toDouble() ?? 35),
+    ),
+
+    AiTool(
+      name: 'get_stop_list',
+      description: 'Стоп-лист: что сейчас не продаётся, и блюда, для которых продукта уже нет на складе.',
+      parameters: _params({}),
+      scopes: {AiToolScope.staff},
+      run: (args, ctx) => _ctx.stopList(),
+    ),
+
+    AiTool(
+      name: 'get_purchase_list',
+      description: 'Что закупить: продукты ниже минимума, сколько взять и примерная сумма.',
+      parameters: _params({}),
+      scopes: {AiToolScope.staff},
+      run: (args, ctx) => _ctx.reorderList(),
+    ),
+
+    AiTool(
+      name: 'suggest_upsell',
+      description: 'Что предложить гостю к текущему заказу стола: популярные позиции из категорий, которых в чеке нет.',
+      parameters: _params({
+        'session_id': {'type': 'string', 'description': 'Id чека; пусто — чек, открытый на экране'},
+      }),
+      scopes: {AiToolScope.staff},
+      run: (args, ctx) => _ctx.upsellFor(((args['session_id'] as String?) ?? '').trim().isNotEmpty ? '${args['session_id']}'.trim() : ctx.sessionId),
     ),
 
     AiTool(

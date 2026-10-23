@@ -4,12 +4,9 @@ import '../../theme/app_colors.dart';
 import '../../utils/constants.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
-import '../../utils/time_cafe.dart';
 
-/// «Тайм-кафе»: оплата за время за столом (цена часа, округление,
-/// стоп-чек) и таймер стола — длительность сеанса по умолчанию (час, два,
-/// без таймера). См. TimeCafe и AppConstants.sessionMinutes /
-/// loadSessionDurationSettings.
+/// Длительность сеанса кальяна — у каждого заведения своя (час, два, без
+/// таймера). См. AppConstants.sessionMinutes/loadSessionDurationSettings.
 class SessionSettingsScreen extends StatefulWidget {
   const SessionSettingsScreen({super.key});
 
@@ -25,14 +22,6 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
 
   late bool _unlimited;
   late final TextEditingController _hoursCtrl;
-
-  // Тайм-кафе — с того, что уже действует на кассе (TimeCafe), до чтения документа.
-  bool _cafe = TimeCafe.enabled;
-  int _round = TimeCafe.roundMinutes;
-  late final TextEditingController _priceCtrl =
-      TextEditingController(text: TimeCafe.pricePerHour > 0 ? _numStr(TimeCafe.pricePerHour) : '');
-  late final TextEditingController _stopCtrl =
-      TextEditingController(text: TimeCafe.stopCheck > 0 ? _numStr(TimeCafe.stopCheck) : '');
 
   @override
   void initState() {
@@ -52,8 +41,6 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
   @override
   void dispose() {
     _hoursCtrl.dispose();
-    _priceCtrl.dispose();
-    _stopCtrl.dispose();
     super.dispose();
   }
 
@@ -72,12 +59,7 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
       if (data != null && mounted) {
         final unlimited = data['unlimited'] as bool? ?? false;
         final minutes = (data['minutes'] as num?)?.toInt();
-        TimeCafe.apply(data['timeCafe']);
         setState(() {
-          _cafe = TimeCafe.enabled;
-          _round = TimeCafe.roundMinutes;
-          _priceCtrl.text = TimeCafe.pricePerHour > 0 ? _numStr(TimeCafe.pricePerHour) : '';
-          _stopCtrl.text = TimeCafe.stopCheck > 0 ? _numStr(TimeCafe.stopCheck) : '';
           _unlimited = unlimited;
           if (!unlimited && minutes != null && minutes > 0) {
             _hoursCtrl.text = _numStr(minutes / 60);
@@ -109,23 +91,9 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
       minutes = (hours * 60).round();
     }
 
-    double money(TextEditingController c) => double.tryParse(c.text.replaceAll(',', '.').replaceAll(' ', '').trim()) ?? 0;
-    final price = money(_priceCtrl);
-    final stop = money(_stopCtrl);
-    if (_cafe && price <= 0) {
-      setState(() => _error = 'Укажите цену часа для тайм-кафе');
-      return;
-    }
-    if (stop < 0 || (stop > 0 && stop < price * _round / 60)) {
-      setState(() => _error = 'Стоп-чек меньше цены минимального шага — проверьте сумму');
-      return;
-    }
-    final cafe = TimeCafe.toMap(enabled: _cafe, pricePerHour: price, roundMinutes: _round, stopCheck: stop);
-
     setState(() => _saving = true);
     try {
-      await _doc.set({'unlimited': _unlimited, 'minutes': minutes, 'timeCafe': cafe});
-      TimeCafe.apply(cafe);
+      await _doc.set({'unlimited': _unlimited, 'minutes': minutes});
       // Применяем сразу — без этого касса открывала бы сеансы по старой
       // длительности вплоть до перезапуска приложения.
       AppConstants.sessionMinutes = minutes;
@@ -143,7 +111,7 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Тайм-кафе')),
+      appBar: AppBar(title: const Text('Длительность сеанса')),
       body: CenteredBody(
         maxWidth: Breakpoints.form,
         child: _loading
@@ -151,61 +119,6 @@ class _SessionSettingsScreenState extends State<SessionSettingsScreen> {
             : ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Тайм-кафе: оплата за время', style: TextStyle(fontWeight: FontWeight.w700)),
-                    subtitle: const Text('Гость платит за время за столом. На экране стола видно, сколько '
-                        'уже набежало, а кнопка «Время в счёт» добавляет строку со временем — '
-                        'за каждого гостя.'),
-                    value: _cafe,
-                    onChanged: (v) => setState(() => _cafe = v),
-                  ),
-                  if (_cafe) ...[
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _priceCtrl,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      onChanged: (_) => setState(() {}),
-                      decoration: const InputDecoration(labelText: 'Цена часа за гостя, ₽', hintText: 'Например, 300'),
-                    ),
-                    const SizedBox(height: 12),
-                    Text('Округлять время вверх до', style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        for (final r in TimeCafe.roundChoices)
-                          ChoiceChip(
-                            label: Text(r == 1 ? 'минуты' : r == 60 ? 'часа' : '$r мин'),
-                            selected: _round == r,
-                            onSelected: (_) => setState(() => _round = r),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _stopCtrl,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      onChanged: (_) => setState(() {}),
-                      decoration: const InputDecoration(
-                        labelText: 'Стоп-чек за гостя, ₽ (необязательно)',
-                        hintText: 'Больше этой суммы за визит не берём',
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Builder(builder: (context) {
-                      final p = double.tryParse(_priceCtrl.text.replaceAll(',', '.').trim()) ?? 0;
-                      final st = double.tryParse(_stopCtrl.text.replaceAll(',', '.').trim()) ?? 0;
-                      if (p <= 0) return const SizedBox.shrink();
-                      String c(int m) => TimeCafe.costPerGuest(Duration(minutes: m), price: p, round: _round, stop: st).toStringAsFixed(0);
-                      return Text('Пример: 40 мин — ${c(40)} ₽, 1 ч 30 мин — ${c(90)} ₽, 3 ч — ${c(180)} ₽ за гостя',
-                          style: TextStyle(fontSize: 13, color: AppColors.textMuted));
-                    }),
-                  ],
-                  const Divider(height: 32),
-                  const Text('Таймер стола', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                  const SizedBox(height: 6),
                   Text(
                     'Это время ставится таймером при нажатии «Начать сеанс» и '
                     'при «Перезабивке». Сотрудник в любой момент может вручную '
