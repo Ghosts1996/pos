@@ -1,14 +1,16 @@
 #!/bin/bash
-# Диагностика удаления устройства в кабинете — только чтение, ничего не меняет.
+# Диагностика Telegram-бота поддержки — только чтение, ничего не меняет.
 set -u
 echo "== Службы"
 for s in saas-gateway nginx; do
   printf '%-14s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null || echo нет)"
 done
 echo "== Версия кода: $(cat /opt/saas-gateway/VERSION 2>/dev/null || echo неизвестна)"
-grep -c "handleRestoreDevice" /opt/saas-gateway/server.js 2>/dev/null | sed 's/^/restoreDevice в коде сервера: /'
-echo "== Ошибки удаления и восстановления устройств за сутки (без токенов)"
-journalctl -u saas-gateway --since "-24h" --no-pager 2>/dev/null \
-  | grep -E -A12 "saas-gateway /(removeDevice|restoreDevice|setDeviceEnabled)" \
-  | grep -v -i -E "bearer|token|secret|password|key=" | tail -80
+echo "== Квота Firestore за 2 часа: $(journalctl -u saas-gateway --since '-2h' --no-pager 2>/dev/null | grep -c -E 'RESOURCE_EXHAUSTED|Quota exceeded')"
+echo "== Журнал бота и ошибок за 30 минут (без токенов)"
+journalctl -u saas-gateway --since "-30min" --no-pager 2>/dev/null \
+  | grep -i -E "telegram|support|tg |bot|error|ошиб|exhaust|quota|warn" \
+  | grep -v -E "^\s+at " \
+  | sed -E 's#bot[0-9]+:[A-Za-z0-9_-]+#bot***#g' \
+  | grep -v -i -E "bearer|secret|password|key=" | tail -60
 echo "Готово."
