@@ -257,7 +257,7 @@ test("карта кода: описания и надписи экранов б�
 
 // ---------------------------------------------------------------- весь путь
 
-function harness() {
+function harness(extra = {}) {
   const { db, store } = fakeDb();
   const calls = [];
   const aiCalls = [];
@@ -338,8 +338,9 @@ function harness() {
     ocr: { available: () => flags.ocrText !== undefined, recognize: async () => flags.ocrText || "" },
     debounceMs: 0,
     guidePath: require("path").join(__dirname, "..", "saas", "console", "guide.js"),
+    ...extra,
   });
-  return { bot, db, store, calls, aiCalls, aiReplies, sent, flags };
+  return { bot, db, store, calls, aiCalls, aiReplies, sent, flags, key };
 }
 
 const GROUP = -1001234567890;
@@ -1774,6 +1775,9 @@ test("сайт: один посетитель — одна тема; 30 мину
   }
   const cab = h.store.get("supportTickets/cab1");
   h.store.set("supportTickets/cab1", { ...cab, updatedAt: old, clientAt: old, createdAt: old });
+  // Бот запомнил, когда тема может устареть, и раньше её не перечитывает;
+  // здесь время «сдвинуто» правкой дат, поэтому срок сбрасываем.
+  h.bot._state.siteTopicNext.clear();
   assert.strictEqual(await h.bot.sweepSiteTopics(), 1);
   assert.ok(h.calls.some((c) => c.method === "deleteForumTopic" && c.body.message_thread_id === a.topicId));
   assert.ok(!h.calls.some((c) => c.method === "deleteForumTopic" && c.body.message_thread_id === h.store.get("supportTickets/cab1").topicId), "удалил тему кабинета");
@@ -1788,6 +1792,34 @@ test("сайт: один посетитель — одна тема; 30 мину
   await h.bot.idle();
   const again = tickets(h.store).find((x) => x.id === tok.ticketId);
   assert.ok(again.topicId && again.topicId !== a.topicId, "не создал новую тему");
+});
+
+test("исчерпан лимит базы: бот отвечает объяснением, а не молчит; запускается по копии настроек", async () => {
+  const fs = require("fs");
+  const os = require("os");
+  const cachePath = require("path").join(fs.mkdtempSync(require("path").join(os.tmpdir(), "sb-")), "state", "cfg.json");
+  const h = harness({ cfgCachePath: cachePath });
+  await setup(h);
+  assert.ok(fs.existsSync(cachePath), "копия настроек не записана");
+  assert.ok(!fs.readFileSync(cachePath, "utf8").includes("AAAbbbCCC"), "токен в копии не зашифрован");
+  const quota = () => Object.assign(new Error("8 RESOURCE_EXHAUSTED: Quota exceeded."), { code: 8 });
+  assert.ok(h.bot.isQuotaError(quota()) && !h.bot.isQuotaError(new Error("boom")));
+
+  // Сервер перезапустился, база отказывает: бот включается по копии.
+  const h2 = harness({ cfgCachePath: cachePath, secretKey: () => h.key });
+  // Как настоящая база при исчерпанном лимите: любой запрос отклоняется.
+  const failing = new Proxy({}, { get: (_, k) => (["get", "set", "add", "update", "delete"].includes(k)
+    ? () => Promise.reject(quota())
+    : k === "onSnapshot" ? (_ok, onErr) => { if (onErr) onErr(quota()); return () => {}; }
+      : k === "then" ? undefined : () => failing) });
+  h2.db.collection = () => failing;
+  h2.db.runTransaction = () => Promise.reject(quota());
+  await h2.bot.start();
+  await h2.bot.handleUpdate(pm("/start", 4242));
+  await h2.bot.handleUpdate(pm("Помогите", 4242));
+  const replies = sends(h2.calls, 4242);
+  assert.strictEqual(replies.length, 1, "не чаще раза в 10 минут");
+  assert.match(replies[0].body.text, /перегружен/);
 });
 
 test("группа поддержки закрыта: чужие заявки отклоняются, вошедший по ссылке удаляется, своих принимаем", async () => {

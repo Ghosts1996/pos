@@ -94,6 +94,13 @@ const SITE_POLL_PER_MIN = 90;    // опросов «есть ли ответ» 
 const SITE_TTL_MS = 30 * 24 * 3600 * 1000; // диалог на сайте живёт 30 дней
 const HOOK_UPDATES = ["message", "callback_query", "chat_join_request", "chat_member"];
 const SITE_TOPIC_IDLE_MS = 30 * 60 * 1000; // тема чата сайта без диалога 30 мин — удаляется
+const SITE_SWEEP_MS = 10 * 60 * 1000; // как часто проверять темы чата сайта
+const QUOTA_TEXT = "Сервис поддержки временно перегружен — база данных исчерпала лимит запросов. Напишите, пожалуйста, ещё раз чуть позже.";
+
+/** Firestore отказал из-за квоты (код 8 RESOURCE_EXHAUSTED). */
+function isQuotaError(e) {
+  return !!e && (e.code === 8 || e.code === "resource-exhausted" || /RESOURCE_EXHAUSTED|Quota exceeded/i.test(String(e.message || "")));
+}
 
 const ICON = { ai: "🤖", human: "🔴", answered: "🟡", closed: "✅" };
 
@@ -1173,7 +1180,7 @@ function createSupportBot(deps) {
 
   const state = {
     cfg: null, token: "", aiKeys: new Map(), awaiting: new Map(), staffDir: {}, rr: 0, guide: [], code: [], learned: [], topicToTicket: new Map(), prio: new Map(),
-    usage: { day: "", calls: 0, tokens: 0 }, rate: new Map(), lastError: "", noise: new Map(), news: [],
+    usage: { day: "", calls: 0, tokens: 0 }, rate: new Map(), lastError: "", noise: new Map(), news: [], siteTopicNext: new Map(),
     templates: tplIndex(TEMPLATES.map((t) => ({ ...t, id: `b_${t.id}`, source: "builtin", status: "active" }))),
   };
   const timers = new Map();
@@ -1244,8 +1251,36 @@ function createSupportBot(deps) {
 
   // ---- настройки
 
-  async function reload() {
-    const d = (await cfgRef().get()).data() || null;
+  /** Копия настроек на диске (токен и ключи в ней зашифрованы, как в базе):
+   *  сервер перезапустился, когда база недоступна (исчерпан лимит Firebase), —
+   *  бот всё равно включается и говорит клиенту, что случилось. */
+  function saveCfgCache(d) {
+    if (!deps.cfgCachePath) return;
+    try {
+      fs.mkdirSync(path.dirname(deps.cfgCachePath), { recursive: true });
+      fs.writeFileSync(deps.cfgCachePath, JSON.stringify(d || null), { mode: 0o600 });
+    } catch (e) {
+      console.error(`support-bot: копия настроек: ${e.message || e}`);
+    }
+  }
+  function readCfgCache() {
+    if (!deps.cfgCachePath) return null;
+    try {
+      return JSON.parse(fs.readFileSync(deps.cfgCachePath, "utf8"));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function reload({ fromCache = false } = {}) {
+    let d;
+    if (fromCache) {
+      d = readCfgCache();
+      if (!d) return state.cfg;
+    } else {
+      d = (await cfgRef().get()).data() || null;
+      saveCfgCache(d);
+    }
     state.cfg = d;
     state.token = "";
     state.aiKeys = new Map();
@@ -1927,7 +1962,13 @@ function createSupportBot(deps) {
   /** Клиент ждёт ответа человека 15 минут — обращение следующему, напоминание всем. */
   async function sweepSla() {
     if (!active()) return;
-    const snap = await ticketsCol().where("status", "==", "open").limit(300).get();
+    // Только те, где последним писал клиент: остальным ждать нечего. Раньше
+    // каждую минуту читались все открытые обращения — тысячи чтений в час
+    // из суточного лимита базы.
+    const snap = await ticketsCol().where("status", "==", "open").where("lastAuthorRole", "==", "owner").limit(300).get()
+      // База попросила составной индекс (FAILED_PRECONDITION) — прежний запрос.
+      .catch((e) => (e && (e.code === 9 || e.code === "failed-precondition")
+        ? ticketsCol().where("status", "==", "open").limit(300).get() : Promise.reject(e)));
     for (const d of snap.docs) {
       const t = { id: d.id, ...d.data() };
       if (t.lastAuthorRole !== "owner" || !(t.escalated || aiPaused(t, now()))) continue;
@@ -1962,6 +2003,8 @@ function createSupportBot(deps) {
     for (const d of snap.docs) {
       const topicId = Number(d.data().topicId) || 0;
       if (!topicId) { await quiet(d.ref.delete(), "тема сайта"); continue; }
+      // Тема ещё не могла устареть — её обращения не перечитываем.
+      if (now() < (state.siteTopicNext.get(topicId) || 0)) continue;
       if (await retireSiteTopic(topicId, d.ref)) n++;
     }
     return n;
@@ -1969,9 +2012,23 @@ function createSupportBot(deps) {
 
   async function retireSiteTopic(topicId, keyRef = null) {
     const list = (await ticketsCol().where("topicId", "==", topicId).limit(100).get()).docs.map((x) => ({ id: x.id, ...x.data() }));
-    if (list.some((t) => t.channel !== "site")) return false;
+    if (list.some((t) => t.channel !== "site")) {
+      state.siteTopicNext.set(topicId, now() + 6 * 3600 * 1000);
+      return false;
+    }
     const waiting = list.some((t) => t.status !== "closed" && t.escalated && t.lastAuthorRole === "owner");
-    if (waiting || list.some((t) => now() - lastMove(t) < SITE_TOPIC_IDLE_MS)) return false;
+    if (waiting) {
+      state.siteTopicNext.set(topicId, now() + SITE_SWEEP_MS);
+      return false;
+    }
+    const last = list.reduce((m, t) => Math.max(m, lastMove(t)), 0);
+    if (now() - last < SITE_TOPIC_IDLE_MS) {
+      // Раньше, чем через 30 минут после последнего сообщения, не устареет;
+      // новое сообщение лишь отодвинет срок — тогда перепроверим.
+      state.siteTopicNext.set(topicId, last + SITE_TOPIC_IDLE_MS);
+      return false;
+    }
+    state.siteTopicNext.delete(topicId);
     for (const t of list) {
       const open = t.status !== "closed";
       await patch(t, { topicId: null, topicName: null, topicStatus: null, panelMsgId: null,
@@ -3678,8 +3735,31 @@ function createSupportBot(deps) {
       const link = String(msg.text || "").match(/^\/link(?:@\w+)?\s+([A-Z0-9]{6,12})\s*$/);
       if (link && (msg.chat.type === "supergroup" || msg.chat.type === "group")) return await linkGroup(msg, link[1]);
     } catch (e) {
+      if (isQuotaError(e)) {
+        console.error("support-bot update: база недоступна — исчерпан лимит Firebase");
+        await replyQuota(update).catch(() => {});
+        return;
+      }
       console.error(`support-bot update: ${e && e.stack ? e.stack : e}`);
     }
+  }
+
+  /** База отказала из-за лимита запросов: клиенту — короткое объяснение
+   *  (не чаще раза в 10 минут в чат), а не тишина. */
+  const quotaNotified = new Map();
+  async function replyQuota(update) {
+    if (!active()) return;
+    if (update.callback_query) {
+      await tg("answerCallbackQuery", { callback_query_id: update.callback_query.id, text: QUOTA_TEXT, show_alert: true });
+      return;
+    }
+    const msg = update.message;
+    if (!msg || !msg.chat || msg.chat.type !== "private") return;
+    const last = quotaNotified.get(msg.chat.id) || 0;
+    if (now() - last < 10 * 60 * 1000) return;
+    quotaNotified.set(msg.chat.id, now());
+    if (quotaNotified.size > 2000) quotaNotified.clear();
+    await tg("sendMessage", { chat_id: msg.chat.id, text: QUOTA_TEXT });
   }
 
   // ---- самовосстановление: вебхук, описание бота
@@ -4526,8 +4606,39 @@ function createSupportBot(deps) {
     sendJson(res, 200, { enabled: true, url: `https://t.me/${state.cfg.username}?start=sup_${code}` });
   }
 
+  /** Включить слежение и профиль бота — один раз, когда настройки есть. */
+  let activated = false;
+  function activate() {
+    if (!active() || activated) return;
+    activated = true;
+    try { watchNews(); } catch (_) {}
+    watchTickets();
+    setGroupCommands().catch(() => {});
+    ensureProfile().catch(() => {});
+    checkHook({ force: true }).catch(() => {});
+  }
+
+  /** Настройки из базы не загрузились при запуске — пробуем раз в минуту. */
+  let cfgFromDb = false;
+  function retryReload() {
+    const timer = setInterval(() => {
+      reload().then(() => {
+        cfgFromDb = true;
+        clearInterval(timer);
+        console.log("support-bot: настройки загружены из базы");
+        activate();
+      }).catch(() => {});
+    }, 60 * 1000);
+    if (timer.unref) timer.unref();
+  }
+
   async function start() {
-    await reload().catch((e) => console.error(`support-bot: настройки: ${e.message || e}`));
+    await reload().then(() => { cfgFromDb = true; }).catch(async (e) => {
+      console.error(`support-bot: настройки: ${e.message || e}`);
+      await reload({ fromCache: true }).catch(() => {});
+      if (active()) console.log("support-bot: база недоступна — работаю по копии настроек");
+    });
+    if (!cfgFromDb) retryReload();
     const st = await db().collection("supportBot").doc("aiStatus").get().catch(() => null);
     for (const [id, v] of Object.entries((st && st.data && st.data()) || {})) router.restore(id, v);
     await loadGuide();
@@ -4535,22 +4646,21 @@ function createSupportBot(deps) {
     await loadTemplates().catch(() => {});
     await loadNoise().catch(() => {});
     await loadNews().catch(() => {});
-    if (active()) { try { watchNews(); } catch (_) {} }
     const u = (await db().collection("supportBot").doc("usage").get().catch(() => null));
     if (u && u.data && u.data()) state.usage = { day: "", calls: 0, tokens: 0, ...u.data() };
-    if (active()) watchTickets();
-    if (active()) setGroupCommands().catch(() => {});
-    if (active()) ensureProfile().catch(() => {});
-    if (active()) checkHook({ force: true }).catch(() => {});
+    activate();
     // Ступени моделей ещё не подобраны (старые настройки) — подобрать по списку провайдера.
     if (aiReady() && providers().some((p) => p.enabled && (!p.medium || !p.max))) pickModelsNow().catch((e) => console.error(`support-bot: подбор моделей: ${e.message || e}`));
     const dir = await db().collection("supportBot").doc("staffDir").get().catch(() => null);
     for (const [id, v] of Object.entries((dir && dir.data && dir.data()) || {})) state.staffDir[id] = { username: v.username || "", name: v.name || "" };
     setInterval(() => {
       sweepSla().catch((e) => console.error(`support-bot: очередь сотрудников: ${e.message || e}`));
-      sweepSiteTopics().catch((e) => console.error(`support-bot: темы сайта: ${e.message || e}`));
       checkHook().catch(() => {});
     }, 60 * 1000).unref();
+    // Тема живёт 30 минут без диалога — проверять раз в 10 минут достаточно.
+    setInterval(() => {
+      sweepSiteTopics().catch((e) => console.error(`support-bot: темы сайта: ${e.message || e}`));
+    }, SITE_SWEEP_MS).unref();
     setInterval(() => {
       sweepLearn().catch((e) => console.error(`support-bot: автообучение: ${e.message || e}`));
     }, LEARN_SWEEP_MS).unref();
@@ -4561,7 +4671,7 @@ function createSupportBot(deps) {
       loadTemplates().catch(() => {});
       loadNoise().catch(() => {});
       if (!unsubNews) loadNews().catch(() => {});
-      reload().catch(() => {});
+      reload().then(() => activate()).catch(() => {});
       for (const [k, r] of state.rate) if (now() > r.reset) state.rate.delete(k);
     }, KB_RELOAD_MS).unref();
   }
@@ -4571,6 +4681,7 @@ function createSupportBot(deps) {
     onTicketDoc, syncTicket, loadGuide, loadKnowledge, loadNoise, learnedJunk, loadNews, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
     // Тесты: подменить файлы знаний (карта кода с шаблонами, «что нового»).
     __setKbPaths: (p) => Object.assign(deps, p),
+    isQuotaError,
   };
 }
 

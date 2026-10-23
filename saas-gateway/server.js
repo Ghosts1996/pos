@@ -3035,6 +3035,9 @@ async function runAppRolloutTick() {
       })
       .map((d) => d.data().tenantId));
     let slots = APP_ROLLOUT_CONCURRENCY - busy.size;
+    // Все места заняты сборками — список заведений читать незачем (раньше
+    // его перечитывали каждую минуту, пока шли сборки).
+    if (slots <= 0) return;
 
     // "!=" не находит заведения без appBuild — те, что приложений ещё не
     // собирали, раскатка не трогает.
@@ -7591,6 +7594,9 @@ const supportBot = createSupportBot({
   docData: supportDocData,
   tenantPriority: supportTenantPriority,
   clientIp,
+  // Копия настроек бота (секреты в ней зашифрованы) — на случай запуска,
+  // когда база недоступна.
+  cfgCachePath: process.env.SUPPORT_BOT_CFG_CACHE || path.join(__dirname, "state", "support-bot-config.json"),
 });
 
 // ------------------------------------------------ кеш статических данных
