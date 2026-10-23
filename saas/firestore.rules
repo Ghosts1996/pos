@@ -468,7 +468,10 @@ service cloud.firestore {
     // Присоединяются по коду приглашения своего заведения, а не по общему
     // секрету платформы — иначе чужой код открывал бы все заведения.
     match /tenants/{tenantId}/devices/{deviceId} {
-      allow read: if isMember(tenantId);
+      // Своё устройство читается и после удаления владельцем: касса
+      // показывает «Устройство удалено» и открывается сама, когда его
+      // восстановят в кабинете.
+      allow read: if isMember(tenantId) || isSelf(deviceId);
       allow create: if isSelf(deviceId) &&
         request.resource.data.inviteCode ==
           get(/databases/$(database)/documents/tenants/$(tenantId)/settings/deviceInvite).data.code;

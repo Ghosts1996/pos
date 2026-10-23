@@ -4281,9 +4281,10 @@ function watchDashboardData(tenantId) {
       const max = planCaps((plans || []).find((p) => p.id === subscription?.planId)).maxDevices;
       const ms = (v) => (v && typeof v.toMillis === 'function' ? v.toMillis() : Infinity);
       const list = [...(devices || [])].sort((a, b) => ms(a.createdAt) - ms(b.createdAt) || a.id.localeCompare(b.id));
-      const active = list.filter((d) => d.status !== 'disabled');
+      const off = (d) => d.status === 'disabled' || d.status === 'removed';
+      const active = list.filter((d) => !off(d));
       const working = new Set(active.slice(0, max || active.length).map((d) => d.id));
-      return { max, list, active, working, over: max > 0 && active.length > max };
+      return { max, list, active, removed: list.filter(off), working, over: max > 0 && active.length > max };
     };
     const devWord = (n) => (n % 10 === 1 && n % 100 !== 11 ? 'устройство' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'устройства' : 'устройств');
     // На главной: устройств больше, чем по тарифу, — сразу два выхода.
@@ -4297,18 +4298,20 @@ function watchDashboardData(tenantId) {
         <p class="small muted" style="margin:6px 0 10px">${extra === 1 ? 'На последнем подключённом устройстве' : `На ${extra} последних подключённых`} касса не работает.
         Удалите устройство, которым больше не пользуетесь, или перейдите на тариф с большим числом устройств.</p>
         <div class="row" style="gap:8px;flex-wrap:wrap">
-          <button class="btn btn-ghost f-dash-tab" data-tab="devices">Удалить ненужное устройство</button>
+          <button class="btn btn-ghost f-dash-tab" data-tab="devices">${role === 'owner' ? 'Удалить ненужное устройство' : 'Посмотреть устройства'}</button>
           <button class="btn f-dash-tab" data-tab="plans">Выбрать тариф больше</button>
         </div>
       </div>`;
     };
     const devicesListHtml = () => {
       if (!devices) return '';
-      const { max, list, active, working } = deviceStats();
+      const { max, active, removed, working } = deviceStats();
+      // Удалять и восстанавливать устройства может только владелец заведения.
+      const isOwner = role === 'owner';
       const PLATFORM = { android: 'Android', windows: 'Windows', ios: 'iOS', web: 'браузер' };
       const title = (d) => d.deviceName || (d.platform === 'windows' ? 'Компьютер с Windows' : d.platform === 'android' ? 'Android-устройство' : 'Устройство');
       const row = (d) => {
-        const off = d.status === 'disabled';
+        const off = d.status === 'disabled' || d.status === 'removed';
         const over = !off && !working.has(d.id);
         const seen = d.seenAt || d.lastSeenAt;
         return `<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:6px 12px;padding:10px 0;border-top:1px solid var(--border)">
@@ -4316,13 +4319,13 @@ function watchDashboardData(tenantId) {
             <div style="font-weight:600">${esc(title(d))}${d.platform ? ` <span class="muted small">· ${esc(PLATFORM[d.platform] || d.platform)}</span>` : ''}</div>
             ${d.usage ? `<div class="small">${esc(d.usage)}</div>` : ''}
             <div class="small muted">Подключено ${fmtDate(d.createdAt)}${seen ? ` · на связи ${fmtDateTime(seen)}` : ''}</div>
-            ${off ? '<div class="small" style="color:var(--muted)">Отключено — касса на нём не работает</div>' : ''}
+            ${off ? `<div class="small" style="color:var(--muted)">${d.removedAt ? `Удалено ${fmtDate(d.removedAt)}` : 'Удалено'} — касса на нём не работает, пока его не восстановить</div>` : ''}
             ${over ? '<div class="small" style="color:var(--warning)">Сверх лимита тарифа — касса на нём не работает</div>' : ''}
           </div>
           ${canManage ? `<div class="row" style="gap:14px;flex:none;margin-left:auto">
-            <button class="btn-link" data-device-rename="${esc(d.id)}" data-name="${esc(d.deviceName || '')}">Переименовать</button>
-            ${off ? `<button class="btn-link" data-device-toggle="${esc(d.id)}" data-enable="1">Включить</button>` : ''}
-            <button class="btn-link" data-device-remove="${esc(d.id)}" data-name="${esc(title(d))}" style="color:var(--danger)">Удалить</button>
+            ${off ? '' : `<button class="btn-link" data-device-rename="${esc(d.id)}" data-name="${esc(d.deviceName || '')}">Переименовать</button>`}
+            ${isOwner && off ? `<button class="btn-link" data-device-restore="${esc(d.id)}" data-name="${esc(title(d))}">Восстановить</button>` : ''}
+            ${isOwner && !off ? `<button class="btn-link" data-device-remove="${esc(d.id)}" data-name="${esc(title(d))}" style="color:var(--danger)">Удалить</button>` : ''}
           </div>` : ''}
         </div>`;
       };
@@ -4333,8 +4336,11 @@ function watchDashboardData(tenantId) {
         телефон официанта, компьютер. ${max
           ? `По тарифу — до ${max} ${max % 10 === 1 && max % 100 !== 11 ? 'устройства' : 'устройств'}${tenant?.chainId ? ' на этой точке' : ''}, сейчас подключено ${active.length}.`
           : `По тарифу число устройств не ограничено, сейчас подключено ${active.length}.`}
-        Устройство больше не нужно или потеряно — удалите его: касса на нём перестанет работать, а место освободится.</p>
-        ${list.length ? list.map(row).join('') : '<p class="small muted">Пока ни одного устройства. Скачайте кассу ниже — она подключится сама.</p>'}
+        ${role === 'owner'
+          ? 'Устройство больше не нужно — удалите его: касса на нём перестанет работать, а место освободится. Передумали — восстановите его ниже.'
+          : 'Удалять и восстанавливать устройства может только владелец заведения.'}</p>
+        ${active.length ? active.map(row).join('') : '<p class="small muted">Пока ни одного устройства. Скачайте кассу ниже — она подключится сама.</p>'}
+        ${removed.length ? `<div style="margin-top:16px;font-weight:600">Удалённые устройства</div>${removed.map(row).join('')}` : ''}
         ${max && active.length >= max ? `<p class="small" style="margin:12px 0 0">Нужно больше устройств — <a href="#" class="f-dash-tab" data-tab="plans">выберите тариф больше</a>, оплаченные дни пересчитаются.</p>` : ''}
       </div>`;
     };
@@ -5931,11 +5937,23 @@ function watchDashboardData(tenantId) {
     if ($('f-rotate-code')) $('f-rotate-code').onclick = () => rotateInviteCode(tenantId);
     document.querySelectorAll('[data-device-remove]').forEach((btn) => {
       btn.onclick = async () => {
-        if (!confirm(`Удалить «${btn.dataset.name}»? Касса на этом устройстве перестанет работать, место по тарифу освободится. Понадобится снова — подключите его заново.`)) return;
+        if (!confirm(`Удалить «${btn.dataset.name}»? Касса на этом устройстве перестанет работать, место по тарифу освободится. Вернуть его можно кнопкой «Восстановить».`)) return;
         btn.disabled = true;
         try {
           await callSaasGateway('removeDevice', { tenantId, uid: btn.dataset.deviceRemove });
           toast('Устройство удалено');
+        } catch (e) {
+          toast(e?.message || String(e));
+          btn.disabled = false;
+        }
+      };
+    });
+    document.querySelectorAll('[data-device-restore]').forEach((btn) => {
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          await callSaasGateway('restoreDevice', { tenantId, uid: btn.dataset.deviceRestore });
+          toast(`«${btn.dataset.name}» восстановлено — касса на нём снова работает`);
         } catch (e) {
           toast(e?.message || String(e));
           btn.disabled = false;

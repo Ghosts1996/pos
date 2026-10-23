@@ -88,8 +88,9 @@ class PlanCapabilitiesService {
 /// Лимит устройств тарифа: касса работает, если она среди первых
 /// [PlanCapabilities.maxDevices] подключённых и не отключённых устройств
 /// заведения (по времени подключения). Лишняя касса показывает экран
-/// «Лимит устройств» — владелец отключает старый планшет в кабинете
+/// «Лимит устройств» — владелец удаляет старый планшет в кабинете
 /// («Устройства») или переходит на тариф больше, и касса открывается сама.
+/// Удалённое устройство владелец там же восстанавливает.
 ///
 /// Устройство без документа в devices (приложение гостя, сборка одного
 /// заведения) не ограничивается никогда.
@@ -101,15 +102,21 @@ class DeviceLimitGate {
   static final ValueNotifier<DeviceLimitState?> over = ValueNotifier(null);
 
   /// Все устройства заведения по времени подключения — для списка на
-  /// экране лимита и в Админ → «Устройства».
+  /// экране лимита.
   static final ValueNotifier<List<DeviceSlot>> devices = ValueNotifier(const []);
 
   /// Это устройство.
   static String get myId => _uid;
 
   static StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _sub;
+  static StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _selfSub;
   static List<DeviceSlot> _devices = const [];
   static String _uid = '';
+
+  /// Своё устройство — отдельной подпиской: удалённое владельцем устройство
+  /// не видит остальных (оно уже не участник заведения), но свой документ
+  /// читает — так касса узнаёт, что её удалили, и что её восстановили.
+  static DeviceSlot? _mine;
 
   static void watch(String tenantId, String uid) {
     stop();
@@ -125,11 +132,22 @@ class DeviceLimitGate {
       // Нет прав или связи — кассу не блокируем.
       onError: (_) {},
     );
+    _selfSub = FirebaseFirestore.instance.collection('tenants').doc(tenantId).collection('devices').doc(uid).snapshots().listen(
+      (d) {
+        final data = d.data();
+        _mine = data == null ? null : DeviceSlot.fromMap(d.id, data);
+        _recompute();
+      },
+      onError: (_) {},
+    );
   }
 
   static void stop() {
     _sub?.cancel();
     _sub = null;
+    _selfSub?.cancel();
+    _selfSub = null;
+    _mine = null;
     PlanCapabilitiesService.current.removeListener(_recompute);
     _devices = const [];
     devices.value = const [];
@@ -137,7 +155,10 @@ class DeviceLimitGate {
   }
 
   static void _recompute() {
-    over.value = check(_devices, _uid, PlanCapabilitiesService.current.value.maxDevices);
+    final mine = _mine;
+    // Свой документ свежее общего списка: удалённое устройство его только и видит.
+    final list = mine == null ? _devices : [for (final d in _devices) if (d.id != mine.id) d, mine];
+    over.value = check(list, _uid, PlanCapabilitiesService.current.value.maxDevices);
   }
 
   /// По времени подключения; ещё без серверного времени — только что
@@ -205,7 +226,8 @@ class DeviceSlot {
     final seen = [t(d['seenAt']), t(d['lastSeenAt'])].whereType<DateTime>().toList()..sort();
     return DeviceSlot(
       id: id,
-      active: d['status'] != 'disabled',
+      // Удалённое (removed) или отключённое (disabled, прежние версии) — не работает.
+      active: d['status'] != 'disabled' && d['status'] != 'removed',
       joinedAt: t(d['createdAt']),
       name: '${d['deviceName'] ?? ''}'.trim(),
       platform: '${d['platform'] ?? ''}',
@@ -228,7 +250,7 @@ class DeviceLimitState {
   final int max;
   final int active;
 
-  /// Устройство отключил владелец в кабинете.
+  /// Устройство удалил (отключил) владелец в кабинете.
   final bool disabled;
   const DeviceLimitState({required this.max, required this.active, this.disabled = false});
 }

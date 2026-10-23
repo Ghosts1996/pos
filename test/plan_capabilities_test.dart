@@ -78,7 +78,17 @@ void main() {
     expect(list[1].title, 'Планшет на баре');
   });
 
-  testWidgets('экран лимита: список устройств и удаление по PIN администратора', (tester) async {
+  test('удалённое владельцем (removed) не работает и не занимает место', () {
+    final t = DateTime(2026, 10, 1);
+    final gone = DeviceSlot.fromMap('old', {'status': 'removed', 'createdAt': null});
+    expect(gone.active, isFalse);
+    final list = [gone, DeviceSlot(id: 'new', active: true, joinedAt: t)];
+    expect(DeviceLimitGate.check(list, 'new', 1), isNull);
+    expect(DeviceLimitGate.check(list, 'old', 1)!.disabled, isTrue);
+    expect(DeviceSlot.fromMap('old', {'status': 'active'}).active, isTrue, reason: 'восстановили — снова работает');
+  });
+
+  testWidgets('экран лимита: список устройств, удалять на кассе нельзя', (tester) async {
     DeviceLimitGate.devices.value = [
       DeviceSlot(id: 'a', active: true, joinedAt: DateTime(2026), name: 'Планшет на баре', usage: 'Бармен'),
       DeviceSlot(id: 'b', active: true, joinedAt: DateTime(2026, 2), name: 'Планшет на кухне'),
@@ -91,9 +101,12 @@ void main() {
     expect(find.text('Лимит устройств тарифа'), findsOneWidget);
     expect(find.text('Планшет на баре'), findsOneWidget);
     expect(find.textContaining('сверх лимита'), findsOneWidget);
-    await tester.tap(find.text('Удалить').first);
-    await tester.pumpAndSettle();
-    expect(find.text('PIN администратора'), findsOneWidget, reason: 'окно открывается — у экрана свой навигатор');
+    expect(find.text('Удалить'), findsNothing, reason: 'удаляет только владелец в кабинете');
+    expect(find.text('Устройства в кабинете'), findsOneWidget);
+    DeviceLimitGate.over.value = const DeviceLimitState(max: 1, active: 1, disabled: true);
+    await tester.pump();
+    expect(find.text('Устройство удалено'), findsOneWidget);
+    expect(find.textContaining('«Восстановить»'), findsOneWidget);
     DeviceLimitGate.over.value = null;
     DeviceLimitGate.devices.value = const [];
     PlanCapabilitiesService.current.value = PlanCapabilities.full;

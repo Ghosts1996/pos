@@ -1,17 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
-import '../services/gateway_api.dart';
 import '../services/plan_capabilities.dart';
 import '../theme/app_colors.dart';
-import '../utils/human_error.dart';
 
 /// Устройства заведения с кассой: каждое физическое устройство — планшет на
 /// кухне, планшет на баре, телефон официанта, компьютер — считается
-/// отдельно. Здесь видно, сколько подключено и сколько разрешает тариф, на
-/// каких касса работает, и можно удалить ненужное (PIN администратора).
+/// отдельно. Здесь видно, сколько подключено и сколько разрешает тариф и на
+/// каких касса работает. Удаляет и восстанавливает устройства только
+/// владелец заведения — в кабинете («Устройства»).
 ///
-/// Используется на экране «Лимит устройств тарифа» и в Админ → «Устройства».
+/// Используется на экране «Лимит устройств тарифа».
 class DevicesPanel extends StatelessWidget {
   const DevicesPanel({super.key});
 
@@ -37,71 +35,6 @@ class DevicesPanel extends StatelessWidget {
     if (d.usage.contains('кухн')) return Icons.soup_kitchen_outlined;
     if (d.platform == 'windows') return Icons.desktop_windows_outlined;
     return Icons.tablet_android_outlined;
-  }
-
-  Future<void> _remove(BuildContext context, DeviceSlot d) async {
-    final pin = TextEditingController();
-    String? error;
-    var busy = false;
-    final done = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, set) {
-          Future<void> go() async {
-            set(() {
-              busy = true;
-              error = null;
-            });
-            try {
-              await GatewayApi.post('removeDevice', {'uid': d.id, 'adminPin': pin.text.trim()});
-              if (ctx.mounted) Navigator.pop(ctx, true);
-            } catch (e) {
-              set(() {
-                busy = false;
-                error = humanError(e);
-              });
-            }
-          }
-
-          return AlertDialog(
-            scrollable: true,
-            title: Text('Удалить «${d.title}»?'),
-            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              const Text('Касса на этом устройстве перестанет работать, место по тарифу освободится. '
-                  'Понадобится снова — подключите его заново, оно встанет последним.'),
-              const SizedBox(height: 14),
-              TextField(
-                controller: pin,
-                autofocus: true,
-                obscureText: true,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(8)],
-                decoration: const InputDecoration(labelText: 'PIN администратора'),
-                onSubmitted: (_) => busy ? null : go(),
-              ),
-              if (error != null) ...[
-                const SizedBox(height: 8),
-                Text(error!, style: TextStyle(color: AppColors.danger)),
-              ],
-            ]),
-            actions: [
-              TextButton(onPressed: busy ? null : () => Navigator.pop(ctx, false), child: const Text('Отмена')),
-              FilledButton(
-                style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
-                onPressed: busy ? null : go,
-                child: busy
-                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Удалить'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-    pin.dispose();
-    if (done == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Устройство «${d.title}» удалено')));
-    }
   }
 
   @override
@@ -136,7 +69,7 @@ class DevicesPanel extends StatelessWidget {
 
   Widget _row(BuildContext context, DeviceSlot d, {required bool mine, required bool works}) {
     final status = !d.active
-        ? 'отключено в кабинете'
+        ? 'удалено владельцем'
         : works
             ? ''
             : 'сверх лимита — касса не работает';
@@ -163,12 +96,6 @@ class DevicesPanel extends StatelessWidget {
             if (status.isNotEmpty) Text(status, style: TextStyle(fontSize: 12.5, color: AppColors.warning)),
           ]),
         ),
-        if (!mine)
-          TextButton(
-            onPressed: () => _remove(context, d),
-            style: TextButton.styleFrom(foregroundColor: AppColors.danger, minimumSize: const Size(0, 40)),
-            child: const Text('Удалить'),
-          ),
       ]),
     );
   }

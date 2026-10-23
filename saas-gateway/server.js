@@ -492,7 +492,7 @@ async function handleChainPointJoin(req, res) {
   const own = await callerChainMembership(decoded.uid, target.chainId);
   if (!own) throw new HttpError(403, "Эта касса не подключена к точкам этой сети");
   const sourceDevice = (await firestore.collection("tenants").doc(own.tenantId).collection("devices").doc(decoded.uid).get()).data();
-  if (!sourceDevice || sourceDevice.status === "disabled") throw new HttpError(403, "Эта касса отключена в кабинете");
+  if (!sourceDevice || ["disabled", "removed"].includes(sourceDevice.status)) throw new HttpError(403, "Эта касса отключена в кабинете");
   const invite = (await firestore.collection("tenants").doc(tenantId).collection("settings").doc("deviceInvite").get()).data();
   const now = admin.firestore.FieldValue.serverTimestamp();
   const batch = firestore.batch();
@@ -6227,8 +6227,7 @@ async function setDeviceEnabled(req, res, enabled) {
   if (typeof tenantId !== "string" || !tenantId || typeof uid !== "string" || !uid) throw new HttpError(400, "Не указано устройство");
   // Владелец или управляющий — кассы своего заведения (кабинет →
   // «Устройства»), супер-админ — любые.
-  const superAdmin = await isSuperAdmin(decoded);
-  if (!superAdmin) await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+  const superAdmin = await requireDeviceOwner(decoded, tenantId);
   if (uid === decoded.uid) throw new HttpError(400, "Своё устройство отключить нельзя");
   const firestore = db();
   const deviceRef = firestore.collection("tenants").doc(tenantId).collection("devices").doc(uid);
@@ -6236,13 +6235,9 @@ async function setDeviceEnabled(req, res, enabled) {
   if (!deviceSnap.exists) throw new HttpError(404, "Устройство не найдено");
   const tenantDoc = await firestore.collection("tenants").doc(tenantId).get();
   // Включить сверх лимита тарифа нельзя: касса всё равно не откроется.
-  if (enabled && !superAdmin && deviceSnap.data().status === "disabled") {
-    const planId = tenantDoc.exists ? await effectivePlanId(tenantDoc) : null;
-    const plan = planId ? (await firestore.collection("plans").doc(planId).get()).data() : null;
-    const max = planCapabilities(plan).maxDevices;
+  if (enabled && !superAdmin && ["disabled", "removed"].includes(deviceSnap.data().status)) {
+    const { max, active } = await deviceSlots(firestore.collection("tenants").doc(tenantId), tenantDoc);
     if (max > 0) {
-      const all = await firestore.collection("tenants").doc(tenantId).collection("devices").get();
-      const active = all.docs.filter((d) => d.data().status !== "disabled").length;
       if (active >= max) {
         throw new HttpError(409, `По тарифу касса работает на ${max} ${max % 10 === 1 && max % 100 !== 11 ? "устройстве" : "устройствах"}, и все места заняты. Сначала отключите другое устройство или смените тариф`);
       }
@@ -6254,8 +6249,15 @@ async function setDeviceEnabled(req, res, enabled) {
   if ((await memberRef.get()).exists) await memberRef.set({ status }, { merge: true });
   const chainId = tenantDoc.exists ? tenantDoc.data().chainId : null;
   if (chainId) await syncChainMembership(chainId, uid, "employee", status);
-  await getFirebaseApp().auth().updateUser(uid, { disabled: !enabled });
-  if (!enabled) await getFirebaseApp().auth().revokeRefreshTokens(uid);
+  // Вход устройства выключает только супер-админ (потерянный планшет):
+  // владелец отключает доступ к заведению, а вход остаётся — иначе
+  // включённая обратно касса не смогла бы войти.
+  if (superAdmin) {
+    await getFirebaseApp().auth().updateUser(uid, { disabled: !enabled });
+    if (!enabled) await getFirebaseApp().auth().revokeRefreshTokens(uid);
+  } else if (enabled) {
+    try { await getFirebaseApp().auth().updateUser(uid, { disabled: false }); } catch (_) {}
+  }
   await writeSecurityEvent(req, decoded, enabled ? "deviceEnabled" : "deviceDisabled", {
     tenantId,
     targetUid: uid,
@@ -6268,70 +6270,89 @@ async function setDeviceEnabled(req, res, enabled) {
   sendJson(res, 200, { ok: true });
 }
 
-/** Попытки PIN администратора с кассы: устройство → { n, resetAt }. */
-const DEVICE_PIN_TRIES = new Map();
-const DEVICE_PIN_MAX = 5;
-const DEVICE_PIN_WINDOW_MS = 10 * 60 * 1000;
+/** Владелец заведения (не управляющий) или супер-админ — только они
+ *  удаляют и восстанавливают устройства. */
+async function requireDeviceOwner(decoded, tenantId) {
+  if (await isSuperAdmin(decoded)) return true;
+  await requireTenantRole(tenantId, decoded.uid, ["owner"]);
+  return false;
+}
+
+/** Активных устройств заведения и лимит тарифа (0 — без лимита). */
+async function deviceSlots(tenantRef, tenantDoc) {
+  const planId = tenantDoc.exists ? await effectivePlanId(tenantDoc) : null;
+  const plan = planId ? (await db().collection("plans").doc(planId).get()).data() : null;
+  const all = await tenantRef.collection("devices").get();
+  const active = all.docs.filter((d) => !["disabled", "removed"].includes(d.data().status)).length;
+  return { max: planCapabilities(plan).maxDevices, active };
+}
 
 /**
- * Удалить устройство из заведения: касса на нём перестаёт работать и
- * освобождает место по тарифу. Владелец и управляющий — из кабинета;
- * с самой кассы (например, с экрана «Лимит устройств») — по PIN
- * администратора заведения. Удалённое устройство можно подключить заново
- * обычным путём, оно встанет последним.
+ * Удалить устройство из заведения (кабинет → «Устройства», только
+ * владелец). Устройство не стирается: оно помечается удалённым, касса на
+ * нём показывает «Устройство удалено» и не получает данных заведения, а
+ * место по тарифу освобождается. Вход самого устройства не трогаем —
+ * владелец может восстановить его, и касса заработает, как была.
  */
 async function handleRemoveDevice(req, res) {
   const decoded = await verifyAuth(req);
-  const { tenantId, uid, adminPin } = await parseJsonBody(req);
+  const { tenantId, uid } = await parseJsonBody(req);
   if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)
       || typeof uid !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) throw new HttpError(400, "Не указано устройство");
+  await requireDeviceOwner(decoded, tenantId);
+  if (uid === decoded.uid) throw new HttpError(400, "Это устройство удалить нельзя");
   const firestore = db();
   const tenantRef = firestore.collection("tenants").doc(tenantId);
-  let via = "cabinet";
-  if (!(await isSuperAdmin(decoded))) {
-    const member = (await firestore.collection("tenantMembers").doc(`${tenantId}_${decoded.uid}`).get()).data();
-    if (!member || member.status !== "active") throw new HttpError(403, "Недостаточно прав в этом заведении");
-    if (!["owner", "admin"].includes(member.role)) {
-      // Касса: только устройство этого заведения и только с PIN администратора.
-      via = "pos";
-      if (!(await tenantRef.collection("devices").doc(decoded.uid).get()).exists) throw new HttpError(403, "Недостаточно прав в этом заведении");
-      const now = Date.now();
-      const tries = DEVICE_PIN_TRIES.get(decoded.uid);
-      if (tries && tries.resetAt > now && tries.n >= DEVICE_PIN_MAX) {
-        throw new HttpError(429, "Слишком много неверных PIN. Подождите 10 минут или удалите устройство в кабинете");
-      }
-      if (typeof adminPin !== "string" || !/^\d{4,8}$/.test(adminPin)) throw new HttpError(400, "Введите PIN администратора");
-      const hash = pinHashFor(adminPin, tenantId);
-      const found = await tenantRef.collection("employees").where("pinHash", "==", hash).limit(5).get();
-      if (!found.docs.some((d) => d.data().role === "admin")) {
-        const cur = tries && tries.resetAt > now ? tries : { n: 0, resetAt: now + DEVICE_PIN_WINDOW_MS };
-        DEVICE_PIN_TRIES.set(decoded.uid, { n: cur.n + 1, resetAt: cur.resetAt });
-        throw new HttpError(403, "Неверный PIN администратора");
-      }
-      DEVICE_PIN_TRIES.delete(decoded.uid);
-    }
-  }
-  if (uid === decoded.uid) throw new HttpError(400, "Это устройство удалить с него самого нельзя — выберите другое");
   const deviceRef = tenantRef.collection("devices").doc(uid);
   const deviceSnap = await deviceRef.get();
-  if (!deviceSnap.exists) throw new HttpError(404, "Устройство уже удалено");
+  if (!deviceSnap.exists) throw new HttpError(404, "Устройство не найдено");
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await deviceRef.set({ status: "removed", removedAt: now, updatedAt: now }, { merge: true });
+  const memberRef = firestore.collection("tenantMembers").doc(`${tenantId}_${uid}`);
+  if ((await memberRef.get()).exists) await memberRef.set({ status: "disabled" }, { merge: true });
   const tenantDoc = await tenantRef.get();
-  await deviceRef.delete();
-  await firestore.collection("tenantMembers").doc(`${tenantId}_${uid}`).delete().catch(() => {});
-  // Устройство точки сети может работать и в других точках — там оно
-  // остаётся; удалено отовсюду — выключаем и его вход.
-  const others = await firestore.collection("tenantMembers").where("userId", "==", uid).where("status", "==", "active").limit(1).get();
-  if (others.empty) {
-    const chainId = tenantDoc.exists ? tenantDoc.data().chainId : null;
-    if (chainId) await syncChainMembership(chainId, uid, "employee", "disabled");
-    try {
-      await getFirebaseApp().auth().updateUser(uid, { disabled: true });
-      await getFirebaseApp().auth().revokeRefreshTokens(uid);
-    } catch (_) {
-      // Анонимного входа уже нет — нечего выключать.
+  const chainId = tenantDoc.exists ? tenantDoc.data().chainId : null;
+  if (chainId) {
+    const others = await firestore.collection("tenantMembers").where("userId", "==", uid).where("status", "==", "active").limit(1).get();
+    if (others.empty) await syncChainMembership(chainId, uid, "employee", "disabled");
+  }
+  await writeAuditLog({ tenantId, actorId: decoded.uid, action: "deviceRemoved", metadata: { uid, deviceName: deviceSnap.data().deviceName || null } });
+  sendJson(res, 200, { ok: true });
+}
+
+/** Вернуть удалённое (или отключённое) устройство — если по тарифу есть место. */
+async function handleRestoreDevice(req, res) {
+  const decoded = await verifyAuth(req);
+  const { tenantId, uid } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)
+      || typeof uid !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) throw new HttpError(400, "Не указано устройство");
+  const superAdmin = await requireDeviceOwner(decoded, tenantId);
+  const firestore = db();
+  const tenantRef = firestore.collection("tenants").doc(tenantId);
+  const deviceRef = tenantRef.collection("devices").doc(uid);
+  const deviceSnap = await deviceRef.get();
+  if (!deviceSnap.exists) throw new HttpError(404, "Устройство не найдено — подключите его заново кодом приглашения");
+  const status = deviceSnap.data().status;
+  if (status !== "removed" && status !== "disabled") {
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+  const tenantDoc = await tenantRef.get();
+  if (!superAdmin) {
+    const { max, active } = await deviceSlots(tenantRef, tenantDoc);
+    if (max > 0 && active >= max) {
+      throw new HttpError(409, `По тарифу касса работает на ${max} ${max % 10 === 1 && max % 100 !== 11 ? "устройстве" : "устройствах"}, и все места заняты. Удалите другое устройство или перейдите на тариф больше`);
     }
   }
-  await writeAuditLog({ tenantId, actorId: decoded.uid, action: "deviceRemoved", metadata: { uid, via, deviceName: deviceSnap.data().deviceName || null } });
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await deviceRef.set({ status: "active", removedAt: admin.firestore.FieldValue.delete(), updatedAt: now }, { merge: true });
+  await firestore.collection("tenantMembers").doc(`${tenantId}_${uid}`)
+    .set({ tenantId, userId: uid, role: "employee", status: "active" }, { merge: true });
+  const chainId = tenantDoc.exists ? tenantDoc.data().chainId : null;
+  if (chainId) await syncChainMembership(chainId, uid, "employee", "active");
+  // Устройства, удалённые прежней версией, остались с выключенным входом.
+  try { await getFirebaseApp().auth().updateUser(uid, { disabled: false }); } catch (_) {}
+  await writeAuditLog({ tenantId, actorId: decoded.uid, action: "deviceRestored", metadata: { uid, deviceName: deviceSnap.data().deviceName || null } });
   sendJson(res, 200, { ok: true });
 }
 
@@ -7420,7 +7441,7 @@ async function supportVenueStatus(tenantId) {
   const planId = (sub && sub.planId) || tenant.planId || "";
   const plan = planId ? ((await firestore.collection("plans").doc(planId).get().catch(() => null))?.data() || {}) : {};
   const devices = devSnap ? devSnap.docs.map((d) => d.data()) : [];
-  const activeDev = devices.filter((d) => d.status !== "disabled");
+  const activeDev = devices.filter((d) => !["disabled", "removed"].includes(d.status));
   const seen = activeDev.map((d) => ms(d.lastSeenAt));
   // Последняя сборка каждого приложения; «superseded» — старые готовые,
   // заменённые новой, их не показываем.
@@ -7779,6 +7800,7 @@ const ROUTES = {
   "/disableDevice": (req, res) => setDeviceEnabled(req, res, false),
   "/enableDevice": (req, res) => setDeviceEnabled(req, res, true),
   "/removeDevice": handleRemoveDevice,
+  "/restoreDevice": handleRestoreDevice,
   "/createDataRequest": handleCreateDataRequest,
   "/requestGuestDataDeletion": handleRequestGuestDataDeletion,
   "/resolveDataRequest": handleResolveDataRequest,

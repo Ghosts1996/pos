@@ -166,6 +166,16 @@ class SaasDeviceJoinService {
   }) async {
     final db = FirebaseFirestore.instance;
 
+    // Удалённое владельцем устройство кодом приглашения обратно не входит:
+    // вернуть его может только владелец в кабинете. Без этой проверки
+    // касса показала бы непонятное «нет доступа».
+    final own = await db.collection('tenants/$tenantId/devices').doc(uid).get().then((d) => d.data()).catchError((Object _) => null);
+    final ownStatus = own?['status'];
+    if (ownStatus == 'removed' || ownStatus == 'disabled') {
+      throw StateError('Это устройство удалил владелец заведения. Попросите его восстановить устройство в кабинете: '
+          '«Устройства» → «Удалённые устройства» → «Восстановить».');
+    }
+
     await db.collection('tenants/$tenantId/devices').doc(uid).set({
       'inviteCode': inviteCode.trim(),
       'deviceName': deviceName,

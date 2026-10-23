@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import '../../services/auth_service.dart';
 import 'package:flutter/material.dart';
 
 import '../../build_info.dart';
@@ -88,16 +89,24 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
       setState(() => _error = 'Заполните код заведения и код приглашения');
       return;
     }
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) {
-      setState(() => _error = 'Нет входа в Firebase — перезапустите приложение');
-      return;
-    }
-
     setState(() {
       _busy = true;
       _error = null;
     });
+    // Прежний вход могли выключить на сервере (устройство удаляли) — тогда
+    // присоединение с ним получало «нет доступа». Сбрасываем и входим заново.
+    await AuthService().recoverDeadSession().catchError((Object _) => false);
+    if (FirebaseAuth.instance.currentUser == null) await AuthService().ensureSignedIn().catchError((Object _) {});
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = 'Нет входа в Firebase — проверьте интернет и перезапустите приложение';
+        });
+      }
+      return;
+    }
     try {
       StartupLog.step('присоединение: поиск заведения по коду');
       final resolved = await _service.resolveTenantIdBySlug(slug);

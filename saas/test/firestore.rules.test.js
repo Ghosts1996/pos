@@ -316,6 +316,12 @@ describe("Полный путь joinAsDevice() как реальный клие�
     await assertFails(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { status: "disabled" }));
     await assertFails(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { piiReady: 1, deviceName: "Чужое" }));
     await assertFails(updateDoc(doc(ctxFor("device2"), "tenants/tenantA/devices/device1"), { piiReady: 1 }));
+    // Удалённое владельцем устройство видит свой документ (и только его).
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), "tenants/tenantA/devices/device1"), { status: "removed" });
+    });
+    await assertSucceeds(getDoc(doc(db, "tenants/tenantA/devices/device1")));
+    await assertFails(updateDoc(doc(db, "tenants/tenantA/devices/device1"), { status: "active" }));
   });
 
   it("шаг 2: после шага 1 устройство создаёт tenantMembers тем же uid", async () => {
