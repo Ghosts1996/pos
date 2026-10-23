@@ -100,6 +100,7 @@ function saleOf(id, d) {
 // Как часто бот сети перечитывает список точек (новая точка, своя группа).
 // Реже — меньше чтений из суточной квоты Firestore; точки добавляют редко.
 const POINTS_RESYNC_MS = 30 * 60 * 1000;
+const HOOK_CHECK_MS = 15 * 60 * 1000; // проверка вебхука бота заведения
 
 const MENU = {
   revenue: "💰 Выручка сегодня",
@@ -2173,7 +2174,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         else live[which].set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
         reconcile(ch.doc.id).catch((e) => console.error(`telegram card (${tid}):`, e.message));
       });
-    }, (e) => console.error(`telegram sessions (${tid}):`, e.message)));
+    }, (e) => { console.error(`telegram sessions (${tid}):`, e.message); bot.broken = Date.now(); }));
     const takeaway = t.collection("sessions").where("tableId", "==", TAKEAWAY_TABLE);
     watch("active", takeaway.where("status", "==", "active"));
     watch("open", takeaway.where("deliveryOpen", "==", true));
@@ -2204,7 +2205,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
           const patch = tid === bot.tenantId ? { auditCursor: last, [`auditCursors.${tid}`]: last } : { [`auditCursors.${tid}`]: last };
           botsCol().doc(bot.tenantId).update(patch).catch(() => {});
         }
-      }, (e) => console.error(`telegram audit (${tid}):`, e.message)));
+      }, (e) => { console.error(`telegram audit (${tid}):`, e.message); bot.broken = Date.now(); }));
 
     // Смены сотрудников: начало и конец — владельцу, с ролью и временем.
     const dayAgo = admin.firestore.Timestamp.fromMillis(Date.now() - 36 * 3600 * 1000);
@@ -2229,7 +2230,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
           const text = label() ? `${icon} ${label()} — ${verb.toLowerCase()}: ${role} в ${at}` : `${icon} ${verb}: ${role} в ${at}`;
           for (const c of owners()) await say(bot, c.id, text, whoButton(tid, "sh", ch.doc.id));
         }
-      }, (e) => console.error(`telegram shifts (${tid}):`, e.message)));
+      }, (e) => { console.error(`telegram shifts (${tid}):`, e.message); bot.broken = Date.now(); }));
     return unsubs;
   }
 
@@ -2296,12 +2297,35 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     bots.delete(tenantId);
   }
 
+  /** Самовосстановление: слежение за базой оборвалось — переподключаем бота;
+   *  вебхук у Telegram сбился или пропал — ставим заново (раз в 15 минут). */
+  async function heal(bot) {
+    if (bot.broken && Date.now() - bot.broken > 60 * 1000) {
+      console.log(`telegram (${bot.tenantId}): слежение за базой оборвалось — переподключаю бота`);
+      attach(bot.tenantId, bot.cfg);
+      return false;
+    }
+    if (!bot.cfg.hookSecret || Date.now() - (bot.hookCheckAt || 0) < HOOK_CHECK_MS) return true;
+    bot.hookCheckAt = Date.now();
+    const info = await api(bot.token, "getWebhookInfo").catch(() => null);
+    if (!info) return true; // Telegram недоступен — проверим в следующий раз
+    const want = hookUrl(bot.tenantId);
+    const allowed = Array.isArray(info.allowed_updates) ? info.allowed_updates : [];
+    if (info.url !== want || !["message", "callback_query"].every((u) => !allowed.length || allowed.includes(u))) {
+      console.log(`telegram (${bot.tenantId}): вебхук сбился — ставлю заново`);
+      await api(bot.token, "setWebhook", { url: want, secret_token: bot.cfg.hookSecret, allowed_updates: ["message", "callback_query"] })
+        .catch((e) => console.error(`telegram webhook (${bot.tenantId}):`, e.message));
+    }
+    return true;
+  }
+
   /** Утренние итоги — раз в рабочие сутки после SUMMARY_HOUR; заодно — новые точки сети. */
   async function tick() {
     await reconcileStores();
-    for (const bot of bots.values()) {
+    for (const bot of [...bots.values()]) {
       try {
         await bot.ready;
+        if (!(await heal(bot))) continue;
         if (Date.now() - bot.pointsAt > POINTS_RESYNC_MS) await syncPoints(bot);
         if (bot.cfg.notify && bot.cfg.notify.summary === false) continue;
         const owners = ownerChats(bot.cfg);
@@ -2334,6 +2358,11 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
   const groupsKey = (cfg) => JSON.stringify([(cfg.staffChat || {}).id || null, Object.entries(cfg.staffChats || {}).map(([k, v]) => [k, (v || {}).id]).sort()]);
 
   function start() {
+    watchBots();
+    setInterval(() => tick().catch((e) => console.error("telegram tick:", e.message)), 2 * 60 * 1000);
+  }
+
+  function watchBots() {
     // Настройки всех ботов — живьём: подключили, сменили токен, отключили.
     botsCol().onSnapshot((snap) => {
       snap.docChanges().forEach((ch) => {
@@ -2346,8 +2375,11 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         if (cur && cur.cfg.tokenEnc === cfg.tokenEnc && groupsKey(cur.cfg) === groupsKey(cfg)) cur.cfg = cfg;
         else attach(id, cfg);
       });
-    }, (e) => console.error("telegram bots:", e.message));
-    setInterval(() => tick().catch((e) => console.error("telegram tick:", e.message)), 2 * 60 * 1000);
+    }, (e) => {
+      // Слежение оборвалось — через минуту подписываемся снова.
+      console.error("telegram bots:", e.message);
+      setTimeout(watchBots, 60 * 1000);
+    });
   }
 
   return {

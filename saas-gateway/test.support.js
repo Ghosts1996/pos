@@ -309,6 +309,7 @@ function harness() {
       getChatMember: { status: "administrator", can_manage_topics: true },
       createForumTopic: { message_thread_id: ++topicId },
       getFile: { file_path: "photos/file_1.jpg" },
+      getForumTopicIconStickers: [{ emoji: "🤖", custom_emoji_id: "e-ai" }, { emoji: "❗️", custom_emoji_id: "e-human" }, { emoji: "💬", custom_emoji_id: "e-chat" }, { emoji: "✅", custom_emoji_id: "e-done" }],
       sendMessage: { message_id: ++msgId },
     }[method] ?? true;
     return { ok: true, status: 200, json: async () => ({ ok: true, result }) };
@@ -429,7 +430,7 @@ test("«позовите оператора» → 🔴, сигнал сотру�
   const [t] = tickets(h.store);
   assert.strictEqual(t.escalated, true);
   assert.strictEqual(h.aiCalls.length, 0);
-  assert.ok(h.calls.some((c) => c.method === "editForumTopic" && c.body.name.startsWith("🔴")));
+  assert.ok(h.calls.some((c) => c.method === "editForumTopic" && c.body.name.startsWith("🔴") && c.body.icon_custom_emoji_id === "e-human"), "значок темы не сменился");
   const staff = sends(h.calls, 555000111)[0];
   assert.ok(staff && /Нужен человек/.test(staff.body.text) && staff.body.reply_markup.inline_keyboard[0][0].url.includes("t.me/c/1234567890/"));
   assert.ok(sends(h.calls, 42).some((c) => /Позвал специалиста/.test(c.body.text) && /с 10 до 22/.test(c.body.text)));
@@ -1205,7 +1206,7 @@ test("только Россия: обращение из кабинета обе
   h.bot.onTicketDoc(id, h.store.get(`supportTickets/${id}`));
   await h.bot.idle();
   assert.ok(!h.calls.some((c) => c.method === "sendPhoto" || c.method === "sendDocument"), "файл ушёл в Telegram");
-  assert.ok(sends(h.calls, GROUP).some((c) => /screen\.png/.test(c.body.text) && /сервере в РФ/.test(c.body.text)));
+  assert.ok(sends(h.calls, GROUP).some((c) => /скриншот «screen\.png» · 1 КБ/.test(c.body.text) && /сервере в РФ/.test(c.body.text)));
   assert.ok(!h.aiCalls.slice(n).some((c) => JSON.stringify(c.messages).includes("image_url")), "скриншот ушёл ИИ");
   assert.ok(messagesOf(h.store, id).some((m) => m.authorRole === "ai" && /специалист его видит/.test(m.text)));
 
@@ -1705,6 +1706,97 @@ test("чат сайта: у каждого посетителя постоянн
   assert.ok(h.calls.some((x) => x.method === "createForumTopic" && x.body.name.includes(`Гость ${a.visitorTag}`)));
   assert.ok(sends(h.calls, GROUP).some((x) => /Он уже писал: #/.test(x.body.text)));
   assert.strictEqual(sb.siteWho({}), "Посетитель");
+});
+
+test("сайт: один посетитель — одна тема; 30 минут без диалога — тема удаляется, новый вопрос — новая тема; кабинет не трогаем", async () => {
+  const h = harness();
+  await setup(h);
+  const req = (body, ip) => ({ body, headers: { "x-real-ip": ip } });
+  const visitor = "q".repeat(30);
+  await h.bot.handleSiteSend(req({ text: "Сколько стоит касса?", consent: true, visitor }, "10.4.0.1"), {});
+  const first = h.sent.body.ticketId;
+  await h.bot.idle();
+  await h.bot.handleSiteSend(req({ text: "Есть ли демо-версия кассы?", consent: true, visitor }, "10.4.0.2"), {});
+  const second = h.sent.body.ticketId;
+  await h.bot.idle();
+  let all = tickets(h.store);
+  const [a, b] = [first, second].map((id) => all.find((x) => x.id === id));
+  assert.ok(a.topicId && a.topicId === b.topicId, "второй диалог того же посетителя — новая тема");
+  assert.strictEqual(h.calls.filter((c) => c.method === "createForumTopic").length, 1);
+  const created = h.calls.find((c) => c.method === "createForumTopic");
+  assert.ok(created.body.name.includes("🌐 Сайт"), created.body.name);
+  // Обращение из кабинета — с пометкой кабинета, его тема не удаляется.
+  h.store.set("supportTickets/cab1", { tenantId: "t1", channel: "cabinet", subject: "Не печатает", status: "open", createdBy: "owner1", lastAuthorRole: "owner",
+    createdAt: { toMillis: () => Date.now() }, updatedAt: { toMillis: () => Date.now() } });
+  h.store.set("supportTickets/cab1/messages/m1", { text: "Не печатает чек на кухне", authorRole: "owner", authorUid: "owner1", createdAt: { toMillis: () => Date.now() } });
+  h.bot.onTicketDoc("cab1", h.store.get("supportTickets/cab1"));
+  await h.bot.idle();
+  assert.ok(h.calls.some((c) => c.method === "createForumTopic" && c.body.name.includes("🏪")), "нет пометки кабинета");
+
+  // Пока диалог свежий — тема живёт.
+  assert.strictEqual(await h.bot.sweepSiteTopics(), 0);
+  const old = { toMillis: () => Date.now() - 31 * 60 * 1000 };
+  for (const id of [first, second]) {
+    const k = `supportTickets/${id}`;
+    const x = h.store.get(k);
+    h.store.set(k, { ...x, updatedAt: old, clientAt: old, createdAt: old, aiTypingAt: null });
+  }
+  const cab = h.store.get("supportTickets/cab1");
+  h.store.set("supportTickets/cab1", { ...cab, updatedAt: old, clientAt: old, createdAt: old });
+  assert.strictEqual(await h.bot.sweepSiteTopics(), 1);
+  assert.ok(h.calls.some((c) => c.method === "deleteForumTopic" && c.body.message_thread_id === a.topicId));
+  assert.ok(!h.calls.some((c) => c.method === "deleteForumTopic" && c.body.message_thread_id === h.store.get("supportTickets/cab1").topicId), "удалил тему кабинета");
+  all = tickets(h.store);
+  for (const id of [first, second]) {
+    const t = all.find((x) => x.id === id);
+    assert.ok(!t.topicId && t.status === "closed", JSON.stringify(t));
+  }
+  assert.ok(![...h.store.keys()].some((k) => /^supportTopics\/v_/.test(k)), "ключ темы посетителя остался");
+  // Посетитель вернулся — новая тема с историей.
+  const tok = (await (async () => { await h.bot.handleSiteSend(req({ text: "А склад тоже есть?", consent: true, visitor }, "10.4.0.3"), {}); return h.sent.body; })());
+  await h.bot.idle();
+  const again = tickets(h.store).find((x) => x.id === tok.ticketId);
+  assert.ok(again.topicId && again.topicId !== a.topicId, "не создал новую тему");
+});
+
+test("группа поддержки закрыта: чужие заявки отклоняются, вошедший по ссылке удаляется, своих принимаем", async () => {
+  const h = harness();
+  await setup(h);
+  const chat = { id: GROUP, type: "supergroup" };
+  await h.bot.handleUpdate({ chat_join_request: { chat, from: { id: 31337, first_name: "Чужой" }, date: 1 } });
+  assert.ok(h.calls.some((c) => c.method === "declineChatJoinRequest" && c.body.user_id === 31337));
+  assert.ok(sends(h.calls, GROUP).some((c) => /Отклонил заявку/.test(c.body.text)));
+  await h.bot.handleUpdate({ chat_join_request: { chat, from: { id: 555000111, first_name: "Константин" }, date: 1 } });
+  assert.ok(h.calls.some((c) => c.method === "approveChatJoinRequest" && c.body.user_id === 555000111));
+  // Вошёл сам по ссылке — удалён (бан на минуту и снятие).
+  const joined = (id, by) => ({ chat_member: { chat, from: { id: by }, date: 1, old_chat_member: { status: "left", user: { id } }, new_chat_member: { status: "member", user: { id, first_name: "Гость" } } } });
+  await h.bot.handleUpdate(joined(4242, 4242));
+  assert.ok(h.calls.some((c) => c.method === "banChatMember" && c.body.user_id === 4242));
+  assert.ok(h.calls.some((c) => c.method === "unbanChatMember" && c.body.user_id === 4242 && c.body.only_if_banned));
+  // Сотрудник добавил коллегу сам — не трогаем.
+  const before = h.calls.filter((c) => c.method === "banChatMember").length;
+  await h.bot.handleUpdate(joined(5151, 555000111));
+  assert.strictEqual(h.calls.filter((c) => c.method === "banChatMember").length, before);
+  assert.ok(h.calls.some((c) => c.method === "setWebhook" && c.body.allowed_updates.includes("chat_join_request")));
+});
+
+test("технический бот: описание, кнопки команды без клиентских, вебхук восстанавливается сам", async () => {
+  const h = harness();
+  await setup(h, { ruOnly: true });
+  assert.ok(h.calls.some((c) => c.method === "setMyShortDescription" && /Технический бот/.test(c.body.short_description)));
+  assert.ok(h.calls.some((c) => c.method === "setMyDescription" && /не принимаются/.test(c.body.description)));
+  await h.bot.handleUpdate(pm("/staff", 555000111));
+  const menu = sends(h.calls, 555000111).pop();
+  const labels = menu.body.reply_markup.keyboard.flat().map((b) => b.text);
+  assert.ok(labels.includes("📊 Сводка") && labels.includes("🩺 Состояние бота"), labels.join());
+  assert.ok(!labels.includes("❓ Новый вопрос") && !labels.includes("👤 Позвать человека"), "клиентские кнопки у команды");
+  await h.bot.handleUpdate(pm("🩺 Состояние бота", 555000111));
+  assert.ok(/Состояние бота поддержки/.test(sends(h.calls, 555000111).pop().body.text));
+  // Вебхук сбит — бот ставит его заново тем же адресом.
+  const n = h.calls.filter((c) => c.method === "setWebhook").length;
+  assert.strictEqual(await h.bot.checkHook({ force: true }), "fixed");
+  assert.strictEqual(h.calls.filter((c) => c.method === "setWebhook").length, n + 1);
+  assert.ok(h.calls.filter((c) => c.method === "setWebhook").pop().body.url.endsWith("/tgHook/_support"));
 });
 
 test("объявления платформы: бот знает действующую акцию и отвечает по ней, снятую — забывает", async () => {

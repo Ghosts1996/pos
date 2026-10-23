@@ -90,6 +90,8 @@ const SITE_MSG_PER_10MIN = 20;   // сообщений с одного адре�
 const SITE_NEW_PER_DAY = 6;      // новых диалогов с одного адреса за сутки
 const SITE_POLL_PER_MIN = 90;    // опросов «есть ли ответ» в минуту
 const SITE_TTL_MS = 30 * 24 * 3600 * 1000; // диалог на сайте живёт 30 дней
+const HOOK_UPDATES = ["message", "callback_query", "chat_join_request", "chat_member"];
+const SITE_TOPIC_IDLE_MS = 30 * 60 * 1000; // тема чата сайта без диалога 30 мин — удаляется
 
 const ICON = { ai: "🤖", human: "🔴", answered: "🟡", closed: "✅" };
 
@@ -110,6 +112,25 @@ const STAFF_KB = {
   keyboard: [[{ text: STAFF_BTN.stats }, { text: STAFF_BTN.waiting }], [{ text: STAFF_BTN.client }]],
   resize_keyboard: true, is_persistent: true,
 };
+// Режим «данные только в России»: клиенты в Telegram не пишут — в личке
+// бота только команда поддержки, и кнопки — для работы, а не клиентские.
+const STAFF_HEALTH = "🩺 Состояние бота";
+const TEAM_KB = (admin) => ({
+  keyboard: [...(admin ? [[{ text: ADMIN_BTN }]] : []), [{ text: STAFF_BTN.stats }, { text: STAFF_BTN.waiting }], [{ text: STAFF_HEALTH }]],
+  resize_keyboard: true, is_persistent: true, input_field_placeholder: "Команда поддержки ZalPOS",
+});
+// Описание бота в Telegram: что это и куда писать клиентам.
+const BOT_PROFILE = {
+  ruOnly: {
+    short: "Технический бот поддержки ZalPOS. Вопросы по кассе — в личном кабинете на zalpos.ru → «Поддержка».",
+    full: "🛠 Технический бот службы поддержки ZalPOS.\n\nЧерез него сотрудники поддержки получают обращения из личного кабинета и чата на сайте и отвечают в рабочей группе.\n\nВладельцам заведений: задайте вопрос на zalpos.ru → войдите → «Поддержка». Там сразу отвечает ИИ-ассистент, а при необходимости — специалист. Здесь обращения не принимаются: так ваши данные остаются в России.",
+  },
+  open: {
+    short: "Поддержка ZalPOS: ИИ-ассистент отвечает сразу, специалист — когда нужно.",
+    full: "💬 Поддержка ZalPOS — касса для кафе, ресторанов и кальянных.\n\nНапишите вопрос — ИИ-ассистент ответит сразу по инструкции и состоянию вашего заведения, а при необходимости подключит специалиста.\n\nПолитика конфиденциальности и удаление данных — команды /privacy и /delete.",
+  },
+};
+const HOOK_CHECK_MS = 10 * 60 * 1000; // как часто бот проверяет свой вебхук
 const MAX_STAFF = 20;
 // После стольких попыток обмана в одном обращении ИИ уступает человеку.
 const DECEIT_LIMIT = 3;
@@ -930,9 +951,17 @@ function aiPaused(t, now = Date.now()) {
  *  браузера (не имя: в Telegram персональные данные не передаём). */
 const siteWho = (t) => (t.visitorTag ? `Гость ${t.visitorTag}` : "Посетитель");
 
+/** Состояние темы: ИИ ведёт, ждут человека, человек ответил, закрыта. */
+const topicState = (t) => (t.status === "closed" ? "closed" : t.escalated ? "human" : t.humanAt && toMs(t.aiPausedUntil) > Date.now() ? "answered" : "ai");
+/** Значок темы в списке Telegram по состоянию — первый доступный из набора. */
+const TOPIC_ICON_PREF = { ai: ["🤖", "💬"], human: ["❗", "‼", "🔥"], answered: ["💬", "📝"], closed: ["✅"] };
+
 function topicTitle(t, venueName = "") {
-  const icon = t.status === "closed" ? ICON.closed : t.escalated ? ICON.human : t.humanAt && toMs(t.aiPausedUntil) > Date.now() ? ICON.answered : ICON.ai;
-  const who = venueName || t.tgName || (t.channel === "telegram" ? "Telegram" : t.channel === "site" ? (t.visitorTag ? `Сайт · ${siteWho(t)}` : "Сайт") : "Кабинет");
+  const icon = ICON[topicState(t)];
+  // Откуда пишут — видно сразу: 🌐 лендинг, 🏪 кабинет заведения, ✈️ Telegram.
+  const who = t.channel === "site" ? `🌐 Сайт · ${siteWho(t)}`
+    : t.channel === "telegram" ? `✈️ ${venueName || t.tgName || "Telegram"}`
+      : `🏪 ${venueName || "Кабинет"}`;
   return clip(`${icon} #${t.no || "?"} · ${who} · ${t.subject || "обращение"}`, 120);
 }
 
@@ -1619,21 +1648,40 @@ function createSupportBot(deps) {
     }
   }
 
+  /** Набор значков тем Telegram (раз в сутки): эмодзи → id. */
+  async function topicIconId(key) {
+    if (!state.topicIcons || now() - state.topicIconsAt > 24 * 3600 * 1000) {
+      state.topicIconsAt = now();
+      const list = await quiet(tg("getForumTopicIconStickers", {}), "значки тем");
+      state.topicIcons = new Map((Array.isArray(list) ? list : []).filter((x) => x && x.emoji && x.custom_emoji_id)
+        .map((x) => [String(x.emoji).replace(/\uFE0F/g, ""), String(x.custom_emoji_id)]));
+    }
+    for (const e of TOPIC_ICON_PREF[key] || []) if (state.topicIcons.has(e)) return state.topicIcons.get(e);
+    return "";
+  }
+
   async function renameTopic(t) {
     if (!t.topicId || !state.cfg.groupChatId) return;
     // В теме клиента несколько обращений — имя по текущему, старое не перебивает.
     const cur = await ticketByTopic(t.topicId);
     if (cur && cur.id !== t.id) return;
     const name = topicTitle(t, await venueName(t));
-    if (name === t.topicName) return;
+    const key = topicState(t);
+    if (name === t.topicName && key === t.topicIcon) return;
     t.topicName = name;
-    await quiet(tg("editForumTopic", { chat_id: state.cfg.groupChatId, message_thread_id: t.topicId, name }), "имя темы");
-    await quiet(ticketRef(t.id).set({ topicName: name }, { merge: true }), "имя темы");
+    t.topicIcon = key;
+    // Значок в списке тем меняется вместе с состоянием — видно без открытия.
+    const icon = await topicIconId(key).catch(() => "");
+    await quiet(tg("editForumTopic", { chat_id: state.cfg.groupChatId, message_thread_id: t.topicId, name, ...(icon ? { icon_custom_emoji_id: icon } : {}) }), "имя темы");
+    await quiet(ticketRef(t.id).set({ topicName: name, topicIcon: key }, { merge: true }), "имя темы");
   }
 
   /** Тема в группе поддержки под обращение; карточка — что за клиент и что у него. */
   /** Ключ клиента для общей темы: заведение, иначе человек в Telegram или кабинете. */
-  const clientKey = (t) => (t.tenantId ? `t_${t.tenantId}` : t.tgUserId ? `u_${t.tgUserId}` : t.siteKeyHash ? `s_${String(t.siteKeyHash).slice(0, 24)}` : t.createdBy && t.createdBy !== "site" ? `o_${t.createdBy}` : "");
+  /** Посетитель сайта — по постоянному ключу браузера: все его диалоги в одной теме. */
+  const clientKey = (t) => (t.tenantId ? `t_${t.tenantId}` : t.tgUserId ? `u_${t.tgUserId}`
+    : t.visitorHash ? `v_${String(t.visitorHash).slice(0, 24)}` : t.siteKeyHash ? `s_${String(t.siteKeyHash).slice(0, 24)}`
+      : t.createdBy && t.createdBy !== "site" ? `o_${t.createdBy}` : "");
 
   /** Тема, где уже шла переписка с этим клиентом (в том числе до общих тем). */
   async function clientTopic(t) {
@@ -1641,7 +1689,8 @@ function createSupportBot(deps) {
     if (!key) return null;
     const saved = (await topicsCol().doc(key).get()).data();
     if (saved && saved.topicId) return { key, topicId: saved.topicId };
-    const field = t.tenantId ? ["tenantId", t.tenantId] : t.tgUserId ? ["tgUserId", t.tgUserId] : t.siteKeyHash ? ["siteKeyHash", t.siteKeyHash] : ["createdBy", t.createdBy];
+    const field = t.tenantId ? ["tenantId", t.tenantId] : t.tgUserId ? ["tgUserId", t.tgUserId] : t.visitorHash ? ["visitorHash", t.visitorHash]
+      : t.siteKeyHash ? ["siteKeyHash", t.siteKeyHash] : ["createdBy", t.createdBy];
     const snap = await ticketsCol().where(field[0], "==", field[1]).limit(100).get();
     const prev = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((x) => x.id !== t.id && x.topicId)
       .sort((a, b) => toMs(b.updatedAt) - toMs(a.updatedAt))[0];
@@ -1670,7 +1719,8 @@ function createSupportBot(deps) {
     if (!reused) {
       let topic;
       try {
-        topic = await tg("createForumTopic", { chat_id: state.cfg.groupChatId, name: topicTitle(t, vname), icon_color: TOPIC_COLOR });
+        const icon = await topicIconId(topicState(t)).catch(() => "");
+        topic = await tg("createForumTopic", { chat_id: state.cfg.groupChatId, name: topicTitle(t, vname), icon_color: TOPIC_COLOR, ...(icon ? { icon_custom_emoji_id: icon } : {}) });
       } catch (e) {
         state.lastError = `не создать тему: ${e.message}`;
         console.error(`support-bot: ${state.lastError}`);
@@ -1679,10 +1729,11 @@ function createSupportBot(deps) {
       }
       t.topicId = topic.message_thread_id;
       t.topicName = topicTitle(t, vname);
+      t.topicIcon = topicState(t);
     }
     state.topicToTicket.set(t.topicId, t.id);
-    await patch(t, { topicId: t.topicId, ...(reused ? {} : { topicName: t.topicName }) });
-    if (known && known.key) await quiet(topicsCol().doc(known.key).set({ topicId: t.topicId, ticketId: t.id, updatedAt: ts(now()) }, { merge: true }), "тема клиента");
+    await patch(t, { topicId: t.topicId, ...(reused ? {} : { topicName: t.topicName, topicIcon: t.topicIcon }) });
+    if (known && known.key) await quiet(topicsCol().doc(known.key).set({ topicId: t.topicId, ticketId: t.id, updatedAt: ts(now()), ...(t.channel === "site" ? { site: true } : {}) }, { merge: true }), "тема клиента");
     if (reused) await renameTopic(t);
     const lines = [`${reused ? "📋" : "🆕"} <b>Обращение #${t.no}</b> · ${t.channel === "telegram" ? "Telegram" : t.channel === "site" ? "чат на сайте" : "из кабинета"}`];
     if (t.channel === "telegram") lines.push(`👤 ${h(t.tgName || "Клиент")}${t.tgUsername ? ` (@${h(t.tgUsername)})` : ""} · ID <code>${h(t.tgUserId)}</code>`);
@@ -1829,6 +1880,45 @@ function createSupportBot(deps) {
       }
       notifyStaff(t, `клиент ждёт ответа ${mins} мин`, next, "⏰ Клиент ждёт");
     }
+  }
+
+  /** Последнее движение в обращении: сообщение клиента, ответ, закрытие. */
+  const lastMove = (t) => Math.max(toMs(t.updatedAt), toMs(t.clientAt), toMs(t.humanAt), toMs(t.closedAt), toMs(t.createdAt));
+
+  /** Темы чата с сайта: 30 минут без диалога — обращение закрыто, тема
+   *  удалена (их много, группа не засоряется). Посетитель напишет снова —
+   *  откроется новая тема с историей. Клиент ждёт человека — не трогаем. */
+  async function sweepSiteTopics() {
+    if (!active() || !state.cfg.groupChatId) return 0;
+    const snap = await topicsCol().where("site", "==", true).limit(200).get();
+    let n = 0;
+    for (const d of snap.docs) {
+      const topicId = Number(d.data().topicId) || 0;
+      if (!topicId) { await quiet(d.ref.delete(), "тема сайта"); continue; }
+      if (await retireSiteTopic(topicId, d.ref)) n++;
+    }
+    return n;
+  }
+
+  async function retireSiteTopic(topicId, keyRef = null) {
+    const list = (await ticketsCol().where("topicId", "==", topicId).limit(100).get()).docs.map((x) => ({ id: x.id, ...x.data() }));
+    if (list.some((t) => t.channel !== "site")) return false;
+    const waiting = list.some((t) => t.status !== "closed" && t.escalated && t.lastAuthorRole === "owner");
+    if (waiting || list.some((t) => now() - lastMove(t) < SITE_TOPIC_IDLE_MS)) return false;
+    for (const t of list) {
+      const open = t.status !== "closed";
+      await patch(t, { topicId: null, topicName: null, topicStatus: null, panelMsgId: null,
+        ...(open ? { status: "closed", closedAt: ts(now()), escalated: false, closedBy: "auto:idle" } : {}) });
+      if (open && (t.humanReplies || t.helpful)) learnSoon(t, "обращение закрыто");
+    }
+    await quiet(tg("deleteForumTopic", { chat_id: state.cfg.groupChatId, message_thread_id: topicId }), "удалить тему сайта");
+    state.topicToTicket.delete(topicId);
+    if (keyRef) await quiet(keyRef.delete(), "тема сайта");
+    else {
+      const keys = await topicsCol().where("topicId", "==", topicId).limit(10).get().catch(() => null);
+      for (const k of (keys ? keys.docs : [])) await quiet(k.ref.delete(), "тема сайта");
+    }
+    return true;
   }
 
   /** Главный разбор нового сообщения клиента (Telegram или кабинет). */
@@ -2327,7 +2417,7 @@ function createSupportBot(deps) {
     }
     const cmd = raw.match(/^\/(\w+)(?:@\w+)?\s*(.*)$/s);
     const button = Object.entries(BTN).find(([, label]) => raw.trim() === label);
-    const staffButton = isStaffId(userId) ? Object.entries(STAFF_BTN).find(([, label]) => raw.trim() === label) : null;
+    const staffButton = isTeamId(userId) ? (raw.trim() === STAFF_HEALTH ? ["health"] : Object.entries(STAFF_BTN).find(([, label]) => raw.trim() === label)) : null;
     const action = cmd ? cmd[1].toLowerCase() : button ? `btn_${button[0]}` : staffButton ? `staff_${staffButton[0]}` : "";
     const arg = cmd ? cmd[2].trim() : "";
     switch (action) {
@@ -2378,11 +2468,13 @@ function createSupportBot(deps) {
         return sendDocsMenu(chatId, client);
       case "staff":
         if (!isStaffId(userId)) return send(chatId, "Такой команды нет — пользуйтесь кнопками внизу или просто напишите вопрос.", kb);
-        return send(chatId, "Меню сотрудника поддержки. Обращения ведутся в темах рабочей группы.", { reply_markup: STAFF_KB });
+        return send(chatId, "Меню сотрудника поддержки. Обращения ведутся в темах рабочей группы.", { reply_markup: staffKb(userId) });
       case "staff_stats":
-        return send(chatId, await statsText(), { ...HTML, reply_markup: STAFF_KB });
+        return send(chatId, await statsText(), { ...HTML, reply_markup: staffKb(userId) });
       case "staff_waiting":
         return sendWaiting(chatId);
+      case "staff_health":
+        return send(chatId, await healthText(), { ...HTML, reply_markup: staffKb(userId) });
       case "staff_client":
         return send(chatId, "Меню клиента — так бот выглядит для владельцев заведений.", kb);
       default:
@@ -2575,7 +2667,9 @@ function createSupportBot(deps) {
 
   // ---- админка в боте: ID админов задаются в панели супер-админа
 
-  const kbFor = (id) => (isAdminId(id) ? ADMIN_KB : CLIENT_KB);
+  const isTeamId = (id) => isStaffId(id) || isAdminId(id);
+  const kbFor = (id) => (ruOnly() && isTeamId(id) ? TEAM_KB(isAdminId(id)) : isAdminId(id) ? ADMIN_KB : CLIENT_KB);
+  const staffKb = (id) => (ruOnly() ? TEAM_KB(isAdminId(id)) : STAFF_KB);
   const ROUTING_TITLE = { auto: "авто — сложные вопросы сильной модели", light: "всегда лёгкая модель (дешевле)", heavy: "всегда сильная модель (точнее)" };
   const back = (to = "main") => [{ text: "← Назад", callback_data: `sb:a:${to}` }];
   const btn = (text, data) => ({ text, callback_data: `sb:a:${data}` });
@@ -2872,7 +2966,7 @@ function createSupportBot(deps) {
     const snap = await ticketsCol().where("status", "==", "open").limit(300).get();
     const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((t) => t.escalated || t.lastAuthorRole === "owner")
       .sort((a, b) => toMs(a.updatedAt) - toMs(b.updatedAt)).slice(0, 10);
-    if (!list.length) return send(chatId, "🎉 Никто не ждёт ответа.", { reply_markup: STAFF_KB });
+    if (!list.length) return send(chatId, "🎉 Никто не ждёт ответа.", { reply_markup: staffKb(chatId) });
     const rows = list.map((t) => {
       const link = topicLink(state.cfg.groupChatId, t.topicId);
       return link ? [{ text: `${t.escalated ? "🔴" : "⏳"} #${t.no || "?"} · ${clip(t.subject || "", 40)}`, url: link }] : null;
@@ -3468,6 +3562,8 @@ function createSupportBot(deps) {
   async function handleUpdate(update) {
     try {
       if (update.callback_query) return await onCallback(update.callback_query);
+      if (update.chat_join_request) return await onJoinRequest(update.chat_join_request);
+      if (update.chat_member) return await onMemberChange(update.chat_member);
       const msg = update.message;
       if (!msg || !msg.chat) return;
       if (isGroup(msg.chat.id)) return await onGroupMessage(msg);
@@ -3477,6 +3573,116 @@ function createSupportBot(deps) {
     } catch (e) {
       console.error(`support-bot update: ${e && e.stack ? e.stack : e}`);
     }
+  }
+
+  // ---- самовосстановление: вебхук, описание бота
+
+  /** Вебхук у Telegram сбился (другой адрес, нет нужных событий, удалён) —
+   *  ставим заново тем же секретом. Telegram недоступен — проверим позже. */
+  async function checkHook({ force = false } = {}) {
+    if (!active() || !state.cfg.hookSecret) return "off";
+    if (!force && now() - (state.hookCheckAt || 0) < HOOK_CHECK_MS) return "skip";
+    state.hookCheckAt = now();
+    let info;
+    try {
+      info = await tg("getWebhookInfo", {});
+    } catch (e) {
+      state.hookHealth = { at: now(), ok: false, note: `Telegram не ответил: ${e.message}` };
+      return "unreachable";
+    }
+    const allowed = Array.isArray(info && info.allowed_updates) ? info.allowed_updates : [];
+    const lastErr = info && info.last_error_date ? info.last_error_date * 1000 : 0;
+    state.hookHealth = { at: now(), ok: true, pending: Number(info && info.pending_update_count) || 0,
+      error: lastErr && now() - lastErr < 3600 * 1000 ? clip(String(info.last_error_message || ""), 160) : "" };
+    if (info && info.url === hookUrl() && HOOK_UPDATES.every((u) => allowed.includes(u))) return "ok";
+    try {
+      await tg("setWebhook", { url: hookUrl(), secret_token: state.cfg.hookSecret, allowed_updates: HOOK_UPDATES });
+      console.log("support-bot: вебхук восстановлен");
+      state.hookHealth.fixedAt = now();
+      return "fixed";
+    } catch (e) {
+      state.lastError = `вебхук: ${e.message}`;
+      return "failed";
+    }
+  }
+
+  /** Описание и команды бота по режиму: технический бот или поддержка клиентов. */
+  async function ensureProfile() {
+    if (!active()) return;
+    const mode = ruOnly() ? "ruOnly" : "open";
+    const ver = `${mode}:2`;
+    if (state.cfg.profileVer === ver) return;
+    const p = BOT_PROFILE[mode];
+    await quiet(tg("setMyShortDescription", { short_description: p.short }), "описание бота");
+    await quiet(tg("setMyDescription", { description: p.full }), "описание бота");
+    const commands = mode === "ruOnly" ? [{ command: "start", description: "Начать" }]
+      : [{ command: "start", description: "Начать" }, { command: "operator", description: "Позвать человека" },
+        { command: "new", description: "Новое обращение" }, { command: "privacy", description: "О данных" }, { command: "delete", description: "Удалить мои данные" }];
+    await quiet(tg("setMyCommands", { commands, scope: { type: "all_private_chats" } }), "команды");
+    state.cfg.profileVer = ver;
+    await quiet(cfgRef().set({ profileVer: ver }, { merge: true }), "описание бота");
+  }
+
+  /** «🩺 Состояние бота» для команды: связь, вебхук, группа, ИИ. */
+  async function healthText() {
+    await checkHook({ force: true });
+    const hh = state.hookHealth || {};
+    const lines = ["🩺 <b>Состояние бота поддержки</b>", ""];
+    lines.push(hh.ok ? `✅ Связь с Telegram есть${hh.fixedAt && now() - hh.fixedAt < 60000 ? " · вебхук восстановлен только что" : ""}` : `⚠️ ${h(hh.note || "Telegram не ответил")}`);
+    if (hh.pending) lines.push(`📨 В очереди Telegram: ${hh.pending}`);
+    if (hh.error) lines.push(`🧯 Последняя ошибка доставки: <i>${h(hh.error)}</i>`);
+    lines.push(state.cfg.groupChatId ? `👥 Рабочая группа: ${h(state.cfg.groupTitle || "подключена")}` : "👥 Рабочая группа не подключена");
+    lines.push(aiReady() ? "🤖 ИИ-ассистент: включён" : "🤖 ИИ-ассистент: выключен или нет ключа");
+    lines.push(ruOnly() ? "🔒 Режим: данные только в России — клиенты пишут в кабинете и на сайте" : "💬 Режим: клиенты пишут и в Telegram");
+    if (state.lastError) lines.push("", `Последняя ошибка: <i>${h(clip(state.lastError, 200))}</i>`);
+    return lines.join("\n");
+  }
+
+  // ---- защита рабочей группы: посторонние не вступают
+
+  /** Администраторы группы (кэш 10 мин). null — список не получить. */
+  async function groupAdmins() {
+    if (state.groupAdmins && now() - state.groupAdminsAt < 10 * 60 * 1000) return state.groupAdmins;
+    const list = await quiet(tg("getChatAdministrators", { chat_id: state.cfg.groupChatId }), "админы группы");
+    state.groupAdminsAt = now();
+    state.groupAdmins = Array.isArray(list) ? new Set(list.map((m) => Number(m.user && m.user.id)).filter(Boolean)) : null;
+    return state.groupAdmins;
+  }
+
+  /** Свой: сотрудник или админ поддержки из панели, администратор группы. */
+  async function isTeam(id) {
+    if (isStaffId(id) || isAdminId(id)) return true;
+    const admins = await groupAdmins();
+    return !!(admins && admins.has(Number(id)));
+  }
+
+  const personName = (u) => clip([u.first_name, u.last_name].filter(Boolean).join(" ") || (u.username ? `@${u.username}` : String(u.id)), 60);
+  const JOIN_HINT = "Новый сотрудник? Добавьте его в панели ZalPOS → «Бот поддержки» → «Сотрудники» — тогда заявка примется сама, или добавьте его в группу вручную.";
+
+  /** Заявка на вступление: свои — принимаем, остальные — отклоняем. */
+  async function onJoinRequest(r) {
+    if (!r.chat || !isGroup(r.chat.id) || !r.from) return;
+    const ok = await isTeam(r.from.id);
+    await quiet(tg(ok ? "approveChatJoinRequest" : "declineChatJoinRequest", { chat_id: r.chat.id, user_id: r.from.id }), "заявка в группу");
+    if (!ok) await quiet(send(r.chat.id, `🚫 Отклонил заявку в группу: ${h(personName(r.from))} — нет в списке сотрудников поддержки.
+<i>${h(JOIN_HINT)}</i>`, HTML), "группа");
+  }
+
+  /** Кто-то вошёл по ссылке сам и он не из команды — удаляем из группы.
+   *  Добавил администратор или сотрудник — значит, свой. */
+  async function onMemberChange(u) {
+    if (!u.chat || !isGroup(u.chat.id) || !u.new_chat_member || !u.new_chat_member.user) return;
+    const user = u.new_chat_member.user;
+    const was = u.old_chat_member ? u.old_chat_member.status : "left";
+    if (!["member", "restricted"].includes(u.new_chat_member.status) || !["left", "kicked"].includes(was) || user.is_bot) return;
+    const by = u.from || {};
+    if (Number(by.id) !== Number(user.id) && (await isTeam(by.id))) return;
+    if (await isTeam(user.id)) return;
+    // Бан на минуту и снятие — человек удалён, но сможет подать заявку позже.
+    await quiet(tg("banChatMember", { chat_id: u.chat.id, user_id: user.id, until_date: Math.floor(now() / 1000) + 60 }), "убрать из группы");
+    await quiet(tg("unbanChatMember", { chat_id: u.chat.id, user_id: user.id, only_if_banned: true }), "убрать из группы");
+    await quiet(send(u.chat.id, `🚫 Убрал из группы: ${h(personName(user))} — вошёл по ссылке и его нет в списке сотрудников.
+<i>${h(JOIN_HINT)}</i>`, HTML), "группа");
   }
 
   async function linkGroup(msg, code) {
@@ -3604,7 +3810,16 @@ function createSupportBot(deps) {
     if (ruOnly() && t.channel !== "telegram") {
       // Файлы клиента остаются на сервере в РФ — в Telegram только названия.
       const list = supportFiles.listOf(m);
-      if (list.length) await toTopicHtml(t, `📎 <b>${h(who)}</b>: ${h(list.map((f) => f.name).join(", "))}\n<i>Файлы хранятся на сервере в РФ — откройте их в панели ZalPOS → «Обращения».</i>`);
+      // Сам файл не пересылаем (персональные данные остаются в РФ) — только
+      // описание: что за файл и какого размера.
+      const kind = (f) => (supportFiles.isImage(f.type) ? "🖼 скриншот" : /pdf/.test(f.type || "") ? "📄 PDF" : /word|document/.test(f.type || "") ? "📝 документ Word"
+        : /sheet|excel|csv/.test(f.type || "") ? "📊 таблица" : /video/.test(f.type || "") ? "🎬 видео" : "📎 файл");
+      const size = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1).replace(".", ",")} МБ` : n ? `${Math.max(1, Math.round(n / 1024))} КБ` : "");
+      if (list.length) {
+        await toTopicHtml(t, [`📎 <b>${h(who)}</b> приложил ${list.length === 1 ? "файл" : `файлы (${list.length})`}:`,
+          ...list.map((f) => `• ${kind(f)} «${h(clip(f.name, 80))}»${size(f.size) ? ` · ${size(f.size)}` : ""}`),
+          `<i>Файлы хранятся на сервере в РФ и в Telegram не пересылаются — открыть: панель ZalPOS → «Обращения».</i>`].join("\n"));
+      }
       return;
     }
     for (const f of supportFiles.listOf(m)) {
@@ -3700,13 +3915,8 @@ function createSupportBot(deps) {
       const taken = await db().collection("telegramBots").where("botId", "==", me.id).limit(1).get();
       if (taken.docs.length) throw new HttpError(409, "Этот бот уже подключён к заведению — для поддержки создайте отдельного бота");
       const hookSecret = crypto.randomBytes(24).toString("hex");
-      await tg("setWebhook", { url: hookUrl(), secret_token: hookSecret, allowed_updates: ["message", "callback_query"], drop_pending_updates: true }, token);
-      await quiet(tg("setMyCommands", { commands: [
-        { command: "start", description: "Начать" }, { command: "operator", description: "Позвать человека" },
-        { command: "new", description: "Новое обращение" }, { command: "privacy", description: "О данных" },
-        { command: "delete", description: "Удалить мои данные" },
-      ], scope: { type: "all_private_chats" } }, token), "команды");
-      Object.assign(upd, { tokenEnc: encrypt(key, token), botId: me.id, username: me.username || "", hookSecret, hookUrl: hookUrl() });
+      await tg("setWebhook", { url: hookUrl(), secret_token: hookSecret, allowed_updates: HOOK_UPDATES, drop_pending_updates: true }, token);
+      Object.assign(upd, { profileVer: null, tokenEnc: encrypt(key, token), botId: me.id, username: me.username || "", hookSecret, hookUrl: hookUrl() });
       if (prev.botId && prev.botId !== me.id) Object.assign(upd, { groupChatId: null, groupTitle: "" });
     } else if (!prev.tokenEnc) {
       throw new HttpError(400, "Вставьте токен бота из @BotFather");
@@ -3789,6 +3999,7 @@ function createSupportBot(deps) {
     await reload();
     if (autoPick) await pickModelsNow();
     if (active()) watchTickets();
+    if (active()) await ensureProfile().catch(() => {});
     sendJson(res, 200, await statusOf());
   }
 
@@ -4151,6 +4362,7 @@ function createSupportBot(deps) {
   async function sweepSite() {
     // Только равенство — без составного индекса; старые отбираем здесь.
     const snap = await ticketsCol().where("channel", "==", "site").limit(1000).get();
+    const fresh = snap.docs.map((x) => x.data() || {}).filter((x) => now() - toMs(x.createdAt) <= SITE_TTL_MS);
     let n = 0;
     for (const d of snap.docs.filter((x) => now() - toMs(x.data().createdAt) > SITE_TTL_MS)) {
       const msgs = await d.ref.collection("messages").limit(500).get();
@@ -4159,6 +4371,11 @@ function createSupportBot(deps) {
       n++;
     }
     if (n) console.log(`support-bot: удалено диалогов с сайта старше 30 дней: ${n}`);
+    // Темы сайта, открытые до автоудаления (без отметки), — тоже убираем.
+    if (active() && state.cfg.groupChatId) {
+      const left = new Set(fresh.map((x) => Number(x.topicId) || 0).filter(Boolean));
+      for (const topicId of left) await retireSiteTopic(topicId).catch(() => false);
+    }
     return n;
   }
 
@@ -4190,11 +4407,17 @@ function createSupportBot(deps) {
     if (u && u.data && u.data()) state.usage = { day: "", calls: 0, tokens: 0, ...u.data() };
     if (active()) watchTickets();
     if (active()) setGroupCommands().catch(() => {});
+    if (active()) ensureProfile().catch(() => {});
+    if (active()) checkHook({ force: true }).catch(() => {});
     // Ступени моделей ещё не подобраны (старые настройки) — подобрать по списку провайдера.
     if (aiReady() && providers().some((p) => p.enabled && (!p.medium || !p.max))) pickModelsNow().catch((e) => console.error(`support-bot: подбор моделей: ${e.message || e}`));
     const dir = await db().collection("supportBot").doc("staffDir").get().catch(() => null);
     for (const [id, v] of Object.entries((dir && dir.data && dir.data()) || {})) state.staffDir[id] = { username: v.username || "", name: v.name || "" };
-    setInterval(() => sweepSla().catch((e) => console.error(`support-bot: очередь сотрудников: ${e.message || e}`)), 60 * 1000).unref();
+    setInterval(() => {
+      sweepSla().catch((e) => console.error(`support-bot: очередь сотрудников: ${e.message || e}`));
+      sweepSiteTopics().catch((e) => console.error(`support-bot: темы сайта: ${e.message || e}`));
+      checkHook().catch(() => {});
+    }, 60 * 1000).unref();
     setInterval(() => {
       sweepLearn().catch((e) => console.error(`support-bot: автообучение: ${e.message || e}`));
     }, LEARN_SWEEP_MS).unref();
@@ -4211,7 +4434,7 @@ function createSupportBot(deps) {
   }
 
   return {
-    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handleCabinetMessages, handleSiteSend, handleSiteMessages, handlePurgeForeign, sweepSite, handleAiCheck, handleDocDownload, router,
+    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handleCabinetMessages, handleSiteSend, handleSiteMessages, handlePurgeForeign, sweepSite, sweepSiteTopics, checkHook, ensureProfile, handleAiCheck, handleDocDownload, router,
     onTicketDoc, syncTicket, loadGuide, loadKnowledge, loadNoise, learnedJunk, loadNews, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
     // Тесты: подменить файлы знаний (карта кода с шаблонами, «что нового»).
     __setKbPaths: (p) => Object.assign(deps, p),
