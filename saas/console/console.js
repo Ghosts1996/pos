@@ -4648,6 +4648,7 @@ function watchDashboardData(tenantId) {
             <label class="field"><span>Имя</span>
               <input id="f-emp-name" placeholder="Имя для кассы (без фамилии)">
             </label>
+            <p class="small muted" style="margin:-6px 0 10px">Можно вписать псевдоним («Аня-бар», «Кальянщик 2») — кассе нужно только различать сотрудников. Чем меньше личных данных, тем проще с 152-ФЗ.</p>
             <div class="row">
               <select id="f-emp-role" class="grow">
                 <option value="employee">Сотрудник (PIN — 4 цифры)</option>
@@ -5093,7 +5094,7 @@ function watchDashboardData(tenantId) {
           меню с ценами и категориями, склад с остатками и ценами закупки, техкарты, сотрудники с новыми PIN-кодами, скидочные карты.</p>
           <ol class="small muted" style="padding-left:18px;margin:8px 0">
             <li>В прежней системе выгрузите данные в Excel или CSV её штатной функцией «Экспорт» / «Выгрузить в Excel»: номенклатуру (меню), остатки склада, техкарты, сотрудников, дисконтные карты.</li>
-            <li>Загрузите файлы сюда по одному — лучше в таком порядке: меню → склад → техкарты → сотрудники → карты.</li>
+            <li>Выберите сразу все файлы выгрузки (или одну книгу Excel, где меню, склад и сотрудники — на разных листах). Мы узнаем, что где, и перенесём по очереди: меню → склад → техкарты → сотрудники → карты.</li>
             <li>Проверьте, какие столбцы мы узнали, посмотрите предпросмотр и нажмите «Перенести». Ошибся — «Отменить перенос».</li>
           </ol>
           <p class="small muted" style="margin:0">Формат своей системы не подошёл — скачайте шаблон, вставьте в него столбцы из выгрузки и загрузите:
@@ -5121,10 +5122,32 @@ function watchDashboardData(tenantId) {
       if (imp.step === 'pick' || !kinds) {
         return `${intro}
           <div class="card" style="margin-top:10px">
-            <label class="field"><span>Файл выгрузки: Excel (.xlsx, .xls), .ods, .xml или CSV</span>
-              <input type="file" id="f-imp-file" accept=".xlsx,.xls,.ods,.xml,.htm,.html,.csv,.txt,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet"></label>
+            <label class="field"><span>Файлы выгрузки: Excel (.xlsx, .xls), .ods, .xml или CSV — можно несколько сразу</span>
+              <input type="file" id="f-imp-file" multiple accept=".xlsx,.xls,.ods,.xml,.htm,.html,.csv,.txt,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet"></label>
             ${imp.busy ? '<p class="small muted">Читаю файл…</p>' : ''}
             ${imp.error ? `<p class="small" style="color:var(--danger)">${esc(imp.error)}</p>` : ''}
+          </div>${history}`;
+      }
+      if (imp.step === 'queue') {
+        // Несколько файлов или листов: что где узнали — проверить и начать по очереди.
+        return `${head}
+          <div class="card" style="margin-top:10px">
+            <div class="small" style="font-weight:600;margin-bottom:6px">Нашли данные для переноса: ${imp.queue.length}</div>
+            <p class="small muted" style="margin-top:0">Перенесём по очереди. Каждую часть вы проверите в предпросмотре перед переносом.</p>
+            ${imp.queue.map((q, i) => `
+              <div class="row" style="gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--border);flex-wrap:wrap">
+                <div class="grow small" style="min-width:160px">${esc(q.fileName)}${q.sheets.length > 1 ? ` · лист «${esc(q.sheets[q.sheetIdx].name)}»` : ''}
+                  <div class="muted">${(() => { const n = q.sheets[q.sheetIdx].rows.length; const m10 = n % 10, m100 = n % 100; return `${n} ${m10 === 1 && m100 !== 11 ? 'строка' : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? 'строки' : 'строк'}`; })()}</div></div>
+                <select class="f-imp-qkind" data-i="${i}" style="width:auto">
+                  <option value="">Пропустить</option>
+                  ${KIND_ORDER.map((k) => `<option value="${k}" ${k === q.kind ? 'selected' : ''}>${LABEL[k]}</option>`).join('')}
+                </select>
+              </div>`).join('')}
+            ${imp.error ? `<p class="small" style="color:var(--danger)">${esc(imp.error)}</p>` : ''}
+            <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
+              <button class="btn btn-ghost" id="f-imp-back" style="width:auto">Другие файлы</button>
+              <button class="btn btn-primary" id="f-imp-qstart" style="width:auto">Начать перенос по очереди</button>
+            </div>
           </div>${history}`;
       }
       const sheet = imp.sheets[imp.sheetIdx];
@@ -5134,7 +5157,7 @@ function watchDashboardData(tenantId) {
       if (imp.step === 'map') {
         return `${head}
           <div class="card" style="margin-top:10px">
-            <div class="small" style="font-weight:600;margin-bottom:8px">${esc(imp.fileName)}</div>
+            <div class="small" style="font-weight:600;margin-bottom:8px">${imp.queue ? `Часть ${imp.qi + 1} из ${imp.queue.length} · ` : ''}${esc(imp.fileName)}</div>
             ${imp.sheets.length > 1 ? `<label class="field"><span>Лист</span><select id="f-imp-sheet">${imp.sheets.map((sh, i) => `<option value="${i}" ${i === imp.sheetIdx ? 'selected' : ''}>${esc(sh.name)} (${sh.rows.length} строк)</option>`).join('')}</select></label>` : ''}
             <label class="field"><span>Что в файле</span><select id="f-imp-kind">${KIND_ORDER.map((k) => `<option value="${k}" ${k === imp.kind ? 'selected' : ''}>${LABEL[k]}</option>`).join('')}</select></label>
             <p class="small muted" style="margin-top:-4px">${esc(def.hint)}</p>
@@ -5145,8 +5168,9 @@ function watchDashboardData(tenantId) {
               <input type="checkbox" id="f-imp-update" ${imp.update ? 'checked' : ''} style="width:auto;margin-top:2px">
               <span>${{ menu: 'Позиции с тем же названием обновить: цена, категория, описание', stock: 'Продукты с тем же названием обновить: остаток, цена закупки, минимум', recipes: 'Заменить рецепт у блюд, где он уже есть', cards: 'У карт с тем же номером обновить скидку' }[imp.kind]}. Иначе — пропустить.</span></label>` : ''}
             ${imp.error ? `<p class="small" style="color:var(--danger)">${esc(imp.error)}</p>` : ''}
-            <div class="row" style="gap:8px;margin-top:12px">
-              <button class="btn btn-ghost" id="f-imp-back" style="width:auto">Другой файл</button>
+            <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
+              <button class="btn btn-ghost" id="f-imp-back" style="width:auto">${imp.queue ? 'Другие файлы' : 'Другой файл'}</button>
+              ${imp.queue && imp.qi + 1 < imp.queue.length ? '<button class="btn btn-ghost" id="f-imp-qskip" style="width:auto">Пропустить эту часть</button>' : ''}
               <button class="btn btn-primary" id="f-imp-preview" style="width:auto">Предпросмотр</button>
             </div>
           </div>${history}`;
@@ -5185,7 +5209,7 @@ function watchDashboardData(tenantId) {
               </label>`).join('')}
             ${imp.progress ? `<p class="small muted">${esc(imp.progress)}</p>` : ''}
             ${imp.error ? `<p class="small" style="color:var(--danger)">${esc(imp.error)}</p>` : ''}
-            <div class="row" style="gap:8px;margin-top:12px">
+            <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
               <button class="btn btn-ghost" id="f-imp-edit" style="width:auto" ${imp.busy ? 'disabled' : ''}>Назад</button>
               <button class="btn btn-primary" id="f-imp-run" style="width:auto" ${imp.busy || !consentOk || !(plan.create.length + plan.update.length) ? 'disabled' : ''}>${imp.busy ? 'Переношу…' : 'Перенести'}</button>
             </div>
@@ -5201,8 +5225,10 @@ function watchDashboardData(tenantId) {
             <div class="small" style="font-weight:600;margin-top:10px">PIN-коды для входа в кассу — сохраните сейчас, больше не покажем</div>
             <div id="f-imp-pins" class="small" style="margin:6px 0;font-family:ui-monospace,monospace">${r.pins.map((x) => `<div>${esc(x.name)} — ${x.role === 'admin' ? 'администратор' : 'сотрудник'} — ${x.pin}</div>`).join('')}</div>
             <button class="btn btn-ghost" id="f-imp-copy-pins" style="width:auto">Скопировать список</button>` : ''}
-          <div class="row" style="gap:8px;margin-top:12px">
-            <button class="btn btn-primary" id="f-imp-next" style="width:auto">Перенести ещё файл</button>
+          <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
+            ${imp.queue && imp.qi + 1 < imp.queue.length
+              ? `<button class="btn btn-primary" id="f-imp-qnext" style="width:auto">Дальше: ${esc(LABEL[imp.queue[imp.qi + 1].kind])} (${imp.qi + 2} из ${imp.queue.length})</button>`
+              : '<button class="btn btn-primary" id="f-imp-next" style="width:auto">Перенести ещё файл</button>'}
           </div>
         </div>${history}`;
     };
@@ -5230,12 +5256,19 @@ function watchDashboardData(tenantId) {
       if (!importCore) loadImportCore().then(draw).catch((e) => { imp.error = `Не загрузился модуль переноса: ${e?.message || e}`; draw(); });
       const I = importCore;
       // Модуль мог догрузиться после этой отрисовки — берём актуальный.
-      const toMap = () => {
+      const toMap = (kind = '') => {
         const core = importCore;
         const sheet = imp.sheets[imp.sheetIdx];
         imp.headerIdx = core.findHeader(sheet.rows);
-        imp.kind = core.guessKind(sheet.rows[imp.headerIdx]) || imp.kind || 'menu';
+        imp.kind = kind || core.guessKind(sheet.rows[imp.headerIdx]) || imp.kind || 'menu';
         imp.map = core.guessMapping(imp.kind, sheet.rows[imp.headerIdx]);
+      };
+      // Часть очереди «всё сразу» — обычные шаги: столбцы → предпросмотр → перенос.
+      const startPart = (queue, qi) => {
+        const q = queue[qi];
+        imp = { step: 'map', fileName: q.fileName, sheets: q.sheets, sheetIdx: q.sheetIdx, update: false, queue, qi };
+        toMap(q.kind);
+        draw();
       };
       document.querySelectorAll('.f-imp-template').forEach((el) => {
         el.onclick = async (e) => {
@@ -5251,16 +5284,38 @@ function watchDashboardData(tenantId) {
       });
       if ($('f-imp-file')) {
         $('f-imp-file').onchange = async (e) => {
-          const file = e.target.files && e.target.files[0];
-          if (!file) return;
+          const files = [...(e.target.files || [])].slice(0, 10);
+          if (!files.length) return;
           imp = { step: 'pick', busy: true };
           draw();
           try {
-            if (file.size > 15 * 1024 * 1024) throw new Error('файл больше 15 МБ — выгрузите данные частями');
             const core = await loadImportCore();
-            const sheets = await core.readTable(new Uint8Array(await file.arrayBuffer()), file.name);
-            imp = { step: 'map', fileName: file.name, sheets, sheetIdx: 0, update: false };
-            toMap();
+            const ORDER = ['menu', 'stock', 'recipes', 'staff', 'cards'];
+            const parts = [];
+            const failed = [];
+            for (const file of files) {
+              try {
+                if (file.size > 15 * 1024 * 1024) throw new Error('больше 15 МБ — выгрузите данные частями');
+                const sheets = await core.readTable(new Uint8Array(await file.arrayBuffer()), file.name);
+                // Каждый лист со строками — отдельная часть; что в нём, угадываем по заголовкам.
+                const found = sheets.map((sh, i) => ({ sh, i })).filter(({ sh }) => sh.rows.length > 1).map(({ sh, i }) => ({
+                  fileName: file.name, sheets, sheetIdx: i, kind: core.guessKind(sh.rows[core.findHeader(sh.rows)]) || '',
+                }));
+                const known = found.filter((x) => x.kind);
+                parts.push(...(known.length ? known : found.slice(0, 1)));
+              } catch (err) {
+                failed.push(`${file.name}: ${err?.message || err}`);
+              }
+            }
+            if (!parts.length) throw new Error(failed.join('; ') || 'в файлах нет строк');
+            if (parts.length === 1 && !failed.length) {
+              const [q] = parts;
+              imp = { step: 'map', fileName: q.fileName, sheets: q.sheets, sheetIdx: q.sheetIdx, update: false };
+              toMap(q.kind);
+            } else {
+              parts.sort((a, b) => (ORDER.indexOf(a.kind) + 1 || 99) - (ORDER.indexOf(b.kind) + 1 || 99));
+              imp = { step: 'queue', queue: parts, error: failed.length ? `Не прочитали: ${failed.join('; ')}` : '' };
+            }
           } catch (err) {
             imp = { step: 'pick', error: `Не получилось прочитать файл: ${err?.message || err}` };
           }
@@ -5285,6 +5340,17 @@ function watchDashboardData(tenantId) {
       if ($('f-imp-back')) $('f-imp-back').onclick = () => { imp = { step: 'pick' }; draw(); };
       if ($('f-imp-edit')) $('f-imp-edit').onclick = () => { imp.step = 'map'; imp.error = ''; draw(); };
       if ($('f-imp-next')) $('f-imp-next').onclick = () => { imp = { step: 'pick' }; draw(); };
+      document.querySelectorAll('.f-imp-qkind').forEach((el) => {
+        el.onchange = () => { imp.queue[Number(el.dataset.i)].kind = el.value; };
+      });
+      if ($('f-imp-qstart')) $('f-imp-qstart').onclick = () => {
+        const ORDER = ['menu', 'stock', 'recipes', 'staff', 'cards'];
+        const queue = imp.queue.filter((q) => q.kind).sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind));
+        if (!queue.length) { imp.error = 'Выберите, что в файлах, хотя бы для одной части'; draw(); return; }
+        startPart(queue, 0);
+      };
+      if ($('f-imp-qnext')) $('f-imp-qnext').onclick = () => startPart(imp.queue, imp.qi + 1);
+      if ($('f-imp-qskip')) $('f-imp-qskip').onclick = () => startPart(imp.queue, imp.qi + 1);
       if ($('f-imp-preview')) {
         $('f-imp-preview').onclick = async () => {
           imp.error = '';
