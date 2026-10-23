@@ -1184,7 +1184,7 @@ X.aiBuy = () => X.scr('Заявка на закупку', `<div class="gx-card" 
   <b>Срочно (кончится за 2 дня):</b><br>• Лимоны — 3 кг<br>• Мята свежая — 0,8 кг<br><b>На неделю:</b><br>• Смесь для кальяна — 1 кг (расход ~140 г/день)<br>• Уголь кокосовый — 6 кг<br>• Молоко 3,2% — 12 л<br><span class="gx-mu">Сок яблочный продаётся вдвое медленнее — можно не брать.</span></div>`,
   { bottom: `<div style="display:flex;gap:8px">${btn('Скопировать', { kind: 'ghost', style: 'flex:1' })}${btn('Отправить в Telegram', { style: 'flex:1' })}</div>` });
 
-/* ---- Кабинет: сеть, бэкап, поддержка, Windows, РКН ---- */
+/* ---- Кабинет: сеть, бэкап, поддержка, Windows ---- */
 X.webNetwork = ({ tap = {} } = {}) => web('Тарифы', `<h3>Тарифы</h3><div class="gx-mu">Кафе «Лето» · тариф Бизнес</div>
   <div class="gx-web-card"><h5>Сеть заведений</h5><div class="gx-mu" style="font-size:13px;line-height:1.5;max-width:560px">У каждой точки свой зал, сотрудники и PIN-коды. Гости и их бонусы — общие на всю сеть.</div>
     <div style="margin-top:12px">${wBtn('<span class="gx-show" data-mark="net">Перевести в сеть</span><span class="gx-alt" data-mark="net">Сеть «Лето» ✓</span>', { tap: 'net' })}</div></div>
@@ -1223,14 +1223,6 @@ X.winApp = () => `<div class="gx-app gx-wide">
     </div>
     <div class="gx-map-pill">${ic('checks', 17, 2)}Показать список · 11</div>
   </div></div>`;
-X.webRkn = () => webPage(`<h3>Уведомление об обработке ПД</h3><div class="gx-mu" style="margin-bottom:10px">Схема формы на pd.rkn.gov.ru — подпись через Госуслуги</div>
-  <div class="gx-web-card gx-web-narrow gx-wf-wrap" style="margin-top:0">
-    ${wField('Цель обработки', { type: 'goal', ph: '' })}
-    ${wField('Категории данных', { val: 'ФИО; должность; рабочее время и зарплата' })}
-    ${wField('Субъекты', { val: 'работники' })}
-    ${wField('Трансграничная передача', { val: '<span class="gx-show" data-mark="tb">—</span><span class="gx-alt" data-mark="tb">нет</span>', tap: 'tb' })}
-    ${wField('Место нахождения базы данных', { val: 'Российская Федерация' })}
-    ${wBtn('Подписать и отправить', { tap: 'send', style: 'width:100%;justify-content:center;margin-top:6px' })}</div>`, { url: 'pd.rkn.gov.ru (схема)' });
 
 // Переходы в разделы кассы, общие для сцен ниже.
 const ADMIN_TO = (t) => ({ screen: adminHome({ tap: t }), cap: `Войдите по PIN администратора и откройте «${t}».`, acts: [{ wait: 400 }, { tap: 'tile' }] });
@@ -1937,13 +1929,6 @@ export const SCENES = {
     frames: [
       { screen: X.webSupport(), cap: 'Кабинет → «Поддержка». Опишите, что делали и что увидели, приложите снимок экрана.', acts: [{ type: 'sup', text: 'Не печатает чек на Windows' }, { tap: 'att', mark: 'att' }, { tap: 'send' }] },
       { screen: X.webSupport(), cap: 'Ответ придёт здесь же, в обращении.', acts: [{ mark: 'ans' }, { wait: 2200 }] },
-    ],
-  },
-  rkn: {
-    label: 'Роскомнадзор: уведомление работодателя', device: 'web',
-    frames: [
-      { screen: X.webRkn(), url: 'pd.rkn.gov.ru (схема)', cap: 'За гостей ZalPOS отвечает сам. Заведению остаётся общее уведомление работодателя — если ещё не подавали: pd.rkn.gov.ru.', acts: [{ type: 'goal', text: 'кадровый и бухгалтерский учёт, расчёт зарплаты' }, { wait: 400 }] },
-      { screen: X.webRkn(), url: 'pd.rkn.gov.ru (схема)', cap: 'Трансграничная передача — нет, база — Российская Федерация. Подпишите через Госуслуги: бесплатно, 15–20 минут.', acts: [{ tap: 'tb', mark: 'tb' }, { wait: 500 }, { tap: 'send' }, { wait: 900 }] },
     ],
   },
   'kitchen-alarm': {

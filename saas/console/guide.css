@@ -474,7 +474,6 @@
 .gx-cols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 12px; }
 .gx-cols.wide2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) auto; }
 .gx-web-narrow { max-width: 420px; }
-.gx-wf-wrap .gx-wf-box { height: auto; min-height: 40px; padding: 9px 12px; white-space: normal; line-height: 1.35; }
 .gx-web-hero { margin-bottom: 4px; }
 .gx-web-hero h3 { font-size: 28px; max-width: 520px; }
 .gx-web-brand.big { font-size: 22px; margin: 0 0 14px; }
