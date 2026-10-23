@@ -157,7 +157,7 @@ function listOf(m) {
     .map((a) => ({
       id: a.id, name: cleanName(a.name, a.id.split(".").pop()), type: EXT_TYPE[a.id.split(".").pop()], size: Number(a.size) || 0,
       // Что на скриншоте — так его «видит» ИИ (support-bot.js, describeImages).
-      ...(a.desc ? { desc: String(a.desc).slice(0, 900) } : {}),
+      ...(a.desc ? { desc: String(a.desc).slice(0, 2600) } : {}),
     }));
 }
 

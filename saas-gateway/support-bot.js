@@ -1134,6 +1134,8 @@ function createSupportBot(deps) {
     settings: () => ({ provider: ((state.cfg && state.cfg.web) || {}).provider || "auto", key: state.webKey || "" }),
   });
   const debounceMs = deps.debounceMs ?? 2500;
+  // Текст со скриншотов — на нашем сервере в РФ (в тестах — подделка).
+  const ocr = deps.ocr || require("./support-ocr");
   const now = () => (deps.now ? deps.now() : Date.now());
   const cfgRef = () => db().collection("supportBot").doc("config");
   const ticketsCol = () => db().collection("supportTickets");
@@ -2187,8 +2189,12 @@ function createSupportBot(deps) {
     const doneTyping = () => quiet(patch(t, { aiTypingAt: null }), "печатает");
     // Скриншоты клиента — ИИ сначала смотрит их и описывает словами.
     const canSee = !ruOnly() || aiInRussia();
-    const looked = imagesNow && canSee ? await describeImages(t, fresh) : 0;
-    if (imagesNow && !question && !canSee) {
+    const looked = imagesNow && (canSee || ocr.available()) ? await describeImages(t, fresh, { vision: canSee }) : 0;
+    // «Посмотри скриншот» без новой картинки — смотрим присланные раньше.
+    if (!imagesNow && /(скрин|картинк|фото|изображен|на экране|посмотри)/.test(norm(question)) && (canSee || ocr.available())) {
+      await describeImages(t, history.slice(-8), { vision: canSee });
+    }
+    if (imagesNow && !question && !canSee && !looked) {
       await doneTyping();
       return deliver(t, "Скриншот получил — специалист его видит. Напишите в двух словах, что на экране и что не так, — помогу сразу.");
     }
@@ -3844,10 +3850,12 @@ function createSupportBot(deps) {
     if (fresh.length && last && last.authorRole === "owner" && t.status !== "closed") await respond(t);
   }
 
-  /** Посмотреть скриншоты клиента моделью с картинками и записать в
-   *  сообщение, что на них (attachments[].desc) — один раз на файл. Модель не
-   *  умеет картинки — ключ не наказывается (soft), ИИ попросит описать. */
-  async function describeImages(t, msgs) {
+  /** Посмотреть скриншоты клиента и записать в сообщение, что на них
+   *  (attachments[].desc) — один раз на файл. [vision] — можно показать
+   *  картинку модели (данные не только в РФ или ИИ в РФ); иначе или если
+   *  модель не умеет картинки — текст распознаётся на нашем сервере в РФ
+   *  (support-ocr.js), и ИИ видит только обезличенный текст. */
+  async function describeImages(t, msgs, { vision = true } = {}) {
     let done = 0;
     let budget = 3;
     for (const m of msgs) {
@@ -3859,6 +3867,23 @@ function createSupportBot(deps) {
         const file = await supportFiles.read({ tenantId: t.tenantId, ticketId: t.id, id: a.id });
         if (!file || file.buffer.length > 5 * 1024 * 1024) continue;
         budget--;
+        // Сначала текст с экрана — на нашем сервере; картинку модели — только если можно.
+        let text = "";
+        if (ocr.available()) {
+          try {
+            text = clip(scrubPii(maskSecrets(await ocr.recognize(file.buffer))), 1500);
+          } catch (e) {
+            console.error(`support-bot: распознавание скриншота #${t.no}: ${e.message}`);
+          }
+        }
+        if (!vision) {
+          if (!text) continue;
+          a.desc = `Текст на экране (распознан на сервере в РФ): ${text}`;
+          a.ocr = true;
+          changed = true;
+          done++;
+          continue;
+        }
         try {
           const r = await router.complete(providers(), [
             { role: "system", content: "Ты помогаешь поддержке ZalPOS (касса и учёт для общепита). Опиши скриншот клиента по-русски, до 600 символов: что это за экран (касса ZalPOS, кабинет zalpos.ru, приложение гостя, сайт банка или другой программы, телефон), какой раздел открыт, точный текст ошибок и сообщений, заметные кнопки и поля. Только то, что видно, без догадок. Телефоны, почты, имена людей, номера карт и ключи не переписывай." },
@@ -3868,18 +3893,25 @@ function createSupportBot(deps) {
             ] },
           ], { tier: "vision", maxTokens: 400, temperature: 0.1, soft: true });
           const desc = clip(guardReply(scrubPii(maskSecrets(plain(r.text)))), 900);
-          if (!desc) continue;
-          a.desc = desc;
+          if (!desc && !text) continue;
+          a.desc = [desc, text ? `Текст на экране: ${text}` : ""].filter(Boolean).join("\n");
           changed = true;
           done++;
         } catch (e) {
           console.error(`support-bot: скриншот #${t.no}: ${e.message}`);
+          // Модель не умеет картинки — хватит и текста с экрана.
+          if (text) {
+            a.desc = `Текст на экране (распознан на сервере в РФ): ${text}`;
+            a.ocr = true;
+            changed = true;
+            done++;
+          }
         }
       }
       if (changed) {
         await quiet(ticketRef(t.id).collection("messages").doc(m.id).set({ attachments: raw }, { merge: true }), "описание скриншота");
         const seen = raw.filter((a) => a && a.desc);
-        if (seen.length) await toTopicHtml(t, `👁 <b>ИИ посмотрел скриншот</b>\n${seen.map((a) => `<blockquote expandable>${h(a.desc)}</blockquote>`).join("\n")}`);
+        if (seen.length) await toTopicHtml(t, `👁 <b>${seen.every((a) => a.ocr) ? "Текст со скриншота" : "ИИ посмотрел скриншот"}</b>\n${seen.map((a) => `<blockquote expandable>${h(a.desc)}</blockquote>`).join("\n")}`);
       }
     }
     return done;

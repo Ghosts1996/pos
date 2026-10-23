@@ -334,6 +334,8 @@ function harness() {
     recentErrors: () => ["12:00: build failed for t1"],
     docData: async (tid) => ({ venue: tid ? { name: "Колибри", sellerName: "ООО «Колибри»", sellerInn: "7701234567" } : {}, platform: {} }),
     tenantPriority: async (tid) => tid === "tprio",
+    // Распознавание текста скриншотов — подделка: что вернуть, задаёт тест.
+    ocr: { available: () => flags.ocrText !== undefined, recognize: async () => flags.ocrText || "" },
     debounceMs: 0,
     guidePath: require("path").join(__dirname, "..", "saas", "console", "guide.js"),
   });
@@ -1215,6 +1217,32 @@ test("только Россия: обращение из кабинета обе
   // Чужое заведение и без согласия — отказ.
   await assert.rejects(h.bot.handleCabinetSend({ uid: "stranger", body: { tenantId: "t1", subject: "x", consent: true, text: "y" } }, {}));
   await assert.rejects(h.bot.handleCabinetSend({ uid: "owner1", body: { tenantId: "t1", subject: "x", text: "y" } }, {}), /согласие/);
+});
+
+test("только Россия: скриншот — текст распознаётся на сервере, ИИ получает обезличенный текст, картинку — нет", async () => {
+  const h = harness();
+  await setup(h, { ruOnly: true });
+  h.flags.ocrText = "Ошибка оплаты: терминал не отвечает (код 1205)\nПозвоните Ивану +7 999 123-45-67";
+  await h.bot.handleCabinetSend({ uid: "owner1", body: { tenantId: "t1", subject: "Оплата", consent: true, text: "Не проходит оплата картой" } }, {});
+  const id = h.sent.body.ticketId;
+  h.bot.onTicketDoc(id, h.store.get(`supportTickets/${id}`));
+  await h.bot.idle();
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
+  const file = await supportFiles.save({ tenantId: "t1", ticketId: id, buffer: png, type: "image/png", name: "screen.png" });
+  const n = h.aiCalls.length;
+  await h.bot.handleCabinetSend({ uid: "owner1", body: { ticketId: id, text: "Вот что на экране", attachments: [file] } }, {});
+  h.bot.onTicketDoc(id, h.store.get(`supportTickets/${id}`));
+  await h.bot.idle();
+  const sent = JSON.stringify(h.aiCalls.slice(n).map((c) => c.messages));
+  assert.ok(!sent.includes("image_url"), "картинка ушла ИИ");
+  assert.ok(sent.includes("терминал не отвечает (код 1205)"), "текст скриншота не дошёл до ИИ");
+  assert.ok(!sent.includes("123-45-67"), "телефон со скриншота ушёл ИИ");
+  assert.ok(sends(h.calls, GROUP).some((c) => /Текст со скриншота/.test(c.body.text)));
+  // «Посмотри скриншот» следующим сообщением — текст уже в переписке, ИИ его видит.
+  await h.bot.handleCabinetSend({ uid: "owner1", body: { ticketId: id, text: "Посмотри скриншот" } }, {});
+  h.bot.onTicketDoc(id, h.store.get(`supportTickets/${id}`));
+  await h.bot.idle();
+  assert.ok(JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages).includes("код 1205"));
 });
 
 test("очистка: обращения из Telegram удаляются целиком, старые из кабинета обезличиваются, темы сотрудников удаляются", async () => {
