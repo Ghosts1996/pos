@@ -46,6 +46,13 @@ async function main() {
   await new Promise((r) => setTimeout(r, 200)); // дать серверу подняться
 
   {
+    const q = server.isQuotaExhausted;
+    check("квота Firestore: код 8", q({ code: 8, message: "8 RESOURCE_EXHAUSTED: Quota exceeded." }));
+    check("квота Firestore: только текст", q(new Error("Quota exceeded.")));
+    check("не квота: другая ошибка", !q(new Error("boom")) && !q({ code: 7 }) && !q(null));
+  }
+
+  {
     const r = await request("GET", "/health");
     check("GET /health -> 200 ok:true", r.status === 200 && r.json?.ok === true);
   }

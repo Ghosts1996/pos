@@ -7823,12 +7823,26 @@ const ROUTES = {
   "/robokassaFail": handleAnyRobokassaReturn,
 };
 
+const QUOTA_MESSAGE = "База данных временно перегружена — исчерпан лимит запросов. Попробуйте позже, данные не потеряны";
+
+/** Firestore/gRPC: квота проекта исчерпана (код 8 RESOURCE_EXHAUSTED). */
+function isQuotaExhausted(e) {
+  return !!e && (e.code === 8 || e.code === "resource-exhausted" || /RESOURCE_EXHAUSTED|Quota exceeded/i.test(String(e.message || "")));
+}
+
 function runHandler(handler, req, res) {
   handler(req, res).catch((e) => {
     const known = e instanceof HttpError;
     if (res.headersSent) {
       // Ответ уже начат — второй writeHead уронил бы процесс.
       if (!known) console.error(`saas-gateway ${(req.url || "").split("?")[0]}:`, e && e.stack ? e.stack : e);
+      return;
+    }
+    // Firestore исчерпал квоту (бесплатный тариф Firebase — суточный лимит
+    // чтений и записей): не «внутренняя ошибка», а понятная причина.
+    if (!known && isQuotaExhausted(e)) {
+      console.error(`saas-gateway ${(req.url || "").split("?")[0]}: Firestore RESOURCE_EXHAUSTED — исчерпана квота Firebase`);
+      sendJson(res, 503, { error: QUOTA_MESSAGE, gateway: true, quota: true });
       return;
     }
     // Непредусмотренная ошибка (Firestore, сеть, баг) — подробности только в
@@ -7911,4 +7925,4 @@ server.listen(port, "127.0.0.1", () => {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor });
+Object.assign(module.exports, { isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor });
