@@ -1,4 +1,11 @@
 User-agent: *
 Allow: /
+Disallow: /__/
+
+# Яндекс: ссылки с метками рекламы — та же страница, без дублей в поиске.
+User-agent: Yandex
+Allow: /
+Disallow: /__/
+Clean-param: utm_source&utm_medium&utm_campaign&utm_content&utm_term&yclid&gclid&fbclid&from&ref /
 
 Sitemap: https://zalpos.ru/sitemap.xml
