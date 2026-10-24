@@ -1171,6 +1171,12 @@ function createSupportBot(deps) {
   // Текст со скриншотов — на нашем сервере в РФ (в тестах — подделка).
   const ocr = deps.ocr || require("./support-ocr");
   const now = () => (deps.now ? deps.now() : Date.now());
+  // Время сообщений обращения — строго по возрастанию: по нему они сортируются
+  // и по нему чат на сайте догружает новое («после последнего увиденного»).
+  // Два сообщения в одну миллисекунду иначе вставали как попало, а второе
+  // посетитель сайта не получал вовсе.
+  let lastMsgAt = 0;
+  const msgNow = () => (lastMsgAt = Math.max(now(), lastMsgAt + 1));
   const cfgRef = () => db().collection("supportBot").doc("config");
   const ticketsCol = () => db().collection("supportTickets");
   const ticketRef = (id) => ticketsCol().doc(id);
@@ -1724,7 +1730,7 @@ function createSupportBot(deps) {
   /** Сообщение в базу. Своё — с отметкой synced, чтобы слушатель кабинета не
    *  принял его за новое и не продублировал в тему. */
   async function addMessage(t, m) {
-    const at = now();
+    const at = msgNow();
     await ticketRef(t.id).collection("messages").add({ ...m, viaBot: true, createdAt: ts(at) });
     const upd = { updatedAt: ts(at), syncedAt: at };
     if (m.authorRole !== "note") upd.lastAuthorRole = m.authorRole;
@@ -4438,7 +4444,7 @@ function createSupportBot(deps) {
       .map(({ desc, ...a }) => a);
     let id = String(body.ticketId || "");
     let t;
-    const at = ts(now());
+    const at = ts(msgNow());
     if (id) {
       if (!/^[\w-]{1,64}$/.test(id)) throw new HttpError(400, "Не указано обращение");
       const snap = await ticketRef(id).get();
@@ -4495,7 +4501,7 @@ function createSupportBot(deps) {
     if (!rawText) throw new HttpError(400, "Напишите вопрос");
     if (rawText.length > CABINET_TEXT_MAX) throw new HttpError(400, `Сообщение длиннее ${CABINET_TEXT_MAX} символов — разделите его на части`);
     const text = maskSecrets(scrubPii(rawText));
-    const at = ts(now());
+    const at = ts(msgNow());
     let t = await partnerTicket(uid);
     if (!t) {
       if (consent !== true) throw new HttpError(412, "Нужно согласие на обработку данных обращения");
@@ -4580,7 +4586,7 @@ function createSupportBot(deps) {
     if (!rawText) throw new HttpError(400, "Напишите сообщение");
     if (rawText.length > SITE_TEXT_MAX) throw new HttpError(400, `Сообщение длиннее ${SITE_TEXT_MAX} символов — разделите его на части`);
     const text = maskSecrets(scrubPii(rawText));
-    const at = ts(now());
+    const at = ts(msgNow());
     const page = cleanPage(body.page);
     // Вошёл в аккаунт (заведения ещё нет) — бот подскажет, как его создать.
     const uid = req.headers && req.headers.authorization ? await verifyAuth(req).then((d) => d.uid).catch(() => "") : "";
@@ -4738,7 +4744,7 @@ function createSupportBot(deps) {
     const status = body.status === "closed" ? "closed" : body.status === "open" ? "open" : "";
     if (!status) throw new HttpError(400, "Статус — open или closed");
     const { t } = await ticketFor(decoded, body.ticketId);
-    const at = ts(now());
+    const at = ts(msgNow());
     const upd = { status, updatedAt: at, ...(status === "closed" ? { closedAt: at } : {}) };
     await ticketRef(t.id).set(upd, { merge: true });
     onTicketDoc(t.id, { ...t, ...upd });
@@ -4767,7 +4773,7 @@ function createSupportBot(deps) {
     const attachments = supportFiles.listOf({ attachments: Array.isArray(body.attachments) ? body.attachments.slice(0, 5) : [] })
       .map(({ desc, ...a }) => a);
     if (!text && !attachments.length) throw new HttpError(400, "Пустое сообщение");
-    const at = ts(now());
+    const at = ts(msgNow());
     await ticketRef(t.id).collection("messages").add({
       text, authorUid: decoded.uid, authorRole: "super_admin", createdAt: at, ...(attachments.length ? { attachments } : {}),
     });

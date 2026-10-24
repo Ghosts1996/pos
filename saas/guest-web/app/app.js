@@ -10,7 +10,7 @@
 
 // Вход — Firebase Authentication или свой вход платформы (zal-auth.js).
 import {
-  initAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut,
+  initAuth, isOwnAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut,
 } from './zal-auth.js';
 // Данные — Firestore или свой сервер платформы (zal-db.js решает по серверу).
 import {
@@ -85,7 +85,7 @@ async function restoreGuest(auth, k) {
     const resp = await fetch(`${GATEWAY}/restoreGuestSession`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uid: k.uid, secret: k.secret }),
+      body: JSON.stringify({ uid: k.uid, secret: k.secret, auth: isOwnAuth(auth) ? 'own' : 'firebase' }),
     });
     if (!resp.ok) return false;
     const { token } = await resp.json();

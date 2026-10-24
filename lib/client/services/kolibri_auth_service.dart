@@ -124,7 +124,8 @@ class KolibriAuthService {
           .post(
             Uri.parse('$kSaasGatewayUrl/restoreGuestSession'),
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'uid': uid, 'secret': secret}),
+            // Токен — для того входа, на котором работает приложение.
+            body: jsonEncode({'uid': uid, 'secret': secret, 'auth': _auth.isOwn ? 'own' : 'firebase'}),
           )
           .timeout(const Duration(seconds: 15));
       if (resp.statusCode == 400 || resp.statusCode == 403) {

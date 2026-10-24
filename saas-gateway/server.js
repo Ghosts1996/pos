@@ -6863,7 +6863,8 @@ async function handleRegisterGuestRecovery(req, res) {
 
 async function handleRestoreGuestSession(req, res) {
   if (guestRecoveryLimited(clientIp(req))) throw new HttpError(429, "Слишком много попыток — попробуйте позже");
-  const { uid, secret } = await parseJsonBody(req);
+  const body = await parseJsonBody(req);
+  const { uid, secret } = body;
   if (typeof uid !== "string" || !/^[A-Za-z0-9]{10,128}$/.test(uid)
       || typeof secret !== "string" || !RECOVERY_SECRET_RE.test(secret)) {
     throw new HttpError(400, "Некорректный запрос");
@@ -6883,7 +6884,11 @@ async function handleRestoreGuestSession(req, res) {
     // ошибки (сеть, квоты) не превращаем в выдачу токена.
     if (e instanceof HttpError || e?.code !== "auth/user-not-found") throw e;
   }
-  const token = await authApi().createCustomToken(uid);
+  // Токен — для того входа, на котором работает приложение: новые версии
+  // присылают auth ("own" | "firebase"), старые его не знают и ждут токен Firebase.
+  const fb = firebaseAuthOrNull();
+  const wantFirebase = body.auth === "firebase" || (body.auth !== "own" && authOwn() && fb);
+  const token = await (wantFirebase && fb ? fb : authApi()).createCustomToken(uid);
   await ref.set({
     restoredAt: admin.firestore.FieldValue.serverTimestamp(),
     restoreCount: admin.firestore.FieldValue.increment(1),

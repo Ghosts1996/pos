@@ -278,7 +278,8 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   assert.match(revText, /Выручка сегодня \(с 6:00\): 4\s000 ₽/);
   assert.match(revText, /Чеков закрыто: 1/);
   assert.match(revText, /Наличные 2\s500 ₽ · карта 1\s500 ₽/);
-  assert.match(revText, /Смена кассы с \d\d:\d\d: 4\s000 ₽ · чеков 1/);
+  // Смена с прошлого дня (тест около полуночи) — с датой: «с 24.10 23:15».
+  assert.match(revText, /Смена кассы с (\d\d\.\d\d )?\d\d:\d\d: 4\s000 ₽ · чеков 1/);
   sent.length = 0;
   await hookA({ message: { chat: { id: 501, type: "private" }, from: { id: 501 }, text: "🧾 Средний чек" } });
   assert.match(sent.find((m) => m.body.chat_id === 501).body.text, /Средний чек сегодня: 4\s000 ₽ \(1 чек\.\)/);
@@ -573,9 +574,10 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   assert.match(text, /Отменено позиций, которые уже готовили: 1 на 300 ₽/);
   assert.match(text, /Причины: гость передумал ×1/);
   body = await ask("👥 Текущая смена");
-  assert.match(body.text, /Касса открыта с \d\d:\d\d/);
+  // Открыта до полуночи (тест ночью) — с датой: «с 24.10 22:15».
+  assert.match(body.text, /Касса открыта с (\d\d\.\d\d )?\d\d:\d\d/);
   assert.match(body.text, /• универсал, с [\d. :]+ ⚠️ не закрыта/);
-  assert.match(body.text, /• бармен, с \d\d:\d\d\n/);
+  assert.match(body.text, /• бармен, с (\d\d\.\d\d )?\d\d:\d\d\n/);
   assert.match(body.text, /больше 16 часов/);
   assert.ok(!/Игорь|Ольга/.test(body.text));
 
