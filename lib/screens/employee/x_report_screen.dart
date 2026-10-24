@@ -602,7 +602,7 @@ class _XReportScreenState extends State<XReportScreen> {
                 onPressed: _busy ? null : () => _closeShift(shift),
                 style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
                 icon: const Icon(Icons.lock_outline, size: 18),
-                label: const Text('Закрыть смену заведения'),
+                label: const Text('Закрыть смену · Z-отчёт'),
               );
         return centered ? Center(child: child) : child;
       },

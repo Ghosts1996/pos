@@ -355,15 +355,23 @@ Future<bool> closeVenueShift(BuildContext context, {required ShiftModel shift, r
     }
   }
 
-  if (!await closeShiftWithCashCount(context, shift: shift, employee: me)) return false;
-  // Касса закрыта — отмечаем уход. Ошибку здесь не показываем поверх
-  // сообщения о закрытии: незакрытую личную смену видно в меню и табеле.
-  final leaving = [if (mine != null) mine, if (endOthers) ...others];
+  // Сначала отмечаем уход, потом показываем Z-отчёт (он откроется сам).
+  if (!await closeShiftWithCashCount(context, shift: shift, employee: me, showReport: false)) return false;
+  // Касса закрыта — отмечаем уход: все свои личные смены (в том числе
+  // забытую вчерашнюю) и, по галочке, остальных. Забытая смена (16+ часов)
+  // закрывается через 8 часов после начала — время поправят в табеле.
+  final leaving = [...crew.shifts.where((s) => s.employeeId == me.id), if (endOthers) ...others];
   for (final s in leaving) {
     try {
-      await _fs.clockOut(s.id, s.employeeId);
+      if (isStaleShift(s.startedAt)) {
+        final end = s.startedAt.add(const Duration(hours: 8));
+        await _fs.clockOut(s.id, s.employeeId, endedAt: end.isAfter(DateTime.now()) ? DateTime.now() : end, editor: me);
+      } else {
+        await _fs.clockOut(s.id, s.employeeId);
+      }
     } catch (_) {}
   }
+  if (context.mounted) await showClosedZReport(context, shift: shift, employee: me);
   return true;
 }
 

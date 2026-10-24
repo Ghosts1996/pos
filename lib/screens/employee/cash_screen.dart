@@ -230,7 +230,7 @@ class _CashScreenState extends State<CashScreen> {
                     ),
                     onPressed: _busy ? null : () => _close(shift),
                     icon: const Icon(Icons.lock_outline, size: 20),
-                    label: const Text('Закрыть смену заведения'),
+                    label: const Text('Закрыть смену · Z-отчёт'),
                   ),
                 ],
               );

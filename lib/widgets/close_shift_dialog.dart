@@ -5,6 +5,7 @@ import '../models/cash_op.dart';
 import '../models/employee.dart';
 import '../models/session_model.dart';
 import '../models/shift_model.dart';
+import '../screens/admin/z_report_screen.dart';
 import '../services/atol_local_kassa.dart';
 import '../services/firestore_service.dart';
 import '../services/kassa_service.dart';
@@ -21,8 +22,36 @@ import '../utils/money.dart';
 /// следующей смены. Всё сохраняется одной транзакцией вместе с закрытием.
 ///
 /// Возвращает true, если смену закрыли.
-Future<bool> closeShiftWithCashCount(BuildContext context, {required ShiftModel shift, required Employee employee}) async {
+Future<bool> closeShiftWithCashCount(BuildContext context,
+    {required ShiftModel shift, required Employee employee, bool showReport = true}) async {
   final fs = FirestoreService();
+  // Как в кассах ресторанов: перед Z-отчётом — открытые счета. Они в этот
+  // Z не попадут (в отчёте только оплаченные чеки) и перейдут в следующую смену.
+  List<SessionModel> open = const [];
+  try {
+    open = await fs.openChecksOnce();
+  } catch (_) {}
+  if (open.isNotEmpty) {
+    if (!context.mounted) return false;
+    final sum = open.fold<double>(0, (a, s) => a + s.totalWithDiscount);
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        scrollable: true,
+        title: Text('Открыто счетов: ${open.length}'),
+        content: Text(
+          'На сумму ${rub(sum)}. В Z-отчёт попадут только оплаченные чеки, а открытые счета '
+          'перейдут в следующую смену. Лучше сначала рассчитать гостей.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Вернуться к счетам')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Всё равно закрыть смену')),
+        ],
+      ),
+    );
+    if (go != true) return false;
+  }
+  if (!context.mounted) return false;
   final choice = await showDialog<_CloseChoice>(
     context: context,
     builder: (_) => _CloseShiftDialog(shift: shift, fs: fs),
@@ -48,6 +77,8 @@ Future<bool> closeShiftWithCashCount(BuildContext context, {required ShiftModel 
             : 'Смена закрыта'}$fiscalNote'),
       ));
     }
+    // Сразу показываем снятый Z-отчёт — его можно распечатать.
+    if (showReport && context.mounted) await showClosedZReport(context, shift: shift, employee: employee);
     return true;
   } catch (e) {
     if (context.mounted) {
@@ -56,6 +87,17 @@ Future<bool> closeShiftWithCashCount(BuildContext context, {required ShiftModel 
     }
     return false;
   }
+}
+
+/// Открыть только что снятый Z-отчёт закрытой смены.
+Future<void> showClosedZReport(BuildContext context, {required ShiftModel shift, required Employee employee}) async {
+  ShiftModel? done;
+  try {
+    done = (await FirestoreService().closedShifts(limit: 5)).where((s) => s.id == shift.id).firstOrNull;
+  } catch (_) {}
+  if (done == null || !context.mounted) return;
+  await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => ZReportDetailScreen(shift: done!, employee: employee, justClosed: true)));
 }
 
 /// Итог диалога: [cash] == null — закрыть без пересчёта кассы (когда

@@ -99,23 +99,39 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
                   crewList(crew, crew.shifts),
                 ],
                 const SizedBox(height: 12),
+                if (DateTime.now().difference(shift.openedAt) > const Duration(hours: 24)) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      'Смена открыта больше суток. Закройте её Z-отчётом: кассовая смена по закону '
+                      'длится не больше 24 часов, а чеки разных дней не должны смешиваться.',
+                      style: TextStyle(fontSize: 13, color: AppColors.warning),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 Text(
-                  'Уходите домой — нажмите «Моя смена» в меню: смена заведения продолжится у остальных. '
-                  'Закрывает смену заведения последний, с пересчётом кассы.',
+                  'X-отчёт — промежуточный итог: смотреть можно сколько угодно, смена не закрывается. '
+                  'Z-отчёт закрывает смену: пересчёт кассы, итог дня, номер Z. Закрывает последний, кто уходит; '
+                  'остальные просто заканчивают «Мою смену».',
                   style: TextStyle(fontSize: 13, color: AppColors.textMuted),
                 ),
                 const SizedBox(height: 16),
                 FilledButton.icon(
                   onPressed: () => Navigator.pop(ctx, 'report'),
                   icon: const Icon(Icons.receipt_long_outlined),
-                  label: const Text('X-отчёт'),
+                  label: const Text('X-отчёт — промежуточный'),
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
                   onPressed: () => Navigator.pop(ctx, 'close'),
                   icon: const Icon(Icons.lock_outline),
-                  label: const Text('Закрыть смену заведения'),
+                  label: const Text('Закрыть смену · Z-отчёт'),
                 ),
               ],
             ),

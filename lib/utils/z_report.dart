@@ -223,7 +223,8 @@ class ZReport {
     final kinds = <String, double>{};
     final items = <String, ZItemLine>{};
     for (final s in sold) {
-      if (s.status == 'cancelled') continue;
+      // Отменённый или снова открытый чек — не продажа.
+      if (s.status == 'cancelled' || s.status == 'active') continue;
       // Чаевые — деньги сотрудников, не выручка; остаются и при возврате.
       tipsCash += s.tipsCash;
       tipsCard += s.tipsCard;
@@ -267,7 +268,7 @@ class ZReport {
     }
 
     final drawer = CashDrawerSummary.from(
-        opening: shift.openingCash, sessions: [for (final s in sold) if (s.status != 'cancelled') s], ops: ops);
+        opening: shift.openingCash, sessions: [for (final s in sold) if (s.status != 'cancelled' && s.status != 'active') s], ops: ops);
     final revenue = total - refundsTotal;
     return ZReport(
       number: number,

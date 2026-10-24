@@ -206,4 +206,28 @@ void main() {
     await fs.closeShift(shiftId, 'Тест Кассир');
     expect(await fs.currentOpenShift(), isNull);
   }, skip: skip, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('Z-отчёты: сквозные номера, необнуляемый итог; открытие смены их не сбрасывает', () async {
+    NetStatus.online.value = true;
+    final fs = FirestoreService();
+    Future<Map<String, dynamic>> closeWithSale(int price) async {
+      final shiftId = await fs.openShiftIfNeeded('Тест Кассир');
+      final state = (await db.doc('tenants/$_tenant/meta/shiftState').get(const GetOptions(source: Source.server))).data()!;
+      final t = TableModel(id: 'z$price', name: 'Стол Z', x: 0.3, y: 0.3);
+      await fs.addTable(t);
+      final sid = await fs.openSession(table: t, employeeName: 'Тест Кассир');
+      await fs.addOrderItem(sid, MenuItem(id: 'zm$price', categoryId: 'c1', name: 'Позиция', price: price.toDouble()));
+      final s = await fs.sessionStream(sid).firstWhere((x) => x != null && x.orderItems.isNotEmpty).timeout(const Duration(seconds: 8));
+      await fs.closeSessionWithPayment(sid, t.id, cash: price.toDouble(), card: 0, comp: 0, orderItems: s!.orderItems, employeeName: 'Тест Кассир');
+      await fs.closeShift(shiftId, 'Тест Кассир');
+      final shift = (await db.doc('tenants/$_tenant/shifts/$shiftId').get(const GetOptions(source: Source.server))).data()!;
+      return {'state': state, 'z': shift['z'] as Map, 'zNumber': shift['zNumber']};
+    }
+    final a = await closeWithSale(100);
+    final b = await closeWithSale(250);
+    expect(b['zNumber'], (a['zNumber'] as int) + 1, reason: 'номер Z продолжается, а не начинается с №1');
+    expect((b['state'] as Map)['lastZ'], a['zNumber'], reason: 'открытие смены не стёрло счётчик');
+    expect(((b['z'] as Map)['salesTotal'] as num) - ((b['z'] as Map)['refundsTotal'] as num? ?? 0), 250, reason: 'в Z только чеки этой смены');
+    expect(((b['z'] as Map)['grandTotal'] as num) - ((a['z'] as Map)['grandTotal'] as num), 250);
+  }, skip: skip, timeout: const Timeout(Duration(minutes: 2)));
 }

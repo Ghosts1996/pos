@@ -971,6 +971,12 @@ class FirestoreService {
           .snapshots()
           .map((snap) => snap.docs.map((d) => SessionModel.fromDoc(d)).toList()));
 
+  /// Открытые счета — разово (перед закрытием смены).
+  Future<List<SessionModel>> openChecksOnce() async {
+    final snap = await AppScope.col('sessions').where('status', isEqualTo: 'active').get();
+    return snap.docs.map((d) => SessionModel.fromDoc(d)).toList();
+  }
+
   /// Пожелание к строке заказа («без льда», «покрепче»). Пусто — убрать.
   Future<void> setOrderItemNote(String sessionId, String lineId, String note) =>
       _editLine(sessionId, lineId, (i) => i.withNote(note));
@@ -1774,7 +1780,10 @@ class FirestoreService {
         openingCash: ((data?['cashLeft'] ?? 0) as num).toDouble(),
       );
       tx.set(shiftRef, shift.toMap());
-      tx.set(stateRef, {'openShiftId': shiftRef.id});
+      // merge: в этом же документе счётчик Z-отчётов, необнуляемый итог и
+      // размен — без merge новая смена их стирала, и нумерация Z начиналась
+      // снова с №1.
+      tx.set(stateRef, {'openShiftId': shiftRef.id}, SetOptions(merge: true));
       return shiftRef.id;
     });
 
@@ -1801,6 +1810,20 @@ class FirestoreService {
     } catch (e) {
       debugPrint('closeShift: данные Z-отчёта не собраны: $e');
     }
+    // Последний снятый Z-отчёт: номер и необнуляемый итог продолжаются от
+    // него, даже если счётчик в meta/shiftState раньше затёрся.
+    var prevZ = 0;
+    double prevGrand = 0;
+    try {
+      for (final sh in await closedShifts(limit: 30)) {
+        final z = sh.z;
+        if (z == null || sh.id == shiftId) continue;
+        if (z.number > prevZ) {
+          prevZ = z.number;
+          prevGrand = z.grandTotal;
+        }
+      }
+    } catch (_) {}
     final closed = await _db.runTransaction<bool>((tx) async {
       final shiftDoc = await tx.get(shiftRef);
       final stateDoc = await tx.get(stateRef);
@@ -1812,8 +1835,10 @@ class FirestoreService {
         return false;
       }
       final state = stateDoc.data();
-      final lastZ = asNum(state?['lastZ'])?.toInt() ?? 0;
-      final grand = asNum(state?['grandTotal'])?.toDouble() ?? 0;
+      final stateZ = asNum(state?['lastZ'])?.toInt() ?? 0;
+      final lastZ = stateZ >= prevZ ? stateZ : prevZ;
+      final stateGrand = asNum(state?['grandTotal'])?.toDouble() ?? 0;
+      final grand = stateZ >= prevZ ? stateGrand : prevGrand;
       final collectOp = cash != null && cash.collect > 0
           ? CashOp(
               id: '',
@@ -2067,6 +2092,17 @@ class FirestoreService {
             referencedDoc.data()?['status'] == 'open' &&
             (started == null || !isStaleShift(started))) {
           return currentOpenId;
+        }
+        // Забытую со вчера смену закрываем через 8 часов после начала с
+        // пометкой «закрыта автоматически» — иначе у сотрудника висели бы две
+        // открытые смены. Время ухода админ поправит в табеле.
+        if (referencedDoc.exists && referencedDoc.data()?['status'] == 'open' && started != null) {
+          final end = started.add(const Duration(hours: 8));
+          tx.update(referencedDoc.reference, {
+            'status': 'closed',
+            'endedAt': Timestamp.fromDate(end.isAfter(now) ? now : end),
+            'autoClosed': true,
+          });
         }
       }
 

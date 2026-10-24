@@ -51,17 +51,9 @@ class _ZReportScreenState extends State<ZReportScreen> {
     final closed = await closeVenueShift(context, shift: shift, me: widget.employee);
     if (!mounted) return;
     setState(() => _busy = false);
+    // Снятый Z-отчёт показало само закрытие (closeShiftWithCashCount).
     _reload();
     if (!closed) return;
-    ShiftModel? done;
-    try {
-      done = (await _fs.closedShifts(limit: 5)).where((s) => s.id == shift.id).firstOrNull;
-    } catch (_) {}
-    if (done != null && mounted) {
-      await Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => ZReportDetailScreen(shift: done!, employee: widget.employee, justClosed: true)));
-      if (mounted) _reload();
-    }
   }
 
   @override
