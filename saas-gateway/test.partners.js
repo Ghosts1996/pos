@@ -6,7 +6,7 @@ const assert = require("assert");
 const crypto = require("crypto");
 const admin = require("firebase-admin");
 const { createLocalDb } = require("./local-db");
-const { createPartners, computeAccrual, maskEmail, cleanCode, translit, payoutCalc, innOk, cleanDetails, receiptDue } = require("./partners");
+const { createPartners, computeAccrual, maskEmail, cleanCode, translit, payoutCalc, innOk, cleanDetails, receiptDue, ndflDue } = require("./partners");
 const { HttpError } = require("./test-helpers");
 
 let passed = 0;
@@ -24,6 +24,8 @@ function harness({ existingEmails = [] } = {}) {
   let clock = Date.UTC(2026, 9, 24, 12);
   const key = crypto.randomBytes(32);
   const created = new Map(); // uid → когда создан аккаунт (по умолчанию — «сейчас»)
+  const npd = { status: true, down: false }; // ответ ФНС о статусе самозанятого
+  const npdCalls = [];
   const auth = {
     getUserByEmail: async (email) => {
       if (!users.has(email)) throw Object.assign(new Error("нет"), { code: "auth/user-not-found" });
@@ -45,6 +47,11 @@ function harness({ existingEmails = [] } = {}) {
     secretKey: () => key,
     encrypt: (k, t) => Buffer.from(t).toString("base64"), decrypt: (k, t) => Buffer.from(t, "base64").toString(),
     fetchImpl: async (url, opts) => {
+      if (url.includes("statusnpd")) {
+        npdCalls.push(JSON.parse(opts.body));
+        if (npd.down) throw new Error("timeout");
+        return { ok: true, status: 200, json: async () => ({ status: npd.status, message: npd.status ? "является плательщиком НПД" : "не является плательщиком НПД" }) };
+      }
       const method = url.split("/").pop();
       tg.push({ method, body: JSON.parse(opts.body || "{}") });
       const result = { getMe: { id: 1, username: "zalpos_partners_bot" }, sendMessage: { message_id: 1 } }[method] ?? true;
@@ -54,7 +61,7 @@ function harness({ existingEmails = [] } = {}) {
   };
   const partners = createPartners(deps);
   const call = async (fn, req) => { await fn(req, {}); return sent.body; };
-  const hh = { partners, deps, store, mails, tg, sent, users, created, tick: (ms) => { clock += ms; }, now: () => clock };
+  const hh = { partners, deps, store, mails, tg, sent, users, created, npd, npdCalls, tick: (ms) => { clock += ms; }, now: () => clock };
   hh.call = call;
   hh.addManager = (body) => call(hh.partners.handleAdminSave, { uid: "sa", body: { email: "anna@zalpos.ru", name: "Анна Петрова", percent: 20, ...body } });
   return hh;
@@ -187,7 +194,7 @@ test("начисления: с каждой оплаты, повтор увед�
   // Выплата: сумма должна совпасть с тем, что видит админ.
   const pid = d.partner.id;
   await assert.rejects(h.partners.handleAdminPayout({ uid: "sa", body: { partnerId: pid, expected: 1 } }, {}), /изменилась/);
-  await h.call(h.partners.handleAdminPayout, { uid: "sa", body: { partnerId: pid, expected: 2684.98, note: "перевод на карту" } });
+  await h.call(h.partners.handleAdminPayout, { uid: "sa", body: { partnerId: pid, expected: 2684.98, note: "перевод на карту", npdManual: true } });
   d = await h.call(h.partners.handleDashboard, anna);
   assert.deepStrictEqual([d.summary.unpaid, d.summary.paid], [0, 2684.98]);
   assert.strictEqual(d.payouts[0].note, "перевод на карту");
@@ -245,8 +252,8 @@ test("логика: давний аккаунт не закрепляется, �
   await h.partners.onPayment({ invId: "p1", ownerUid: "newOwner", amount: 1000 });
   await h.partners.onPayment({ invId: "p2", ownerUid: "newOwner", amount: 1000 });
   const both = await Promise.allSettled([
-    h.partners.handleAdminPayout({ uid: "sa", body: { partnerId: pid } }, {}),
-    h.partners.handleAdminPayout({ uid: "sa", body: { partnerId: pid } }, {}),
+    h.partners.handleAdminPayout({ uid: "sa", body: { partnerId: pid, npdManual: true } }, {}),
+    h.partners.handleAdminPayout({ uid: "sa", body: { partnerId: pid, npdManual: true } }, {}),
   ]);
   assert.deepStrictEqual(both.map((r) => r.status).sort(), ["fulfilled", "rejected"], "вторая выплата — «нет невыплаченных»");
   assert.strictEqual((await h.store.collection("partnerPayouts").get()).size, 1);
@@ -399,7 +406,7 @@ test("бот: доход по месяцам, выплаты списком, н�
   await msg("💼 Мой доход");
   assert.match(last().text, /За октябрь 2026: <b>2\s684,98 ₽<\/b>/);
   assert.match(last().text, /За сентябрь 2026: 0 ₽/);
-  await h.call(h.partners.handleAdminPayout, { uid: "sa", body: { partnerId: pid, amount: 2684.98, note: "СБП" } });
+  await h.call(h.partners.handleAdminPayout, { uid: "sa", body: { partnerId: pid, amount: 2684.98, note: "СБП", npdManual: true } });
   await msg("💸 Выплаты");
   assert.match(last().text, /— <b>2\s684,98 ₽<\/b> · СБП/);
   await msg("👥 Клиенты");
@@ -552,6 +559,156 @@ test("выплаты: самозанятый — чек из «Мой налог
   assert.strictEqual(list.partners[0].receiptsMissing, 0);
   await msg("💸 Выплаты");
   assert.match(last().text, /чек ✓/);
+});
+
+test("бухгалтерия: сроки НДФЛ, сумма прописью, акт за месяц", () => {
+  const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
+  let d = ndflDue(Date.UTC(2026, 9, 10, 9));
+  assert.deepStrictEqual([iso(d.noticeBy), iso(d.payBy)], ["2026-10-25", "2026-10-28"]);
+  d = ndflDue(Date.UTC(2026, 9, 24, 9));
+  assert.deepStrictEqual([iso(d.noticeBy), iso(d.payBy)], ["2026-11-03", "2026-11-05"]);
+  d = ndflDue(Date.UTC(2026, 11, 25, 9));
+  assert.ok(d.yearEnd);
+  const { rubWords, actBlocks } = require("./partner-contract");
+  assert.strictEqual(rubWords(2684.98), "две тысячи шестьсот восемьдесят четыре");
+  assert.strictEqual(rubWords(1021), "одна тысяча двадцать один");
+  const act = JSON.stringify(actBlocks({
+    platform: { fullName: "Бикоев Константин Николаевич", inn: "151211052290", ogrnip: "326150000028364" },
+    partner: { name: "Анна", taxStatus: "npd" }, details: { fullName: "Петрова Анна Сергеевна", inn: "500100732259" },
+    number: "ANNA-2026", year: 2026, month: 10,
+    rows: [{ venueName: "Кафе А", paidAt: Date.UTC(2026, 9, 5), gross: 14900, base: 13424.9, amount: 2684.98 },
+      { venueName: "Кафе Б", paidAt: Date.UTC(2026, 9, 20), gross: -14900, base: -13424.9, amount: -2684.98, clawback: true }],
+  }));
+  assert.match(act, /АКТ № ANNA-2026-10/);
+  assert.match(act, /Петрова Анна Сергеевна, ИНН 500100732259, применяющий/);
+  assert.match(act, /по 31\.10\.2026/);
+  assert.match(act, /Кафе Б — возврат клиенту/);
+  assert.match(act, /Общая сумма вознаграждения за период: 0,00 руб\. \(ноль руб\. 00 коп\.\)/);
+});
+
+test("ФНС: не самозанятый — запрос и выплата не проходят; ФНС молчит — только с ручной проверкой", async () => {
+  const admins = [];
+  const h = harness();
+  h.partners = createPartners({ ...h.deps, notifyAdmins: (x) => admins.push(x) });
+  const { id: pid } = await h.addManager({});
+  const anna = { uid: "u_anna@zalpos.ru" };
+  await h.call(h.partners.handleAcceptTerms, { ...anna, body: { accept: true } });
+  await h.call(h.partners.handleInvite, { ...anna, body: { email: "a@cafe.ru", consent: true } });
+  await h.partners.attachOwner({ uid: "owner1", email: "a@cafe.ru", venueName: "Кафе А" });
+  await h.partners.onPayment({ invId: "p1", ownerUid: "owner1", amount: 14900, venueName: "Кафе А" });
+  h.tick(15 * 86400000);
+  await h.call(h.partners.handlePayoutDetails, { ...anna, body: { phone: "9001234567", bank: "Сбербанк", fullName: "Петрова Анна", inn: "500100732259" } });
+  h.npd.status = false;
+  await assert.rejects(h.partners.handlePayoutRequest({ ...anna, body: {} }, {}), (e) => e.status === 412 && /статус самозанятого на .* не подтверждён/.test(e.message));
+  assert.deepStrictEqual(h.npdCalls[h.npdCalls.length - 1], { inn: "500100732259", requestDate: "2026-11-08" });
+  h.npd.status = true;
+  h.tick(11 * 60 * 1000); // кэш ответа — 10 минут
+  const r = await h.call(h.partners.handlePayoutRequest, { ...anna, body: {} });
+  assert.match(admins[admins.length - 1], /ФНС: самозанятый на сегодня/);
+  assert.match(admins[admins.length - 1], /Назначение платежа: Вознаграждение по договору № ANNAPETROVA-2026 об оказании услуг по привлечению клиентов за октябрь 2026 г\. НДС не облагается/);
+  // Ко дню перевода статус потерян — нельзя.
+  h.tick(11 * 60 * 1000);
+  h.npd.status = false;
+  await assert.rejects(h.partners.handleAdminPayout({ uid: "sa", body: { partnerId: pid, requestId: r.id } }, {}), (e) => e.status === 409 && /не самозанятый/.test(e.message));
+  // ФНС не отвечает — 428, с подтверждением ручной проверки — проходит.
+  h.npd.down = true;
+  h.tick(11 * 60 * 1000);
+  await assert.rejects(h.partners.handleAdminPayout({ uid: "sa", body: { partnerId: pid, requestId: r.id } }, {}), (e) => e.status === 428);
+  const paid = await h.call(h.partners.handleAdminPayout, { uid: "sa", body: { partnerId: pid, requestId: r.id, npdManual: true } });
+  assert.match(paid.purpose, /договору № ANNAPETROVA-2026/);
+  // Номер договора не меняется после новой ссылки.
+  h.npd.down = false;
+  await h.call(h.partners.handleNewLink, { ...anna, body: {} });
+  const dash = await h.call(h.partners.handleDashboard, { ...anna, body: {} });
+  assert.ok(!dash.partner.link.includes("ANNAPETROVA?") && !dash.partner.link.endsWith("=ANNAPETROVA"));
+  const { purpose } = dash.payouts[0];
+  assert.match(purpose, /ANNAPETROVA-2026/);
+});
+
+test("чеки и подтверждение: чужой ИНН и повтор — нет; просроченный чек блокирует новый запрос; «не пришли» — админу; напоминание о запросе; реестр CSV", async () => {
+  const admins = [];
+  const h = harness();
+  h.partners = createPartners({ ...h.deps, notifyAdmins: (x) => admins.push(x) });
+  const { id: pid } = await h.addManager({});
+  const anna = { uid: "u_anna@zalpos.ru" };
+  const call = (fn, body = {}) => h.call(fn, { ...anna, body });
+  await call(h.partners.handleAcceptTerms, { accept: true });
+  await h.call(h.partners.handleAdminBot, { uid: "sa", body: { token: "123456789:AAAbbbCCCdddEEEfffGGGhhhIIIjjjKKKlll" } });
+  const { url } = await h.call(h.partners.handleTgLink, anna);
+  const chat = { id: 781, type: "private" };
+  await h.partners._onMessage({ chat, text: `/start pl_${url.match(/pl_([a-f0-9]+)/)[1]}` });
+  await call(h.partners.handleInvite, { email: "a@cafe.ru", consent: true });
+  await h.partners.attachOwner({ uid: "owner1", email: "a@cafe.ru", venueName: "Кафе А" });
+  await h.partners.onPayment({ invId: "p1", ownerUid: "owner1", amount: 14900, venueName: "Кафе А" });
+  h.tick(15 * 86400000);
+  await call(h.partners.handlePayoutDetails, { phone: "9001234567", bank: "Сбербанк", fullName: "Петрова Анна", inn: "500100732259" });
+  const r = await call(h.partners.handlePayoutRequest);
+  // 6 дней без выплаты — напоминание админу, второй раз в те же сутки — нет.
+  h.tick(6 * 86400000);
+  assert.strictEqual(await h.partners.remindRequests(), 1);
+  assert.match(admins[admins.length - 1], /Запрос выплаты ждёт 6 дн\..*\n.*перевести до/);
+  assert.strictEqual(await h.partners.remindRequests(), 0);
+  await h.call(h.partners.handleAdminPayout, { uid: "sa", body: { partnerId: pid, requestId: r.id, note: "СБП" } });
+  const msg = h.tg[h.tg.length - 1].body;
+  const [got, not] = msg.reply_markup.inline_keyboard[0].map((b) => b.callback_data);
+  // «Не пришли» — админу; потом «пришли» — отмечено.
+  await h.partners._onCallback({ id: "q", data: not, message: { chat, message_id: 3 } });
+  assert.match(admins[admins.length - 1], /деньги не пришли/);
+  await h.partners._onCallback({ id: "q", data: got, message: { chat, message_id: 3 } });
+  assert.match(h.tg[h.tg.length - 1].body.text, /Получение 2\s684,98 ₽ отмечено/);
+  let dash = await call(h.partners.handleDashboard);
+  assert.ok(dash.payouts[0].receivedAt);
+  // Чек: чужой ИНН — нет.
+  await assert.rejects(h.partners.handlePayoutReceipt({ ...anna, body: { url: "https://lknpd.nalog.ru/api/v1/receipt/771234567890/20abc12345/print" } }, {}), /выбит на ИНН 771234567890/);
+  // Новая оплата созрела, а чек просрочен — новый запрос не пройдёт.
+  await h.partners.onPayment({ invId: "p2", ownerUid: "owner1", amount: 14900, venueName: "Кафе А" });
+  h.tick(40 * 86400000);
+  await assert.rejects(h.partners.handlePayoutRequest({ ...anna, body: {} }, {}), (e) => e.status === 412 && /Сначала прикрепите чек/.test(e.message));
+  const good = "https://lknpd.nalog.ru/api/v1/receipt/500100732259/20abc12345/print";
+  await call(h.partners.handlePayoutReceipt, { url: good });
+  const r2 = await call(h.partners.handlePayoutRequest);
+  await h.call(h.partners.handleAdminPayout, { uid: "sa", body: { partnerId: pid, requestId: r2.id } });
+  await assert.rejects(h.partners.handlePayoutReceipt({ ...anna, body: { url: good } }, {}), (e) => e.status === 409 && /уже прикреплён/.test(e.message));
+  // Реестр выплат.
+  let file = null;
+  const res = { writeHead: () => {}, end: (b) => { file = b; } };
+  await h.partners.handleAdminPayoutsCsv({ uid: "sa", body: { year: 2026 } }, res);
+  const csv = file.toString("utf8");
+  assert.ok(csv.startsWith("\uFEFF"));
+  const rows = csv.trim().split("\r\n");
+  assert.strictEqual(rows.length, 3);
+  assert.match(rows[1], /"Анна Петрова";"Петрова Анна";"500100732259";"самозанятый";"ANNAPETROVA-2026";"2684,98";"0,00";"2684,98";"";"";"подтверждён \d{4}-\d{2}-\d{2}";"https:\/\/lknpd/);
+  assert.match(rows[2], /нет \(срок/);
+  // Акт за октябрь — для менеджера и админа.
+  await h.partners.handleAct({ ...anna, body: { month: "2026-10" } }, res);
+  assert.strictEqual(file.slice(0, 2).toString(), "PK");
+  await assert.rejects(h.partners.handleAct({ ...anna, body: { month: "10.2026" } }, res), (e) => e.status === 400);
+  await h.partners.handleAdminAct({ uid: "sa", body: { id: pid, month: "2026-11" } }, res);
+  assert.strictEqual(file.slice(0, 2).toString(), "PK");
+});
+
+test("НДФЛ физлица: в реестре — сроки уведомления и уплаты, админу — напоминание", async () => {
+  const admins = [];
+  const h = harness();
+  h.partners = createPartners({ ...h.deps, notifyAdmins: (x) => admins.push(x) });
+  const { id: pid } = await h.addManager({ taxStatus: "person" });
+  const anna = { uid: "u_anna@zalpos.ru" };
+  await h.call(h.partners.handleAcceptTerms, { ...anna, body: { accept: true } });
+  await h.call(h.partners.handleInvite, { ...anna, body: { email: "a@cafe.ru", consent: true } });
+  await h.partners.attachOwner({ uid: "owner1", email: "a@cafe.ru", venueName: "Кафе А" });
+  await h.partners.onPayment({ invId: "p1", ownerUid: "owner1", amount: 14900, venueName: "Кафе А" });
+  h.tick(15 * 86400000); // 08.11
+  await h.call(h.partners.handlePayoutDetails, { ...anna, body: { phone: "9001234567", bank: "Сбербанк", fullName: "Петрова Анна", inn: "500100732259" } });
+  const r = await h.call(h.partners.handlePayoutRequest, { ...anna, body: {} });
+  const calls = h.npdCalls.length;
+  const paid = await h.call(h.partners.handleAdminPayout, { uid: "sa", body: { partnerId: pid, requestId: r.id } });
+  assert.strictEqual(h.npdCalls.length, calls, "физлицо — ФНС о НПД не спрашиваем");
+  assert.strictEqual(paid.ndfl, 349);
+  assert.strictEqual(new Date(paid.ndflDue.payBy).toISOString().slice(0, 10), "2026-11-28");
+  assert.match(admins[admins.length - 1], /НДФЛ 349 ₽.*\nУведомление об исчисленных суммах — до 25\.11\.2026, уплата ЕНП — до 28\.11\.2026/);
+  let file = null;
+  await h.partners.handleAdminPayoutsCsv({ uid: "sa", body: {} }, { writeHead: () => {}, end: (b) => { file = b; } });
+  assert.match(file.toString(), /"2684,98";"349,00";"2335,98";"25\.11\.2026";"28\.11\.2026"/);
 });
 
 (async () => {

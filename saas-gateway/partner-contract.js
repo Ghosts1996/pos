@@ -40,7 +40,9 @@ function ipName(full) {
  * platform — platformConfig/legal; partner — { name, email, percent, months,
  * taxStatus }; settings — { taxPct, feePct }; number — номер договора.
  */
-function contractBlocks({ platform = {}, partner = {}, settings = {}, number = "", now = new Date() }) {
+function contractBlocks({ platform = {}, partner = {}, settings = {}, number = "", now = new Date(), details = null }) {
+  // Реквизиты, которые менеджер указал в кабинете для выплат, — сразу в договор.
+  const dd = details || {};
   const p = platform || {};
   const npdCustomer = p.taxRegime === "npd";
   const status = ["npd", "ip", "person"].includes(partner.taxStatus) ? partner.taxStatus : "npd";
@@ -53,12 +55,13 @@ function contractBlocks({ platform = {}, partner = {}, settings = {}, number = "
   const payoutMin = Number(settings.payoutMin ?? 1000).toLocaleString("ru-RU");
   const holdDays = String(settings.holdDays ?? 14);
   const customer = `${ipName(p.fullName)}, ОГРНИП ${val(p.ogrnip)}, ИНН ${val(p.inn)}${npdCustomer ? ", применяющий специальный налоговый режим «Налог на профессиональный доход»" : ""}`;
-  const name = val(partner.name, `${LINE} (фамилия, имя, отчество)`);
+  const name = val(dd.fullName || partner.name, `${LINE} (фамилия, имя, отчество)`);
+  const inn = val(dd.inn);
   const executor = status === "ip"
-    ? `индивидуальный предприниматель ${name}, ОГРНИП ${LINE}, ИНН ${LINE}`
+    ? `индивидуальный предприниматель ${name}, ОГРНИП ${LINE}, ИНН ${inn}`
     : status === "npd"
-      ? `${name}, ИНН ${LINE}, применяющий(ая) специальный налоговый режим «Налог на профессиональный доход» (самозанятый)`
-      : `${name}, паспорт серии ${LINE} № ${LINE}, выдан ${LINE}, ИНН ${LINE}`;
+      ? `${name}, ИНН ${inn}, применяющий(ая) специальный налоговый режим «Налог на профессиональный доход» (самозанятый)`
+      : `${name}, паспорт серии ${LINE} № ${LINE}, выдан ${LINE}, ИНН ${inn}`;
 
   const taxSection = status === "npd" ? [
     "5.1. Исполнитель является плательщиком налога на профессиональный доход и самостоятельно уплачивает налог с полученного вознаграждения. На каждую выплату Исполнитель формирует чек в приложении «Мой налог» с указанием ИНН Заказчика и передаёт его Заказчику не позднее 9-го числа месяца, следующего за месяцем выплаты (ст. 14 Федерального закона от 27.11.2018 № 422-ФЗ).",
@@ -130,17 +133,15 @@ function contractBlocks({ platform = {}, partner = {}, settings = {}, number = "
         [
           status === "ip" ? `ИП ${name}` : name,
           ...(status === "ip" ? [`ОГРНИП: ${LINE}`] : []),
-          `ИНН: ${LINE}`,
+          `ИНН: ${inn}`,
           ...(status === "person" ? [`Паспорт: ${LINE}`, `СНИЛС: ${LINE}`] : []),
           `Адрес: ${LINE}`,
-          `Счёт: ${LINE}`,
-          `Банк: ${LINE}`,
-          `БИК: ${LINE}`,
+          ...(dd.phone ? [`Выплаты по СБП: ${dd.phone}, ${dd.bank}`] : [`Счёт: ${LINE}`, `Банк: ${LINE}`, `БИК: ${LINE}`]),
           `E-mail: ${val(partner.email)}`,
-          `Телефон: ${LINE}`,
+          `Телефон: ${val(dd.phone)}`,
         ].join("\n"),
       ],
-      [`${LINE} / ${shortName(p.fullName)} /`, `${LINE} / ${partner.name ? shortName(partner.name) : LINE} /`],
+      [`${LINE} / ${shortName(p.fullName)} /`, `${LINE} / ${dd.fullName || partner.name ? shortName(dd.fullName || partner.name) : LINE} /`],
     ], widths: [4677, 4678] },
 
     { r: `Приложение № 1\nк Договору № ${val(number, LINE)} от ${date}` },
@@ -165,4 +166,73 @@ function buildPartnerContract(args) {
   return docx(contractBlocks(args));
 }
 
-module.exports = { buildPartnerContract, contractBlocks, shortName };
+const MONTHS_GEN = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+const money = (n) => (Math.round((Number(n) || 0) * 100) / 100).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const day = (ms) => new Date(ms).toLocaleDateString("ru-RU", { timeZone: "Europe/Moscow" });
+
+/** Сумма прописью: «2 013 руб. 74 коп.» → «две тысячи тринадцать». */
+function rubWords(n) {
+  const ones = [["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"], ["", "одна", "две", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"]];
+  const teens = ["десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать"];
+  const tens = ["", "", "двадцать", "тридцать", "сорок", "пятьдесят", "шестьдесят", "семьдесят", "восемьдесят", "девяносто"];
+  const hundreds = ["", "сто", "двести", "триста", "четыреста", "пятьсот", "шестьсот", "семьсот", "восемьсот", "девятьсот"];
+  const form = (x, f) => { const a = x % 100; const b = x % 10; return a > 10 && a < 20 ? f[2] : b === 1 ? f[0] : b >= 2 && b <= 4 ? f[1] : f[2]; };
+  const triad = (x, fem) => {
+    const w = [hundreds[Math.floor(x / 100)]];
+    const t = x % 100;
+    if (t >= 10 && t < 20) w.push(teens[t - 10]); else { w.push(tens[Math.floor(t / 10)]); w.push(ones[fem ? 1 : 0][t % 10]); }
+    return w.filter(Boolean).join(" ");
+  };
+  let r = Math.floor(Math.abs(n));
+  if (r === 0) return "ноль";
+  const parts = [];
+  const groups = [[1e6, false, ["миллион", "миллиона", "миллионов"]], [1e3, true, ["тысяча", "тысячи", "тысяч"]]];
+  for (const [g, fem, f] of groups) {
+    const x = Math.floor(r / g);
+    if (x) { parts.push(`${triad(x, fem)} ${form(x, f)}`); r %= g; }
+  }
+  if (r) parts.push(triad(r, false));
+  return parts.join(" ");
+}
+
+/**
+ * Акт за месяц (Приложение № 1 к договору) — по начислениям этого месяца.
+ * rows — [{ venueName, paidAt, gross, base, amount, clawback }].
+ */
+function actBlocks({ platform = {}, partner = {}, details = null, number = "", year, month, rows = [], now = new Date() }) {
+  const p = platform || {};
+  const dd = details || {};
+  const status = ["npd", "ip", "person"].includes(partner.taxStatus) ? partner.taxStatus : "npd";
+  const name = val(dd.fullName || partner.name);
+  const customer = `${ipName(p.fullName)}, ОГРНИП ${val(p.ogrnip)}, ИНН ${val(p.inn)}`;
+  const executor = status === "ip" ? `индивидуальный предприниматель ${name}, ИНН ${val(dd.inn)}`
+    : status === "npd" ? `${name}, ИНН ${val(dd.inn)}, применяющий(ая) налог на профессиональный доход`
+      : `${name}, ИНН ${val(dd.inn)}`;
+  const total = Math.round(rows.reduce((s, r) => s + r.amount, 0) * 100) / 100;
+  const period = `${MONTHS_GEN[month - 1]} ${year} г.`;
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const rub = Math.floor(Math.abs(total));
+  const kop = String(Math.round((Math.abs(total) - rub) * 100)).padStart(2, "0");
+  return [
+    { r: `Приложение № 1\nк Договору № ${val(number)}` },
+    { h: `АКТ № ${val(number)}-${String(month).padStart(2, "0")}\nоб оказании услуг по привлечению клиентов` },
+    { c: `за ${period} · составлен ${last}.${String(month).padStart(2, "0")}.${year}` },
+    `${cap(customer)} (Заказчик) и ${executor} (Исполнитель) составили настоящий акт о том, что в период с 01.${String(month).padStart(2, "0")}.${year} по ${last}.${String(month).padStart(2, "0")}.${year} Исполнитель оказал услуги по привлечению клиентов по Договору. Вознаграждение рассчитано по данным Кабинета:`,
+    { table: [
+      ["Клиент (заведение)", "Дата платежа", "Платёж, ₽", "База, ₽", "Вознаграждение, ₽"],
+      ...(rows.length ? rows.map((r) => [r.clawback ? `${r.venueName} — возврат клиенту` : r.venueName, day(r.paidAt), money(r.gross), money(r.base), money(r.amount)])
+        : [["Платежей привлечённых клиентов в периоде не было", "", "", "", ""]]),
+      ["Итого", "", "", "", money(total)],
+    ], widths: [2800, 1500, 1500, 1500, 2055] },
+    `Общая сумма вознаграждения за период: ${money(total)} руб. (${rubWords(total)} руб. ${kop} коп.)${status === "person" ? ", до удержания НДФЛ; НДФЛ удерживается Заказчиком при выплате" : ""}. НДС не облагается.`,
+    "Вознаграждение выплачивается в порядке раздела 4 Договора — по запросу Исполнителя. Услуги оказаны полностью и в срок, Стороны претензий друг к другу не имеют.",
+    { table: [
+      ["Заказчик", "Исполнитель"],
+      [`${LINE} / ${shortName(p.fullName)} /`, `${LINE} / ${shortName(dd.fullName || partner.name)} /`],
+    ], widths: [4677, 4678] },
+  ];
+}
+
+const buildPartnerAct = (args) => docx(actBlocks(args));
+
+module.exports = { buildPartnerContract, contractBlocks, shortName, actBlocks, buildPartnerAct, rubWords };

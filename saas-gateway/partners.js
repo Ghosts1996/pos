@@ -79,7 +79,24 @@ function receiptDue(paidMs) {
   const d = new Date(paidMs + 3 * 3600 * 1000); // по Москве
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 9, 20, 59, 59); // 9-е, 23:59 МСК
 }
-const RECEIPT_RE = /^https:\/\/lknpd\.nalog\.ru\/api\/v1\/receipt\/\d{10,12}\/[\w-]{4,40}\/print\/?$/;
+const RECEIPT_RE = /^https:\/\/lknpd\.nalog\.ru\/api\/v1\/receipt\/(\d{10,12})\/([\w-]{4,40})\/print\/?$/;
+
+/**
+ * Сроки по НДФЛ, удержанному в день выплаты (п. 6 ст. 226, п. 9 ст. 58 НК РФ):
+ * удержан 1–22 — уведомление до 25-го, уплата до 28-го этого месяца;
+ * 23–последнее — уведомление до 3-го, уплата до 5-го следующего; в декабре
+ * с 23-го — всё до последнего рабочего дня года. Перенос с выходных — на
+ * ближайший рабочий день (здесь не учитывается).
+ */
+function ndflDue(paidMs) {
+  const d = new Date(paidMs + 3 * 3600 * 1000);
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth();
+  const at = (yy, mm, dd) => Date.UTC(yy, mm, dd, 12);
+  if (d.getUTCDate() <= 22) return { noticeBy: at(y, m, 25), payBy: at(y, m, 28) };
+  if (m === 11) return { noticeBy: at(y, 11, 31), payBy: at(y, 11, 31), yearEnd: true };
+  return { noticeBy: at(y, m + 1, 3), payBy: at(y, m + 1, 5) };
+}
 
 const maskDetails = (d) => (d ? `СБП ${d.phone.slice(0, 2)} *** ***-${d.phone.slice(-4, -2)}-${d.phone.slice(-2)} · ${d.bank} · ${d.fullName.split(" ").map((w, i) => (i === 0 ? w : `${w[0]}.`)).join(" ")}` : "");
 const normEmail = (e) => String(e || "").trim().toLowerCase();
@@ -124,6 +141,7 @@ function createPartners(deps) {
     letters = require("./auth-email"),
     platformLegal = async () => ({}),
     notifyAdmins = () => {},
+    npdApi = (process.env.NPD_STATUS_API || "https://statusnpd.nalog.ru/api/v1/tracker/taxpayer_status").replace(/\/+$/, ""),
     auth = () => admin.auth(),
   } = deps;
   const ts = (ms) => admin.firestore.Timestamp.fromMillis(ms);
@@ -242,13 +260,66 @@ function createPartners(deps) {
     };
   }
 
+  // ---- статус самозанятого — открытый сервис ФНС (не чаще 2 запросов в минуту)
+  const npdCache = new Map(); // `${inn}:${день}` → { ok, message, at }
+  const isoDay = (ms) => new Date(ms + 3 * 3600 * 1000).toISOString().slice(0, 10);
+  async function checkNpd(inn, atMs = now()) {
+    const key = `${inn}:${isoDay(atMs)}`;
+    const hit = npdCache.get(key);
+    if (hit && now() - hit.at < 10 * 60 * 1000) return hit;
+    let out;
+    try {
+      const ctl = typeof AbortController === "function" ? new AbortController() : null;
+      const timer = ctl ? setTimeout(() => ctl.abort(), 10000) : null;
+      const r = await fetchImpl(npdApi, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inn, requestDate: isoDay(atMs) }), ...(ctl ? { signal: ctl.signal } : {}),
+      });
+      if (timer) clearTimeout(timer);
+      const j = await r.json().catch(() => ({}));
+      out = r.ok && typeof j.status === "boolean"
+        ? { ok: j.status, message: String(j.message || "").slice(0, 300) }
+        : { ok: null, message: String(j.message || `ФНС ответила ${r.status}`).slice(0, 300) };
+    } catch (e) {
+      out = { ok: null, message: `ФНС не ответила: ${String((e && e.message) || e).slice(0, 200)}` };
+    }
+    out.at = now();
+    out.date = isoDay(atMs);
+    if (out.ok !== null) npdCache.set(key, out);
+    return out;
+  }
+
+  /** Номер договора не меняется вместе со ссылкой: запоминаем при первой выдаче. */
+  async function contractNumberOf(p) {
+    if (p.contractNumber) return p.contractNumber;
+    const number = `${p.code}-${new Date(now()).getUTCFullYear()}`;
+    await partnersCol().doc(p.id).set({ contractNumber: number }, { merge: true });
+    p.contractNumber = number;
+    return number;
+  }
+
+  const MONTHS_PREP = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+  /** Назначение платежа: договор, период начислений, без НДС. */
+  function purposeOf(number, accruals) {
+    const months = [...new Set(accruals.filter((a) => a.amount > 0).map((a) => {
+      const d = new Date(toMs(a.paidAt) + 3 * 3600 * 1000);
+      return d.getUTCFullYear() * 100 + d.getUTCMonth();
+    }))].sort();
+    const name = (k) => `${MONTHS_PREP[k % 100]} ${Math.floor(k / 100)}`;
+    const period = !months.length ? "" : months.length === 1 ? ` за ${name(months[0])} г.`
+      : ` за ${name(months[0])} — ${name(months[months.length - 1])} г.`;
+    return `Вознаграждение по договору № ${number} об оказании услуг по привлечению клиентов${period}${period ? "" : "."} НДС не облагается`;
+  }
+
   const openRequestOf = async (partnerId) => {
     const snap = await col("partnerPayoutRequests").where("partnerId", "==", partnerId).get();
     const d = snap.docs.find((x) => x.data().status === "requested");
     return d ? { id: d.id, ...d.data() } : null;
   };
+  const PAY_TERM_MS = 14 * DAY_MS; // договор: 10 рабочих дней с запроса
   const publicRequest = (r) => r && ({
     id: r.id, status: r.status, gross: r.gross, ndfl: r.ndfl, net: r.net, requestedAt: toMs(r.requestedAt), details: r.detailsMask || "",
+    payBy: toMs(r.requestedAt) + PAY_TERM_MS, purpose: r.purpose || "", contractNumber: r.contractNumber || "", npdCheck: r.npdCheck || null,
   });
 
   const publicPartner = (p) => ({
@@ -375,6 +446,7 @@ function createPartners(deps) {
       return {
         id: d.id, amount: x.amount, ndfl: x.ndfl || 0, net: x.net ?? x.amount, paidAt: toMs(x.paidAt), note: x.note || "",
         taxStatus: x.taxStatus || "", receiptUrl: x.receiptUrl || "", receiptAt: toMs(x.receiptAt) || null,
+        receivedAt: toMs(x.receivedAt) || null, notReceivedAt: toMs(x.notReceivedAt) || null, purpose: x.purpose || "",
         needReceipt: x.taxStatus === "npd" && !x.receiptUrl, receiptDue: x.taxStatus === "npd" ? receiptDue(toMs(x.paidAt)) : null,
       };
     }).sort((a, b) => b.paidAt - a.paidAt);
@@ -665,9 +737,30 @@ function createPartners(deps) {
     }
     const taxStatus = (request && request.taxStatus) || pDoc.taxStatus || "npd";
     const calc = payoutCalc(amount, taxStatus);
+    // Самозанятому — только если ФНС подтверждает статус на день перевода.
+    let npdCheck = null;
+    if (taxStatus === "npd") {
+      const det = (request && (() => { try { return JSON.parse(decrypt(secretKey(), request.detailsEnc)); } catch (_) { return null; } })()) || detailsOf(pDoc);
+      if (!det || !det.inn) {
+        if (body.npdManual !== true) throw new HttpError(428, "У менеджера нет ИНН в реквизитах — проверьте статус самозанятого на npd.nalog.ru/check-status вручную и подтвердите");
+        npdCheck = { ok: null, manual: true, at: now(), message: "ИНН не указан, проверено вручную" };
+      } else {
+        npdCheck = await checkNpd(det.inn);
+        if (npdCheck.ok === false) {
+          throw new HttpError(409, `ФНС: ИНН ${det.inn} не самозанятый на ${fmtDate(now())}. Не переводите как самозанятому: отклоните запрос и смените налоговый статус менеджера (физлицо — с удержанием НДФЛ, или ИП).`);
+        }
+        if (npdCheck.ok === null) {
+          if (body.npdManual !== true) throw new HttpError(428, `ФНС сейчас не отвечает (${npdCheck.message}). Проверьте статус по ИНН ${det.inn} на npd.nalog.ru/check-status и подтвердите, что он действующий`);
+          npdCheck = { ...npdCheck, manual: true };
+        }
+      }
+    }
+    const number = await contractNumberOf({ id: partnerId, ...pDoc });
+    const purpose = (request && request.purpose) || purposeOf(number, open);
     const ref = col("partnerPayouts").doc();
     await ref.set({
       partnerId, amount, ndfl: calc.ndfl, net: calc.net, taxStatus, accrualIds: open.map((a) => a.id), note,
+      contractNumber: number, purpose, ...(npdCheck ? { npdCheck } : {}),
       ...(request ? { requestId: request.ref.id } : {}), paidAt: ts(now()), by: decoded.uid,
     });
     for (const a of open) await col("partnerAccruals").doc(a.id).set({ payoutId: ref.id }, { merge: true });
@@ -680,8 +773,17 @@ function createPartners(deps) {
       lines.push("", `🧾 Сформируйте чек в «Мой налог» на ${fmtRub(amount)}: покупатель — ${who}, услуга — «Привлечение клиентов по договору».`,
         `Срок — до ${fmtDate(receiptDue(now()))}. Пришлите сюда ссылку на чек («Поделиться» → «Скопировать ссылку»).`);
     }
-    notify(partnerId, lines.join("\n")).catch(() => {});
-    sendJson(res, 200, { ok: true, amount, ...calc });
+    lines.push("", "Когда деньги придут, подтвердите — так у обеих сторон будет одна и та же картина.");
+    notify(partnerId, lines.join("\n"), { reply_markup: { inline_keyboard: [[{ text: "✅ Деньги пришли", callback_data: `pgot_${ref.id}` }, { text: "❌ Не пришли", callback_data: `pnot_${ref.id}` }]] } }).catch(() => {});
+    let ndfl = null;
+    if (calc.ndfl) {
+      const due = ndflDue(now());
+      ndfl = { amount: calc.ndfl, noticeBy: due.noticeBy, payBy: due.payBy };
+      try {
+        notifyAdmins(`🧾 <b>НДФЛ ${fmtRub(calc.ndfl)}</b> удержан с выплаты ${h(pDoc.name || pDoc.email)}.\nУведомление об исчисленных суммах — до ${fmtDate(due.noticeBy)}, уплата ЕНП — до ${fmtDate(due.payBy)}${due.yearEnd ? " (декабрь: до последнего рабочего дня года)" : ""}. Если срок выпал на выходной — следующий рабочий день.\nСтраховые взносы с ${fmtRub(amount)} — по итогам месяца; квартальные 6-НДФЛ и РСВ — по реестру выплат в панели.`);
+      } catch (_) {}
+    }
+    sendJson(res, 200, { ok: true, amount, ...calc, purpose, ndflDue: ndfl });
   }
 
   // ------------------------------------------------------------ запрос выплаты менеджером
@@ -704,22 +806,37 @@ function createPartners(deps) {
       const details = detailsOf(p);
       if (!details) throw new HttpError(412, "Укажите реквизиты для перевода в кабинете менеджера");
       if (await openRequestOf(p.id)) throw new HttpError(409, "Запрос уже отправлен — дождитесь выплаты или отмените его");
+      const overdue = (await col("partnerPayouts").where("partnerId", "==", p.id).get()).docs.map((d) => d.data())
+        .find((x) => x.taxStatus === "npd" && !x.receiptUrl && receiptDue(toMs(x.paidAt)) < now());
+      if (overdue) throw new HttpError(412, `Сначала прикрепите чек из «Мой налог» за выплату ${fmtRub(overdue.amount)} от ${fmtDate(toMs(overdue.paidAt))} — срок был до ${fmtDate(receiptDue(toMs(overdue.paidAt)))}. Без чеков новые выплаты не проводятся.`);
       const s = await settings();
       const avail = (await accrualsOf(p.id)).filter((a) => isAvailable(a, s));
       const gross = round2(avail.reduce((sum, a) => sum + a.amount, 0));
       if (gross <= 0 || gross < s.payoutMin) throw new HttpError(400, `Доступно к выплате ${fmtRub(Math.max(0, gross))} — запросить можно от ${fmtRub(s.payoutMin)}`);
-      const calc = payoutCalc(gross, p.taxStatus || "npd");
+      const taxStatus = p.taxStatus || "npd";
+      let npd = null;
+      if (taxStatus === "npd") {
+        npd = await checkNpd(details.inn);
+        if (npd.ok === false) {
+          throw new HttpError(412, `ФНС: по ИНН ${details.inn} статус самозанятого на ${fmtDate(now())} не подтверждён${npd.message ? ` («${npd.message}»)` : ""}. Встаньте на учёт в «Мой налог» или сообщите администратору ZalPOS — выплата пойдёт как физлицу, с удержанием НДФЛ.`);
+        }
+      }
+      const calc = payoutCalc(gross, taxStatus);
+      const number = await contractNumberOf(p);
       const ref = col("partnerPayoutRequests").doc();
       await ref.set({
-        partnerId: p.id, status: "requested", ...calc, taxStatus: p.taxStatus || "npd", accrualIds: avail.map((a) => a.id),
+        partnerId: p.id, status: "requested", ...calc, taxStatus, accrualIds: avail.map((a) => a.id),
         detailsEnc: p.payoutDetailsEnc, detailsMask: maskDetails(details), requestedAt: ts(now()),
+        contractNumber: number, purpose: purposeOf(number, avail), ...(npd ? { npdCheck: npd } : {}),
       });
       for (const a of avail) await col("partnerAccruals").doc(a.id).set({ requestId: ref.id }, { merge: true });
       try {
         notifyAdmins([
           `💸 <b>Запрос выплаты</b>: ${h(p.name || p.email)}`,
           `К перечислению: <b>${fmtRub(calc.net)}</b>${calc.ndfl ? ` (начислено ${fmtRub(calc.gross)}, НДФЛ ${fmtRub(calc.ndfl)} удержать и перечислить в бюджет)` : ""}`,
-          `${TAX_STATUSES[p.taxStatus || "npd"]} · СБП ${h(details.phone)} · ${h(details.bank)} · ${h(details.fullName)} · ИНН ${h(details.inn)}`,
+          `${TAX_STATUSES[taxStatus]} · СБП ${h(details.phone)} · ${h(details.bank)} · ${h(details.fullName)} · ИНН ${h(details.inn)}`,
+          ...(npd ? [npd.ok ? "✅ ФНС: самозанятый на сегодня" : `⚠️ ФНС не ответила — проверьте статус на npd.nalog.ru/check-status перед переводом`] : []),
+          `Назначение платежа: ${h(purposeOf(number, avail))}`,
           "Отметьте выплату в панели платформы → «Менеджеры».",
         ].join("\n"));
       } catch (_) {}
@@ -753,7 +870,12 @@ function createPartners(deps) {
   /** Самозанятый прикладывает ссылку на чек из «Мой налог» к выплате. */
   async function attachReceipt(partner, payoutId, url) {
     const u = String(url || "").trim();
-    if (!RECEIPT_RE.test(u)) throw new HttpError(400, "Нужна ссылка на чек из «Мой налог»: https://lknpd.nalog.ru/api/v1/receipt/…/print");
+    const m = u.match(RECEIPT_RE);
+    if (!m) throw new HttpError(400, "Нужна ссылка на чек из «Мой налог»: https://lknpd.nalog.ru/api/v1/receipt/…/print");
+    const det = detailsOf(partner);
+    if (det && det.inn && m[1] !== det.inn) throw new HttpError(400, `Чек выбит на ИНН ${m[1]}, а в ваших реквизитах — ${det.inn}. Нужен чек, сформированный вами в «Мой налог».`);
+    const dup = (await col("partnerPayouts").where("partnerId", "==", partner.id).get()).docs.find((d) => d.data().receiptUrl === u);
+    if (dup) throw new HttpError(409, "Этот чек уже прикреплён к другой выплате — на каждую выплату нужен свой чек");
     let ref;
     if (payoutId) {
       ref = col("partnerPayouts").doc(String(payoutId));
@@ -771,10 +893,112 @@ function createPartners(deps) {
     return { ok: true, payoutId: ref.id, amount: x.amount };
   }
 
+  /** Менеджер подтверждает: деньги пришли / не пришли. */
+  async function confirmPayout(partner, payoutId, got) {
+    const ref = col("partnerPayouts").doc(String(payoutId || ""));
+    const x = (await ref.get()).data();
+    if (!x || x.partnerId !== partner.id) throw new HttpError(404, "Выплата не найдена");
+    if (got) {
+      await ref.set({ receivedAt: ts(now()), notReceivedAt: null }, { merge: true });
+    } else {
+      if (x.receivedAt) throw new HttpError(409, "Вы уже подтвердили, что деньги пришли");
+      await ref.set({ notReceivedAt: ts(now()) }, { merge: true });
+      try {
+        notifyAdmins(`❗ <b>${h(partner.name || partner.email)}: деньги не пришли</b>\nВыплата ${fmtRub(x.net ?? x.amount)} от ${fmtDate(toMs(x.paidAt))}${x.note ? ` (${h(x.note)})` : ""}. Проверьте перевод в банке; если он не прошёл — переведите заново и напишите менеджеру.`);
+      } catch (_) {}
+    }
+    return { ok: true, amount: x.net ?? x.amount };
+  }
+
+  async function handlePayoutConfirm(req, res) {
+    const { partner } = await requirePartner(req);
+    const body = await parseJsonBody(req);
+    sendJson(res, 200, await confirmPayout(partner, body.payoutId, body.got === true));
+  }
+
   async function handlePayoutReceipt(req, res) {
     const { partner } = await requirePartner(req);
     const body = await parseJsonBody(req);
     sendJson(res, 200, await attachReceipt(partner, body.payoutId, body.url));
+  }
+
+  // ---- документы для бухгалтерии
+
+  const monthOf = (ms) => { const d = new Date(ms + 3 * 3600 * 1000); return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 }; };
+  function sendFile(res, file, name, type) {
+    res.writeHead(200, {
+      "Content-Type": type,
+      "Content-Disposition": `attachment; filename="file"; filename*=UTF-8''${encodeURIComponent(name)}`,
+      "Content-Length": file.length,
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Expose-Headers": "Content-Disposition",
+    });
+    res.end(file);
+  }
+
+  async function actFile(p, monthStr) {
+    const m = String(monthStr || "").match(/^(\d{4})-(\d{2})$/);
+    if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) throw new HttpError(400, "Месяц — в виде 2026-10");
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const rows = (await accrualsOf(p.id)).filter((a) => a.status !== "reversed").filter((a) => {
+      const x = monthOf(toMs(a.paidAt));
+      return x.year === year && x.month === month;
+    }).sort((a, b) => toMs(a.paidAt) - toMs(b.paidAt)).map((a) => ({
+      venueName: a.venueName || "Клиент", paidAt: toMs(a.paidAt), gross: a.gross, base: a.base, amount: a.amount, clawback: !!a.clawbackOf,
+    }));
+    const number = await contractNumberOf(p);
+    const file = require("./partner-contract").buildPartnerAct({
+      platform: (await platformLegal().catch(() => ({}))) || {}, partner: p, details: detailsOf(p), number, year, month, rows, now: new Date(now()),
+    });
+    return { file, name: `Акт_${number}-${m[2]}.docx` };
+  }
+
+  const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  async function handleAct(req, res) {
+    const { partner } = await requirePartner(req);
+    const body = await parseJsonBody(req);
+    const { file, name } = await actFile(partner, body.month);
+    sendFile(res, file, name, DOCX);
+  }
+  async function handleAdminAct(req, res) {
+    await requireSuperAdmin(await verifyAuth(req));
+    const body = await parseJsonBody(req);
+    const id = String(body.id || "");
+    if (!/^[\w-]{1,64}$/.test(id)) throw new HttpError(400, "Не указан менеджер");
+    const d = (await partnersCol().doc(id).get()).data();
+    if (!d) throw new HttpError(404, "Менеджер не найден");
+    const { file, name } = await actFile({ id, ...d }, body.month);
+    sendFile(res, file, name, DOCX);
+  }
+
+  /** Реестр выплат за год (CSV для Excel) — для 6-НДФЛ, РСВ и сверки чеков. */
+  async function handleAdminPayoutsCsv(req, res) {
+    await requireSuperAdmin(await verifyAuth(req));
+    const body = await parseJsonBody(req);
+    const year = Number(body.year) || monthOf(now()).year;
+    const partners = new Map((await partnersCol().get()).docs.map((d) => [d.id, d.data()]));
+    const rows = (await col("partnerPayouts").get()).docs.map((d) => ({ id: d.id, ...d.data() }))
+      .filter((x) => monthOf(toMs(x.paidAt)).year === year).sort((a, b) => toMs(a.paidAt) - toMs(b.paidAt));
+    const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const num = (n) => (Math.round((Number(n) || 0) * 100) / 100).toFixed(2).replace(".", ",");
+    const head = ["Дата выплаты", "Менеджер", "ФИО получателя", "ИНН", "Статус", "Договор", "Начислено, ₽", "НДФЛ удержан, ₽", "Перечислено, ₽",
+      "НДФЛ: уведомление до", "НДФЛ: уплата до", "Проверка ФНС (НПД)", "Чек «Мой налог»", "Получение подтверждено", "Назначение платежа", "Комментарий"];
+    const lines = [head.map(q).join(";")];
+    for (const x of rows) {
+      const p = partners.get(x.partnerId) || {};
+      const det = detailsOf(p) || {};
+      const due = x.ndfl ? ndflDue(toMs(x.paidAt)) : null;
+      const npd = x.npdCheck ? (x.npdCheck.ok === true ? `подтверждён ${x.npdCheck.date || ""}` : x.npdCheck.manual ? "проверено вручную" : "не подтверждён") : "";
+      lines.push([
+        fmtDate(toMs(x.paidAt)), p.name || p.email || "", det.fullName || "", det.inn || "", TAX_STATUSES[x.taxStatus] || x.taxStatus || "",
+        x.contractNumber || p.contractNumber || "", num(x.amount), num(x.ndfl || 0), num(x.net ?? x.amount),
+        due ? fmtDate(due.noticeBy) : "", due ? fmtDate(due.payBy) : "", npd,
+        x.taxStatus === "npd" ? (x.receiptUrl || `нет (срок ${fmtDate(receiptDue(toMs(x.paidAt)))})`) : "",
+        x.receivedAt ? fmtDate(toMs(x.receivedAt)) : x.notReceivedAt ? "менеджер: не пришли" : "", x.purpose || "", x.note || "",
+      ].map(q).join(";"));
+    }
+    sendFile(res, Buffer.from(`\uFEFF${lines.join("\r\n")}\r\n`, "utf8"), `Реестр_выплат_менеджерам_${year}.csv`, "text/csv; charset=utf-8");
   }
 
   /** Администратор: отклонить запрос (например, реквизиты не те) — деньги вернутся в «доступно». */
@@ -831,10 +1055,9 @@ function createPartners(deps) {
     if (!/^[\w-]{1,64}$/.test(id)) throw new HttpError(400, "Не указан менеджер");
     const p = (await partnersCol().doc(id).get()).data();
     if (!p) throw new HttpError(404, "Менеджер не найден");
-    const year = new Date(now()).getUTCFullYear();
-    const number = `${p.code}-${year}`;
+    const number = await contractNumberOf({ id, ...p });
     const file = require("./partner-contract").buildPartnerContract({
-      platform: (await platformLegal()) || {}, partner: p, settings: await settings(), number, now: new Date(now()),
+      platform: (await platformLegal()) || {}, partner: p, settings: await settings(), number, now: new Date(now()), details: detailsOf(p),
     });
     const name = `Договор_${number}.docx`;
     res.writeHead(200, {
@@ -881,10 +1104,10 @@ function createPartners(deps) {
   const say = (chatId, text, extra = {}) => tg("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true, ...extra });
   const h = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-  async function notify(partnerId, html) {
+  async function notify(partnerId, html, extra = {}) {
     if (!bot) return;
     const p = (await partnersCol().doc(partnerId).get()).data();
-    if (p && p.tgChatId) await say(p.tgChatId, html).catch((e) => console.error(`partners: уведомление в Telegram: ${e.message || e}`));
+    if (p && p.tgChatId) await say(p.tgChatId, html, extra).catch((e) => console.error(`partners: уведомление в Telegram: ${e.message || e}`));
   }
 
   async function handleAdminBot(req, res) {
@@ -1173,6 +1396,18 @@ function createPartners(deps) {
     // Кнопки под ответом убираем — второй раз не нажмутся.
     const dropButtons = () => q.message.message_id
       && tg("editMessageReplyMarkup", { chat_id: chatId, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
+    const conf = String(q.data || "").match(/^p(got|not)_([\w-]{1,64})$/);
+    if (conf) {
+      const p = await partnerByChat(chatId);
+      if (!p || p.status === "removed") return;
+      try {
+        const r = await confirmPayout(p, conf[2], conf[1] === "got");
+        if (conf[1] === "got") await dropButtons();
+        return say(chatId, conf[1] === "got" ? `👍 Спасибо! Получение ${fmtRub(r.amount)} отмечено.` : "Передал администратору — он проверит перевод. Если деньги придут позже, нажмите «✅ Деньги пришли».");
+      } catch (e) {
+        return say(chatId, h(e.message || e));
+      }
+    }
     if (["ppay_ask", "ppay_yes", "ppay_no", "ppay_cancel"].includes(q.data)) {
       const p = await partnerByChat(chatId);
       if (!p || p.status === "removed") return;
@@ -1310,6 +1545,25 @@ function createPartners(deps) {
     return n;
   }
 
+  /** Запрос висит больше 5 дней — напоминать администраторам раз в сутки до выплаты. */
+  async function remindRequests() {
+    let n = 0;
+    for (const d of (await col("partnerPayoutRequests").get()).docs) {
+      const r = d.data();
+      if (r.status !== "requested") continue;
+      const at = toMs(r.requestedAt);
+      if (now() - at < 5 * DAY_MS || now() - toMs(r.adminRemindedAt) < DAY_MS) continue;
+      const p = (await partnersCol().doc(r.partnerId).get()).data() || {};
+      await d.ref.set({ adminRemindedAt: ts(now()) }, { merge: true });
+      const left = Math.ceil((at + PAY_TERM_MS - now()) / DAY_MS);
+      try {
+        notifyAdmins(`⏰ <b>Запрос выплаты ждёт ${Math.floor((now() - at) / DAY_MS)} дн.</b>: ${h(p.name || p.email || "менеджер")} — ${fmtRub(r.net)}.\n${left > 0 ? `По договору перевести до ${fmtDate(at + PAY_TERM_MS)} (осталось ${left} дн.).` : `Срок по договору (${fmtDate(at + PAY_TERM_MS)}) прошёл.`} Если уже перевели — отметьте выплату в панели.`);
+      } catch (_) {}
+      n++;
+    }
+    return n;
+  }
+
   /** Самозанятому — напомнить про чек: через 3 дня после выплаты и за 2 дня до срока. */
   async function remindReceipts() {
     let n = 0;
@@ -1335,17 +1589,19 @@ function createPartners(deps) {
       sweepInvites().catch((e) => console.error(`partners: приглашения: ${e.message || e}`));
       remindRenewals().catch((e) => console.error(`partners: напоминания о продлении: ${e.message || e}`));
       remindReceipts().catch((e) => console.error(`partners: напоминания о чеках: ${e.message || e}`));
+      remindRequests().catch((e) => console.error(`partners: напоминания о запросах: ${e.message || e}`));
     }, 6 * 3600 * 1000);
     if (t.unref) t.unref();
   }
 
   return {
-    start, attachOwner, onPayment, invite, dashboardOf, computeAccrual, sweepInvites, remindRenewals, remindReceipts,
+    start, attachOwner, onPayment, invite, dashboardOf, computeAccrual, sweepInvites, remindRenewals, remindReceipts, remindRequests,
     handleMe, handleAcceptTerms, handleInvite, handleDashboard, handleInviteInfo, handleOptOut, handleTgLink, handleNewLink,
     handlePayoutDetails, handlePayoutRequest, handlePayoutReceipt, handleAdminPayoutReject,
+    handlePayoutConfirm, handleAct, handleAdminAct, handleAdminPayoutsCsv,
     handleAdminList, handleAdminPartner, handleAdminSave, handleAdminSettings, handleAdminPayout, handleAdminReverse, handleAdminBot, handleAdminContract,
     handleHook, HOOK_ID, TERMS_EDITION, _onMessage: onMessage, _onCallback: onCallback,
   };
 }
 
-module.exports = { createPartners, computeAccrual, maskEmail, cleanCode, translit, TERMS_EDITION, TAX_STATUSES, INVITE_TTL_MS, payoutCalc, innOk, cleanDetails, receiptDue };
+module.exports = { createPartners, computeAccrual, maskEmail, cleanCode, translit, TERMS_EDITION, TAX_STATUSES, INVITE_TTL_MS, payoutCalc, innOk, cleanDetails, receiptDue, ndflDue };

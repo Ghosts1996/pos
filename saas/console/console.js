@@ -319,6 +319,32 @@ function bindTelegramBox(tenantId, redraw) {
 
 /** Вызов saas-gateway с ID-токеном пользователя. Бросает Error с текстом,
  *  который можно показать пользователю. */
+/** Скачать файл (docx, csv), который сервер отдаёт по POST. */
+async function downloadFromGateway(path, data, fallbackName) {
+  const idToken = await state.auth.currentUser?.getIdToken();
+  const res = await fetch(`${SAAS_GATEWAY_URL}/${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
+    body: JSON.stringify(data || {}),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => null);
+    throw new Error(json?.error || `Сервис ответил ошибкой (${res.status})`);
+  }
+  const cd = res.headers.get('Content-Disposition') || '';
+  const m = cd.match(/filename\*=UTF-8''([^;]+)/);
+  const name = m ? decodeURIComponent(m[1]) : fallbackName;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  return name;
+}
+
+const prevMonthIso = () => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+
 async function callSaasGateway(path, data, { forceRefresh = false } = {}) {
   if (!SAAS_GATEWAY_URL) {
     throw new Error(
@@ -7022,7 +7048,7 @@ function screenPartner() {
     function payoutAction() {
       const r = data.request;
       if (r) {
-        return `<div class="pt-pay-req"><span>⏳ Запрос на ${fmtMoney(r.net)} отправлен ${fmtDay(r.requestedAt)} — деньги придут на ${esc(r.details)}</span>
+        return `<div class="pt-pay-req"><span>⏳ Запрос на ${fmtMoney(r.net)} отправлен ${fmtDay(r.requestedAt)} — деньги придут на ${esc(r.details)} до ${fmtDay(r.payBy)}</span>
           <button type="button" class="pt-link-renew" id="f-partner-pay-cancel">Отменить запрос</button></div>`;
       }
       if (stopped) return '';
@@ -7076,6 +7102,12 @@ function screenPartner() {
       if (a.availableAt && a.availableAt > Date.now()) return `<span class="pt-badge off">доступно с ${fmtDay(a.availableAt)}</span>`;
       return '<span class="pt-badge wait">можно запросить</span>';
     };
+    const actMonths = () => {
+      const set = new Set(data.accruals.map((a) => { const d = new Date(a.paidAt); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }));
+      set.add(prevMonthIso());
+      return [...set].sort().reverse().slice(0, 12);
+    };
+    const monthLabel = (m) => { const [y, mm] = m.split('-').map(Number); return new Date(y, mm - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }); };
     const payPanel = () => `
       <div class="card">
         <div class="pt-kicker">Реквизиты для перевода</div>
@@ -7089,12 +7121,21 @@ function screenPartner() {
           ${p.payoutDetails ? '<button type="button" class="pt-link-renew" id="f-partner-details-cancel" style="margin:0">Отмена</button>' : ''}</div>
           <p class="small muted" style="margin:10px 0 0">Реквизиты хранятся в зашифрованном виде на сервере в России и нужны только для перевода.</p>`}
       </div>
+      <div class="card">
+        <div class="pt-kicker">Акт за месяц</div>
+        <p class="small muted" style="margin:6px 0 10px">По договору раз в месяц подписываем акт об оказанных услугах — в нём все оплаты ваших клиентов за месяц и вознаграждение.</p>
+        <div class="row" style="gap:8px;flex-wrap:wrap"><select id="f-pa-month" style="width:auto;margin:0">${actMonths().map((m) => `<option value="${m}">${esc(monthLabel(m))}</option>`).join('')}</select>
+          <button class="btn btn-ghost" id="f-partner-act" style="width:auto">Скачать акт</button></div>
+      </div>
       <h2 class="pt-sub">История выплат</h2>
       <div class="card pt-rows">${data.payouts.length ? data.payouts.map((x) => `
         <div class="pt-pay-item">
           <div class="pt-row"><div class="pt-row-main"><b>${fmtDay(x.paidAt)}</b>
               <span class="small muted">${x.ndfl ? `начислено ${fmtMoney(x.amount)}, НДФЛ ${fmtMoney(x.ndfl)}` : ''}${x.ndfl && x.note ? ' · ' : ''}${x.note ? esc(x.note) : ''}</span></div>
-            <div class="pt-row-side"><b>${fmtMoney(x.net)}</b>${x.receiptUrl ? `<span class="small"><a href="${esc(x.receiptUrl)}" target="_blank" rel="noopener">чек</a> ✓</span>` : ''}</div></div>
+            <div class="pt-row-side"><b>${fmtMoney(x.net)}</b>${x.receiptUrl ? `<span class="small"><a href="${esc(x.receiptUrl)}" target="_blank" rel="noopener">чек</a> ✓</span>` : ''}${x.receivedAt ? '<span class="small muted">получено ✓</span>' : ''}</div></div>
+          ${!x.receivedAt ? `<div class="row small" style="gap:14px;padding:0 0 12px;flex-wrap:wrap;align-items:center">${x.notReceivedAt ? '<span style="color:var(--danger)">Вы сообщили, что деньги не пришли — администратор проверяет.</span>' : '<span class="muted">Деньги пришли?</span>'}
+            <button type="button" class="pt-link-renew f-pc" data-id="${esc(x.id)}" data-got="1" style="margin:0">✅ Да, пришли</button>
+            ${x.notReceivedAt ? '' : `<button type="button" class="pt-link-renew f-pc" data-id="${esc(x.id)}" style="margin:0">❌ Не пришли</button>`}</div>` : ''}
           ${x.needReceipt ? `<div class="pt-receipt"><span class="small" style="color:var(--warning)">Нужен чек в «Мой налог» на ${fmtMoney(x.amount)} — до ${fmtDay(x.receiptDue)}. В приложении: чек → «Поделиться» → скопируйте ссылку.</span>
             <div class="row" style="gap:8px;margin-top:6px"><input class="grow f-pr-url" data-id="${esc(x.id)}" placeholder="https://lknpd.nalog.ru/api/v1/receipt/…" style="margin:0;min-width:0"><button class="btn btn-ghost f-pr-save" data-id="${esc(x.id)}" style="width:auto">Прикрепить</button></div></div>` : ''}
         </div>`).join('') : empty('Выплат пока не было. Когда сумма к выплате достигнет минимальной, нажмите «Запросить» вверху страницы или в Telegram-боте.')}</div>`;
@@ -7190,6 +7231,14 @@ function screenPartner() {
         editDetails = false;
       }, 'Реквизиты сохранены');
     }
+    screenEl().querySelectorAll('.f-pc').forEach((b) => {
+      b.onclick = () => payCall(b, () => callSaasGateway('partnerPayoutConfirm', { payoutId: b.dataset.id, got: !!b.dataset.got }), b.dataset.got ? 'Спасибо, получение отмечено' : 'Передали администратору — он проверит перевод');
+    });
+    if ($('f-partner-act')) {
+      $('f-partner-act').onclick = async () => {
+        try { await downloadFromGateway('partnerAct', { month: $('f-pa-month').value }, 'Акт.docx'); toast('Акт скачан'); } catch (e) { toast(`Не получилось: ${e?.message || e}`); }
+      };
+    }
     screenEl().querySelectorAll('.f-pr-save').forEach((b) => {
       b.onclick = () => {
         const inp = screenEl().querySelector(`.f-pr-url[data-id="${CSS.escape(b.dataset.id)}"]`);
@@ -7272,10 +7321,10 @@ function screenPartnerTerms() {
         'С каждой поступившей оплаты закреплённого клиента — подписки, продления, дополнительной точки сети — начисляется процент, установленный партнёру. База — сумма оплаты за вычетом налога правообладателя (ставка указана в кабинете менеджера) и комиссии платёжной системы. Тестовые оплаты и пробный период не учитываются. Если партнёру установлен срок, начисления идут только в течение этого срока после регистрации клиента.',
         'При возврате денег клиенту начисление по этой оплате снимается; если оно уже выплачено — удерживается из следующей выплаты.',
         'Начисления видны в кабинете менеджера и в Telegram-боте. Начисление по оплате клиента становится доступным к выплате через срок ожидания после оплаты (на случай возврата; срок и минимальная сумма выплаты указаны в кабинете менеджера).',
-        'Выплату партнёр запрашивает сам — в кабинете или в Telegram-боте; в запрос входят все доступные начисления. Перевод производится по Системе быстрых платежей по реквизитам, указанным партнёром в кабинете, в течение 10 рабочих дней после запроса; партнёр отвечает за правильность реквизитов. Запрос можно отменить до выплаты; если администратор отклонит запрос (например, из-за неверных реквизитов), сумма снова становится доступной.',
+        'Выплату партнёр запрашивает сам — в кабинете или в Telegram-боте; в запрос входят все доступные начисления. Перевод производится по Системе быстрых платежей по реквизитам, указанным партнёром в кабинете, в течение 10 рабочих дней после запроса; партнёр отвечает за правильность реквизитов. Запрос можно отменить до выплаты; если администратор отклонит запрос (например, из-за неверных реквизитов), сумма снова становится доступной. Получив деньги, партнёр подтверждает это в кабинете или в боте; если деньги не пришли — сообщает там же.',
       ])}
       ${legalSection('4. Налоги партнёра', [
-        'Самозанятый партнёр уплачивает налог на профессиональный доход сам, формирует в «Мой налог» чек на каждую выплату (не позднее 9-го числа месяца, следующего за месяцем выплаты) и прикладывает ссылку на чек в кабинете или в боте. Партнёр — индивидуальный предприниматель уплачивает налоги сам. Если партнёр — физическое лицо без этих статусов, правообладатель как налоговый агент удерживает налог на доходы физических лиц из суммы вознаграждения и уплачивает страховые взносы в порядке, установленном законодательством.',
+        'Самозанятый партнёр уплачивает налог на профессиональный доход сам, формирует в «Мой налог» чек на каждую выплату (не позднее 9-го числа месяца, следующего за месяцем выплаты) и прикладывает ссылку на чек в кабинете или в боте. Статус самозанятого проверяется по открытому сервису ФНС при запросе и в день выплаты; если статус не подтверждён, выплата как самозанятому не производится. Пока не приложен просроченный чек, новые выплаты не производятся. Партнёр — индивидуальный предприниматель уплачивает налоги сам. Если партнёр — физическое лицо без этих статусов, правообладатель как налоговый агент удерживает налог на доходы физических лиц из суммы вознаграждения и уплачивает страховые взносы в порядке, установленном законодательством.',
       ])}
       ${legalSection('5. Обязанности партнёра', [
         'Направлять приглашения по почте только лицам, которые дали предварительное согласие на их получение (ст. 18 Федерального закона № 38-ФЗ «О рекламе»), и отмечать это согласие при отправке. Отказ получателя от писем исполняется автоматически.',
@@ -7350,7 +7399,7 @@ function watchAdminPartners() {
               : a.requested ? '<span class="muted">в запросе</span>'
                 : `<button class="btn-link f-pa-reverse" data-id="${esc(a.id)}" data-restore="${a.status === 'reversed' ? '1' : ''}">${a.status === 'reversed' ? 'вернуть' : 'снять (возврат)'}</button>`}</span>
         </div>`).join('') || '<div class="small muted">—</div>'}
-        ${d.payouts.length ? `<div class="small muted" style="margin-top:8px">Выплаты</div>${d.payouts.map((x) => `<div class="small">${fmtDay(x.paidAt)} · перечислено ${fmtMoney(x.net)}${x.ndfl ? ` (начислено ${fmtMoney(x.amount)}, НДФЛ ${fmtMoney(x.ndfl)})` : ''}${x.note ? ` · ${esc(x.note)}` : ''}${x.receiptUrl ? ` · <a href="${esc(x.receiptUrl)}" target="_blank" rel="noopener">чек</a>` : x.needReceipt ? ` · <span style="color:var(--warning)">чека нет (до ${fmtDay(x.receiptDue)})</span>` : ''}</div>`).join('')}` : ''}
+        ${d.payouts.length ? `<div class="small muted" style="margin-top:8px">Выплаты</div>${d.payouts.map((x) => `<div class="small">${fmtDay(x.paidAt)} · перечислено ${fmtMoney(x.net)}${x.ndfl ? ` (начислено ${fmtMoney(x.amount)}, НДФЛ ${fmtMoney(x.ndfl)})` : ''}${x.note ? ` · ${esc(x.note)}` : ''}${x.receiptUrl ? ` · <a href="${esc(x.receiptUrl)}" target="_blank" rel="noopener">чек</a>` : x.needReceipt ? ` · <span style="color:var(--warning)">чека нет (до ${fmtDay(x.receiptDue)})</span>` : ''}${x.receivedAt ? ' · получение подтверждено' : x.notReceivedAt ? ' · <span style="color:var(--danger)">менеджер: деньги не пришли</span>' : ''}</div>`).join('')}` : ''}
         <div class="small muted" style="margin-top:8px">Приглашения: ${d.invites.length}</div>
       </div>`;
   };
@@ -7386,6 +7435,8 @@ function watchAdminPartners() {
           <label class="field grow" style="margin:0"><span>Ожидание после оплаты, дней</span><input id="f-pa-hold" type="number" min="0" max="60" step="1" value="${esc(String(s.holdDays ?? 14))}"></label>
           <button class="btn btn-ghost" id="f-pa-settings" style="width:auto">Сохранить</button>
         </div>
+        <p class="small muted" style="margin:14px 0 6px">Для бухгалтера: все выплаты за год — суммы, НДФЛ и сроки по нему, проверка ФНС, чеки самозанятых, назначение платежа.</p>
+        <button class="btn btn-ghost" id="f-pa-csv" style="width:auto">Реестр выплат за ${new Date().getFullYear()} (Excel)</button>
       </div>
       <div class="card">
         <b>Telegram-бот менеджеров</b>
@@ -7419,6 +7470,9 @@ function watchAdminPartners() {
             <b>💸 Запрос выплаты от ${fmtDay(p.request.requestedAt)}: перевести ${fmtMoney(p.request.net)}</b>
             ${p.request.ndfl ? `<div class="small">Начислено ${fmtMoney(p.request.gross)}; НДФЛ ${fmtMoney(p.request.ndfl)} удержите и перечислите в бюджет, страховые взносы — сверху.</div>` : ''}
             ${p.request.fullDetails ? `<div class="small" style="margin-top:4px">СБП <b>${esc(p.request.fullDetails.phone)}</b> · ${esc(p.request.fullDetails.bank)} · ${esc(p.request.fullDetails.fullName)} · ИНН ${esc(p.request.fullDetails.inn)}</div>` : '<div class="small" style="color:var(--danger)">Реквизиты не расшифровались — попросите менеджера указать их заново и отклоните запрос.</div>'}
+            ${p.request.taxStatus === 'npd' ? `<div class="small" style="margin-top:4px">${p.request.npdCheck?.ok ? `✅ ФНС подтвердила статус самозанятого на ${esc(p.request.npdCheck.date || '')}; перед отметкой выплаты проверим ещё раз` : '⚠️ ФНС не ответила при запросе — статус проверим при отметке выплаты'}</div>` : ''}
+            <div class="small" style="margin-top:4px">Перевести по договору до <b>${fmtDay(p.request.payBy)}</b> · с расчётного счёта ИП, по СБП</div>
+            ${p.request.purpose ? `<div class="small" style="margin-top:6px">Назначение платежа: <span class="muted">${esc(p.request.purpose)}</span> <button class="btn-link f-pa-copy" data-text="${esc(p.request.purpose)}">Скопировать</button></div>` : ''}
             <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:8px">
               <button class="btn btn-primary f-pa-reqpay" data-id="${esc(p.id)}" data-req="${esc(p.request.id)}" data-net="${p.request.net}" style="width:auto">Перевёл — отметить выплату</button>
               <button class="btn-link f-pa-reqreject" data-req="${esc(p.request.id)}">Отклонить</button>
@@ -7430,6 +7484,7 @@ function watchAdminPartners() {
             <button class="btn-link f-pa-open" data-id="${esc(p.id)}">${openId === p.id ? 'Скрыть' : 'Подробнее'}</button>
             <button class="btn-link f-pa-edit" data-id="${esc(p.id)}">Изменить</button>
             <button class="btn-link f-pa-contract" data-id="${esc(p.id)}" data-code="${esc(p.code)}">Договор (Word)</button>
+            <button class="btn-link f-pa-act" data-id="${esc(p.id)}">Акт за месяц</button>
             <button class="btn-link f-pa-letter" data-email="${esc(p.email)}">Письмо для входа</button>
             ${!p.request && p.summary.unpaid > 0 ? `<button class="btn-link f-pa-pay" data-id="${esc(p.id)}" data-amount="${p.summary.unpaid}">Выплатить без запроса ${fmtMoney(p.summary.unpaid)}</button>` : ''}
             <button class="btn-link f-pa-status" data-id="${esc(p.id)}" data-status="${p.status === 'active' ? 'stopped' : 'active'}">${p.status === 'active' ? 'Приостановить' : 'Возобновить'}</button>
@@ -7523,17 +7578,40 @@ function watchAdminPartners() {
       el.onclick = act(async (b) => {
         const note = prompt(`Отметить выплату ${fmtMoney(b.dataset.amount)}? Комментарий (например, «перевод на карту 24.10»):`, '');
         if (note === null) throw new Error('отменено');
-        await callSaasGateway('partnerAdminPayout', { partnerId: b.dataset.id, expected: Number(b.dataset.amount), note });
-        toast('Выплата отмечена');
+        paidToast(await payWithNpd({ partnerId: b.dataset.id, expected: Number(b.dataset.amount), note }));
       });
     });
+    // Самозанятому: сервер сверяет статус с ФНС; если ФНС не ответила (428) —
+    // только после подтверждения, что статус проверен вручную.
+    const payWithNpd = async (payload) => {
+      try {
+        return (await callSaasGateway('partnerAdminPayout', payload)).data;
+      } catch (e) {
+        if (e.status !== 428) throw e;
+        if (!confirm(`${e.message}\n\nОткройте npd.nalog.ru/check-status, проверьте ИНН на сегодня. Статус действующий — нажмите ОК.`)) throw new Error('отменено');
+        return (await callSaasGateway('partnerAdminPayout', { ...payload, npdManual: true })).data;
+      }
+    };
+    const paidToast = (r) => toast(r?.ndflDue ? `Выплата отмечена. НДФЛ ${fmtMoney(r.ndflDue.amount)}: уведомление до ${fmtDay(r.ndflDue.noticeBy)}, уплата до ${fmtDay(r.ndflDue.payBy)}` : 'Выплата отмечена — менеджеру ушло уведомление');
     document.querySelectorAll('.f-pa-reqpay').forEach((el) => {
       el.onclick = act(async (b) => {
         const note = prompt(`Вы перевели ${fmtMoney(b.dataset.net)}? Комментарий для менеджера (например, «СБП 24.10, Сбербанк»):`, '');
         if (note === null) throw new Error('отменено');
-        await callSaasGateway('partnerAdminPayout', { partnerId: b.dataset.id, requestId: b.dataset.req, note });
-        toast('Выплата отмечена — менеджеру ушло уведомление');
+        paidToast(await payWithNpd({ partnerId: b.dataset.id, requestId: b.dataset.req, note }));
       });
+    });
+    document.querySelectorAll('.f-pa-copy').forEach((el) => { el.onclick = () => copyToClipboard(el.dataset.text); });
+    document.querySelectorAll('.f-pa-act').forEach((el) => {
+      el.onclick = act(async (b) => {
+        const month = prompt('Акт за какой месяц? В виде ГГГГ-ММ:', prevMonthIso());
+        if (month === null) throw new Error('отменено');
+        await downloadFromGateway('partnerAdminAct', { id: b.dataset.id, month: month.trim() }, `Акт_${month}.docx`);
+        toast('Акт скачан — подпишите и обменяйтесь сканами с менеджером');
+      });
+    });
+    if ($('f-pa-csv')) $('f-pa-csv').onclick = act(async () => {
+      await downloadFromGateway('partnerAdminPayoutsCsv', { year: new Date().getFullYear() }, 'Реестр_выплат.csv');
+      toast('Реестр скачан — откройте в Excel');
     });
     document.querySelectorAll('.f-pa-reqreject').forEach((el) => {
       el.onclick = act(async (b) => {
