@@ -1080,6 +1080,26 @@ function authErrorMessage(e) {
   return map[e?.code] || `Не удалось выполнить: ${e?.message || e}`;
 }
 
+// Рабочие сутки 06:00–06:00: ночная смена — один день (как у бота заведения).
+const DAY_START_HOUR = 6;
+
+/** Начало текущих рабочих суток в часовом поясе заведения — как у бота. */
+function businessDayStartIn(tz, now = new Date()) {
+  let p;
+  try {
+    const f = new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+    p = Object.fromEntries(f.formatToParts(now).map((x) => [x.type, x.value]));
+  } catch (_) {
+    return tz === 'Europe/Moscow' ? new Date(now.getTime() - 24 * 3600 * 1000) : businessDayStartIn('Europe/Moscow', now);
+  }
+  const sec = Math.floor(now.getTime() / 1000) * 1000;
+  const offsetMin = Math.round((Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - sec) / 60000);
+  let start = Date.UTC(+p.year, +p.month - 1, +p.day, DAY_START_HOUR, 0, 0) - offsetMin * 60000;
+  if (+p.hour < DAY_START_HOUR) start -= 24 * 3600 * 1000;
+  return new Date(start);
+}
+
 // ---------- ЗАПУСК ----------
 
 /** Приложение Firebase — создаётся, только если вход или данные ещё у Firebase. */
@@ -3967,6 +3987,8 @@ function watchDashboardData(tenantId) {
   let plans = null;
   let buildJobs = null;
   let generalSettings = null;
+  // Пересчёт «сегодня» под часовой пояс заведения, когда придут настройки.
+  let onGeneralSettings = null;
   let venueProfile = null;
   // Режим rf: имена сотрудников из справочника в РФ (id → имя).
   const staffNames = new Map();
@@ -6704,6 +6726,7 @@ function watchDashboardData(tenantId) {
   }, () => {}));
   sub(onSnapshot(doc(state.db, 'tenants', tenantId, 'settings', 'general'), (d) => {
     generalSettings = d.exists() ? d.data() : null;
+    if (onGeneralSettings) onGeneralSettings();
     draw();
   }, () => {}));
   sub(onSnapshot(doc(state.db, 'tenants', tenantId, 'meta', 'venueProfile'), (d) => {
@@ -6790,8 +6813,7 @@ function watchDashboardData(tenantId) {
     () => { bankInvoices = []; draw(); },
   ));
 
-  // Живые цифры «Обзора». «Сегодня» — по часам браузера: это ориентир, а не
-  // бухгалтерия.
+  // Живые цифры «Обзора».
   sub(onSnapshot(
     query(collection(state.db, 'tenants', tenantId, 'sessions'), where('status', '==', 'active')),
     (snap) => { liveOpenSessions = snap.size; draw(); },
@@ -6821,56 +6843,60 @@ function watchDashboardData(tenantId) {
     devicesCount = snap.size;
     draw();
   }, () => { devicesCount = 0; draw(); }));
+  // «Сегодня» — рабочие сутки с 6:00 по времени заведения, как в боте и
+  // X-отчёте кассы. Выручка как Z-отчёт: оплаты чеков, закрытых за сутки,
+  // минус возвраты, оформленные за сутки (за какой бы день ни был чек).
   {
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    sub(onSnapshot(
-      query(
-        collection(state.db, 'tenants', tenantId, 'sessions'),
-        where('status', '==', 'closed'),
-        where('closedAt', '>=', Timestamp.fromDate(startOfToday)),
-      ),
-      (snap) => {
-        todayChecksCount = snap.size;
-        todayRevenue = snap.docs.reduce((sum, d) => {
-          const s = d.data();
-          // Возвращённый чек не выручка — так же считает X-отчёт кассы.
-          if (s.refunded === true) return sum;
-          return sum + (Number(s.paymentCash) || 0) + (Number(s.paymentCard) || 0) +
-            (Number(s.paymentTerminal) || 0) + (Number(s.paymentAggregator) || 0) + (Number(s.paymentComp) || 0);
-        }, 0);
-        draw();
-      },
-      () => { todayChecksCount = 0; todayRevenue = 0; draw(); },
-    ));
-    // Остальные точки сети — те же цифры, чтобы сравнить точки между собой.
-    const me = state.tenants.find((t) => t.id === tenantId);
-    if (me && me.chainId) {
-      state.tenants.filter((t) => t.chainId === me.chainId).forEach((t) => {
-        sub(onSnapshot(
-          query(
-            collection(state.db, 'tenants', t.id, 'sessions'),
-            where('status', '==', 'closed'),
-            where('closedAt', '>=', Timestamp.fromDate(startOfToday)),
-          ),
-          (snap) => {
-            let revenue = 0;
-            let checks = 0;
-            snap.docs.forEach((d) => {
-              const s = d.data();
-              if (s.refunded === true) return;
-              checks++;
-              revenue += (Number(s.paymentCash) || 0) + (Number(s.paymentCard) || 0) +
-                (Number(s.paymentTerminal) || 0) + (Number(s.paymentAggregator) || 0) + (Number(s.paymentComp) || 0);
-            });
-            chainToday[t.id] = { revenue, checks };
-            draw();
-          },
-          () => {},
-        ));
-      });
-    }
+    const paid = (s) => (Number(s.paymentCash) || 0) + (Number(s.paymentCard) || 0) +
+      (Number(s.paymentTerminal) || 0) + (Number(s.paymentAggregator) || 0) + (Number(s.paymentComp) || 0);
+    const watchDay = (tid, tz, onChange) => {
+      const from = Timestamp.fromDate(businessDayStartIn(tz));
+      let sales = null;
+      let refunds = null;
+      const emit = () => {
+        if (!sales || !refunds) return;
+        let revenue = 0;
+        let checks = 0;
+        for (const s of sales) {
+          if (s.closedWithoutPayment) continue;
+          checks++;
+          revenue += paid(s);
+        }
+        for (const s of refunds) if (s.refunded === true) revenue -= paid(s);
+        onChange({ revenue, checks });
+      };
+      const col = collection(state.db, 'tenants', tid, 'sessions');
+      const offs = [
+        onSnapshot(query(col, where('status', '==', 'closed'), where('closedAt', '>=', from)),
+          (snap) => { sales = snap.docs.map((d) => d.data()); emit(); }, () => { sales = []; emit(); }),
+        onSnapshot(query(col, where('refundedAt', '>=', from)),
+          (snap) => { refunds = snap.docs.map((d) => d.data()); emit(); }, () => { refunds = []; emit(); }),
+      ];
+      return () => offs.forEach((off) => { try { off(); } catch (_) {} });
+    };
+    // Часовой пояс приходит с настройками заведения — по нему и пересчитываем.
+    let dayTz = null;
+    let dayOff = null;
+    const restartDay = () => {
+      const tz = generalSettings?.timezone || 'Europe/Moscow';
+      if (tz === dayTz && dayOff) return;
+      dayTz = tz;
+      if (dayOff) dayOff();
+      const offs = [watchDay(tenantId, tz, ({ revenue, checks }) => { todayRevenue = revenue; todayChecksCount = checks; draw(); })];
+      // Остальные точки сети — те же цифры, чтобы сравнить точки между собой.
+      const me = state.tenants.find((t) => t.id === tenantId);
+      if (me && me.chainId) {
+        state.tenants.filter((t) => t.chainId === me.chainId).forEach((t) => {
+          offs.push(watchDay(t.id, tz, (v) => { chainToday[t.id] = v; draw(); }));
+        });
+      }
+      dayOff = () => offs.forEach((off) => off());
+    };
+    restartDay();
+    onGeneralSettings = restartDay;
+    sub(() => { if (dayOff) dayOff(); onGeneralSettings = null; });
   }
+}
 }
 
 // draw() кабинета перерисовывает вкладку на любой снапшот, а живые цифры

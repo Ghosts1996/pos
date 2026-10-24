@@ -321,9 +321,17 @@ const hhmm = (date, tz) => {
 /** Номер заказа: порядковый (sessions.orderNo), у старых — хвост id. Как orderNumberLabel в кассе. */
 const orderNo = (sessionId, no = 0) => (Number(no) > 0 ? String(Math.trunc(no)) : String(sessionId).slice(-4).toUpperCase());
 
-/** Деньги чеков: выручка, чеки, оплаты, доли цехов. */
-function salesStats(sessions, excludeTobacco = true) {
-  const st = { revenue: 0, checks: 0, cash: 0, card: 0, terminal: 0, comp: 0, aggregator: 0, unpaid: 0, unpaidSum: 0,
+/**
+ * Деньги чеков: выручка, чеки, оплаты, доли цехов.
+ *
+ * С периодом { from, to } (мс) — как Z-отчёт кассы: продажи — чеки, закрытые
+ * за период (и те, что вернули позже); возвраты — оформленные за период, за
+ * какой бы день ни был чек; выручка = продажи − возвраты. Период берётся и
+ * из массива, который вернул closedSince (sessions.period).
+ */
+function salesStats(sessions, excludeTobacco = true, period = sessions && sessions.period) {
+  const inPeriod = (v) => { const ms = msOf(v); return ms >= period.from && ms < period.to; };
+  const st = { revenue: 0, gross: 0, checks: 0, cash: 0, card: 0, terminal: 0, comp: 0, aggregator: 0, unpaid: 0, unpaidSum: 0,
     refunds: 0, refundSum: 0, discount: 0, takeaway: 0, delivery: 0, kinds: { kitchen: 0, bar: 0, hookah: 0 }, items: new Map(),
     itemQty: new Map(), terminalBanks: new Map() };
   for (const s of sessions) {
@@ -331,7 +339,11 @@ function salesStats(sessions, excludeTobacco = true) {
     // не принёс — как и в кабинете (там только status == "closed").
     if (s.status === "cancelled") continue;
     const bill = sessionBill(s, excludeTobacco);
-    if (s.refunded) { st.refunds++; st.refundSum += bill; continue; }
+    if (period) {
+      // Старые чеки без даты возврата — возврат в день закрытия, как раньше.
+      if (s.refunded && inPeriod(s.refundedAt || s.closedAt)) { st.refunds++; st.refundSum += bill; }
+      if (!inPeriod(s.closedAt)) continue; // в периоде только возврат
+    } else if (s.refunded) { st.refunds++; st.refundSum += bill; continue; }
     if (s.closedWithoutPayment) { st.unpaid++; st.unpaidSum += bill; continue; }
     st.checks++;
     st.revenue += bill;
@@ -352,6 +364,8 @@ function salesStats(sessions, excludeTobacco = true) {
     for (const i of s.orderItems || []) {
       const sum = (Number(i.price) || 0) * (Number(i.qty) || 0);
       full += sum;
+      // Топ и доли — что действительно продали: возвращённый чек не в них.
+      if (s.refunded) continue;
       const kind = i.kind === "hookah" || i.kind === "bar" ? i.kind : "kitchen";
       st.kinds[kind] += sum;
       const name = i.name || "—";
@@ -360,8 +374,13 @@ function salesStats(sessions, excludeTobacco = true) {
     }
     st.discount += Math.max(0, full - bill);
   }
+  st.gross = st.revenue;
+  if (period) st.revenue -= st.refundSum;
   return st;
 }
+
+/** Средний чек — по продажам, без вычета возвратов (как в Z-отчёте). */
+const avgCheck = (st) => (st.checks ? (st.gross || st.revenue) / st.checks : 0);
 
 /** Что не так за сутки: удалённые позиции, закрытие без оплаты, возвраты. */
 function summaryWarnings(st, audit) {
@@ -402,14 +421,14 @@ function topItems(stats, n = 5) {
 function buildChainSummary({ chainName, label, points }) {
   const per = points.map((p) => ({ ...p, st: salesStats(p.sessions || [], p.excludeTobacco !== false) }));
   const total = per.reduce((a, p) => {
-    for (const k of ["revenue", "checks", "cash", "card", "terminal", "aggregator", "comp", "discount"]) a[k] += p.st[k];
+    for (const k of ["revenue", "gross", "checks", "cash", "card", "terminal", "aggregator", "comp", "discount"]) a[k] += p.st[k];
     return a;
-  }, { revenue: 0, checks: 0, cash: 0, card: 0, terminal: 0, aggregator: 0, comp: 0, discount: 0 });
+  }, { revenue: 0, gross: 0, checks: 0, cash: 0, card: 0, terminal: 0, aggregator: 0, comp: 0, discount: 0 });
   const lines = [
     `📊 Сеть «${chainName || "Сеть"}» — итоги ${label}`,
     "",
     `Выручка: ${rub(total.revenue)}`,
-    `Чеков: ${total.checks}${total.checks ? ` · средний чек ${rub(total.revenue / total.checks)}` : ""}`,
+    `Чеков: ${total.checks}${total.checks ? ` · средний чек ${rub(total.gross / total.checks)}` : ""}`,
   ];
   const pays = payLines(total);
   if (pays.length) lines.push(`Оплаты: ${pays.join(", ")}`);
@@ -417,7 +436,7 @@ function buildChainSummary({ chainName, label, points }) {
   lines.push("");
   for (const p of per) {
     lines.push(p.st.checks
-      ? `${POINT_MARK} ${p.name}: ${rub(p.st.revenue)} · ${p.st.checks} чек. · средний ${rub(p.st.revenue / p.st.checks)}`
+      ? `${POINT_MARK} ${p.name}: ${rub(p.st.revenue)} · ${p.st.checks} чек. · средний ${rub(avgCheck(p.st))}`
       : `${POINT_MARK} ${p.name}: продаж не было`);
   }
   const top = topItems(per.map((p) => p.st));
@@ -439,7 +458,7 @@ function buildSummary({ venueName, label, sessions, audit, excludeTobacco = true
     `📊 ${venueName} — итоги ${label}`,
     "",
     `Выручка: ${rub(st.revenue)}`,
-    `Чеков: ${st.checks}${st.checks ? ` · средний чек ${rub(st.revenue / st.checks)}` : ""}`,
+    `Чеков: ${st.checks}${st.checks ? ` · средний чек ${rub(avgCheck(st))}` : ""}`,
   ];
   const pays = payLines(st);
   if (pays.length) lines.push(`Оплаты: ${pays.join(", ")}`);
@@ -1545,13 +1564,21 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     if (st.today && st.today < start) {
       if (st.liveUnsub && !st.liveFailed) for (let d = st.today; d < start; d += DAY_MS) st.days.add(d);
       const oldest = start - KEEP_DAYS * DAY_MS;
-      for (const [id, x] of st.sales) if (x.closedAt < oldest) st.sales.delete(id);
+      for (const [id, x] of st.sales) if (x.closedAt < oldest && !(x.refundedAt >= oldest)) st.sales.delete(id);
       for (const d of [...st.days]) if (d < oldest) st.days.delete(d);
     }
     if (st.liveUnsub) { try { st.liveUnsub(); } catch (_) { /* уже отписан */ } }
     st.liveUnsub = null;
+    if (st.refundUnsub) { try { st.refundUnsub(); } catch (_) { /* уже отписан */ } }
+    st.refundUnsub = null;
     st.liveFailed = false;
     st.today = start;
+    // Возврат вчерашнего (или более старого) чека — это сегодняшний возврат:
+    // подписка на сегодняшние закрытия его не видит.
+    st.refundUnsub = tenantRef(st.tid).collection("sessions").where("refundedAt", ">=", new Date(start)).onSnapshot((snap) => {
+      for (const ch of snap.docChanges()) st.sales.set(ch.doc.id, saleOf(ch.doc.id, ch.doc.data()));
+      if (snap.docChanges().length) saveSoon(st);
+    }, (e) => console.error(`telegram copy (${st.tid}): подписка на возвраты — ${e.message}`));
     st.liveReady = new Promise((resolve) => {
       let first = true;
       st.liveUnsub = tenantRef(st.tid).collection("sessions").where("closedAt", ">=", new Date(start)).onSnapshot((snap) => {
@@ -1616,7 +1643,9 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     }
     if (gap !== null) await loadDays(st, gap, Math.min(st.today, dayStartOf(st, to - 1) + DAY_MS));
     const out = [];
-    for (const x of st.sales.values()) if (x.closedAt >= from && x.closedAt < to) out.push(x);
+    for (const x of st.sales.values()) {
+      if ((x.closedAt >= from && x.closedAt < to) || (x.refundedAt >= from && x.refundedAt < to)) out.push(x);
+    }
     // Старше срока копии (забытая смена кассы) — прямо из базы, без копии.
     if (from < oldest) {
       const snap = await tenantRef(st.tid).collection("sessions")
@@ -1666,15 +1695,20 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
    * У точек бота — из копии на сервере.
    */
   async function closedSince(tenantId, start, end = null) {
+    const period = { from: start.getTime(), to: end ? end.getTime() : Infinity };
     const st = await storeOf(tenantId);
     if (st) {
-      const out = await salesFromStore(st, start.getTime(), end ? end.getTime() : Infinity);
-      if (out) return out;
+      const out = await salesFromStore(st, period.from, period.to);
+      if (out) return Object.assign(out, { period });
     }
-    let q = tenantRef(tenantId).collection("sessions").where("closedAt", ">=", start);
-    if (end) q = q.where("closedAt", "<", end);
-    const snap = await q.get();
-    return snap.docs.map((d) => d.data());
+    // И чеки, возвращённые за период, — за какой бы день они ни были.
+    const byId = new Map();
+    for (const field of ["closedAt", "refundedAt"]) {
+      let q = tenantRef(tenantId).collection("sessions").where(field, ">=", start);
+      if (end) q = q.where(field, "<", end);
+      for (const d of (await q.get()).docs) byId.set(d.id, { id: d.id, ...d.data() });
+    }
+    return Object.assign([...byId.values()], { period });
   }
 
   /** Открытая кассовая смена — та же, что «Текущая смена» в X-отчёте. */
@@ -1740,33 +1774,31 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
   async function weekOf(tid) {
     const d = await dayOf(tid);
     const from = new Date(d.start.getTime() - 6 * DAY_MS);
-    const sessions = await closedSince(tid, new Date(from.getTime() - 7 * DAY_MS));
-    const buckets = Array.from({ length: 7 }, () => []);
-    const prev = [];
-    for (const s of sessions) {
-      const at = toDate(s.closedAt);
-      if (!at) continue;
-      const idx = Math.floor((at.getTime() - from.getTime()) / DAY_MS);
-      if (idx < 0) prev.push(s);
-      else buckets[Math.min(6, idx)].push(s);
-    }
+    const prevFrom = from.getTime() - 7 * DAY_MS;
+    const sessions = await closedSince(tid, new Date(prevFrom));
+    // Сутки — как Z-отчёт: продажи по закрытию, возвраты по дню возврата.
     return {
       tz: d.tz,
-      days: buckets.map((list, i) => ({ start: new Date(from.getTime() + i * DAY_MS), st: salesStats(list, d.ex) })),
-      prev: salesStats(prev, d.ex),
+      days: Array.from({ length: 7 }, (_, i) => {
+        const a = from.getTime() + i * DAY_MS;
+        return { start: new Date(a), st: salesStats(sessions, d.ex, { from: a, to: i === 6 ? Infinity : a + DAY_MS }) };
+      }),
+      prev: salesStats(sessions, d.ex, { from: prevFrom, to: from.getTime() }),
     };
   }
 
   function weekText(days, prevRevenue, tz) {
     const lines = ["📆 Неделя по дням (рабочие сутки с 6:00):"];
     let revenue = 0;
+    let gross = 0;
     let checks = 0;
     days.forEach((x, i) => {
       revenue += x.revenue;
+      gross += x.gross ?? x.revenue;
       checks += x.checks;
       lines.push(`${dayLabel(x.start, tz)}${i === days.length - 1 ? " (сегодня)" : ""} — ${rub(x.revenue)} · ${x.checks} чек.`);
     });
-    lines.push("", `Итого: ${rub(revenue)} · ${checks} чек.${checks ? ` · средний ${rub(revenue / checks)}` : ""}`);
+    lines.push("", `Итого: ${rub(revenue)} · ${checks} чек.${checks ? ` · средний ${rub(gross / checks)}` : ""}`);
     if (prevRevenue > 0) {
       const diff = Math.round(((revenue - prevRevenue) / prevRevenue) * 100);
       lines.push(`К прошлым 7 дням (${rub(prevRevenue)}): ${diff > 0 ? "+" : ""}${diff}%`);
@@ -1789,7 +1821,8 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       return [
         venueTitle(m.venue) ? `🏠 ${venueTitle(m.venue)}` : "",
         `💰 Выручка сегодня (с ${DAY_START_HOUR}:00): ${rub(st.revenue)}`,
-        `Чеков закрыто: ${st.checks}${st.checks ? ` · средний ${rub(st.revenue / st.checks)}` : ""}`,
+        `Чеков закрыто: ${st.checks}${st.checks ? ` · средний ${rub(avgCheck(st))}` : ""}`,
+        st.refunds ? `Возвраты: ${st.refunds} на ${rub(st.refundSum)} (уже вычтены)` : "",
         `Наличные ${rub(st.cash)} · карта ${rub(st.card)} · терминал/СБП ${rub(st.terminal)}`,
         st.aggregator ? `Агрегаторы: ${rub(st.aggregator)} (переведут позже)` : "",
         st.comp ? `За счёт заведения: ${rub(st.comp)}` : "",
@@ -1805,8 +1838,8 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       // Вчера к этому же часу — честное сравнение незаконченного дня.
       const yStart = new Date(d.start.getTime() - DAY_MS);
       const yesterday = salesStats(await closedSince(tid, yStart, new Date(d.now.getTime() - DAY_MS)), d.ex);
-      const a = today.checks ? today.revenue / today.checks : 0;
-      const b = yesterday.checks ? yesterday.revenue / yesterday.checks : 0;
+      const a = avgCheck(today);
+      const b = avgCheck(yesterday);
       const diff = b ? Math.round(((a - b) / b) * 100) : null;
       return `🧾 Средний чек сегодня: ${rub(a)} (${today.checks} чек.)\n`
         + `Вчера к этому часу: ${rub(b)} (${yesterday.checks} чек.)${diff === null ? "" : `\nИзменение: ${diff > 0 ? "+" : ""}${diff}%`}`;
@@ -1870,10 +1903,14 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       const venue = await venueOf(tid);
       const shift = await openCashShift(tid);
       if (!shift) return "💵 Касса закрыта — смена не открыта.";
-      const sessions = (await closedSince(tid, shift.openedAt)).filter((s) => s.status !== "cancelled");
+      const all = await closedSince(tid, shift.openedAt);
+      const sessions = all.filter((s) => s.status !== "cancelled");
       let sales = 0;
       let tips = 0;
       for (const s of sessions) {
+        // Чек прошлой смены, возвращённый в этой, — не продажа этой смены
+        // (выданные наличные — в «возвратах наличными» из операций кассы).
+        if (msOf(s.closedAt) < shift.openedAt.getTime()) continue;
         if (s.closedWithoutPayment) continue;
         if (s.refunded && !s.refundCashOut) continue;
         sales += Number(s.paymentCash) || 0;
@@ -1887,7 +1924,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       const pay = sumOf("payout");
       const ref = sumOf("refund");
       const expected = opening + sales + tips + dep - col - pay - ref;
-      const st = salesStats(sessions, await loyaltyExclude(tid));
+      const st = salesStats(all, await loyaltyExclude(tid));
       const stale = staleCashText(shift.openedAt, venue.timezone);
       return [
         `💵 Касса, смена ${sinceLabel(shift.openedAt, venue.timezone)}`,
@@ -1912,7 +1949,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     },
     async week(bot, tid) {
       const w = await weekOf(tid);
-      return weekText(w.days.map((x) => ({ start: x.start, revenue: x.st.revenue, checks: x.st.checks })), w.prev.revenue, w.tz);
+      return weekText(w.days.map((x) => ({ start: x.start, revenue: x.st.revenue, gross: x.st.gross, checks: x.st.checks })), w.prev.revenue, w.tz);
     },
     async top(bot, tid) {
       const d = await dayOf(tid);
@@ -2091,6 +2128,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         w.days.forEach((x, i) => {
           days[i].start = days[i].start || x.start;
           days[i].revenue += x.st.revenue;
+          days[i].gross = (days[i].gross || 0) + x.st.gross;
           days[i].checks += x.st.checks;
         });
         prev += w.prev.revenue;

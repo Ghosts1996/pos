@@ -142,6 +142,33 @@ const deps = {
 const tg = tgmod.createTelegram(deps);
 const tick = () => new Promise((r) => setTimeout(r, 30));
 
+// ---- выручка как Z-отчёт кассы: продажи по закрытию, возвраты по дню возврата
+{
+  const assert = require("assert");
+  const day = (h) => Date.UTC(2026, 9, 24, h);
+  const item = (price) => [{ name: "Чай", price, qty: 1 }];
+  const all = [
+    { id: "a", status: "closed", closedAt: day(10), orderItems: item(500), paymentCash: 500 },
+    // Вчерашний чек, возвращённый сегодня: вчера — продажа, сегодня — возврат.
+    { id: "b", status: "closed", closedAt: day(10) - 86400000, refunded: true, refundedAt: day(11), orderItems: item(300), paymentCash: 300 },
+    // Сегодня продали и сегодня вернули — в продажах и в возвратах, выручка 0.
+    { id: "c", status: "closed", closedAt: day(12), refunded: true, refundedAt: day(13), orderItems: item(200), paymentCard: 200 },
+    // Старый чек без даты возврата — возврат в день закрытия.
+    { id: "d", status: "closed", closedAt: day(14), refunded: true, orderItems: item(100), paymentCash: 100 },
+    { id: "e", status: "cancelled", closedAt: day(15), orderItems: item(999) },
+  ];
+  const today = tgmod.salesStats(all, true, { from: day(6), to: day(6) + 86400000 });
+  assert.strictEqual(today.checks, 3, "продажи сегодня: a, c, d");
+  assert.strictEqual(today.gross, 800);
+  assert.strictEqual(today.refunds, 3, "возвраты сегодня: b, c, d");
+  assert.strictEqual(today.refundSum, 600);
+  assert.strictEqual(today.revenue, 200, "выручка = продажи − возвраты");
+  assert.deepStrictEqual([...today.items.entries()], [["Чай", 500]], "в топе — только невозвращённое");
+  const yesterday = tgmod.salesStats(all, true, { from: day(6) - 86400000, to: day(6) });
+  assert.strictEqual(yesterday.revenue, 300, "вчера не переписывается возвратом сегодня");
+  assert.strictEqual(yesterday.refunds, 0);
+}
+
 (async () => {
   store.set("tenants/A", { name: "Кафе А", timezone: "Europe/Moscow" });
   store.set("tenants/B", { name: "Бар Б", timezone: "Europe/Moscow" });
@@ -525,12 +552,13 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   let before = closedReads;
   text = await more("week");
   assert.ok(closedReads > before, "прошедшие сутки — один раз из Firestore");
-  assert.match(text, /\(сегодня\) — 3\s700 ₽ · 2 чек\./);
-  assert.match(text, /Итого: 4\s000 ₽ · 3 чек\./);
+  // Как Z-отчёт: возвращённый чек — в продажах (3 чека), его сумма вычтена из выручки.
+  assert.match(text, /\(сегодня\) — 3\s700 ₽ · 3 чек\./);
+  assert.match(text, /Итого: 4\s000 ₽ · 4 чек\./);
   assert.match(text, /К прошлым 7 дням \(1\s000 ₽\): \+300%/);
   // Копия на сервере: повторные отчёты чеки из Firestore заново не читают.
   before = closedReads;
-  assert.match(await more("week"), /Итого: 4\s000 ₽ · 3 чек\./);
+  assert.match(await more("week"), /Итого: 4\s000 ₽ · 4 чек\./);
   assert.match((await ask("💰 Выручка сегодня")).text, /Выручка сегодня \(с 6:00\): 3\s700 ₽/);
   await more("top");
   await ask("💵 Касса сейчас");
@@ -539,13 +567,19 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   store.set("tenants/C2/sessions/p5", { status: "closed", tableId: "t2", closedAt: new TS(Date.now() - 10000), orderItems: [{ name: "Чай", price: 100, qty: 1 }], paymentCash: 100 });
   assert.match((await ask("💰 Выручка сегодня")).text, /Выручка сегодня \(с 6:00\): 3\s800 ₽/);
   assert.equal(closedReads, before);
-  // Возврат вчерашнего чека — копия обновилась, без перечитывания дня.
+  // Возврат вчерашнего чека сегодня — как в Z-отчёте: вчера не меняется,
+  // возврат — в сегодняшней выручке. Копия узнаёт о нём подпиской.
   store.set("tenants/C2/sessions/w1", { ...store.get("tenants/C2/sessions/w1"), refunded: true, refundedAt: new TS(Date.now()) });
   fire(); await tick();
-  assert.match(await more("yesterday"), /Выручка: 0 ₽/);
+  assert.match(await more("yesterday"), /Выручка: 300 ₽/, "вчерашние итоги задним числом не переписываются");
+  let rev = (await ask("💰 Выручка сегодня")).text;
+  assert.match(rev, /Выручка сегодня \(с 6:00\): 3\s500 ₽/, "возврат вчерашнего чека вычтен сегодня");
+  assert.match(rev, /Возвраты: 2 на 1\s500 ₽ \(уже вычтены\)/);
   store.set("tenants/C2/sessions/w1", { ...store.get("tenants/C2/sessions/w1"), refunded: false, refundedAt: null });
   fire(); await tick(); await tick();
-  assert.match(await more("yesterday"), /Выручка: 300 ₽/, "отмена возврата — тоже");
+  rev = (await ask("💰 Выручка сегодня")).text;
+  assert.match(rev, /Выручка сегодня \(с 6:00\): 3\s800 ₽/, "отмена возврата — тоже");
+  assert.match(await more("yesterday"), /Выручка: 300 ₽/);
   store.delete("tenants/C2/sessions/p5");
   // Прошедшие сутки — в файле на сервере, без имён, телефонов и адресов.
   await new Promise((r) => setTimeout(r, 1200));
@@ -592,7 +626,7 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   text = await more("top");
   assert.match(text, /Сеть «Ромашка» — топ продаж сегодня:\n1\. Чай — 5 шт · 2\s500 ₽\n2\. Пирог — 1 шт · 1\s200 ₽/);
   text = await more("week");
-  assert.match(text, /Итого: 5\s000 ₽ · 4 чек\./);
+  assert.match(text, /Итого: 5\s000 ₽ · 5 чек\./); // возвращённый чек — тоже продажа, как в Z-отчёте
   assert.match(text, /📍 Арбат: 4\s000 ₽\n📍 Центр: 1\s000 ₽/);
   text = await more("yesterday");
   assert.match(text, /Сеть «Ромашка» — итоги/);
@@ -716,7 +750,7 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   await tg2.handleHook(mkReq({ callback_query: { id: "rw", from: { id: 701 }, data: "r:week", message: { chat: { id: 701 }, message_id: 1 } } },
     { "x-telegram-bot-api-secret-token": store.get("telegramBots/C1").hookSecret }), mkRes(), "C1");
   const weekAfter = sent.filter((m) => m.method === "sendMessage" && m.body.chat_id === 701).pop().body.text;
-  assert.match(weekAfter, /Итого: 5\s000 ₽ · 4 чек\./);
+  assert.match(weekAfter, /Итого: 5\s000 ₽ · 5 чек\./);
   assert.equal(closedReads, before, "после перезапуска неделя — из файла на сервере");
   require("fs").rmSync(cacheDir, { recursive: true, force: true });
   // Оформление: заголовок и подписи жирным, пользовательский текст экранирован.
