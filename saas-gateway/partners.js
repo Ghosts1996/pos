@@ -29,13 +29,59 @@ const crypto = require("crypto");
 
 const INVITE_TTL_MS = 30 * 24 * 3600 * 1000;
 const INVITES_PER_DAY = 30;
-const DEFAULT_SETTINGS = { taxPct: 6, feePct: 3.9 };
+// payoutMin — с какой суммы менеджер может запросить выплату; holdDays —
+// сколько дней начисление ждёт после оплаты клиента (вдруг будет возврат).
+const DEFAULT_SETTINGS = { taxPct: 6, feePct: 3.9, payoutMin: 1000, holdDays: 14 };
+const DAY_MS = 24 * 3600 * 1000;
+const NDFL_PCT = 13;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 // Редакция правил программы: менеджер принимает их в кабинете, редакция — в журнале.
-const TERMS_EDITION = "Редакция от 24 октября 2026 г.";
+const TERMS_EDITION = "Редакция № 2 от 24 октября 2026 г.";
 const TAX_STATUSES = { npd: "самозанятый", ip: "ИП", person: "физлицо (налог удерживаете вы)" };
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+/**
+ * Сколько перечислить: самозанятому и ИП — всё начисленное (налоги они
+ * платят сами); физлицу без статуса — за вычетом НДФЛ 13% (налог в полных
+ * рублях, ст. 52 НК РФ), страховые взносы платформа платит сверху.
+ */
+function payoutCalc(gross, taxStatus) {
+  const g = round2(gross);
+  const ndfl = taxStatus === "person" ? Math.round(g * NDFL_PCT / 100) : 0;
+  return { gross: g, ndfl, net: round2(g - ndfl) };
+}
+
+/** ИНН физлица/ИП — 12 цифр с двумя контрольными. */
+function innOk(inn) {
+  if (!/^\d{12}$/.test(inn)) return false;
+  const d = inn.split("").map(Number);
+  const k = (w) => (w.reduce((s, x, i) => s + x * d[i], 0) % 11) % 10;
+  return k([7, 2, 4, 10, 3, 5, 9, 4, 6, 8]) === d[10] && k([3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8]) === d[11];
+}
+
+/** Реквизиты для перевода по СБП: телефон, банк, ФИО, ИНН. */
+function cleanDetails(body) {
+  let phone = String(body.phone || "").replace(/\D/g, "");
+  if (phone.length === 11 && phone[0] === "8") phone = `7${phone.slice(1)}`;
+  if (phone.length === 10 && phone[0] === "9") phone = `7${phone}`;
+  if (!/^79\d{9}$/.test(phone)) throw new Error("Телефон для СБП — российский мобильный, например +7 900 123-45-67");
+  const bank = String(body.bank || "").trim().replace(/\s+/g, " ").slice(0, 60);
+  if (bank.length < 2) throw new Error("Укажите банк, в который придёт перевод");
+  const fullName = String(body.fullName || "").trim().replace(/\s+/g, " ").slice(0, 120);
+  if (!/^[А-ЯЁа-яё-]+(\s[А-ЯЁа-яё-]+){1,3}$/.test(fullName)) throw new Error("ФИО получателя — полностью, кириллицей, как в банке");
+  const inn = String(body.inn || "").replace(/\D/g, "");
+  if (!innOk(inn)) throw new Error("Проверьте ИНН: 12 цифр, как в «Мой налог» или на госуслугах");
+  return { method: "sbp", phone: `+${phone}`, bank, fullName, inn };
+}
+/** Чек самозанятого за безналичную выплату — до 9-го числа следующего месяца (422-ФЗ, ст. 14). */
+function receiptDue(paidMs) {
+  const d = new Date(paidMs + 3 * 3600 * 1000); // по Москве
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 9, 20, 59, 59); // 9-е, 23:59 МСК
+}
+const RECEIPT_RE = /^https:\/\/lknpd\.nalog\.ru\/api\/v1\/receipt\/\d{10,12}\/[\w-]{4,40}\/print\/?$/;
+
+const maskDetails = (d) => (d ? `СБП ${d.phone.slice(0, 2)} *** ***-${d.phone.slice(-4, -2)}-${d.phone.slice(-2)} · ${d.bank} · ${d.fullName.split(" ").map((w, i) => (i === 0 ? w : `${w[0]}.`)).join(" ")}` : "");
 const normEmail = (e) => String(e || "").trim().toLowerCase();
 const emailKey = (e) => crypto.createHash("sha256").update(normEmail(e)).digest("hex").slice(0, 32);
 const toMs = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : typeof v === "number" ? v : 0);
@@ -77,6 +123,7 @@ function createPartners(deps) {
     hookBase = (process.env.TELEGRAM_HOOK_BASE || "").replace(/\/+$/, ""),
     letters = require("./auth-email"),
     platformLegal = async () => ({}),
+    notifyAdmins = () => {},
     auth = () => admin.auth(),
   } = deps;
   const ts = (ms) => admin.firestore.Timestamp.fromMillis(ms);
@@ -156,13 +203,59 @@ function createPartners(deps) {
       col("partnerClients").where("partnerId", "==", p.id).get(),
       accrualsOf(p.id),
     ]);
-    return { clients: clients.size, ...sums(accruals) };
+    return { clients: clients.size, ...sums(accruals), ...balanceOf(accruals, await settings(), p.taxStatus) };
   }
+
+  // Новая редакция правил — менеджер принимает её заново.
+  const termsOk = (p) => !!p.termsAcceptedAt && p.termsEditionAccepted === TERMS_EDITION;
+  const detailsOf = (p) => {
+    if (!p.payoutDetailsEnc) return null;
+    try { return JSON.parse(decrypt(secretKey(), p.payoutDetailsEnc)); } catch (_) { return null; }
+  };
+
+  // ------------------------------------------------------------ баланс
+
+  const isOpenAccrual = (a) => a.status !== "reversed" && !a.payoutId;
+  /** Можно запросить: не выплачено, не в запросе, прошло holdDays (удержания — сразу). */
+  const isAvailable = (a, s) => isOpenAccrual(a) && !a.requestId && (a.amount < 0 || toMs(a.paidAt) <= now() - s.holdDays * DAY_MS);
+
+  function balanceOf(accruals, s, taxStatus) {
+    let available = 0;
+    let hold = 0;
+    let requested = 0;
+    let nextAt = 0;
+    for (const a of accruals) {
+      if (!isOpenAccrual(a)) continue;
+      if (a.requestId) requested += a.amount;
+      else if (isAvailable(a, s)) available += a.amount;
+      else {
+        hold += a.amount;
+        const at = toMs(a.paidAt) + s.holdDays * DAY_MS;
+        if (!nextAt || at < nextAt) nextAt = at;
+      }
+    }
+    available = round2(available);
+    return {
+      available, hold: round2(hold), requested: round2(requested), holdUntil: nextAt || null,
+      payoutMin: s.payoutMin, holdDays: s.holdDays, canRequest: available >= s.payoutMin && available > 0,
+      calc: payoutCalc(Math.max(0, available), taxStatus),
+    };
+  }
+
+  const openRequestOf = async (partnerId) => {
+    const snap = await col("partnerPayoutRequests").where("partnerId", "==", partnerId).get();
+    const d = snap.docs.find((x) => x.data().status === "requested");
+    return d ? { id: d.id, ...d.data() } : null;
+  };
+  const publicRequest = (r) => r && ({
+    id: r.id, status: r.status, gross: r.gross, ndfl: r.ndfl, net: r.net, requestedAt: toMs(r.requestedAt), details: r.detailsMask || "",
+  });
 
   const publicPartner = (p) => ({
     id: p.id, name: p.name || "", email: p.email, code: p.code, link: linkOf(p), percent: p.percent, months: p.months || 0,
     status: p.status, taxStatus: p.taxStatus || "npd", taxStatusLabel: TAX_STATUSES[p.taxStatus || "npd"],
-    termsAcceptedAt: toMs(p.termsAcceptedAt) || null, termsEdition: TERMS_EDITION, telegram: !!p.tgChatId,
+    termsAcceptedAt: termsOk(p) ? toMs(p.termsAcceptedAt) : null, termsEdition: TERMS_EDITION, telegram: !!p.tgChatId,
+    payoutDetails: p.payoutDetailsMask || "",
   });
 
   // ------------------------------------------------------------ кабинет менеджера
@@ -172,7 +265,7 @@ function createPartners(deps) {
     const p = await partnerByUid(decoded.uid);
     if (!p || p.status === "removed") return sendJson(res, 200, { partner: null });
     const s = await settings();
-    sendJson(res, 200, { partner: publicPartner(p), summary: await summaryOf(p), settings: { taxPct: s.taxPct, feePct: s.feePct }, bot: botInfo() });
+    sendJson(res, 200, { partner: publicPartner(p), summary: await summaryOf(p), settings: { taxPct: s.taxPct, feePct: s.feePct, payoutMin: s.payoutMin, holdDays: s.holdDays }, bot: botInfo() });
   }
 
   async function handleAcceptTerms(req, res) {
@@ -242,6 +335,7 @@ function createPartners(deps) {
 
   /** Клиенты, приглашения и начисления менеджера. */
   async function dashboardOf(p) {
+    const s0 = await settings();
     const [clientsSnap, invitesSnap, accruals, payoutsSnap] = await Promise.all([
       col("partnerClients").where("partnerId", "==", p.id).get(),
       col("partnerInvites").where("partnerId", "==", p.id).get(),
@@ -274,10 +368,21 @@ function createPartners(deps) {
     const history = accruals.map((a) => ({
       id: a.id, venueName: a.venueName || "", paidAt: toMs(a.paidAt), gross: a.gross, fee: a.fee, tax: a.tax, base: a.base,
       percent: a.percent, amount: a.amount, status: a.status, paidOut: !!a.payoutId, purpose: a.purpose || "",
+      requested: !!a.requestId && !a.payoutId, availableAt: a.amount < 0 ? null : toMs(a.paidAt) + s0.holdDays * DAY_MS, clawback: !!a.clawbackOf,
     })).sort((a, b) => b.paidAt - a.paidAt);
-    const payouts = payoutsSnap.docs.map((d) => ({ id: d.id, amount: d.data().amount, paidAt: toMs(d.data().paidAt), note: d.data().note || "" }))
-      .sort((a, b) => b.paidAt - a.paidAt);
-    return { clients, invites, accruals: history, payouts, summary: { clients: clients.length, ...sums(accruals) } };
+    const payouts = payoutsSnap.docs.map((d) => {
+      const x = d.data();
+      return {
+        id: d.id, amount: x.amount, ndfl: x.ndfl || 0, net: x.net ?? x.amount, paidAt: toMs(x.paidAt), note: x.note || "",
+        taxStatus: x.taxStatus || "", receiptUrl: x.receiptUrl || "", receiptAt: toMs(x.receiptAt) || null,
+        needReceipt: x.taxStatus === "npd" && !x.receiptUrl, receiptDue: x.taxStatus === "npd" ? receiptDue(toMs(x.paidAt)) : null,
+      };
+    }).sort((a, b) => b.paidAt - a.paidAt);
+    const s = await settings();
+    return {
+      clients, invites, accruals: history, payouts, request: publicRequest(await openRequestOf(p.id)),
+      summary: { clients: clients.length, ...sums(accruals), ...balanceOf(accruals, s, p.taxStatus) },
+    };
   }
 
   async function handleDashboard(req, res) {
@@ -398,10 +503,20 @@ function createPartners(deps) {
     for (const d of (await partnersCol().get()).docs) {
       const p = { id: d.id, ...d.data() };
       if (p.status === "removed") continue;
-      list.push({ ...publicPartner(p), summary: await summaryOf(p), createdAt: toMs(p.createdAt) });
+      const r = await openRequestOf(p.id);
+      // Администратору — полные реквизиты открытого запроса: по ним переводить.
+      let request = null;
+      if (r) {
+        let details = null;
+        try { details = JSON.parse(decrypt(secretKey(), r.detailsEnc)); } catch (_) {}
+        request = { ...publicRequest(r), taxStatus: r.taxStatus, fullDetails: details };
+      }
+      const payouts = (await col("partnerPayouts").where("partnerId", "==", p.id).get()).docs.map((d) => d.data());
+      const receiptsMissing = payouts.filter((x) => x.taxStatus === "npd" && !x.receiptUrl).length;
+      list.push({ ...publicPartner(p), summary: await summaryOf(p), createdAt: toMs(p.createdAt), request, receiptsMissing });
     }
     list.sort((a, b) => b.createdAt - a.createdAt);
-    sendJson(res, 200, { partners: list, settings: { taxPct: s.taxPct, feePct: s.feePct }, bot: botInfo(), termsEdition: TERMS_EDITION, taxStatuses: TAX_STATUSES });
+    sendJson(res, 200, { partners: list, settings: { taxPct: s.taxPct, feePct: s.feePct, payoutMin: s.payoutMin, holdDays: s.holdDays }, bot: botInfo(), termsEdition: TERMS_EDITION, taxStatuses: TAX_STATUSES });
   }
 
   async function handleAdminPartner(req, res) {
@@ -485,7 +600,18 @@ function createPartners(deps) {
     const feePct = Number(body.feePct);
     if (!Number.isFinite(taxPct) || taxPct < 0 || taxPct > 50) throw new HttpError(400, "Налог — от 0 до 50%");
     if (!Number.isFinite(feePct) || feePct < 0 || feePct > 20) throw new HttpError(400, "Комиссия — от 0 до 20%");
-    await settingsRef().set({ taxPct: round2(taxPct), feePct: round2(feePct), updatedAt: ts(now()) }, { merge: true });
+    const upd = { taxPct: round2(taxPct), feePct: round2(feePct), updatedAt: ts(now()) };
+    if (body.payoutMin !== undefined) {
+      const v = Number(body.payoutMin);
+      if (!Number.isFinite(v) || v < 0 || v > 100000) throw new HttpError(400, "Минимальная выплата — от 0 до 100 000 ₽");
+      upd.payoutMin = round2(v);
+    }
+    if (body.holdDays !== undefined) {
+      const v = Number(body.holdDays);
+      if (!Number.isInteger(v) || v < 0 || v > 60) throw new HttpError(400, "Ожидание после оплаты — от 0 до 60 дней");
+      upd.holdDays = v;
+    }
+    await settingsRef().set(upd, { merge: true });
     sendJson(res, 200, { ok: true });
   }
 
@@ -512,19 +638,161 @@ function createPartners(deps) {
   }
 
   async function payout(decoded, body, partnerId, res) {
-    if (!(await partnersCol().doc(partnerId).get()).exists) throw new HttpError(404, "Менеджер не найден");
-    const open = (await accrualsOf(partnerId)).filter((a) => a.status !== "reversed" && !a.payoutId);
+    const pDoc = (await partnersCol().doc(partnerId).get()).data();
+    if (!pDoc) throw new HttpError(404, "Менеджер не найден");
+    const note = String(body.note || "").trim().slice(0, 200);
+    const all = await accrualsOf(partnerId);
+    let open;
+    let request = null;
+    if (body.requestId) {
+      // По запросу менеджера — ровно те начисления, что попали в запрос.
+      const rRef = col("partnerPayoutRequests").doc(String(body.requestId));
+      const r = (await rRef.get()).data();
+      if (!r || r.partnerId !== partnerId) throw new HttpError(404, "Запрос не найден");
+      if (r.status !== "requested") throw new HttpError(409, r.status === "paid" ? "Этот запрос уже выплачен" : "Запрос отменён — обновите страницу");
+      open = all.filter((a) => a.requestId === rRef.id && isOpenAccrual(a));
+      request = { ref: rRef, ...r };
+    } else {
+      // Без запроса — всё невыплаченное, кроме того, что уже в чужом запросе.
+      open = all.filter((a) => isOpenAccrual(a) && !a.requestId);
+    }
     if (!open.length) throw new HttpError(400, "Невыплаченных начислений нет");
     const amount = round2(open.reduce((s, a) => s + a.amount, 0));
+    if (amount <= 0) throw new HttpError(400, `К выплате ${fmtRub(amount)}: удержания за возвраты больше начислений`);
+    if (request && Math.abs(request.gross - amount) > 0.009) throw new HttpError(409, "Сумма запроса не сходится с начислениями — отклоните запрос, менеджер запросит заново");
     if (body.expected !== undefined && Math.abs(Number(body.expected) - amount) > 0.009) {
       throw new HttpError(409, "Сумма к выплате изменилась — обновите страницу");
     }
+    const taxStatus = (request && request.taxStatus) || pDoc.taxStatus || "npd";
+    const calc = payoutCalc(amount, taxStatus);
     const ref = col("partnerPayouts").doc();
-    const note = String(body.note || "").trim().slice(0, 200);
-    await ref.set({ partnerId, amount, accrualIds: open.map((a) => a.id), note, paidAt: ts(now()), by: decoded.uid });
+    await ref.set({
+      partnerId, amount, ndfl: calc.ndfl, net: calc.net, taxStatus, accrualIds: open.map((a) => a.id), note,
+      ...(request ? { requestId: request.ref.id } : {}), paidAt: ts(now()), by: decoded.uid,
+    });
     for (const a of open) await col("partnerAccruals").doc(a.id).set({ payoutId: ref.id }, { merge: true });
-    notify(partnerId, `✅ Выплата ${fmtRub(amount)} отмечена${note ? ` (${note})` : ""}.`).catch(() => {});
-    sendJson(res, 200, { ok: true, amount });
+    if (request) await request.ref.set({ status: "paid", payoutId: ref.id, paidAt: ts(now()) }, { merge: true });
+    const lines = [`✅ <b>Выплата отправлена: ${fmtRub(calc.net)}</b>${note ? ` (${h(note)})` : ""}`];
+    if (calc.ndfl) lines.push(`Начислено ${fmtRub(amount)}, удержан НДФЛ ${NDFL_PCT}% — ${fmtRub(calc.ndfl)}.`);
+    if (taxStatus === "npd") {
+      const pl = (await platformLegal().catch(() => ({}))) || {};
+      const who = pl.fullName ? `ИП ${h(pl.fullName)}${pl.inn ? `, ИНН ${h(pl.inn)}` : ""}` : "ИП — правообладателя ZalPOS (реквизиты в договоре)";
+      lines.push("", `🧾 Сформируйте чек в «Мой налог» на ${fmtRub(amount)}: покупатель — ${who}, услуга — «Привлечение клиентов по договору».`,
+        `Срок — до ${fmtDate(receiptDue(now()))}. Пришлите сюда ссылку на чек («Поделиться» → «Скопировать ссылку»).`);
+    }
+    notify(partnerId, lines.join("\n")).catch(() => {});
+    sendJson(res, 200, { ok: true, amount, ...calc });
+  }
+
+  // ------------------------------------------------------------ запрос выплаты менеджером
+
+  /** Реквизиты для перевода — хранятся зашифрованными, менеджеру видна маска. */
+  async function handlePayoutDetails(req, res) {
+    const { partner } = await requirePartner(req);
+    const body = await parseJsonBody(req);
+    let d;
+    try { d = cleanDetails(body); } catch (e) { throw new HttpError(400, e.message); }
+    await partnersCol().doc(partner.id).set({ payoutDetailsEnc: encrypt(secretKey(), JSON.stringify(d)), payoutDetailsMask: maskDetails(d), payoutDetailsAt: ts(now()) }, { merge: true });
+    sendJson(res, 200, { ok: true, payoutDetails: maskDetails(d) });
+  }
+
+  async function requestPayout(partner) {
+    return withPayoutLock(partner.id, async () => {
+      const p = { id: partner.id, ...((await partnersCol().doc(partner.id).get()).data() || {}) };
+      if (p.status !== "active") throw new HttpError(403, "Программа для вас приостановлена — обратитесь к администратору ZalPOS");
+      if (!termsOk(p)) throw new HttpError(412, "Сначала примите правила партнёрской программы в кабинете");
+      const details = detailsOf(p);
+      if (!details) throw new HttpError(412, "Укажите реквизиты для перевода в кабинете менеджера");
+      if (await openRequestOf(p.id)) throw new HttpError(409, "Запрос уже отправлен — дождитесь выплаты или отмените его");
+      const s = await settings();
+      const avail = (await accrualsOf(p.id)).filter((a) => isAvailable(a, s));
+      const gross = round2(avail.reduce((sum, a) => sum + a.amount, 0));
+      if (gross <= 0 || gross < s.payoutMin) throw new HttpError(400, `Доступно к выплате ${fmtRub(Math.max(0, gross))} — запросить можно от ${fmtRub(s.payoutMin)}`);
+      const calc = payoutCalc(gross, p.taxStatus || "npd");
+      const ref = col("partnerPayoutRequests").doc();
+      await ref.set({
+        partnerId: p.id, status: "requested", ...calc, taxStatus: p.taxStatus || "npd", accrualIds: avail.map((a) => a.id),
+        detailsEnc: p.payoutDetailsEnc, detailsMask: maskDetails(details), requestedAt: ts(now()),
+      });
+      for (const a of avail) await col("partnerAccruals").doc(a.id).set({ requestId: ref.id }, { merge: true });
+      try {
+        notifyAdmins([
+          `💸 <b>Запрос выплаты</b>: ${h(p.name || p.email)}`,
+          `К перечислению: <b>${fmtRub(calc.net)}</b>${calc.ndfl ? ` (начислено ${fmtRub(calc.gross)}, НДФЛ ${fmtRub(calc.ndfl)} удержать и перечислить в бюджет)` : ""}`,
+          `${TAX_STATUSES[p.taxStatus || "npd"]} · СБП ${h(details.phone)} · ${h(details.bank)} · ${h(details.fullName)} · ИНН ${h(details.inn)}`,
+          "Отметьте выплату в панели платформы → «Менеджеры».",
+        ].join("\n"));
+      } catch (_) {}
+      return { id: ref.id, ...calc };
+    });
+  }
+
+  async function cancelPayout(partner) {
+    return withPayoutLock(partner.id, async () => {
+      const r = await openRequestOf(partner.id);
+      if (!r) throw new HttpError(404, "Открытого запроса нет");
+      await releaseRequest(r, { status: "cancelled", cancelledAt: ts(now()) });
+      return { ok: true };
+    });
+  }
+
+  async function releaseRequest(r, patch) {
+    await col("partnerPayoutRequests").doc(r.id).set(patch, { merge: true });
+    for (const a of await accrualsOf(r.partnerId)) {
+      if (a.requestId === r.id && !a.payoutId) await col("partnerAccruals").doc(a.id).set({ requestId: null }, { merge: true });
+    }
+  }
+
+  async function handlePayoutRequest(req, res) {
+    const { partner } = await requirePartner(req);
+    const body = await parseJsonBody(req);
+    if (body.action === "cancel") return sendJson(res, 200, await cancelPayout(partner));
+    sendJson(res, 200, { ok: true, ...(await requestPayout(partner)) });
+  }
+
+  /** Самозанятый прикладывает ссылку на чек из «Мой налог» к выплате. */
+  async function attachReceipt(partner, payoutId, url) {
+    const u = String(url || "").trim();
+    if (!RECEIPT_RE.test(u)) throw new HttpError(400, "Нужна ссылка на чек из «Мой налог»: https://lknpd.nalog.ru/api/v1/receipt/…/print");
+    let ref;
+    if (payoutId) {
+      ref = col("partnerPayouts").doc(String(payoutId));
+      const x = (await ref.get()).data();
+      if (!x || x.partnerId !== partner.id) throw new HttpError(404, "Выплата не найдена");
+    } else {
+      const waiting = (await col("partnerPayouts").where("partnerId", "==", partner.id).get()).docs
+        .filter((d) => d.data().taxStatus === "npd" && !d.data().receiptUrl).sort((a, b) => toMs(a.data().paidAt) - toMs(b.data().paidAt));
+      if (!waiting.length) throw new HttpError(404, "Нет выплат, которые ждут чека");
+      ref = waiting[0].ref;
+    }
+    await ref.set({ receiptUrl: u, receiptAt: ts(now()) }, { merge: true });
+    const x = (await ref.get()).data();
+    try { notifyAdmins(`🧾 Чек от ${h(partner.name || partner.email)} за выплату ${fmtRub(x.amount)} от ${fmtDate(toMs(x.paidAt))}: ${h(u)}`); } catch (_) {}
+    return { ok: true, payoutId: ref.id, amount: x.amount };
+  }
+
+  async function handlePayoutReceipt(req, res) {
+    const { partner } = await requirePartner(req);
+    const body = await parseJsonBody(req);
+    sendJson(res, 200, await attachReceipt(partner, body.payoutId, body.url));
+  }
+
+  /** Администратор: отклонить запрос (например, реквизиты не те) — деньги вернутся в «доступно». */
+  async function handleAdminPayoutReject(req, res) {
+    await requireSuperAdmin(await verifyAuth(req));
+    const body = await parseJsonBody(req);
+    const id = String(body.requestId || "");
+    if (!/^[\w-]{1,64}$/.test(id)) throw new HttpError(400, "Не указан запрос");
+    const r = (await col("partnerPayoutRequests").doc(id).get()).data();
+    if (!r) throw new HttpError(404, "Запрос не найден");
+    await withPayoutLock(r.partnerId, async () => {
+      const cur = (await col("partnerPayoutRequests").doc(id).get()).data();
+      if (cur.status !== "requested") throw new HttpError(409, "Запрос уже закрыт");
+      const reason = String(body.reason || "").trim().slice(0, 300);
+      await releaseRequest({ id, ...cur }, { status: "rejected", rejectedAt: ts(now()), reason });
+      notify(r.partnerId, `↩️ Запрос выплаты ${fmtRub(cur.net)} отклонён${reason ? `: ${h(reason)}` : ""}. Сумма снова доступна — исправьте, что нужно, и запросите заново.`).catch(() => {});
+    });
+    sendJson(res, 200, { ok: true });
   }
 
   /** Возврат денег клиенту — начисление снимается (если ещё не выплачено — просто не войдёт в выплату). */
@@ -536,7 +804,21 @@ function createPartners(deps) {
     const ref = col("partnerAccruals").doc(accrualId);
     const a = (await ref.get()).data();
     if (!a) throw new HttpError(404, "Начисление не найдено");
-    if (a.payoutId) throw new HttpError(409, "Начисление уже выплачено — учтите это в следующей выплате вручную");
+    if (a.requestId && !a.payoutId) throw new HttpError(409, "Начисление в запросе на выплату — сначала отклоните запрос");
+    if (a.payoutId) {
+      // Уже выплачено: удерживаем из следующей выплаты (правила, раздел 3).
+      if (body.restore) throw new HttpError(409, "Начисление выплачено — восстанавливать нечего");
+      if (a.clawedBack) throw new HttpError(409, "Возврат по этой оплате уже учтён");
+      await col("partnerAccruals").doc(`${accrualId}-back`).set({
+        partnerId: a.partnerId, ownerUid: a.ownerUid || "", venueName: a.venueName || "", invId: `${a.invId || accrualId}-back`,
+        gross: -a.gross, fee: -(a.fee || 0), tax: -(a.tax || 0), base: -(a.base || 0), percent: a.percent, amount: -a.amount,
+        status: "accrued", payoutId: null, requestId: null, clawbackOf: accrualId, purpose: "Возврат клиенту — удержание из следующей выплаты",
+        paidAt: ts(now()),
+      });
+      await ref.set({ clawedBack: true, clawedBackAt: ts(now()) }, { merge: true });
+      notify(a.partnerId, `↩️ Клиенту «${h(a.venueName || "заведение")}» вернули оплату. Выплаченные ${fmtRub(a.amount)} будут удержаны из следующей выплаты.`).catch(() => {});
+      return sendJson(res, 200, { ok: true, clawback: true });
+    }
     await ref.set({ status: body.restore ? "accrued" : "reversed", reversedAt: ts(now()) }, { merge: true });
     sendJson(res, 200, { ok: true });
   }
@@ -706,7 +988,7 @@ function createPartners(deps) {
     `${BTN.link} — ссылка для клиентов, её можно переслать`,
     `${BTN.pitch} — готовое сообщение владельцу со ссылкой`,
     `${BTN.invites} — кому отправлены письма и кто зарегистрировался`,
-    `${BTN.payouts} — история выплат`,
+    `${BTN.payouts} — запросить выплату, история выплат и чеки`,
     "",
     "Бот сам сообщит о новых клиентах, оплатах и выплатах, а за 3 дня до конца подписки клиента — напомнит предложить продление.",
   ].join("\n");
@@ -741,6 +1023,27 @@ function createPartners(deps) {
   const sayPitch = (chatId, p, i) => say(chatId, `✍️ <b>Текст для клиента</b> — скопируйте или нажмите «Отправить клиенту»:\n\n${h(PITCHES[i](linkOf(p)))}`, { reply_markup: pitchButtons(linkOf(p), i) });
 
   const INVITE_STATUS = { sent: "⏳ ждёт регистрации", registered: "✅ зарегистрировался", expired: "⌛ срок истёк", optedOut: "🚫 отказался от писем" };
+
+  async function sayPayouts(chatId, p) {
+    const { payouts, summary: b, request } = await dashboardOf(p);
+    const lines = ["💸 <b>Выплаты</b>", ""];
+    if (request) {
+      lines.push(`⏳ Запрос отправлен ${fmtDate(request.requestedAt)}: <b>${fmtRub(request.net)}</b>${request.ndfl ? ` (НДФЛ ${fmtRub(request.ndfl)} удерживается)` : ""}`, `   на ${h(request.details)}`, "");
+    }
+    lines.push(`Доступно к выплате: <b>${fmtRub(b.available)}</b>`);
+    if (b.hold > 0) lines.push(`Ждут ${b.holdDays} дн. после оплаты: ${fmtRub(b.hold)}${b.holdUntil ? ` (ближайшее — ${fmtDate(b.holdUntil)})` : ""}`);
+    lines.push(`Выплачено всего: ${fmtRub(b.paid)}`, "");
+    const waiting = payouts.filter((x) => x.needReceipt);
+    if (waiting.length) lines.push(`🧾 Нужен чек из «Мой налог»: ${waiting.map((x) => `${fmtRub(x.amount)} от ${fmtDate(x.paidAt)} (до ${fmtDate(x.receiptDue)})`).join("; ")}. Пришлите ссылку на чек сюда.`, "");
+    lines.push(payouts.length ? payouts.slice(0, 15).map((x) => `• ${fmtDate(x.paidAt)} — <b>${fmtRub(x.net)}</b>${x.ndfl ? ` (НДФЛ ${fmtRub(x.ndfl)})` : ""}${x.note ? ` · ${h(x.note)}` : ""}${x.receiptUrl ? " · чек ✓" : ""}`).join("\n") : "Выплат пока не было.");
+    const kb = [];
+    if (request) kb.push([{ text: "✖️ Отменить запрос", callback_data: "ppay_cancel" }]);
+    else if (b.canRequest) kb.push([{ text: `💸 Запросить ${fmtRub(b.calc.net)}`, callback_data: "ppay_ask" }]);
+    else lines.push("", `<i>Запросить выплату можно от ${fmtRub(b.payoutMin)}. Начисление становится доступным через ${b.holdDays} дн. после оплаты клиента — на случай возврата.</i>`);
+    if (!p.payoutDetailsEnc) lines.push("", "Чтобы получать выплаты, укажите реквизиты для перевода в кабинете (раздел «Выплаты»).");
+    kb.push([cabinetBtn()]);
+    return say(chatId, lines.join("\n"), { reply_markup: { inline_keyboard: kb } });
+  }
 
   async function askInvite(chatId, email, venueName) {
     if (!EMAIL_RE.test(email)) return say(chatId, "Проверьте адрес почты — например, <code>owner@cafe.ru Кафе Лето</code>");
@@ -837,20 +1140,7 @@ function createPartners(deps) {
         ...(invites.length > 20 ? ["", "Все приглашения — в кабинете."] : []),
       ].join("\n"), { reply_markup: { inline_keyboard: [[{ text: "📨 Пригласить ещё", callback_data: "pmenu_invite" }, cabinetBtn("🖥 Кабинет")]] } });
     }
-    if (cmd === "payouts") {
-      const { payouts, summary } = await dashboardOf(p);
-      const lines = payouts.slice(0, 15).map((x) => `• ${fmtDate(x.paidAt)} — <b>${fmtRub(x.amount)}</b>${x.note ? ` (${h(x.note)})` : ""}`);
-      return say(chatId, [
-        "💸 <b>Выплаты</b>",
-        "",
-        `К выплате сейчас: <b>${fmtRub(summary.unpaid)}</b>`,
-        `Выплачено всего: ${fmtRub(summary.paid)}`,
-        "",
-        payouts.length ? lines.join("\n") : "Выплат пока не было.",
-        "",
-        "<i>Выплату отмечает администратор ZalPOS — бот сразу сообщит о ней.</i>",
-      ].join("\n"), { reply_markup: { inline_keyboard: [[cabinetBtn()]] } });
-    }
+    if (cmd === "payouts") return sayPayouts(chatId, p);
     if (cmd === "invite") {
       const m = text.match(/^\/invite(?:@\w+)?\s+(\S+@\S+)(?:\s+(.+))?$/);
       if (!m) {
@@ -858,6 +1148,14 @@ function createPartners(deps) {
         return say(chatId, ASK_EMAIL, { reply_markup: { inline_keyboard: [[{ text: "✖️ Отмена", callback_data: "pinv_no" }]] } });
       }
       return askInvite(chatId, normEmail(m[1]), m[2]);
+    }
+    if (!cmd && /^https:\/\/lknpd\.nalog\.ru\//.test(text)) {
+      try {
+        const r = await attachReceipt(p, "", text);
+        return say(chatId, `🧾 Спасибо! Чек прикреплён к выплате ${fmtRub(r.amount)}.`, { reply_markup: MENU });
+      } catch (e) {
+        return say(chatId, h(e.message || e));
+      }
     }
     // Ответ на «Напишите почту владельца».
     if (!cmd && askingEmail.has(chatId) && now() - askingEmail.get(chatId) < 30 * 60 * 1000) {
@@ -875,6 +1173,31 @@ function createPartners(deps) {
     // Кнопки под ответом убираем — второй раз не нажмутся.
     const dropButtons = () => q.message.message_id
       && tg("editMessageReplyMarkup", { chat_id: chatId, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
+    if (["ppay_ask", "ppay_yes", "ppay_no", "ppay_cancel"].includes(q.data)) {
+      const p = await partnerByChat(chatId);
+      if (!p || p.status === "removed") return;
+      if (q.data === "ppay_ask") {
+        const b = await summaryOf(p);
+        if (!p.payoutDetailsEnc) return say(chatId, "Сначала укажите реквизиты для перевода в кабинете менеджера (раздел «Выплаты»).", { reply_markup: { inline_keyboard: [[cabinetBtn()]] } });
+        return say(chatId, [
+          `Запросить выплату <b>${fmtRub(b.calc.net)}</b>?`,
+          ...(b.calc.ndfl ? [`Начислено ${fmtRub(b.calc.gross)}, НДФЛ ${NDFL_PCT}% (${fmtRub(b.calc.ndfl)}) удержит и заплатит ZalPOS.`] : []),
+          `Перевод — на ${h(p.payoutDetailsMask)}.`,
+        ].join("\n"), { reply_markup: { inline_keyboard: [[{ text: "✅ Запросить", callback_data: "ppay_yes" }, { text: "✖️ Отмена", callback_data: "ppay_no" }]] } });
+      }
+      await dropButtons();
+      if (q.data === "ppay_no") return say(chatId, "Хорошо, запрос не отправлен.");
+      try {
+        if (q.data === "ppay_cancel") {
+          await cancelPayout(p);
+          return say(chatId, "Запрос отменён, сумма снова доступна к выплате.", { reply_markup: MENU });
+        }
+        const r = await requestPayout(p);
+        return say(chatId, `📤 Запрос отправлен: <b>${fmtRub(r.net)}</b>. Бот сообщит, когда деньги будут перечислены.`, { reply_markup: MENU });
+      } catch (e) {
+        return say(chatId, `Не получилось: ${h(e.message || e)}`);
+      }
+    }
     const pitch = String(q.data || "").match(/^ppitch_(\d)$/);
     if (pitch) {
       const p = await partnerByChat(chatId);
@@ -987,6 +1310,23 @@ function createPartners(deps) {
     return n;
   }
 
+  /** Самозанятому — напомнить про чек: через 3 дня после выплаты и за 2 дня до срока. */
+  async function remindReceipts() {
+    let n = 0;
+    for (const d of (await col("partnerPayouts").get()).docs) {
+      const x = d.data();
+      if (x.taxStatus !== "npd" || x.receiptUrl) continue;
+      const paid = toMs(x.paidAt);
+      const due = receiptDue(paid);
+      const stage = now() > due - 2 * DAY_MS ? 2 : now() > paid + 3 * DAY_MS ? 1 : 0;
+      if (!stage || (x.receiptReminded || 0) >= stage) continue;
+      await d.ref.set({ receiptReminded: stage }, { merge: true });
+      await notify(x.partnerId, `🧾 Нужен чек из «Мой налог» за выплату ${fmtRub(x.amount)} от ${fmtDate(paid)} — срок до ${fmtDate(due)}. Пришлите ссылку на чек сюда («Поделиться» → «Скопировать ссылку»).`);
+      n++;
+    }
+    return n;
+  }
+
   async function start() {
     await loadBot().catch((e) => console.error(`partners: бот: ${e.message || e}`));
     sweepInvites().catch(() => {});
@@ -994,16 +1334,18 @@ function createPartners(deps) {
     const t = setInterval(() => {
       sweepInvites().catch((e) => console.error(`partners: приглашения: ${e.message || e}`));
       remindRenewals().catch((e) => console.error(`partners: напоминания о продлении: ${e.message || e}`));
+      remindReceipts().catch((e) => console.error(`partners: напоминания о чеках: ${e.message || e}`));
     }, 6 * 3600 * 1000);
     if (t.unref) t.unref();
   }
 
   return {
-    start, attachOwner, onPayment, invite, dashboardOf, computeAccrual, sweepInvites, remindRenewals,
+    start, attachOwner, onPayment, invite, dashboardOf, computeAccrual, sweepInvites, remindRenewals, remindReceipts,
     handleMe, handleAcceptTerms, handleInvite, handleDashboard, handleInviteInfo, handleOptOut, handleTgLink, handleNewLink,
+    handlePayoutDetails, handlePayoutRequest, handlePayoutReceipt, handleAdminPayoutReject,
     handleAdminList, handleAdminPartner, handleAdminSave, handleAdminSettings, handleAdminPayout, handleAdminReverse, handleAdminBot, handleAdminContract,
     handleHook, HOOK_ID, TERMS_EDITION, _onMessage: onMessage, _onCallback: onCallback,
   };
 }
 
-module.exports = { createPartners, computeAccrual, maskEmail, cleanCode, translit, TERMS_EDITION, TAX_STATUSES, INVITE_TTL_MS };
+module.exports = { createPartners, computeAccrual, maskEmail, cleanCode, translit, TERMS_EDITION, TAX_STATUSES, INVITE_TTL_MS, payoutCalc, innOk, cleanDetails, receiptDue };

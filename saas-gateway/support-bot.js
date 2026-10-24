@@ -1590,6 +1590,10 @@ function createSupportBot(deps) {
     alerted.set(key, now());
     for (const a of (state.cfg && state.cfg.admins) || []) send(a.id, html, { parse_mode: "HTML" }).catch(() => {});
   }
+  /** Сообщение администраторам платформы в личку — от других модулей сервера. */
+  function notifyAdmins(html) {
+    for (const a of (state.cfg && state.cfg.admins) || []) send(a.id, html, { parse_mode: "HTML" }).catch(() => {});
+  }
   const router = aiMod.createAiRouter({
     fetchImpl: doFetch,
     now,
@@ -4823,7 +4827,7 @@ function createSupportBot(deps) {
   return {
     start, reload, rewatch, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handleCabinetMessages, handleSiteSend,
     handleTicketList, handleTicketMessages, handleTicketStatus, handleAdminTickets, handleAdminSend, handleKnowledgeList, handleSiteMessages, handlePurgeForeign, sweepSite, sweepSiteTopics, checkHook, ensureProfile, handleAiCheck, handleDocDownload, router,
-    onTicketDoc, syncTicket, loadGuide, loadKnowledge, loadNoise, learnedJunk, loadNews, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
+    notifyAdmins, onTicketDoc, syncTicket, loadGuide, loadKnowledge, loadNoise, learnedJunk, loadNews, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
     // Тесты: подменить файлы знаний (карта кода с шаблонами, «что нового»).
     __setKbPaths: (p) => Object.assign(deps, p),
     isQuotaError,

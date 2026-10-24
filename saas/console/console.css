@@ -1458,6 +1458,13 @@ body:has(.landing-nav) .theme-fab, body:has(.dash-topbar) .theme-fab { display: 
 .pt-hero-sub { font-size: 13.5px; color: #B5A894; margin-top: 6px; }
 .pt-hero .venue-chips { margin: 16px 0 12px; }
 .pt-hero-note { font-size: 12.5px; line-height: 1.5; color: #B5A894; }
+.pt-pay-btn { width: auto; margin: 14px 0 4px; padding: 12px 20px; background: #F1EBE1; color: #1C1915; border-color: #F1EBE1; }
+.pt-pay-btn:not(:disabled):hover { background: #fff; }
+.pt-pay-req { display: flex; flex-direction: column; gap: 4px; margin: 14px 0 4px; padding: 12px 14px; border-radius: 12px; background: rgba(241, 235, 225, .08); font-size: 13.5px; }
+.pt-pay-req .pt-link-renew { margin: 0; color: #E9C9A8; }
+.pt-pay-item + .pt-pay-item { border-top: 1px solid var(--border); }
+.pt-pay-item .pt-row { border-top: 0; }
+.pt-receipt { padding: 0 0 14px; }
 @media (min-width: 600px) { .partner-page .live-stats-grid { grid-template-columns: repeat(4, 1fr); } }
 .partner-page .live-stat-value.pt-money { font-size: 26px; line-height: 1.15; overflow-wrap: anywhere; }
 .pt-warn { margin-bottom: 14px; }

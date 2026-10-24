@@ -6934,6 +6934,7 @@ function screenPartner() {
   };
 
   let tab = 'invite';
+  let editDetails = false;
 
   const greeting = () => {
     const h = new Date().getHours();
@@ -7002,17 +7003,33 @@ function screenPartner() {
 
     const hero = `
       <div class="card venue-card pt-hero">
-        <div class="venue-kicker">К выплате</div>
-        <div class="pt-hero-sum">${fmtMoney(s.unpaid)}</div>
-        <div class="pt-hero-sub">Начислено всего ${fmtMoney(s.total)} · выплачено ${fmtMoney(s.paid)}</div>
+        <div class="venue-kicker">Доступно к выплате</div>
+        <div class="pt-hero-sum">${fmtMoney(s.available || 0)}</div>
+        <div class="pt-hero-sub">${[
+          s.hold > 0 ? `ждут ${s.holdDays} дн. после оплаты: ${fmtMoney(s.hold)}` : '',
+          s.requested > 0 ? `в запросе: ${fmtMoney(s.requested)}` : '',
+          `начислено всего ${fmtMoney(s.total)}`, `выплачено ${fmtMoney(s.paid)}`,
+        ].filter(Boolean).join(' · ')}</div>
+        ${payoutAction()}
         <div class="venue-chips">
           <span class="venue-chip ${stopped ? 'bad' : ''}"><i></i>${stopped ? 'Приостановлено' : 'Активно'}</span>
           <span class="venue-chip">Ставка ${esc(String(p.percent))}%</span>
           <span class="venue-chip">${esc(termText)}</span>
           <span class="venue-chip">${esc(capitalize(p.taxStatusLabel || ''))}</span>
         </div>
-        <div class="pt-hero-note">Процент — от каждой оплаты клиента после налога ${esc(String(st.taxPct ?? 6))}% и комиссии платёжной системы. Выплату отмечает администратор ZalPOS — она появится здесь и в Telegram.</div>
+        <div class="pt-hero-note">Процент — от каждой оплаты клиента после налога ${esc(String(st.taxPct ?? 6))}% и комиссии платёжной системы. Начисление можно запросить через ${esc(String(s.holdDays ?? 14))} дн. после оплаты (на случай возврата), от ${fmtMoney(s.payoutMin ?? 1000)}.</div>
       </div>`;
+    function payoutAction() {
+      const r = data.request;
+      if (r) {
+        return `<div class="pt-pay-req"><span>⏳ Запрос на ${fmtMoney(r.net)} отправлен ${fmtDay(r.requestedAt)} — деньги придут на ${esc(r.details)}</span>
+          <button type="button" class="pt-link-renew" id="f-partner-pay-cancel">Отменить запрос</button></div>`;
+      }
+      if (stopped) return '';
+      if (!p.payoutDetails) return `<button type="button" class="btn pt-pay-btn" data-ptab-go="pay">Указать реквизиты для выплат</button>`;
+      if (!s.canRequest) return '';
+      return `<button type="button" class="btn pt-pay-btn" id="f-partner-pay">Запросить ${fmtMoney(s.calc.net)}</button>${s.calc.ndfl ? `<div class="pt-hero-note">Начислено ${fmtMoney(s.calc.gross)}, НДФЛ 13% (${fmtMoney(s.calc.ndfl)}) удержит и заплатит ZalPOS.</div>` : ''}`;
+    }
     const stat = (icon, value, label, money = false) => `
       <div class="card live-stat"><div class="live-stat-head">${navIconHtml(icon)}</div>
         <div class="live-stat-value${money ? ' pt-money' : ''}">${value}</div><div class="live-stat-label">${label}</div></div>`;
@@ -7047,9 +7064,40 @@ function screenPartner() {
       ['invite', 'Пригласить'],
       ['clients', `Клиенты${data.clients.length ? ` · ${data.clients.length}` : ''}`],
       ['money', 'Начисления'],
+      ['pay', `Выплаты${data.payouts.some((x) => x.needReceipt) ? ' · нужен чек' : ''}`],
       ['invites', `Приглашения${data.invites.length ? ` · ${data.invites.length}` : ''}`],
     ];
     const empty = (t) => `<p class="small muted pt-empty-text">${t}</p>`;
+    const accrualBadge = (a) => {
+      if (a.status === 'reversed') return '<span class="pt-badge off">снято — возврат</span>';
+      if (a.clawback) return '<span class="pt-badge bad">удержание за возврат</span>';
+      if (a.paidOut) return '<span class="pt-badge ok">выплачено</span>';
+      if (a.requested) return '<span class="pt-badge wait">в запросе</span>';
+      if (a.availableAt && a.availableAt > Date.now()) return `<span class="pt-badge off">доступно с ${fmtDay(a.availableAt)}</span>`;
+      return '<span class="pt-badge wait">можно запросить</span>';
+    };
+    const payPanel = () => `
+      <div class="card">
+        <div class="pt-kicker">Реквизиты для перевода</div>
+        ${p.payoutDetails && !editDetails ? `<p class="small" style="margin:8px 0">${esc(p.payoutDetails)}</p><button type="button" class="pt-link-renew" id="f-partner-details-edit">Изменить реквизиты</button>` : `
+          <p class="small muted" style="margin:6px 0 12px">Перевод по СБП на ваш номер. ФИО и ИНН — получателя (ваши): ${p.taxStatus === 'npd' ? 'по ИНН проверяется статус самозанятого, на выплату вы оформляете чек в «Мой налог».' : p.taxStatus === 'person' ? 'ИНН нужен для отчётности по НДФЛ, который удерживает ZalPOS.' : 'ИНН вашего ИП.'}</p>
+          <label class="field"><span>Телефон для СБП</span><input id="f-pd-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 900 123-45-67"></label>
+          <label class="field"><span>Банк</span><input id="f-pd-bank" maxlength="60" placeholder="Сбербанк"></label>
+          <label class="field"><span>ФИО полностью</span><input id="f-pd-name" maxlength="120" autocomplete="name" placeholder="Петрова Анна Сергеевна"></label>
+          <label class="field"><span>ИНН (12 цифр)</span><input id="f-pd-inn" inputmode="numeric" maxlength="12" placeholder="500100732259"></label>
+          <div class="row" style="gap:12px;flex-wrap:wrap;align-items:center"><button class="btn btn-primary" id="f-partner-details-save" style="width:auto">Сохранить</button>
+          ${p.payoutDetails ? '<button type="button" class="pt-link-renew" id="f-partner-details-cancel" style="margin:0">Отмена</button>' : ''}</div>
+          <p class="small muted" style="margin:10px 0 0">Реквизиты хранятся в зашифрованном виде на сервере в России и нужны только для перевода.</p>`}
+      </div>
+      <h2 class="pt-sub">История выплат</h2>
+      <div class="card pt-rows">${data.payouts.length ? data.payouts.map((x) => `
+        <div class="pt-pay-item">
+          <div class="pt-row"><div class="pt-row-main"><b>${fmtDay(x.paidAt)}</b>
+              <span class="small muted">${x.ndfl ? `начислено ${fmtMoney(x.amount)}, НДФЛ ${fmtMoney(x.ndfl)}` : ''}${x.ndfl && x.note ? ' · ' : ''}${x.note ? esc(x.note) : ''}</span></div>
+            <div class="pt-row-side"><b>${fmtMoney(x.net)}</b>${x.receiptUrl ? `<span class="small"><a href="${esc(x.receiptUrl)}" target="_blank" rel="noopener">чек</a> ✓</span>` : ''}</div></div>
+          ${x.needReceipt ? `<div class="pt-receipt"><span class="small" style="color:var(--warning)">Нужен чек в «Мой налог» на ${fmtMoney(x.amount)} — до ${fmtDay(x.receiptDue)}. В приложении: чек → «Поделиться» → скопируйте ссылку.</span>
+            <div class="row" style="gap:8px;margin-top:6px"><input class="grow f-pr-url" data-id="${esc(x.id)}" placeholder="https://lknpd.nalog.ru/api/v1/receipt/…" style="margin:0;min-width:0"><button class="btn btn-ghost f-pr-save" data-id="${esc(x.id)}" style="width:auto">Прикрепить</button></div></div>` : ''}
+        </div>`).join('') : empty('Выплат пока не было. Когда сумма к выплате достигнет минимальной, нажмите «Запросить» вверху страницы или в Telegram-боте.')}</div>`;
     const panels = {
       invite: `
         <div class="card">
@@ -7069,11 +7117,9 @@ function screenPartner() {
           <div class="pt-row${a.status === 'reversed' ? ' pt-row-off' : ''}">
             <div class="pt-row-main"><b>${esc(a.venueName || 'Клиент')}</b>
               <span class="small muted">${fmtDay(a.paidAt)} · оплата ${fmtMoney(a.gross)} − налог ${fmtMoney(a.tax)} − комиссия ${fmtMoney(a.fee)} = ${fmtMoney(a.base)} × ${a.percent}%</span></div>
-            <div class="pt-row-side"><b>${fmtMoney(a.amount)}</b><span class="pt-badge ${a.status === 'reversed' ? 'off' : a.paidOut ? 'ok' : 'wait'}">${a.status === 'reversed' ? 'снято — возврат' : a.paidOut ? 'выплачено' : 'к выплате'}</span></div>
-          </div>`).join('') : empty('Начислений пока нет: они появятся после первой оплаты подписки вашим клиентом.')}</div>
-        ${data.payouts.length ? `<h2 class="pt-sub">Выплаты</h2><div class="card pt-rows">${data.payouts.map((x) => `
-          <div class="pt-row"><div class="pt-row-main"><b>${fmtDay(x.paidAt)}</b>${x.note ? `<span class="small muted">${esc(x.note)}</span>` : ''}</div>
-            <div class="pt-row-side"><b>${fmtMoney(x.amount)}</b></div></div>`).join('')}</div>` : ''}`,
+            <div class="pt-row-side"><b>${fmtMoney(a.amount)}</b>${accrualBadge(a)}</div>
+          </div>`).join('') : empty('Начислений пока нет: они появятся после первой оплаты подписки вашим клиентом.')}</div>`,
+      pay: payPanel(),
       invites: `<div class="card pt-rows">${data.invites.length ? data.invites.slice(0, 50).map((x) => {
           const [label, tone] = { sent: ['ждёт регистрации', 'wait'], registered: ['зарегистрировано', 'ok'], expired: ['срок истёк', 'off'], optedOut: ['отказ от писем', 'bad'] }[x.status] || [x.status, 'off'];
           return `<div class="pt-row"><div class="pt-row-main"><b>${esc(x.venueName || x.email)}</b>
@@ -7118,6 +7164,38 @@ function screenPartner() {
       };
     }
     if ($('f-partner-copy')) $('f-partner-copy').onclick = () => copyToClipboard($('f-partner-link').value);
+    screenEl().querySelectorAll('[data-ptab-go]').forEach((b) => { b.onclick = () => { tab = b.dataset.ptabGo; draw(); }; });
+    const payCall = async (btn, fn, ok) => {
+      if (btn) btn.disabled = true;
+      try { await fn(); if (ok) toast(ok); await load(); } catch (e) { if (btn) btn.disabled = false; toast(`Не получилось: ${e?.message || e}`); }
+    };
+    if ($('f-partner-pay')) {
+      $('f-partner-pay').onclick = () => {
+        const sm = data.summary;
+        if (!confirm(`Запросить выплату ${fmtMoney(sm.calc.net)} на ${data.partner.payoutDetails}?`)) return;
+        payCall($('f-partner-pay'), () => callSaasGateway('partnerPayoutRequest', {}), 'Запрос отправлен — сообщим, когда деньги будут перечислены');
+      };
+    }
+    if ($('f-partner-pay-cancel')) {
+      $('f-partner-pay-cancel').onclick = () => {
+        if (!confirm('Отменить запрос выплаты? Сумма снова станет доступной.')) return;
+        payCall($('f-partner-pay-cancel'), () => callSaasGateway('partnerPayoutRequest', { action: 'cancel' }), 'Запрос отменён');
+      };
+    }
+    if ($('f-partner-details-edit')) $('f-partner-details-edit').onclick = () => { editDetails = true; draw(); };
+    if ($('f-partner-details-cancel')) $('f-partner-details-cancel').onclick = () => { editDetails = false; draw(); };
+    if ($('f-partner-details-save')) {
+      $('f-partner-details-save').onclick = () => payCall($('f-partner-details-save'), async () => {
+        await callSaasGateway('partnerPayoutDetails', { phone: $('f-pd-phone').value, bank: $('f-pd-bank').value, fullName: $('f-pd-name').value, inn: $('f-pd-inn').value });
+        editDetails = false;
+      }, 'Реквизиты сохранены');
+    }
+    screenEl().querySelectorAll('.f-pr-save').forEach((b) => {
+      b.onclick = () => {
+        const inp = screenEl().querySelector(`.f-pr-url[data-id="${CSS.escape(b.dataset.id)}"]`);
+        payCall(b, () => callSaasGateway('partnerPayoutReceipt', { payoutId: b.dataset.id, url: inp ? inp.value : '' }), 'Чек прикреплён');
+      };
+    });
     if ($('f-partner-renew')) {
       $('f-partner-renew').onclick = async () => {
         if (!confirm('Создать новую ссылку? Старые ссылки, которые вы уже отправили, продолжат работать — клиенты по ним тоже закрепятся за вами.')) return;
@@ -7180,7 +7258,7 @@ function screenPartner() {
 
 function screenPartnerTerms() {
   screenEl().innerHTML = publicPageWrapHtml('Правила партнёрской программы ZalPOS', `
-    <p class="small muted">Редакция от 24 октября 2026 г.</p>
+    <p class="small muted">Редакция № 2 от 24 октября 2026 г.</p>
     <div class="card">
       ${legalSection('1. Что это', [
         'Партнёрская программа — порядок, по которому менеджер (партнёр) привлекает в ZalPOS новые заведения и получает вознаграждение с их оплат. Правила дополняют договор, заключённый между партнёром и правообладателем платформы ZalPOS (<span id="legal-requisites" data-kind="privacy">реквизиты — в политике конфиденциальности</span>); при расхождении действует договор.',
@@ -7192,11 +7270,12 @@ function screenPartnerTerms() {
       ])}
       ${legalSection('3. Вознаграждение', [
         'С каждой поступившей оплаты закреплённого клиента — подписки, продления, дополнительной точки сети — начисляется процент, установленный партнёру. База — сумма оплаты за вычетом налога правообладателя (ставка указана в кабинете менеджера) и комиссии платёжной системы. Тестовые оплаты и пробный период не учитываются. Если партнёру установлен срок, начисления идут только в течение этого срока после регистрации клиента.',
-        'При возврате денег клиенту начисление по этой оплате снимается; если оно уже выплачено — учитывается в следующей выплате.',
-        'Начисления видны в кабинете менеджера и в Telegram-боте. Выплата производится переводом по реквизитам, согласованным в договоре, и отмечается в кабинете.',
+        'При возврате денег клиенту начисление по этой оплате снимается; если оно уже выплачено — удерживается из следующей выплаты.',
+        'Начисления видны в кабинете менеджера и в Telegram-боте. Начисление по оплате клиента становится доступным к выплате через срок ожидания после оплаты (на случай возврата; срок и минимальная сумма выплаты указаны в кабинете менеджера).',
+        'Выплату партнёр запрашивает сам — в кабинете или в Telegram-боте; в запрос входят все доступные начисления. Перевод производится по Системе быстрых платежей по реквизитам, указанным партнёром в кабинете, в течение 10 рабочих дней после запроса; партнёр отвечает за правильность реквизитов. Запрос можно отменить до выплаты; если администратор отклонит запрос (например, из-за неверных реквизитов), сумма снова становится доступной.',
       ])}
       ${legalSection('4. Налоги партнёра', [
-        'Самозанятый партнёр уплачивает налог на профессиональный доход сам и формирует чек на каждую выплату. Партнёр — индивидуальный предприниматель уплачивает налоги сам. Если партнёр — физическое лицо без этих статусов, правообладатель как налоговый агент удерживает налог на доходы физических лиц из суммы вознаграждения и уплачивает страховые взносы в порядке, установленном законодательством.',
+        'Самозанятый партнёр уплачивает налог на профессиональный доход сам, формирует в «Мой налог» чек на каждую выплату (не позднее 9-го числа месяца, следующего за месяцем выплаты) и прикладывает ссылку на чек в кабинете или в боте. Партнёр — индивидуальный предприниматель уплачивает налоги сам. Если партнёр — физическое лицо без этих статусов, правообладатель как налоговый агент удерживает налог на доходы физических лиц из суммы вознаграждения и уплачивает страховые взносы в порядке, установленном законодательством.',
       ])}
       ${legalSection('5. Обязанности партнёра', [
         'Направлять приглашения по почте только лицам, которые дали предварительное согласие на их получение (ст. 18 Федерального закона № 38-ФЗ «О рекламе»), и отмечать это согласие при отправке. Отказ получателя от писем исполняется автоматически.',
@@ -7207,7 +7286,7 @@ function screenPartnerTerms() {
         'Администратор вправе приостановить участие партнёра при нарушении правил (в том числе рассылке без согласия получателей); на время приостановки новые клиенты не закрепляются и начисления не идут. Начисления по оплатам, поступившим до приостановки, сохраняются и выплачиваются, если нарушение не связано с привлечением этих клиентов.',
       ])}
       ${legalSection('7. Персональные данные', [
-        'ZalPOS обрабатывает почту и имя партнёра, сведения о начислениях и выплатах, а также почту приглашённых лиц и отметки о согласии — для исполнения договора с партнёром, отправки приглашений и учёта вознаграждения. Данные хранятся на сервере в Российской Федерации. Подробнее — в <a href="#/legal/privacy">политике обработки персональных данных</a>.',
+        'ZalPOS обрабатывает почту и имя партнёра, сведения о начислениях и выплатах, реквизиты для перевода (телефон, банк, ФИО, ИНН — хранятся в зашифрованном виде), а также почту приглашённых лиц и отметки о согласии — для исполнения договора с партнёром, отправки приглашений и учёта вознаграждения. Данные хранятся на сервере в Российской Федерации. Подробнее — в <a href="#/legal/privacy">политике обработки персональных данных</a>.',
       ])}
     </div>
   `);
@@ -7266,9 +7345,12 @@ function watchAdminPartners() {
         <div class="small muted" style="margin-top:8px">Начисления</div>
         ${d.accruals.slice(0, 50).map((a) => `<div class="row small" style="justify-content:space-between;gap:8px;padding:4px 0;border-top:1px solid var(--border);flex-wrap:wrap">
           <span>${fmtDay(a.paidAt)} · ${esc(a.venueName)} · ${fmtMoney(a.gross)} → база ${fmtMoney(a.base)} × ${a.percent}%</span>
-          <span><b style="${a.status === 'reversed' ? 'text-decoration:line-through' : ''}">${fmtMoney(a.amount)}</b> ${a.paidOut ? '<span class="muted">выплачено</span>' : `<button class="btn-link f-pa-reverse" data-id="${esc(a.id)}" data-restore="${a.status === 'reversed' ? '1' : ''}">${a.status === 'reversed' ? 'вернуть' : 'снять (возврат)'}</button>`}</span>
+          <span><b style="${a.status === 'reversed' ? 'text-decoration:line-through' : ''}">${fmtMoney(a.amount)}</b> ${a.clawback ? '<span class="muted">удержание</span>'
+            : a.paidOut ? `<span class="muted">выплачено</span> <button class="btn-link f-pa-reverse" data-id="${esc(a.id)}" data-paid="1">удержать (возврат)</button>`
+              : a.requested ? '<span class="muted">в запросе</span>'
+                : `<button class="btn-link f-pa-reverse" data-id="${esc(a.id)}" data-restore="${a.status === 'reversed' ? '1' : ''}">${a.status === 'reversed' ? 'вернуть' : 'снять (возврат)'}</button>`}</span>
         </div>`).join('') || '<div class="small muted">—</div>'}
-        ${d.payouts.length ? `<div class="small muted" style="margin-top:8px">Выплаты</div>${d.payouts.map((x) => `<div class="small">${fmtDay(x.paidAt)} · ${fmtMoney(x.amount)}${x.note ? ` · ${esc(x.note)}` : ''}</div>`).join('')}` : ''}
+        ${d.payouts.length ? `<div class="small muted" style="margin-top:8px">Выплаты</div>${d.payouts.map((x) => `<div class="small">${fmtDay(x.paidAt)} · перечислено ${fmtMoney(x.net)}${x.ndfl ? ` (начислено ${fmtMoney(x.amount)}, НДФЛ ${fmtMoney(x.ndfl)})` : ''}${x.note ? ` · ${esc(x.note)}` : ''}${x.receiptUrl ? ` · <a href="${esc(x.receiptUrl)}" target="_blank" rel="noopener">чек</a>` : x.needReceipt ? ` · <span style="color:var(--warning)">чека нет (до ${fmtDay(x.receiptDue)})</span>` : ''}</div>`).join('')}` : ''}
         <div class="small muted" style="margin-top:8px">Приглашения: ${d.invites.length}</div>
       </div>`;
   };
@@ -7297,6 +7379,11 @@ function watchAdminPartners() {
         <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
           <label class="field grow" style="margin:0"><span>Ваш налог, %</span><input id="f-pa-tax" type="number" min="0" max="50" step="0.1" value="${esc(String(s.taxPct ?? 6))}"></label>
           <label class="field grow" style="margin:0"><span>Комиссия платёжной системы, %</span><input id="f-pa-fee" type="number" min="0" max="20" step="0.1" value="${esc(String(s.feePct ?? 3.9))}"></label>
+        </div>
+        <p class="small muted" style="margin:12px 0 8px">Менеджер сам запрашивает выплату в кабинете или в боте. Начисление доступно к запросу через N дней после оплаты клиента — если за это время клиенту вернут деньги, начисление просто снимется. Возврат после выплаты удерживается из следующей.</p>
+        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <label class="field grow" style="margin:0"><span>Минимальная выплата, ₽</span><input id="f-pa-min" type="number" min="0" max="100000" step="100" value="${esc(String(s.payoutMin ?? 1000))}"></label>
+          <label class="field grow" style="margin:0"><span>Ожидание после оплаты, дней</span><input id="f-pa-hold" type="number" min="0" max="60" step="1" value="${esc(String(s.holdDays ?? 14))}"></label>
           <button class="btn btn-ghost" id="f-pa-settings" style="width:auto">Сохранить</button>
         </div>
       </div>
@@ -7328,13 +7415,23 @@ function watchAdminPartners() {
             </div>
             <div class="small" style="text-align:right">клиентов: <b>${p.summary.clients}</b><br>начислено: ${fmtMoney(p.summary.total)}<br>к выплате: <b>${fmtMoney(p.summary.unpaid)}</b><br>выплачено: ${fmtMoney(p.summary.paid)}</div>
           </div>
-          ${p.taxStatus === 'person' && p.summary.unpaid > 0 ? '<p class="small" style="color:var(--warning)">Физлицо без статуса: при выплате удержите НДФЛ 13% и начислите страховые взносы — сумма к выплате указана до удержания.</p>' : ''}
+          ${p.request ? `<div class="sec-warn" style="margin-top:10px;padding:12px 14px;border-radius:12px">
+            <b>💸 Запрос выплаты от ${fmtDay(p.request.requestedAt)}: перевести ${fmtMoney(p.request.net)}</b>
+            ${p.request.ndfl ? `<div class="small">Начислено ${fmtMoney(p.request.gross)}; НДФЛ ${fmtMoney(p.request.ndfl)} удержите и перечислите в бюджет, страховые взносы — сверху.</div>` : ''}
+            ${p.request.fullDetails ? `<div class="small" style="margin-top:4px">СБП <b>${esc(p.request.fullDetails.phone)}</b> · ${esc(p.request.fullDetails.bank)} · ${esc(p.request.fullDetails.fullName)} · ИНН ${esc(p.request.fullDetails.inn)}</div>` : '<div class="small" style="color:var(--danger)">Реквизиты не расшифровались — попросите менеджера указать их заново и отклоните запрос.</div>'}
+            <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:8px">
+              <button class="btn btn-primary f-pa-reqpay" data-id="${esc(p.id)}" data-req="${esc(p.request.id)}" data-net="${p.request.net}" style="width:auto">Перевёл — отметить выплату</button>
+              <button class="btn-link f-pa-reqreject" data-req="${esc(p.request.id)}">Отклонить</button>
+            </div>
+          </div>` : ''}
+          ${p.receiptsMissing ? `<p class="small" style="color:var(--warning)">🧾 Самозанятый ещё не прислал чек по ${p.receiptsMissing} ${plural(p.receiptsMissing, 'выплате', 'выплатам', 'выплатам')}. Чек обязателен (422-ФЗ, ст. 14) — бот напоминает менеджеру.</p>` : ''}
+          ${!p.request && p.taxStatus === 'person' && p.summary.unpaid > 0 ? '<p class="small" style="color:var(--warning)">Физлицо без статуса: при выплате удержите НДФЛ 13% и начислите страховые взносы — сумма к выплате указана до удержания.</p>' : ''}
           <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:8px">
             <button class="btn-link f-pa-open" data-id="${esc(p.id)}">${openId === p.id ? 'Скрыть' : 'Подробнее'}</button>
             <button class="btn-link f-pa-edit" data-id="${esc(p.id)}">Изменить</button>
             <button class="btn-link f-pa-contract" data-id="${esc(p.id)}" data-code="${esc(p.code)}">Договор (Word)</button>
             <button class="btn-link f-pa-letter" data-email="${esc(p.email)}">Письмо для входа</button>
-            ${p.summary.unpaid > 0 ? `<button class="btn-link f-pa-pay" data-id="${esc(p.id)}" data-amount="${p.summary.unpaid}">Отметить выплату ${fmtMoney(p.summary.unpaid)}</button>` : ''}
+            ${!p.request && p.summary.unpaid > 0 ? `<button class="btn-link f-pa-pay" data-id="${esc(p.id)}" data-amount="${p.summary.unpaid}">Выплатить без запроса ${fmtMoney(p.summary.unpaid)}</button>` : ''}
             <button class="btn-link f-pa-status" data-id="${esc(p.id)}" data-status="${p.status === 'active' ? 'stopped' : 'active'}">${p.status === 'active' ? 'Приостановить' : 'Возобновить'}</button>
           </div>
           ${editId === p.id ? editHtml(p) : ''}
@@ -7354,7 +7451,7 @@ function watchAdminPartners() {
       }
     };
     if ($('f-pa-settings')) $('f-pa-settings').onclick = act(async () => {
-      await callSaasGateway('partnerAdminSettings', { taxPct: Number($('f-pa-tax').value), feePct: Number($('f-pa-fee').value) });
+      await callSaasGateway('partnerAdminSettings', { taxPct: Number($('f-pa-tax').value), feePct: Number($('f-pa-fee').value), payoutMin: Number($('f-pa-min').value), holdDays: Number($('f-pa-hold').value) });
       toast('Сохранено');
     });
     if ($('f-pa-bot-on')) $('f-pa-bot-on').onclick = act(async () => {
@@ -7430,9 +7527,26 @@ function watchAdminPartners() {
         toast('Выплата отмечена');
       });
     });
+    document.querySelectorAll('.f-pa-reqpay').forEach((el) => {
+      el.onclick = act(async (b) => {
+        const note = prompt(`Вы перевели ${fmtMoney(b.dataset.net)}? Комментарий для менеджера (например, «СБП 24.10, Сбербанк»):`, '');
+        if (note === null) throw new Error('отменено');
+        await callSaasGateway('partnerAdminPayout', { partnerId: b.dataset.id, requestId: b.dataset.req, note });
+        toast('Выплата отмечена — менеджеру ушло уведомление');
+      });
+    });
+    document.querySelectorAll('.f-pa-reqreject').forEach((el) => {
+      el.onclick = act(async (b) => {
+        const reason = prompt('Почему отклоняете? Менеджер увидит это в Telegram (например, «проверьте номер телефона»):', '');
+        if (reason === null) throw new Error('отменено');
+        await callSaasGateway('partnerAdminPayoutReject', { requestId: b.dataset.req, reason });
+        toast('Запрос отклонён');
+      });
+    });
     document.querySelectorAll('.f-pa-reverse').forEach((el) => {
       el.onclick = act(async (b) => {
-        if (!b.dataset.restore && !confirm('Снять начисление (клиенту вернули деньги)?')) throw new Error('отменено');
+        if (b.dataset.paid && !confirm('Начисление уже выплачено. Удержать его из следующей выплаты менеджера (клиенту вернули деньги)?')) throw new Error('отменено');
+        if (!b.dataset.paid && !b.dataset.restore && !confirm('Снять начисление (клиенту вернули деньги)?')) throw new Error('отменено');
         await callSaasGateway('partnerAdminReverse', { accrualId: b.dataset.id, restore: !!b.dataset.restore });
       });
     });

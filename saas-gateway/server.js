@@ -7989,6 +7989,8 @@ const partners = createPartners({
   secretKey: tgSecretKey,
   encrypt: tgEncrypt,
   decrypt: tgDecrypt,
+  // Запросы выплат и чеки — администраторам платформы в Telegram поддержки.
+  notifyAdmins: (html) => supportBot.notifyAdmins(html),
   // Реквизиты для договора; лимит Firebase исчерпан — последняя копия на сервере.
   platformLegal: async () => {
     const cache = partnersDb.collection("partnerSettings").doc("legalCache");
@@ -8211,6 +8213,10 @@ const ROUTES = {
   "/partnerInviteInfo": partners.handleInviteInfo,
   "/partnerTgLink": partners.handleTgLink,
   "/partnerNewLink": partners.handleNewLink,
+  "/partnerPayoutDetails": partners.handlePayoutDetails,
+  "/partnerPayoutRequest": partners.handlePayoutRequest,
+  "/partnerPayoutReceipt": partners.handlePayoutReceipt,
+  "/partnerAdminPayoutReject": partners.handleAdminPayoutReject,
   "/partnerAdminList": partners.handleAdminList,
   "/partnerAdminPartner": partners.handleAdminPartner,
   "/partnerAdminSave": partners.handleAdminSave,
