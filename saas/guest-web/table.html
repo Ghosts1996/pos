@@ -266,11 +266,10 @@
 
 <!--
   Свежий брендинг — отдельным модулем, не задерживая открытие приложения
-  выше. Через Firebase SDK, как в app.js.
+  выше. С собственного сервера платформы; Firebase SDK грузится, только
+  пока данные ещё в Firebase (как в app.js).
 -->
 <script type="module">
-  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
-  import { getFirestore, doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
   (async function () {
     var GATEWAY = 'https://pii.zalpos.ru/saas';
@@ -310,6 +309,8 @@
         if (!d || !d.exists) return;
         b = d.data;
       } else {
+        var { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
+        var { getFirestore, doc, getDoc } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
         var app = initializeApp(configResult.json);
         var db = getFirestore(app);
         var snap = await getDoc(doc(db, brandingPath));

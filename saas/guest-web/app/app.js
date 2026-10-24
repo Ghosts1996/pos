@@ -4414,8 +4414,9 @@ async function startScanner() {
   let jsQR = null;
   if (!detector) {
     try {
-      // Safari своего разбора не имеет — подключаем библиотеку.
-      await loadScript('https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js');
+      // Safari своего разбора не имеет — подключаем библиотеку (jsQR 1.4.0,
+      // лежит у нас: адрес гостя не уходит на чужие серверы).
+      await loadScript(new URL('vendor/jsQR.js', import.meta.url).href);
       jsQR = window.jsQR;
     } catch (_) {
       hint.textContent = 'Не удалось загрузить распознавание кода. '
