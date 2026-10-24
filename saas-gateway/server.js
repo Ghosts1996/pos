@@ -8434,7 +8434,49 @@ if (DATA_LOCAL && process.env.FIREBASE_SERVICE_ACCOUNT_B64) getFirebaseApp();
 const port = Number(process.env.PORT || 8081);
 server.listen(port, "127.0.0.1", () => {
   console.log(`saas-gateway listening on 127.0.0.1:${port}`);
+  if (require.main === module) scheduleAutoDataMigration();
 });
+
+// Плановый перенос данных на свой сервер — один раз на номер (владелец
+// попросил перенести, все кассы — тестовые). Из Firestore; не вышло (лимит
+// чтений) — из последней резервной копии. Откат кнопкой в панели повторно
+// перенос не запускает: номер уже отработан. DATA_AUTO_MIGRATE=0 — выключить.
+const AUTO_DATA_MIGRATION_ID = "2026-10-24";
+function scheduleAutoDataMigration() {
+  if (DATA_LOCAL || process.env.DATA_AUTO_MIGRATE === "0") return;
+  const stamp = `${DATA_DB_FILE}.auto-${AUTO_DATA_MIGRATION_ID}`;
+  let tries = 0;
+  try { tries = Number(JSON.parse(fs.readFileSync(stamp, "utf8")).tries) || 0; } catch (_) {}
+  if (tries >= 3 || fs.existsSync(`${stamp}.done`)) return;
+  // После проверки версии в деплое, чтобы перезапуск ей не помешал.
+  setTimeout(async () => {
+    if (dataMigration && dataMigration.state === "running") return;
+    try { fs.mkdirSync(path.dirname(stamp), { recursive: true }); } catch (_) {}
+    fs.writeFileSync(stamp, JSON.stringify({ tries: tries + 1, at: new Date().toISOString() }), { mode: 0o600 });
+    let source = "firestore";
+    dataMigration = { state: "running", source, docs: 0, at: Date.now(), auto: true };
+    try {
+      try {
+        dataMigration.docs = await migrateToLocal("firestore");
+      } catch (e) {
+        if (!listBackups()[0]) throw e;
+        console.warn(`сервер данных: из Firestore не вышло (${String(e.message || e).slice(0, 160)}) — переношу из резервной копии`);
+        source = "backup";
+        dataMigration.source = source;
+        dataMigration.docs = await migrateToLocal("backup");
+      }
+      fs.writeFileSync(DATA_ACTIVE_MARK, new Date().toISOString(), { mode: 0o600 });
+      fs.writeFileSync(`${stamp}.done`, JSON.stringify({ source, docs: dataMigration.docs, at: new Date().toISOString() }), { mode: 0o600 });
+      dataMigration.state = "done";
+      console.log(`сервер данных: плановый перенос — ${dataMigration.docs} документов (${source}), перезапуск на своём сервере данных`);
+      setTimeout(() => process.exit(75), 1000);
+    } catch (e) {
+      dataMigration.state = "error";
+      dataMigration.error = String(e.message || e).slice(0, 300);
+      console.error(`сервер данных: плановый перенос не удался: ${e.stack || e}`);
+    }
+  }, 45000).unref();
+}
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
