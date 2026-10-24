@@ -452,16 +452,18 @@ function createPartners(deps) {
     const ref = partnersCol().doc();
     await ref.set({ uid: user.uid, email, name, code, percent: round2(percent), months, taxStatus, status: "active", createdAt: ts(now()), createdBy: decoded.uid });
     let mailed = false;
+    let mailError = mailer() ? "" : "почта платформы (SMTP) не настроена";
     if (mailer() && body.sendWelcome !== false) {
       try {
         const link = await auth().generatePasswordResetLink(email, { url: `${site}#/partner` });
         await mailer().send({ to: email, ...letters.partnerWelcomeLetter({ name, link, siteUrl: site }) });
         mailed = true;
       } catch (e) {
-        console.error(`partners: письмо менеджеру ${email}: ${e.message || e}`);
+        mailError = String(e.message || e).slice(0, 200);
+        console.error(`partners: письмо менеджеру ${email}: ${mailError}`);
       }
     }
-    sendJson(res, 200, { ok: true, id: ref.id, code, mailed });
+    sendJson(res, 200, { ok: true, id: ref.id, code, mailed, mailError });
   }
 
   async function handleAdminSettings(req, res) {

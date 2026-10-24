@@ -7200,6 +7200,25 @@ function screenPartnerTerms() {
 
 // ---------- ПАНЕЛЬ ПЛАТФОРМЫ: МЕНЕДЖЕРЫ ----------
 
+/** Письмо менеджеру «задайте пароль и войдите» — его отправляет сам Firebase
+ *  (своя почта платформы не нужна): по ссылке менеджер задаёт пароль и
+ *  попадает в кабинет менеджера. Возвращает текст для уведомления. */
+async function sendPartnerLoginLetter(email) {
+  const settings = { url: `${location.origin}/#/partner` };
+  try {
+    try {
+      await sendPasswordResetEmail(state.auth, email, settings);
+    } catch (e) {
+      // Адрес возврата не в списке разрешённых доменов Firebase — письмо без него.
+      if (e?.code !== 'auth/unauthorized-continue-uri' && e?.code !== 'auth/invalid-continue-uri') throw e;
+      await sendPasswordResetEmail(state.auth, email);
+    }
+    return `Письмо для входа отправлено на ${email} — тема «Сброс пароля». По ссылке менеджер задаст пароль и войдёт на zalpos.ru/#/partner. Не пришло за 5 минут — пусть проверит «Спам» и «Промоакции».`;
+  } catch (e) {
+    return `Письмо не отправилось: ${e?.message || e}. Менеджер может войти сам: zalpos.ru/#/partner → «Забыли пароль?».`;
+  }
+}
+
 function watchAdminPartners() {
   const body = $('admin-partners');
   if (!body) return;
@@ -7298,6 +7317,7 @@ function watchAdminPartners() {
             <button class="btn-link f-pa-open" data-id="${esc(p.id)}">${openId === p.id ? 'Скрыть' : 'Подробнее'}</button>
             <button class="btn-link f-pa-edit" data-id="${esc(p.id)}">Изменить</button>
             <button class="btn-link f-pa-contract" data-id="${esc(p.id)}" data-code="${esc(p.code)}">Договор (Word)</button>
+            <button class="btn-link f-pa-letter" data-email="${esc(p.email)}">Письмо для входа</button>
             ${p.summary.unpaid > 0 ? `<button class="btn-link f-pa-pay" data-id="${esc(p.id)}" data-amount="${p.summary.unpaid}">Отметить выплату ${fmtMoney(p.summary.unpaid)}</button>` : ''}
             <button class="btn-link f-pa-status" data-id="${esc(p.id)}" data-status="${p.status === 'active' ? 'stopped' : 'active'}">${p.status === 'active' ? 'Приостановить' : 'Возобновить'}</button>
           </div>
@@ -7334,9 +7354,18 @@ function watchAdminPartners() {
         email: $('f-pa-email').value.trim(), name: $('f-pa-name').value.trim(), percent: Number($('f-pa-percent').value),
         months: Number($('f-pa-months').value), taxStatus: $('f-pa-taxstatus').value,
       });
-      toast(r.data.mailed ? 'Менеджер добавлен, письмо отправлено' : 'Менеджер добавлен. Письмо не ушло — пусть войдёт на zalpos.ru/#/partner через «Забыли пароль?»');
+      const email = $('f-pa-email').value.trim();
+      if (r.data.mailed) toast(r.data.restored ? 'Менеджер возвращён' : 'Менеджер добавлен, письмо отправлено');
+      else toast(`Менеджер ${r.data.restored ? 'возвращён' : 'добавлен'}. ${await sendPartnerLoginLetter(email)}`);
       $('f-pa-email').value = '';
       $('f-pa-name').value = '';
+    });
+    document.querySelectorAll('.f-pa-letter').forEach((el) => {
+      el.onclick = async () => {
+        el.disabled = true;
+        toast(await sendPartnerLoginLetter(el.dataset.email));
+        el.disabled = false;
+      };
     });
     document.querySelectorAll('.f-pa-open').forEach((el) => { el.onclick = act(async (b) => { openId = openId === b.dataset.id ? null : b.dataset.id; detail = null; }); });
     document.querySelectorAll('.f-pa-edit').forEach((el) => { el.onclick = () => { editId = editId === el.dataset.id ? null : el.dataset.id; draw(); }; });
