@@ -5,6 +5,7 @@ const http = require("http");
 const { Pool } = require("pg");
 const admin = require("firebase-admin");
 const { createVault, VaultError, phoneOk, phoneDigits } = require("./vault");
+const { createPlatform } = require("./platform");
 
 /**
  * Первичная запись персональных данных в базу в РФ (ч. 5 ст. 18 152-ФЗ):
@@ -17,7 +18,9 @@ const { createVault, VaultError, phoneOk, phoneDigits } = require("./vault");
  *   PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD — локальный Postgres;
  *   FIREBASE_SERVICE_ACCOUNT_B64 — ключ проекта hoocah-pos (одно заведение);
  *   SAAS_FIREBASE_SERVICE_ACCOUNT_B64 — ключ проекта платформы saas-3bdc8;
- *   PII_INTERNAL_TOKEN — общий секрет с saas-gateway (ставит update-server.sh).
+ *   PII_INTERNAL_TOKEN — общий секрет с saas-gateway (ставит update-server.sh);
+ *     с ним вход и данные платформы — через saas-gateway (platform.js);
+ *   SAAS_INTERNAL_URL — адрес saas-gateway, по умолчанию http://127.0.0.1:8081.
  *
  * Справочник заведения (сотрудники, гости, контакты) — в vault.js. Все
  * заведения платформы хранят имена и телефоны только здесь: в Firestore —
@@ -61,6 +64,15 @@ function getSaasApp() {
   saasApp = admin.initializeApp({ credential: admin.credential.cert(serviceAccount) }, "saas");
   return saasApp;
 }
+
+// Вход и данные платформы — через saas-gateway этого сервера (platform.js):
+// он знает, где они сейчас (свой сервер в РФ или Firebase).
+const platform = createPlatform({
+  url: process.env.SAAS_INTERNAL_URL || "http://127.0.0.1:8081",
+  token: process.env.PII_INTERNAL_TOKEN || "",
+  admin,
+  firebaseApp: getSaasApp,
+});
 
 /**
  * Режим хранения: 'rf' — имена и телефоны в Firestore не копируем. Так у
@@ -117,13 +129,12 @@ async function verifySaasUser(req, res) {
     sendJson(res, 401, { error: "нет токена авторизации" });
     return null;
   }
-  const fbApp = getSaasApp();
-  if (!fbApp) {
+  if (!platform.available()) {
     sendJson(res, 503, { error: "pii-gateway не подключён к проекту платформы" });
     return null;
   }
   try {
-    return { fbApp, decoded: await fbApp.auth().verifyIdToken(idToken) };
+    return { decoded: await platform.verifyIdToken(idToken) };
   } catch (_) {
     sendJson(res, 401, { error: "невалидный токен" });
     return null;
@@ -161,7 +172,7 @@ async function handleRegisterGuestProfile(req, res, body) {
   }
   let fbApp;
   if (tenant) {
-    fbApp = getSaasApp();
+    fbApp = platform.available() ? platform : null;
     if (!fbApp) {
       return sendJson(res, 503, {
         error: "pii-gateway не подключён к проекту платформы: задайте SAAS_FIREBASE_SERVICE_ACCOUNT_B64 (см. README.md)",
@@ -171,7 +182,7 @@ async function handleRegisterGuestProfile(req, res, body) {
 
   let decoded;
   try {
-    decoded = await (fbApp || getFirebaseApp()).auth().verifyIdToken(idToken);
+    decoded = await (fbApp ? platform.verifyIdToken(idToken) : getFirebaseApp().auth().verifyIdToken(idToken));
   } catch (e) {
     return sendJson(res, 401, { error: "невалидный токен: " + e.message });
   }
@@ -185,7 +196,7 @@ async function handleRegisterGuestProfile(req, res, body) {
   if (tenant) {
     let tenantSnap;
     try {
-      tenantSnap = await admin.firestore(fbApp).doc(`tenants/${tenant}`).get();
+      tenantSnap = await platform.firestore().doc(`tenants/${tenant}`).get();
     } catch (e) {
       return sendJson(res, 502, { error: "не удалось прочитать заведение: " + e.message });
     }
@@ -239,7 +250,7 @@ async function handleRegisterGuestProfile(req, res, body) {
   }
 
   try {
-    const db = admin.firestore(fbApp || getFirebaseApp());
+    const db = (fbApp ? platform.firestore() : admin.firestore(getFirebaseApp()));
     const path = chainId
       ? `chains/${chainId}/clients/${uid}`
       : tenant ? `tenants/${tenant}/clients/${uid}` : `clients/${uid}`;
@@ -356,7 +367,7 @@ async function handleRecordPayer(req, res, body) {
   // Без этой проверки любой пользователь платформы мог бы занять номер
   // будущего счёта своими реквизитами (ниже ON CONFLICT DO NOTHING).
   try {
-    if (!(await isBillingManager(admin.firestore(auth.fbApp), billingId, auth.decoded.uid))) {
+    if (!(await isBillingManager(platform.firestore(), billingId, auth.decoded.uid))) {
       return sendJson(res, 403, { error: "нет прав на оплату этого заведения" });
     }
   } catch (_) {
@@ -406,7 +417,7 @@ async function handleRecordContact(req, res, body) {
   }
   const auth = await verifySaasUser(req, res);
   if (!auth) return;
-  const db = admin.firestore(auth.fbApp);
+  const db = platform.firestore();
   try {
     const t = await db.doc(`tenants/${tenantId}`).get();
     if (!t.exists) return sendJson(res, 404, { error: "заведение не найдено" });
@@ -470,16 +481,16 @@ async function handleGuestConsent(req, res, body) {
   if (!idToken) return sendJson(res, 401, { error: "нет токена авторизации" });
   let fbApp;
   if (tenant) {
-    fbApp = getSaasApp();
+    fbApp = platform.available() ? platform : null;
     if (!fbApp) return sendJson(res, 503, { error: "pii-gateway не подключён к проекту платформы" });
   }
   let decoded;
   try {
-    decoded = await (fbApp || getFirebaseApp()).auth().verifyIdToken(idToken);
+    decoded = await (fbApp ? platform.verifyIdToken(idToken) : getFirebaseApp().auth().verifyIdToken(idToken));
   } catch (_) {
     return sendJson(res, 401, { error: "невалидный токен" });
   }
-  const db = admin.firestore(fbApp || getFirebaseApp());
+  const db = (fbApp ? platform.firestore() : admin.firestore(getFirebaseApp()));
   let chainId = "";
   if (tenant) {
     try {
@@ -593,7 +604,7 @@ async function handleDeleteGuest(req, res, body) {
   }
   const auth = await verifySaasUser(req, res);
   if (!auth) return;
-  const failed = await forgetGuest(admin.firestore(auth.fbApp), tenantId, auth.decoded.uid);
+  const failed = await forgetGuest(platform.firestore(), tenantId, auth.decoded.uid);
   if (failed) return sendJson(res, failed.status, { error: failed.error });
   return sendJson(res, 200, { ok: true });
 }
@@ -616,9 +627,8 @@ async function handleForgetGuest(req, res, body) {
   if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId) || typeof uid !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) {
     return sendJson(res, 400, { error: "некорректные tenantId/uid" });
   }
-  const fbApp = getSaasApp();
-  if (!fbApp) return sendJson(res, 503, { error: "pii-gateway не подключён к проекту платформы" });
-  const failed = await forgetGuest(admin.firestore(fbApp), tenantId, uid);
+  if (!platform.available()) return sendJson(res, 503, { error: "pii-gateway не подключён к проекту платформы" });
+  const failed = await forgetGuest(platform.firestore(), tenantId, uid);
   if (failed) return sendJson(res, failed.status, { error: failed.error });
   return sendJson(res, 200, { ok: true });
 }
@@ -646,14 +656,12 @@ const HANDLERS_EXTRA = {};
 const vault = createVault({
   query: (sql, params) => getPool().query(sql, params),
   firestore: () => {
-    const app = getSaasApp();
-    if (!app) throw new VaultError(503, "pii-gateway не подключён к проекту платформы");
-    return admin.firestore(app);
+    if (!platform.available()) throw new VaultError(503, "pii-gateway не подключён к проекту платформы");
+    return platform.firestore();
   },
   verifyToken: (token) => {
-    const app = getSaasApp();
-    if (!app) throw new VaultError(503, "pii-gateway не подключён к проекту платформы");
-    return app.auth().verifyIdToken(token);
+    if (!platform.available()) throw new VaultError(503, "pii-gateway не подключён к проекту платформы");
+    return platform.verifyIdToken(token);
   },
   internalToken: process.env.PII_INTERNAL_TOKEN || "",
 });

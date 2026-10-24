@@ -320,7 +320,11 @@ function authApi() {
 
 async function verifyAuth(req) {
   const authHeader = req.headers["authorization"] || "";
-  const idToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+  return verifyIdTokenAny(authHeader.replace(/^Bearer\s+/i, "").trim());
+}
+
+/** Токен своего входа или Firebase (пока жив перенос) → данные входа. */
+async function verifyIdTokenAny(idToken) {
   if (!idToken) throw new HttpError(401, "нет токена авторизации");
   if (ownAuth().isOwnToken(idToken)) {
     try {
@@ -7484,6 +7488,67 @@ async function handleAuth(req, res) {
   sendJson(res, 404, { error: "Нет такого действия" });
 }
 
+// ---- pii-gateway на этом же сервере: проверка входа и чтение прав доступа
+// через saas-gateway — он знает, где сейчас вход и данные (свой сервер или
+// Firebase). Только с общим секретом PII_INTERNAL_TOKEN.
+const PLATFORM_PATH_RE = /^(tenants|tenantMembers|chainMembers|chains|clients)(\/[A-Za-z0-9_:-][A-Za-z0-9_:/-]{0,400})?$/;
+function platformOut(v) {
+  if (v === null || typeof v !== "object") return v;
+  if (v instanceof admin.firestore.Timestamp) return { __ts: v.toMillis() };
+  if (Array.isArray(v)) return v.map(platformOut);
+  const out = {};
+  for (const [k, x] of Object.entries(v)) out[k] = platformOut(x);
+  return out;
+}
+function platformIn(v) {
+  if (v === null || typeof v !== "object") return v;
+  if (Array.isArray(v)) return v.map(platformIn);
+  const keys = Object.keys(v);
+  if (keys.length === 1 && keys[0] === "__ts" && typeof v.__ts === "number") return admin.firestore.Timestamp.fromMillis(v.__ts);
+  if (keys.length === 1 && keys[0] === "__op" && v.__op === "now") return admin.firestore.Timestamp.now();
+  const out = {};
+  for (const [k, x] of Object.entries(v)) out[k] = platformIn(x);
+  return out;
+}
+async function handleInternalPlatform(req, res) {
+  const want = process.env.PII_INTERNAL_TOKEN || "";
+  const got = String(req.headers["x-pii-internal"] || "");
+  if (!want || got.length !== want.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want))) {
+    return sendJson(res, 403, { error: "только для сервисов этого сервера" });
+  }
+  const body = await parseJsonBody(req);
+  const op = String(body.op || "");
+  if (op === "verify") {
+    try {
+      return sendJson(res, 200, { decoded: await verifyIdTokenAny(String(body.token || "")) });
+    } catch (e) {
+      return sendJson(res, 401, { error: e.message || "невалидный токен" });
+    }
+  }
+  const pathOk = (p, even) => typeof p === "string" && PLATFORM_PATH_RE.test(p) && !p.includes("//") && (p.split("/").length % 2 === 0) === even;
+  if (op === "get") {
+    if (!pathOk(body.path, true)) throw new HttpError(400, "неверный путь");
+    const snap = await db().doc(body.path).get();
+    return sendJson(res, 200, { exists: snap.exists, data: snap.exists ? platformOut(snap.data()) : null });
+  }
+  if (op === "query") {
+    if (!pathOk(body.col, false)) throw new HttpError(400, "неверная коллекция");
+    let q = db().collection(body.col);
+    for (const w of Array.isArray(body.where) ? body.where.slice(0, 5) : []) {
+      if (!Array.isArray(w) || !["==", "in", "array-contains"].includes(w[1])) throw new HttpError(400, "неверное условие");
+      q = q.where(String(w[0]), w[1], platformIn(w[2]));
+    }
+    const snap = await q.limit(Math.min(Number(body.limit) || 2000, 5000)).get();
+    return sendJson(res, 200, { docs: snap.docs.map((d) => ({ id: d.id, data: platformOut(d.data()) })) });
+  }
+  if (op === "set") {
+    if (!pathOk(body.path, true) || !body.data || typeof body.data !== "object") throw new HttpError(400, "неверная запись");
+    await db().doc(body.path).set(platformIn(body.data), body.merge ? { merge: true } : {});
+    return sendJson(res, 200, { ok: true });
+  }
+  sendJson(res, 400, { error: "неизвестная операция" });
+}
+
 /** Панель платформы: включить свой вход, перенести пользователей, убрать их из Firebase. */
 async function handleAuthBackend(req, res) {
   const decoded = await verifyAuth(req);
@@ -7492,6 +7557,8 @@ async function handleAuthBackend(req, res) {
   const action = String(body.action || "status");
   if (authMailer === undefined) authMailer = createMailer();
   if (action === "enable") {
+    // Firestore пускает только по входу Firebase: свой вход — вместе со своим сервером данных.
+    if (!DATA_LOCAL) throw new HttpError(412, "Сначала перенесите данные на свой сервер — Firestore не примет вход платформы");
     if (!authMailer) throw new HttpError(412, "Сначала настройте почту платформы (SMTP) — без неё не уйдут письма подтверждения и сброса пароля");
     const imp = await ownAuth().importAllFromFirebase();
     fs.writeFileSync(AUTH_OWN_MARK, new Date().toISOString(), { mode: 0o600 });
@@ -8486,6 +8553,7 @@ const ROUTES = {
   "/auth/password": handleAuth,
   "/auth/me": handleAuth,
   "/authBackend": handleAuthBackend,
+  "/internal/platform": handleInternalPlatform,
   "/cancelSubscription": (req, res) => handleSetSubscriptionCancel(req, res, true),
   "/resumeSubscription": (req, res) => handleSetSubscriptionCancel(req, res, false),
   "/disableTenant": handleDisableTenant,
