@@ -34,6 +34,12 @@ class PushService {
   ];
 
   String get _scope => AppScope.tenantId ?? 'default';
+
+  /// Облачная платформа (SaaS): рассыльщика push (Cloud Function) там нет —
+  /// уведомления показывают сами приложения. Поэтому устройство не
+  /// регистрируется в Firebase Cloud Messaging вовсе: никаких токенов и
+  /// подписок у Google (152-ФЗ — меньше передачи за рубеж).
+  bool get _off => kIsWeb || Platform.isWindows || AppScope.isSaasMode;
   String _positionTopic(String position) => 'staff-$_scope-$position';
   String get _allStaffTopic => 'staff-$_scope-all';
 
@@ -49,7 +55,16 @@ class PushService {
   /// SessionAlertsService (см. HallWatchService/app_bootstrap.dart).
   Future<void> initStaff() async {
     // В вебе Platform из dart:io бросает, а топики FCM не поддерживаются.
-    if (kIsWeb || Platform.isWindows) return;
+    if (!kIsWeb && !Platform.isWindows && AppScope.isSaasMode) {
+      // Плагин мог сам получить токен при первом запуске — выключаем
+      // автополучение и удаляем выданный токен.
+      try {
+        await _fcm.setAutoInitEnabled(false);
+        await _fcm.deleteToken();
+      } catch (_) {}
+      return;
+    }
+    if (_off) return;
     await _requestPermission();
     await _fcm.subscribeToTopic(_allStaffTopic);
   }
@@ -57,7 +72,7 @@ class PushService {
   /// Касса уходит в другое заведение (точка сети, новое демо): вызовы и
   /// брони прежнего сюда больше не должны приходить.
   Future<void> leaveStaff() async {
-    if (kIsWeb || Platform.isWindows) return;
+    if (_off) return;
     try {
       await _fcm.unsubscribeFromTopic(_allStaffTopic);
       for (final p in _allPositions) {
@@ -73,7 +88,7 @@ class PushService {
   /// прошлого не должны приходить следующему. Универсал и админ получают
   /// все специализации.
   Future<void> updateStaffPositionSubscription(Employee employee) async {
-    if (kIsWeb || Platform.isWindows) return;
+    if (_off) return;
     for (final p in _allPositions) {
       await _fcm.unsubscribeFromTopic(_positionTopic(p));
     }
@@ -91,6 +106,7 @@ class PushService {
   /// loyaltyCol, а не col — профиль гостя в сети заведений общий на все
   /// точки (chains/{chainId}/clients), а не свой на каждой точке.
   Future<void> initGuest(String uid) async {
+    if (AppScope.isSaasMode) return;
     await _requestPermission();
     final token = await _fcm.getToken();
     if (token != null && uid.isNotEmpty) {

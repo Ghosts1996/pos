@@ -762,7 +762,7 @@ function createPartners(deps) {
       const pl = (await platformLegal().catch(() => ({}))) || {};
       const who = pl.fullName ? `ИП ${h(pl.fullName)}${pl.inn ? `, ИНН ${h(pl.inn)}` : ""}` : "ИП — правообладателя ZalPOS (реквизиты в договоре)";
       lines.push("", `🧾 Сформируйте чек в «Мой налог» на ${fmtRub(amount)}: покупатель — ${who}, услуга — «Привлечение клиентов по договору».`,
-        `Срок — до ${fmtDate(receiptDue(now()))}. Пришлите сюда ссылку на чек («Поделиться» → «Скопировать ссылку»).`);
+        `Срок — до ${fmtDate(receiptDue(now()))}. Ссылку на чек («Поделиться» → «Скопировать ссылку») прикрепите в кабинете → «Выплаты».`);
     }
     lines.push("", "Когда деньги придут, подтвердите — так у обеих сторон будет одна и та же картина.");
     notify(partnerId, lines.join("\n"), { reply_markup: { inline_keyboard: [[{ text: "✅ Деньги пришли", callback_data: `pgot_${ref.id}` }, { text: "❌ Не пришли", callback_data: `pnot_${ref.id}` }]] } }).catch(() => {});
@@ -819,12 +819,12 @@ function createPartners(deps) {
       for (const a of avail) await col("partnerAccruals").doc(a.id).set({ requestId: ref.id }, { merge: true });
       try {
         notifyAdmins([
-          `💸 <b>Запрос выплаты</b>: ${h(p.name || p.email)}`,
-          `К перечислению: <b>${fmtRub(calc.net)}</b>`,
-          `${TAX_STATUSES[taxStatus]} · СБП ${h(details.phone)} · ${h(details.bank)} · ${h(details.fullName)} · ИНН ${h(details.inn)}`,
+          // В Telegram — без ФИО, телефона, ИНН и почты (152-ФЗ): реквизиты — в панели.
+          `💸 <b>Запрос выплаты</b>: менеджер #${h(p.code)}`,
+          `К перечислению: <b>${fmtRub(calc.net)}</b> · ${TAX_STATUSES[taxStatus]}`,
+          "Реквизиты для перевода — в панели платформы → «Менеджеры».",
           ...(npd ? [npd.ok ? "✅ ФНС: самозанятый на сегодня" : `⚠️ ФНС не ответила — проверьте статус на npd.nalog.ru/check-status перед переводом`] : []),
-          `Назначение платежа: ${h(purposeOf(number, avail))}`,
-          "Отметьте выплату в панели платформы → «Менеджеры».",
+          "Переведите и отметьте выплату там же.",
         ].join("\n"));
       } catch (_) {}
       return { id: ref.id, ...calc };
@@ -876,7 +876,7 @@ function createPartners(deps) {
     }
     await ref.set({ receiptUrl: u, receiptAt: ts(now()) }, { merge: true });
     const x = (await ref.get()).data();
-    try { notifyAdmins(`🧾 Чек от ${h(partner.name || partner.email)} за выплату ${fmtRub(x.amount)} от ${fmtDate(toMs(x.paidAt))}: ${h(u)}`); } catch (_) {}
+    try { notifyAdmins(`🧾 Менеджер #${h(partner.code)} прислал чек за выплату ${fmtRub(x.amount)} от ${fmtDate(toMs(x.paidAt))} — ссылка в панели платформы.`); } catch (_) {}
     return { ok: true, payoutId: ref.id, amount: x.amount };
   }
 
@@ -891,7 +891,7 @@ function createPartners(deps) {
       if (x.receivedAt) throw new HttpError(409, "Вы уже подтвердили, что деньги пришли");
       await ref.set({ notReceivedAt: ts(now()) }, { merge: true });
       try {
-        notifyAdmins(`❗ <b>${h(partner.name || partner.email)}: деньги не пришли</b>\nВыплата ${fmtRub(x.net ?? x.amount)} от ${fmtDate(toMs(x.paidAt))}${x.note ? ` (${h(x.note)})` : ""}. Проверьте перевод в банке; если он не прошёл — переведите заново и напишите менеджеру.`);
+        notifyAdmins(`❗ <b>Менеджер #${h(partner.code)}: деньги не пришли</b>\nВыплата ${fmtRub(x.net ?? x.amount)} от ${fmtDate(toMs(x.paidAt))}${x.note ? ` (${h(x.note)})` : ""}. Проверьте перевод в банке; если он не прошёл — переведите заново и напишите менеджеру.`);
       } catch (_) {}
     }
     return { ok: true, amount: x.net ?? x.amount };
@@ -1242,7 +1242,9 @@ function createPartners(deps) {
   }
   async function notifyUid(uid, html) {
     const p = await partnerByUid(String(uid || ""));
-    if (p) await notify(p.id, html, { reply_markup: { inline_keyboard: [[{ text: "✍️ Ответить", callback_data: "psup_ask" }, cabinetBtn("🖥 Кабинет")]] } });
+    // Текст ответа в Telegram не пересылаем — только сигнал и кнопка в кабинет.
+    void html;
+    if (p) await notify(p.id, "💬 <b>Специалист поддержки ответил</b> — ответ в кабинете → «Поддержка».", { reply_markup: { inline_keyboard: [[cabinetBtn("🆘 Открыть поддержку")]] } });
   }
 
   /** Кабинет: «Подключить Telegram» — одноразовая ссылка на бота. */
@@ -1297,16 +1299,10 @@ function createPartners(deps) {
     "",
     "<i>Бот сам пишет о новых клиентах, оплатах и выплатах и за 3 дня до конца подписки клиента напомнит предложить продление.</i>",
   ].join("\n");
-  const ASK_EMAIL = "📨 <b>Пригласить заведение</b>\n\nНапишите почту владельца и, через пробел, название заведения:\n<code>owner@cafe.ru Кафе Лето</code>";
-  const askingEmail = new Map(); // chatId → когда спросили почту
-  const askingSupport = new Map(); // chatId → когда попросили вопрос в поддержку
-  const SUPPORT_CONSENT = "🆘 <b>Поддержка менеджеров ZalPOS</b>\n\nОтвечает специалист — обычно в течение рабочего дня, ответ придёт сюда и в кабинет.\n\nОбращение хранится на сервере в России; в рабочий чат поддержки оно уходит без вашего имени и почты, телефоны, почты, ИНН и номера карт в тексте скрываются автоматически. Не пишите пароли и коды из СМС. Политика конфиденциальности: zalpos.ru/#/legal/privacy";
-  async function askSupport(chatId, p) {
-    if (!(await supportHasTicket(p.uid).catch(() => false))) {
-      return say(chatId, SUPPORT_CONSENT, { reply_markup: { inline_keyboard: [[{ text: "✅ Согласен на обработку данных обращения", callback_data: "psup_ok" }], [{ text: "✖️ Отмена", callback_data: "psup_no" }]] } });
-    }
-    askingSupport.set(chatId, { at: now(), consent: false });
-    return say(chatId, "🆘 Напишите вопрос одним сообщением — передам специалисту поддержки.", { reply_markup: { inline_keyboard: [[{ text: "✖️ Отмена", callback_data: "psup_no" }]] } });
+  async function askSupport(chatId) {
+    return say(chatId, "🆘 <b>Поддержка менеджеров ZalPOS</b>\n\nНапишите вопрос в кабинете → «Поддержка» — он откроется прямо здесь, в Telegram. Ответ специалиста появится там же, а бот сообщит, что он пришёл.", {
+      reply_markup: { inline_keyboard: [[cabinetBtn("🆘 Открыть поддержку")]] },
+    });
   }
 
   const linkText = (p) => `🔗 <b>Ваша ссылка для клиентов</b>\n\n${h(linkOf(p))}\n\nКто зарегистрируется по ней в течение 30 дней после перехода, закрепится за вами. 30 дней считаются от последнего перехода — перешлите ссылку ещё раз, и отсчёт начнётся заново.`;
@@ -1342,13 +1338,13 @@ function createPartners(deps) {
     const { payouts, summary: b, request } = await dashboardOf(p);
     const lines = ["💸 <b>Выплаты</b>", ""];
     if (request) {
-      lines.push(`⏳ Запрос отправлен ${fmtDate(request.requestedAt)}: <b>${fmtRub(request.net)}</b>`, `   на ${h(request.details)}`, "");
+      lines.push(`⏳ Запрос отправлен ${fmtDate(request.requestedAt)}: <b>${fmtRub(request.net)}</b> — на ваши реквизиты из кабинета`, "");
     }
     lines.push(`Доступно к выплате: <b>${fmtRub(b.available)}</b>`);
     if (b.hold > 0) lines.push(`Ждут ${b.holdDays} дн. после оплаты: ${fmtRub(b.hold)}${b.holdUntil ? ` (ближайшее — ${fmtDate(b.holdUntil)})` : ""}`);
     lines.push(`Выплачено всего: ${fmtRub(b.paid)}`, "");
     const waiting = payouts.filter((x) => x.needReceipt);
-    if (waiting.length) lines.push(`🧾 Нужен чек из «Мой налог»: ${waiting.map((x) => `${fmtRub(x.amount)} от ${fmtDate(x.paidAt)} (до ${fmtDate(x.receiptDue)})`).join("; ")}. Пришлите ссылку на чек сюда.`, "");
+    if (waiting.length) lines.push(`🧾 Нужен чек из «Мой налог»: ${waiting.map((x) => `${fmtRub(x.amount)} от ${fmtDate(x.paidAt)} (до ${fmtDate(x.receiptDue)})`).join("; ")}. Ссылку на чек прикрепите в кабинете → «Выплаты».`, "");
     lines.push(payouts.length ? payouts.slice(0, 15).map((x) => `• ${fmtDate(x.paidAt)} — <b>${fmtRub(x.net)}</b>${x.note ? ` · ${h(x.note)}` : ""}${x.receiptUrl ? " · чек ✓" : ""}`).join("\n") : "Выплат пока не было.");
     const kb = [];
     if (request) kb.push([{ text: "✖️ Отменить запрос", callback_data: "ppay_cancel" }]);
@@ -1360,14 +1356,7 @@ function createPartners(deps) {
     return say(chatId, lines.join("\n"), { reply_markup: { inline_keyboard: kb } });
   }
 
-  async function askInvite(chatId, email, venueName) {
-    if (!EMAIL_RE.test(email)) return say(chatId, "Проверьте адрес почты — например, <code>owner@cafe.ru Кафе Лето</code>");
-    askingEmail.delete(chatId);
-    awaiting.set(chatId, { email, venueName: String(venueName || "").trim().slice(0, 80), at: now() });
-    return say(chatId, `Отправить приглашение на <b>${h(email)}</b>${venueName ? ` («${h(String(venueName).trim().slice(0, 80))}»)` : ""}?\n\nПисьмо можно отправить, только если владелец этой почты согласился его получить (закон о рекламе). В письме будет ваше имя и ссылка для отказа.`, {
-      reply_markup: { inline_keyboard: [[{ text: "✅ Клиент согласен — отправить", callback_data: "pinv_yes" }], [{ text: "✖️ Отмена", callback_data: "pinv_no" }]] },
-    });
-  }
+
 
   async function onMessage(msg) {
     const chatId = msg.chat.id;
@@ -1391,7 +1380,7 @@ function createPartners(deps) {
         mailer().send({ to: pd.email, subject: "Telegram подключён к кабинету менеджера ZalPOS", text, html: text.split("\n").map((l) => `<p>${h(l)}</p>`).join("") })
           .catch((e) => console.error(`partners: письмо о Telegram: ${e.message || e}`));
       }
-      return say(chatId, `✅ Готово, ${h(d.data().name || "менеджер")}! Telegram подключён.\n\n${HELP}\n\nКнопки — внизу чата.`, { reply_markup: MENU });
+      return say(chatId, `✅ Готово! Telegram подключён.\n\n${HELP}\n\nКнопки — внизу чата.`, { reply_markup: MENU });
     }
     const p = await partnerByChat(chatId);
     if (!p || p.status === "removed") {
@@ -1401,8 +1390,7 @@ function createPartners(deps) {
     }
     const byButton = Object.keys(BTN).find((k) => BTN[k] === text);
     const cmd = byButton || (text.match(/^\/(\w+)/) || [])[1] || "";
-    if (cmd) { askingEmail.delete(chatId); askingSupport.delete(chatId); }
-    if (cmd === "support") return askSupport(chatId, p);
+    if (cmd === "support") return askSupport(chatId);
     if (cmd === "start" || cmd === "help") return say(chatId, HELP, { reply_markup: MENU });
     if (cmd === "cabinet") return say(chatId, "🖥 <b>Личный кабинет менеджера</b> — откроется прямо в Telegram, вход без пароля.", { reply_markup: { inline_keyboard: [[cabinetBtn("🖥 Открыть кабинет")]] } });
     if (cmd === "link") return say(chatId, linkText(p), { reply_markup: linkButtons(p) });
@@ -1465,38 +1453,18 @@ function createPartners(deps) {
       ].join("\n"), { reply_markup: { inline_keyboard: [[{ text: "📨 Пригласить ещё", callback_data: "pmenu_invite" }, cabinetBtn("🖥 Кабинет")]] } });
     }
     if (cmd === "payouts") return sayPayouts(chatId, p);
+    // Почту владельца и вопросы в поддержку бот не принимает: сообщение в
+    // Telegram сначала попадает на серверы Telegram, а персональные данные
+    // при сборе записываются сначала в базу в РФ (ч. 5 ст. 18 152-ФЗ).
+    // Кабинет открывается прямо в Telegram, но данные из него идут сразу
+    // на наш сервер.
     if (cmd === "invite") {
-      const m = text.match(/^\/invite(?:@\w+)?\s+(\S+@\S+)(?:\s+(.+))?$/);
-      if (!m) {
-        askingEmail.set(chatId, now());
-        return say(chatId, ASK_EMAIL, { reply_markup: { inline_keyboard: [[{ text: "✖️ Отмена", callback_data: "pinv_no" }]] } });
-      }
-      return askInvite(chatId, normEmail(m[1]), m[2]);
+      return say(chatId, "📨 <b>Пригласить заведение</b>\n\nПочту владельца введите в кабинете — он откроется прямо здесь, в Telegram. Так адрес сразу попадает на наш сервер в России, а не в переписку.", {
+        reply_markup: { inline_keyboard: [[cabinetBtn("📨 Открыть приглашение")]] },
+      });
     }
     if (!cmd && /^https:\/\/lknpd\.nalog\.ru\//.test(text)) {
-      try {
-        const r = await attachReceipt(p, "", text);
-        return say(chatId, `🧾 Спасибо! Чек прикреплён к выплате ${fmtRub(r.amount)}.`, { reply_markup: MENU });
-      } catch (e) {
-        return say(chatId, h(e.message || e));
-      }
-    }
-    // Вопрос в поддержку после «🆘 Поддержка».
-    const sup = askingSupport.get(chatId);
-    if (!cmd && sup && now() - sup.at < 30 * 60 * 1000 && text) {
-      askingSupport.delete(chatId);
-      try {
-        const r = await supportSend(p.uid, text, { consent: sup.consent, consentEdition: TERMS_EDITION, via: "telegram" });
-        return say(chatId, `📨 Передал специалисту поддержки${r && r.masked ? " (личные данные в тексте скрыты)" : ""}. Ответ придёт сюда и в кабинет.`, { reply_markup: MENU });
-      } catch (e) {
-        return say(chatId, `Не отправилось: ${h(e.message || e)}`, { reply_markup: MENU });
-      }
-    }
-    // Ответ на «Напишите почту владельца».
-    if (!cmd && askingEmail.has(chatId) && now() - askingEmail.get(chatId) < 30 * 60 * 1000) {
-      const m = text.match(/^(\S+@\S+)(?:\s+(.+))?$/);
-      if (m) return askInvite(chatId, normEmail(m[1]), m[2]);
-      return say(chatId, "Нужна почта владельца — например, <code>owner@cafe.ru Кафе Лето</code>");
+      return say(chatId, "🧾 Ссылку на чек прикрепите в кабинете → «Выплаты»: в ссылке ваш ИНН, его не принимаем через переписку.", { reply_markup: { inline_keyboard: [[cabinetBtn("🧾 Прикрепить чек")]] } });
     }
     return say(chatId, HELP, { reply_markup: MENU });
   }
@@ -1528,7 +1496,7 @@ function createPartners(deps) {
         if (!p.payoutDetailsEnc) return say(chatId, "Сначала укажите реквизиты для перевода в кабинете менеджера (раздел «Выплаты»).", { reply_markup: { inline_keyboard: [[cabinetBtn()]] } });
         return say(chatId, [
           `Запросить выплату <b>${fmtRub(b.calc.net)}</b>?`,
-          `Перевод — на ${h(p.payoutDetailsMask)}.`,
+          "Перевод — на реквизиты, указанные в кабинете.",
         ].join("\n"), { reply_markup: { inline_keyboard: [[{ text: "✅ Запросить", callback_data: "ppay_yes" }, { text: "✖️ Отмена", callback_data: "ppay_no" }]] } });
       }
       await dropButtons();
@@ -1544,17 +1512,7 @@ function createPartners(deps) {
         return say(chatId, `Не получилось: ${h(e.message || e)}`);
       }
     }
-    if (q.data === "psup_ask" || q.data === "psup_ok" || q.data === "psup_no") {
-      const p = await partnerByChat(chatId);
-      if (!p || p.status === "removed") return;
-      if (q.data === "psup_no") { askingSupport.delete(chatId); await dropButtons(); return say(chatId, "Хорошо.", { reply_markup: MENU }); }
-      if (q.data === "psup_ok") {
-        await dropButtons();
-        askingSupport.set(chatId, { at: now(), consent: true });
-        return say(chatId, "🆘 Напишите вопрос одним сообщением — передам специалисту поддержки.");
-      }
-      return askSupport(chatId, p);
-    }
+    if (q.data === "psup_ask" || q.data === "psup_ok" || q.data === "psup_no") return askSupport(chatId);
     const pitch = String(q.data || "").match(/^ppitch_(\d)$/);
     if (pitch) {
       const p = await partnerByChat(chatId);
@@ -1679,7 +1637,7 @@ function createPartners(deps) {
       await d.ref.set({ adminRemindedAt: ts(now()) }, { merge: true });
       const left = Math.ceil((at + PAY_TERM_MS - now()) / DAY_MS);
       try {
-        notifyAdmins(`⏰ <b>Запрос выплаты ждёт ${Math.floor((now() - at) / DAY_MS)} дн.</b>: ${h(p.name || p.email || "менеджер")} — ${fmtRub(r.net)}.\n${left > 0 ? `По договору перевести до ${fmtDate(at + PAY_TERM_MS)} (осталось ${left} дн.).` : `Срок по договору (${fmtDate(at + PAY_TERM_MS)}) прошёл.`} Если уже перевели — отметьте выплату в панели.`);
+        notifyAdmins(`⏰ <b>Запрос выплаты ждёт ${Math.floor((now() - at) / DAY_MS)} дн.</b>: менеджер #${h(p.code || "")} — ${fmtRub(r.net)}.\n${left > 0 ? `По договору перевести до ${fmtDate(at + PAY_TERM_MS)} (осталось ${left} дн.).` : `Срок по договору (${fmtDate(at + PAY_TERM_MS)}) прошёл.`} Если уже перевели — отметьте выплату в панели.`);
       } catch (_) {}
       n++;
     }
@@ -1697,7 +1655,7 @@ function createPartners(deps) {
       const stage = now() > due - 2 * DAY_MS ? 2 : now() > paid + 3 * DAY_MS ? 1 : 0;
       if (!stage || (x.receiptReminded || 0) >= stage) continue;
       await d.ref.set({ receiptReminded: stage }, { merge: true });
-      await notify(x.partnerId, `🧾 Нужен чек из «Мой налог» за выплату ${fmtRub(x.amount)} от ${fmtDate(paid)} — срок до ${fmtDate(due)}. Пришлите ссылку на чек сюда («Поделиться» → «Скопировать ссылку»).`);
+      await notify(x.partnerId, `🧾 Нужен чек из «Мой налог» за выплату ${fmtRub(x.amount)} от ${fmtDate(paid)} — срок до ${fmtDate(due)}. Ссылку на чек («Поделиться» → «Скопировать ссылку») прикрепите в кабинете → «Выплаты».`);
       n++;
     }
     return n;

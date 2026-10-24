@@ -230,13 +230,14 @@ test("бот: подключение по ссылке из кабинета, /i
   assert.match(h.tg[h.tg.length - 1].body.text, /для менеджеров/);
   await msg(`/start pl_${code}`);
   assert.match(h.tg[h.tg.length - 1].body.text, /Telegram подключён/);
+  // Почту владельца бот не принимает (сбор ПД — сначала в базу в РФ): ведёт в кабинет.
+  const mailsBefore = h.mails.length;
   await msg("/invite new@cafe.ru Кафе Лето");
   const ask = h.tg[h.tg.length - 1].body;
-  assert.match(ask.text, /согласился/);
-  assert.strictEqual(ask.reply_markup.inline_keyboard[0][0].callback_data, "pinv_yes");
-  await h.partners._onCallback({ id: "q", data: "pinv_yes", message: { chat } });
-  assert.match(h.tg[h.tg.length - 1].body.text, /Приглашение отправлено/);
-  assert.strictEqual(h.mails[h.mails.length - 1].to, "new@cafe.ru");
+  assert.match(ask.text, /введите в кабинете/);
+  assert.strictEqual(ask.reply_markup.inline_keyboard[0][0].web_app.url, "https://zalpos.ru/?tgapp=1");
+  assert.strictEqual(h.mails.length, mailsBefore, "письмо из бота не уходит");
+  await h.call(h.partners.handleInvite, { ...anna, body: { email: "new@cafe.ru", consent: true } });
   await h.partners.attachOwner({ uid: "owner1", email: "new@cafe.ru", venueName: "Кафе Лето" });
   assert.match(h.tg[h.tg.length - 1].body.text, /Новый клиент: «Кафе Лето»/);
   await h.partners.onPayment({ invId: 9, ownerUid: "owner1", amount: 14900, venueName: "Кафе Лето" });
@@ -354,20 +355,12 @@ test("бот: кнопки меню, приглашение в два шага, 
   assert.match(last().text, /Ваш доход/);
   await msg("👥 Клиенты");
   assert.match(last().text, /Пока нет закреплённых клиентов/);
-  // Приглашение: кнопка → почта → подтверждение согласия.
+  // Приглашение: кнопка ведёт в кабинет; почту в чате бот не принимает.
   await msg("📨 Пригласить заведение");
-  assert.match(last().text, /Напишите почту владельца/);
-  await msg("не почта");
-  assert.match(last().text, /Нужна почта владельца/);
-  await msg("Owner@Cafe.ru Кафе Лето");
-  assert.match(last().text, /owner@cafe\.ru<\/b> \(«Кафе Лето»\)/);
-  await h.partners._onCallback({ id: "q", data: "pinv_yes", message: { chat, message_id: 5 } });
-  assert.ok(h.tg.some((c) => c.method === "editMessageReplyMarkup" && c.body.message_id === 5));
-  assert.match(last().text, /Приглашение отправлено/);
-  assert.strictEqual(h.mails[h.mails.length - 1].to, "owner@cafe.ru");
-  // После отправки обычный текст — не приглашение.
+  assert.match(last().text, /введите в кабинете/);
   await msg("owner2@cafe.ru");
   assert.match(last().text, /Бот менеджеров ZalPOS/);
+  await h.call(h.partners.handleInvite, { ...anna, body: { email: "owner@cafe.ru", consent: true } });
   // Ссылка: «Поделиться» и «Новая ссылка» с подтверждением.
   await msg("🔗 Моя ссылка");
   assert.match(last().text, new RegExp(`\\?p=${oldCode}`));
@@ -480,7 +473,9 @@ test("выплаты: запрос менеджера — ожидание 14 д
   const r = await call(h.partners.handlePayoutRequest);
   assert.deepStrictEqual([r.gross, r.ndfl, r.net], [2684.98, 0, 2684.98]);
   assert.match(admins[admins.length - 1], /Запрос выплаты.*\n.*2\s684,98 ₽/);
-  assert.match(admins[admins.length - 1], /\+79001234567 · Т-Банк · Петрова Анна Сергеевна · ИНН 500100732259/);
+  // В Telegram админам — без телефона, ФИО и ИНН; реквизиты — в панели.
+  assert.match(admins[admins.length - 1], /менеджер #ANNAPETROV/);
+  assert.ok(!/79001234567|Петрова|500100732259/.test(admins.join("\n")), "персональные данные ушли в Telegram");
   await assert.rejects(h.partners.handlePayoutRequest({ ...anna, body: {} }, {}), (e) => e.status === 409);
   // Пока запрос открыт — начисление из него не снять; админ видит полные реквизиты.
   await assert.rejects(h.partners.handleAdminReverse({ uid: "sa", body: { accrualId: "p1" } }, {}), (e) => e.status === 409);
@@ -534,7 +529,7 @@ test("выплаты: самозанятый — чек из «Мой налог
   assert.match(last().text, /Доступно к выплате: <b>2\s684,98 ₽<\/b>/);
   assert.strictEqual(last().reply_markup.inline_keyboard[0][0].callback_data, "ppay_ask");
   await cb("ppay_ask");
-  assert.match(last().text, /Запросить выплату <b>2\s684,98 ₽<\/b>\?\nПеревод — на СБП/);
+  assert.match(last().text, /Запросить выплату <b>2\s684,98 ₽<\/b>\?\nПеревод — на реквизиты, указанные в кабинете/);
   await cb("ppay_yes");
   assert.match(last().text, /Запрос отправлен: <b>2\s684,98 ₽/);
   await msg("💸 Выплаты");
@@ -556,12 +551,14 @@ test("выплаты: самозанятый — чек из «Мой налог
   h.tick(27 * 86400000);
   assert.strictEqual(await h.partners.remindReceipts(), 1);
   assert.strictEqual(await h.partners.remindReceipts(), 0);
-  // Неправильная ссылка — отказ; правильная — прикреплена, админу сообщение.
-  await msg("https://lknpd.nalog.ru/что-то");
-  assert.match(last().text, /Нужна ссылка на чек/);
+  // Чек в чате бот не принимает (в ссылке ИНН) — ведёт в кабинет; там — прикрепляется.
   await msg("https://lknpd.nalog.ru/api/v1/receipt/500100732259/200abc1234/print");
-  assert.match(last().text, /Чек прикреплён к выплате 2\s684,98 ₽/);
-  assert.match(admins[admins.length - 1], /Чек от Анна Петрова/);
+  assert.match(last().text, /прикрепите в кабинете/);
+  await assert.rejects(h.partners.handlePayoutReceipt({ uid: "u_anna@zalpos.ru", body: { url: "https://lknpd.nalog.ru/что-то" } }, {}), /Нужна ссылка на чек/);
+  const att = await h.call(h.partners.handlePayoutReceipt, { uid: "u_anna@zalpos.ru", body: { url: "https://lknpd.nalog.ru/api/v1/receipt/500100732259/200abc1234/print" } });
+  assert.strictEqual(att.amount, 2684.98);
+  assert.match(admins[admins.length - 1], /Менеджер #ANNAPETROVA? прислал чек/);
+  assert.ok(!admins[admins.length - 1].includes("500100732259"), "ИНН ушёл в Telegram");
   const list = await h.call(h.partners.handleAdminList, { uid: "sa" });
   assert.strictEqual(list.partners[0].receiptsMissing, 0);
   await msg("💸 Выплаты");
@@ -605,7 +602,8 @@ test("ФНС: не самозанятый — запрос и выплата н�
   h.tick(11 * 60 * 1000); // кэш ответа — 10 минут
   const r = await h.call(h.partners.handlePayoutRequest, { ...anna, body: {} });
   assert.match(admins[admins.length - 1], /ФНС: самозанятый на сегодня/);
-  assert.match(admins[admins.length - 1], /Назначение платежа: Вознаграждение по договору № ANNAPETROVA-2026 об оказании услуг по привлечению клиентов за октябрь 2026 г\. НДС не облагается/);
+  const lp = await h.call(h.partners.handleAdminList, { uid: "sa" });
+  assert.strictEqual(lp.partners[0].request.purpose, "Вознаграждение по договору № ANNAPETROVA-2026 об оказании услуг по привлечению клиентов за октябрь 2026 г. НДС не облагается");
   // Ко дню перевода статус потерян — нельзя.
   h.tick(11 * 60 * 1000);
   h.npd.status = false;
@@ -761,7 +759,7 @@ test("мини-приложение: вход по подписи Telegram — �
   await assert.rejects(h2.partners.handleTgAuth({ body: { initData: sign({ auth_date: String(Math.floor(h2.now() / 1000)), user: JSON.stringify({ id: 900 }) }) } }, {}), /только по паролю/);
 });
 
-test("бот: «🆘 Поддержка» — согласие в первый раз, вопрос уходит в поддержку; ответ специалиста — в бот; сведения для темы без имени", async () => {
+test("бот: «🆘 Поддержка» ведёт в кабинет; об ответе — только сигнал; сведения для темы без имени", async () => {
   const sentToSupport = [];
   let has = false;
   const h = harness();
@@ -777,22 +775,16 @@ test("бот: «🆘 Поддержка» — согласие в первый �
   const msg = (text) => h.partners._onMessage({ chat, text });
   const last = () => h.tg[h.tg.length - 1].body;
   await msg(`/start pl_${url.match(/pl_([a-f0-9]+)/)[1]}`);
+  // Вопрос в поддержку — в кабинете (данные сразу на сервер в РФ), не в чате.
   await msg("🆘 Поддержка");
-  assert.match(last().text, /Обращение хранится на сервере в России/);
-  assert.strictEqual(last().reply_markup.inline_keyboard[0][0].callback_data, "psup_ok");
-  await h.partners._onCallback({ id: "q", data: "psup_ok", message: { chat, message_id: 2 } });
+  assert.match(last().text, /Напишите вопрос в кабинете/);
+  assert.strictEqual(last().reply_markup.inline_keyboard[0][0].web_app.url, "https://zalpos.ru/?tgapp=1");
   await msg("Когда придёт выплата?");
-  assert.deepStrictEqual(sentToSupport[0], { uid: "u_anna@zalpos.ru", text: "Когда придёт выплата?", consent: true, consentEdition: sentToSupport[0].consentEdition, via: "telegram" });
-  assert.match(last().text, /Передал специалисту поддержки/);
-  // Второй раз — без согласия, сразу вопрос.
-  await msg("/support");
-  assert.match(last().text, /Напишите вопрос одним сообщением/);
-  await msg("И ещё вопрос");
-  assert.strictEqual(sentToSupport[1].consent, false);
-  // Ответ специалиста — в бот, с кнопками.
+  assert.strictEqual(sentToSupport.length, 0, "текст из чата в поддержку не уходит");
+  // Ответ специалиста: в Telegram — только сигнал, без текста ответа.
   await h.partners.notifyUid("u_anna@zalpos.ru", "👨‍💼 <b>Поддержка ZalPOS</b>:\nВыплата будет завтра");
-  assert.match(last().text, /Выплата будет завтра/);
-  assert.strictEqual(last().reply_markup.inline_keyboard[0][0].callback_data, "psup_ask");
+  assert.match(last().text, /Специалист поддержки ответил/);
+  assert.doesNotMatch(last().text, /Выплата будет завтра/);
   // Сведения для темы в Telegram — без имени и почты.
   const info = await h.partners.partnerInfo("u_anna@zalpos.ru");
   assert.strictEqual(info.tag, "#ANNAPETROVA");
