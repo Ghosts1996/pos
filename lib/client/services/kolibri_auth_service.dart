@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../build_info.dart';
 import '../../models/client_models.dart';
 import '../../services/guest_link_service.dart';
+import '../../services/app_auth.dart';
 
 enum _Restore { restored, unavailable, failed }
 
@@ -23,7 +24,7 @@ enum _Restore { restored, unavailable, failed }
 /// отпечаток которого лежит на saas-gateway (/registerGuestRecovery). По нему
 /// возвращается вход в тот же аккаунт (/restoreGuestSession).
 class KolibriAuthService {
-  final _auth = FirebaseAuth.instance;
+  final _auth = AppAuth.instance;
   final _link = GuestLinkService();
 
   static const _shortIdKey = 'kolibri_short_device_id';
@@ -39,12 +40,12 @@ class KolibriAuthService {
   /// позвать ensureGuest одновременно — второй анонимный аккаунт не нужен.
   static Future<ClientProfile>? _pending;
 
-  User? get user => _auth.currentUser;
+  AppUser? get user => _auth.currentUser;
   String get uid => _auth.currentUser?.uid ?? '';
   bool get isAnonymous => _auth.currentUser?.isAnonymous ?? true;
   bool get signedIn => _auth.currentUser != null;
 
-  Stream<User?> authStateChanges() => _auth.authStateChanges();
+  Stream<AppUser?> authStateChanges() => _auth.authStateChanges();
 
   /// Короткий ID устройства — 6 символов (буквы+цифры), хранится локально.
   /// Генерируется один раз и не меняется. Показывается гостю в профиле.

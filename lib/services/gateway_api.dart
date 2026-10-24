@@ -1,10 +1,10 @@
 import 'dart:convert';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
 import '../build_info.dart';
 import 'app_scope.dart';
+import 'app_auth.dart';
 
 /// Ошибка шлюза с текстом для человека (его пишет сам шлюз).
 class GatewayException implements Exception {
@@ -20,7 +20,7 @@ class GatewayApi {
   GatewayApi._();
 
   static Future<Map<String, dynamic>> get(String path, [Map<String, String> query = const {}]) async {
-    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    final token = await AppAuth.instance.currentUser?.getIdToken();
     if (kSaasGatewayUrl.isEmpty || token == null) {
       throw GatewayException('Сервер сейчас недоступен — проверьте интернет');
     }
@@ -46,7 +46,7 @@ class GatewayApi {
   }
 
   static Future<Map<String, dynamic>> post(String path, [Map<String, dynamic> body = const {}]) async {
-    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    final token = await AppAuth.instance.currentUser?.getIdToken();
     if (kSaasGatewayUrl.isEmpty || token == null) {
       throw GatewayException('Сервер сейчас недоступен — проверьте интернет');
     }

@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import '../build_info.dart';
+import 'app_auth.dart';
 
 /// Регистрация планшета кассы как рабочего устройства.
 ///
@@ -12,7 +12,7 @@ import '../build_info.dart';
 /// выбирается по режиму.
 class StaffDeviceService {
 
-  String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
+  String get _uid => AppAuth.instance.currentUser?.uid ?? '';
 
   String get _collection => kSaasMode ? 'devices' : 'staffDevices';
 

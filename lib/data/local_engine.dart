@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import '../services/app_auth.dart';
 
 // Движок собственного сервера данных: кэш документов на устройстве, очередь
 // записей (переживает выключение и работу без интернета), запросы и живые
@@ -386,14 +387,15 @@ abstract class EngineAuth {
   Stream<String> get uidChanges;
 }
 
+/// Вход приложения ([AppAuth]: свой вход платформы или Firebase).
 class FirebaseEngineAuth implements EngineAuth {
   const FirebaseEngineAuth();
   @override
-  String get uid => FirebaseAuth.instance.currentUser?.uid ?? '';
+  String get uid => AppAuth.instance.currentUser?.uid ?? '';
   @override
-  Future<String?> token({bool force = false}) async => FirebaseAuth.instance.currentUser?.getIdToken(force);
+  Future<String?> token({bool force = false}) async => AppAuth.instance.currentUser?.getIdToken(force);
   @override
-  Stream<String> get uidChanges => FirebaseAuth.instance.idTokenChanges().map((u) => u?.uid ?? '');
+  Stream<String> get uidChanges => AppAuth.instance.uidChanges;
 }
 
 class LocalEngine {

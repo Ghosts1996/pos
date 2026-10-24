@@ -1,10 +1,11 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'app_auth.dart';
 
 /// Анонимная авторизация в Firebase — нужна только для доступа к Firestore
 /// по правилам безопасности. Реальный вход в приложение — по PIN-коду
 /// сотрудника (см. FirestoreService.findByPin).
 class AuthService {
-  final _auth = FirebaseAuth.instance;
+  final _auth = AppAuth.instance;
 
   /// Вход устройства — анонимный, но постоянный: по этому uid правила
   /// узнают рабочий планшет. Сохранённый вход Firebase поднимает с диска не

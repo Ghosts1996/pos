@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -10,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../build_info.dart';
 import '../models/tenant_models.dart';
 import '../data/app_db.dart';
+import 'app_auth.dart';
 
 /// Присоединение планшета кассы к заведению по коду приглашения (вместо
 /// общего staffSecret сборки одного заведения).
@@ -118,7 +118,7 @@ class SaasDeviceJoinService {
     }
     String? idToken;
     if (requireAuth) {
-      idToken = await FirebaseAuth.instance.currentUser?.getIdToken();
+      idToken = await AppAuth.instance.currentUser?.getIdToken();
       if (idToken == null || idToken.isEmpty) {
         throw StateError('Нет активной сессии — перезапустите приложение');
       }

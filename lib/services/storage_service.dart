@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'dart:convert';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -10,6 +9,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../build_info.dart';
 import 'app_lock.dart';
 import 'app_scope.dart';
+import 'app_auth.dart';
 
 /// Загрузка фото категорий и позиций меню в Supabase Storage — Firebase
 /// Storage требует тарифа Blaze.
@@ -116,7 +116,7 @@ class StorageService {
     if (type == null) {
       throw Exception('Формат .$ext не поддерживается — выберите фото в JPG, PNG или WebP');
     }
-    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    final token = await AppAuth.instance.currentUser?.getIdToken();
     final base = kSaasGatewayUrl.replaceAll(RegExp(r'/+$'), '');
     final uri = Uri.parse('$base/uploadMenuImage').replace(queryParameters: {
       'tenantId': AppScope.tenantId!,

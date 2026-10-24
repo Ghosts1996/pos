@@ -1,4 +1,3 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/demo_gate.dart';
@@ -7,6 +6,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
 import '../image_preload_screen.dart';
 import 'saas_device_pairing_screen.dart';
+import '../../services/app_auth.dart';
 
 /// Демо прожило 3 дня (DemoGate): поверх любого экрана кассы открываем
 /// новое демо-заведение в исходном виде — всё введённое в прежнем
@@ -35,7 +35,7 @@ class _DemoResetScreenState extends State<DemoResetScreen> {
       _error = null;
     });
     try {
-      final uid = FirebaseAuth.instance.currentUser?.uid;
+      final uid = AppAuth.instance.currentUser?.uid;
       if (uid == null) throw StateError('Нет входа — перезапустите приложение');
       await startFreshDemo(uid);
       _leave(const ImagePreloadScreen());

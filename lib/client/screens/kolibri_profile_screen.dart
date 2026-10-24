@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import '../../services/app_scope.dart';
 import '../../services/app_update_service.dart';
@@ -23,6 +22,7 @@ import 'kolibri_extras_screen.dart';
 import '../../utils/table_label.dart';
 import '../../utils/money.dart';
 import '../../widgets/open_source_licenses.dart';
+import '../../services/app_auth.dart';
 
 /// Профиль гостя: имя, телефон, бонусы, история операций.
 ///
@@ -227,7 +227,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
         }
       }
       await PiiGatewayService().deleteGuestData();
-      final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+      final token = await AppAuth.instance.currentUser?.getIdToken();
       final resp = await http
           .post(
             Uri.parse('$kSaasGatewayUrl/deleteGuestData'),
@@ -241,7 +241,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
       // Ключ восстановления тоже забываем — иначе приложение вернуло бы
       // удалённый аккаунт.
       await _auth.forgetDevice();
-      await FirebaseAuth.instance.signOut();
+      await AppAuth.instance.signOut();
       await _auth.ensureGuest();
       _name.clear();
       _phone.clear();

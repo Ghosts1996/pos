@@ -2,13 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
 import '../build_info.dart';
 import 'app_scope.dart';
+import 'app_auth.dart';
 
 /// Справочник людей заведения: имена и телефоны сотрудников и гостей,
 /// контакты броней, очереди и доставки. Хранится на сервере в РФ
@@ -542,7 +542,7 @@ class People extends ChangeNotifier {
   // ------------------------------------------------------------ сеть
 
   static Future<Map<String, dynamic>> _httpTransport(Map<String, dynamic> body) async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = AppAuth.instance.currentUser;
     final token = await user?.getIdToken();
     if (token == null || token.isEmpty) throw PeopleException('нет входа');
     final resp = await http

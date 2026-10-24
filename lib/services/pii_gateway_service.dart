@@ -1,8 +1,8 @@
 import 'dart:convert';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import '../build_info.dart';
 import 'app_scope.dart';
+import 'app_auth.dart';
 
 /// Первичная запись имени и телефона гостя — в базу в России
 /// (`pii-gateway/`), а не сразу в Firestore: ч. 5 ст. 18 152-ФЗ требует
@@ -37,7 +37,7 @@ class PiiGatewayService {
         '--dart-define=PII_GATEWAY_URL=... (см. pii-gateway/README.md).',
       );
     }
-    final user = FirebaseAuth.instance.currentUser;
+    final user = AppAuth.instance.currentUser;
     if (user == null) {
       throw PiiGatewayException('Нет активной сессии гостя — сначала войдите.');
     }
@@ -105,7 +105,7 @@ extension PiiContactRecords on PiiGatewayService {
     final tenant = AppScope.tenantId ?? '';
     if (baseUrl.isEmpty || tenant.isEmpty) return;
     if (name.trim().isEmpty && phone.trim().isEmpty && address.trim().isEmpty) return;
-    final user = FirebaseAuth.instance.currentUser;
+    final user = AppAuth.instance.currentUser;
     final idToken = await user?.getIdToken();
     if (idToken == null || idToken.isEmpty) {
       throw PiiGatewayException('Нет активной сессии — войдите заново.');
@@ -143,7 +143,7 @@ extension PiiGuestDeletion on PiiGatewayService {
   Future<void> deleteGuestData() async {
     final tenant = AppScope.tenantId ?? '';
     if (baseUrl.isEmpty || tenant.isEmpty) return;
-    final idToken = await FirebaseAuth.instance.currentUser?.getIdToken();
+    final idToken = await AppAuth.instance.currentUser?.getIdToken();
     if (idToken == null || idToken.isEmpty) {
       throw PiiGatewayException('Нет активной сессии — перезапустите приложение.');
     }
@@ -180,7 +180,7 @@ extension PiiGuestConsent on PiiGatewayService {
     if (baseUrl.isEmpty) {
       throw PiiGatewayException('Сервер данных не настроен в этой сборке — согласие не сохранить.');
     }
-    final idToken = await FirebaseAuth.instance.currentUser?.getIdToken();
+    final idToken = await AppAuth.instance.currentUser?.getIdToken();
     if (idToken == null || idToken.isEmpty) {
       throw PiiGatewayException('Нет активной сессии — перезапустите приложение.');
     }

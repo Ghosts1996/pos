@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import '../app_scope.dart';
 import 'package:http/http.dart' as http;
 import 'ai_settings.dart';
+import '../app_auth.dart';
 
 /// Одно сообщение диалога в формате OpenAI Chat Completions.
 class AiMessage {
@@ -139,7 +139,7 @@ class TookenClient {
 
   Future<http.Response> _post(AiEndpoint ep, String path, Map<String, dynamic> body, Duration timeout) async {
     if (_viaProxy) {
-      final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+      final token = await AppAuth.instance.currentUser?.getIdToken();
       return _http
           .post(
             Uri.parse('$_proxyUrl/aiProxy'),

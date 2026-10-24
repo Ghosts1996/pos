@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
@@ -14,6 +13,7 @@ import '../build_info.dart';
 import 'app_lock.dart';
 import 'app_scope.dart';
 import '../data/app_db.dart';
+import 'app_auth.dart';
 
 /// Что сейчас с обновлением — по этому рисуется плашка (AppUpdateBanner).
 enum AppUpdatePhase {
@@ -637,7 +637,7 @@ Start-Process -FilePath \$exe -WorkingDirectory \$dest
 
   static bool _appInForeground() => WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
 
-  static Future<String?> _firebaseToken() async => FirebaseAuth.instance.currentUser?.getIdToken();
+  static Future<String?> _firebaseToken() async => AppAuth.instance.currentUser?.getIdToken();
 }
 
 class _UpdateError implements Exception {

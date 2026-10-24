@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../models/session_model.dart';
@@ -12,6 +11,7 @@ import 'lan_signals.dart';
 import 'relay_client.dart';
 import 'signal_settings.dart';
 import '../../data/app_db.dart';
+import '../app_auth.dart';
 
 /// Куда уходит сигнал о событии в зале: другим планшетам по Wi‑Fi
 /// заведения, на Wi‑Fi реле (звонок, лампа, пейджер официанта) и на
@@ -87,7 +87,7 @@ class SignalHub {
   /// `signaledBy` в документе [doc] — остальные молчат.
   Future<void> remote(String event, DocumentReference<Map<String, dynamic>> doc, {required String table, String text = ''}) async {
     if (signalSettings.relaysFor(event).isEmpty) return;
-    final me = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final me = AppAuth.instance.currentUser?.uid ?? '';
     if (me.isEmpty) return;
     try {
       final won = await AppDb.instance.runTransaction<bool>((tx) async {

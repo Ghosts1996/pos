@@ -1,6 +1,5 @@
 import 'dart:io' show Platform;
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../../services/auth_service.dart';
 import 'package:flutter/material.dart';
@@ -15,6 +14,7 @@ import '../../theme/app_theme.dart';
 import '../image_preload_screen.dart';
 import '../../utils/human_error.dart';
 import '../../utils/startup_log.dart';
+import '../../services/app_auth.dart';
 
 /// Присоединение планшета к заведению SaaS-платформы — SaaS-аналог
 /// [StaffDeviceSetupScreen] из одно-арендной версии. Отличие: вместо
@@ -117,8 +117,8 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
     // Прежний вход могли выключить на сервере (устройство удаляли) — тогда
     // присоединение с ним получало «нет доступа». Сбрасываем и входим заново.
     await AuthService().recoverDeadSession().catchError((Object _) => false);
-    if (FirebaseAuth.instance.currentUser == null) await AuthService().ensureSignedIn().catchError((Object _) {});
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (AppAuth.instance.currentUser == null) await AuthService().ensureSignedIn().catchError((Object _) {});
+    final uid = AppAuth.instance.currentUser?.uid;
     if (uid == null) {
       if (mounted) {
         setState(() {
@@ -158,7 +158,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
   /// saas-gateway/README.md), присоединение дальше идёт тем же путём, что
   /// и обычное устройство.
   Future<void> _tryDemo() async {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final uid = AppAuth.instance.currentUser?.uid;
     if (uid == null) {
       setState(() => _error = 'Нет входа в Firebase — перезапустите приложение');
       return;

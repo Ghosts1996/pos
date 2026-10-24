@@ -1,4 +1,3 @@
-import 'package:firebase_auth/firebase_auth.dart';
 
 import 'app_bootstrap.dart';
 import 'app_scope.dart';
@@ -13,6 +12,7 @@ import 'subscription_gate.dart';
 import 'tenant_config_service.dart';
 import '../utils/startup_log.dart';
 import '../data/app_db.dart';
+import 'app_auth.dart';
 
 /// Записать устройство в заведение, забрать конфигурацию (брендинг,
 /// длительность сеанса и т. п.), войти в него и перезапустить фоновые
@@ -34,7 +34,7 @@ Future<void> joinAndEnterTenant({
 /// подключает к ней планшет, дальше — как после присоединения. Сотрудники
 /// и PIN-коды у точки свои.
 Future<void> switchChainPoint(String tenantId) async {
-  final uid = FirebaseAuth.instance.currentUser?.uid;
+  final uid = AppAuth.instance.currentUser?.uid;
   if (uid == null) throw StateError('Нет входа — перезапустите приложение');
   if (tenantId == AppScope.tenantId) return;
   await SaasDeviceJoinService().joinChainPoint(tenantId);

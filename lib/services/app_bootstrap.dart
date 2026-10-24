@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'fiscal_queue.dart';
 import 'net_status.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import '../models/client_models.dart';
 import '../utils/time_cafe.dart';
 import '../utils/constants.dart';
@@ -24,6 +23,7 @@ import 'ai/ai_scheduler.dart';
 import 'background_jobs_service.dart';
 import 'signals/signal_bootstrap.dart';
 import '../utils/startup_log.dart';
+import 'app_auth.dart';
 
 /// Всё, что не блокирует старт приложения — принтер/касса/ИИ подтянутся
 /// чуть позже, если настроены, а не настроены — ничего не сломается.
@@ -95,7 +95,7 @@ void startBackgroundServices() {
 
   // Фоновые ИИ-задания. Замок внутри планировщика гарантирует, что
   // работу выполнит только одно устройство в зале.
-  final uid = FirebaseAuth.instance.currentUser?.uid;
+  final uid = AppAuth.instance.currentUser?.uid;
   StartupLog.step('фон: ИИ-задания и дежурное устройство');
   if (uid != null) AiScheduler.instance.start(deviceId: uid);
 

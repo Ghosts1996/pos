@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, Tar
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'build_info.dart';
@@ -39,6 +38,7 @@ import 'utils/startup_log.dart';
 import 'widgets/app_update_banner.dart';
 import 'widgets/people_refresh.dart';
 import 'data/app_db.dart';
+import 'services/app_auth.dart';
 
 // Данные проекта Supabase (Project Settings → API в Supabase Dashboard).
 // Используется ТОЛЬКО для хранения фото меню (Storage) — anon key публичный
@@ -87,6 +87,8 @@ void main() async {
       }
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       await AppDb.init();
+      // Вход: свой вход платформы (сервер в РФ) или Firebase — решает сервер.
+      await AppAuth.instance.init();
       StartupLog.step('Firebase инициализирован');
 
       // Офлайн-режим кассы: при обрыве интернета зал продолжает работать
@@ -122,7 +124,7 @@ void main() async {
         final tenantConfigService = TenantConfigService();
         await tenantConfigService.loadFromCache();
         var cachedDemo = tenantConfigService.current?.tenant.demo == true;
-        final uid = FirebaseAuth.instance.currentUser?.uid;
+        final uid = AppAuth.instance.currentUser?.uid;
         TenantConfig? config;
         if (uid != null) {
           try {
