@@ -697,6 +697,7 @@ function clearScreen() {
   // начинают без них.
   screenEl().classList.remove('has-tabbar');
   screenEl().classList.remove('landing');
+  screenEl().classList.remove('partner-page');
 }
 function sub(off) { state.screenSubs.push(off); }
 
@@ -1142,7 +1143,7 @@ function handleAuthChange(user) {
   checkPartner().finally(() => {
     if (state.uid !== user.uid) return;
     state.partnerChecked = true;
-    if (location.hash === '#/partner') route();
+    if (location.hash === '#/partner' || (state.tenantsLoaded && !state.tenants.length)) route();
   });
 
   // Флаг платформы — отдельной лёгкой подпиской.
@@ -1266,12 +1267,12 @@ const SUPPORT_PAGE_NAMES = {
 /** Режим чата для текущей страницы; кабинет уточняет раздел сам (draw). */
 function supportChatForRoute() {
   const h = location.hash;
-  if (h === '#/admin' || h.startsWith('#/invoice/') || h.startsWith('#/act/')) return setSupportChat({ mode: 'hidden' });
+  if (h === '#/admin' || h === '#/partner' || h.startsWith('#/invoice/') || h.startsWith('#/act/')) return setSupportChat({ mode: 'hidden' });
   const page = SUPPORT_PAGE_NAMES[h] || '';
   if (!state.uid) return setSupportChat({ mode: 'site', page: page || 'Главная' });
   if (!state.tenantsLoaded) return;
   // У кого есть заведение — поддержка в кабинете («Поддержка»), кнопка не нужна.
-  if ((state.tenants || []).length) return setSupportChat({ mode: 'hidden' });
+  if ((state.tenants || []).length || state.partner) return setSupportChat({ mode: 'hidden' });
   return setSupportChat({ mode: 'site', role: 'account', page: page || 'Создание заведения' });
 }
 
@@ -1317,6 +1318,12 @@ function route() {
   if (location.hash === '#/partner') {
     return state.partner ? screenPartner() : (state.partnerChecked ? screenNotPartner() : screenLoading());
   }
+  // Менеджер без своего заведения: разделов владельца (создание заведения,
+  // устройства, оплата) у него нет — только кабинет менеджера.
+  if (state.partner && state.tenantsLoaded && !state.tenants.length && !state.isSuperAdmin) {
+    if (location.hash !== '#/partner') history.replaceState(null, '', location.pathname + '#/partner');
+    return screenPartner();
+  }
   if (location.hash === '#/admin') {
     // Панель платформы не зависит от того, есть ли у супер-админа
     // собственное заведение — поэтому проверяется до tenantsLoaded/tenants.
@@ -1347,6 +1354,8 @@ function screenNotPartner() {
 
 function screenDashboardOrOnboarding() {
   if (!state.tenantsLoaded) return screenLoading();
+  // Без заведения — сначала узнаём, не менеджер ли это (иначе мелькнёт «Создайте заведение»).
+  if (!state.tenants.length && !state.partnerChecked) return screenLoading();
   if (!state.tenants.length) return screenOnboarding();
   return screenDashboard();
 }
@@ -4050,6 +4059,8 @@ function watchDashboardData(tenantId) {
   };
 
   const draw = () => {
+    // Раздел уже закрыт (перешли на другую вкладку), а данные пришли — не рисуем.
+    if (!body || !body.isConnected) return;
     // Без документа заведения нет ни названия, ни роли.
     if (!tenant) return;
     const role = (state.tenants.find((t) => t.id === tenantId) || {}).role || '';
@@ -6927,103 +6938,177 @@ function screenPartner() {
     draw();
   };
 
+  let tab = 'invite';
+
+  const greeting = () => {
+    const h = new Date().getHours();
+    return h < 5 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер';
+  };
+
+  const shell = (p, inner) => `
+    <header class="pt-top">
+      <div class="pt-brand"><span class="pt-mark">◆</span> ZalPOS <span class="pt-brand-sub">для партнёров</span></div>
+      <div class="pt-top-right">
+        ${state.tenants.length ? '<a href="#/" class="pt-top-link">Кабинет заведения</a>' : ''}
+        <button type="button" class="btn btn-ghost pt-out" id="f-partner-signout">${navIconHtml('logout')}<span>Выйти</span></button>
+      </div>
+    </header>
+    ${inner}
+    <footer class="pt-foot"><a href="#/partner-terms" target="_blank" rel="noopener">Правила партнёрской программы</a>${p ? ` · ${esc(p.termsEdition)}` : ''}</footer>`;
+
   const draw = () => {
     if (location.hash !== '#/partner' && state.tenants.length) return;
+    screenEl().classList.add('partner-page');
     if (error && !data) {
-      screenEl().innerHTML = `<div class="brand">ZalPOS</div><h1>Кабинет менеджера</h1><div class="card"><p class="small">${esc(error)}</p></div>
-        <p class="small center muted"><a href="#/">← На главную</a></p>`;
+      screenEl().innerHTML = shell(null, `<div class="card pt-empty"><p class="small" style="margin:0">${esc(error)}</p>
+        <button class="btn btn-ghost" id="f-partner-retry" style="width:auto;margin-top:12px">Обновить</button></div>`);
+      bind();
       return;
     }
     if (!data) return;
     const p = data.partner;
     const s = data.summary;
     const st = data.settings || {};
-    const header = `
-      <div class="brand">ZalPOS</div>
-      <h1>Кабинет менеджера</h1>
-      <p class="small muted" style="margin-top:-6px">${esc(p.name || p.email)}${state.tenants.length ? ' · <a href="#/">кабинет заведения</a>' : ''} · <a href="#" id="f-partner-signout">выйти</a></p>`;
+    const firstName = (p.name || '').trim().split(/\s+/)[0] || '';
+    const hello = `
+      <div class="dash-hero">
+        <div class="dash-date">${esc(new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }))}</div>
+        <div class="dash-greeting">${greeting()}${firstName ? `, <em>${esc(firstName)}</em>` : ''}</div>
+      </div>`;
     if (!p.termsAcceptedAt) {
-      screenEl().innerHTML = `${header}
-        <div class="card">
-          <h2 style="margin-top:0">Правила партнёрской программы</h2>
+      screenEl().innerHTML = shell(p, `${hello}
+        <div class="card pt-terms">
+          <div class="pt-kicker">Шаг 1 из 1</div>
+          <h2 class="pt-h">Правила партнёрской программы</h2>
           <p class="small">Вы приводите в ZalPOS новые заведения и получаете <b>${esc(String(p.percent))}%</b> с их оплат подписки после налога и комиссии платёжной системы${p.months ? ` в течение ${p.months} мес. после регистрации клиента` : ''}.</p>
-          <ul class="small" style="padding-left:18px;line-height:1.55">
-            <li>Приглашение по почте отправляйте только тем, кто согласился его получить (закон о рекламе). В письме будут ваше имя и ссылка для отказа.</li>
+          <ul class="pt-list small">
+            <li>Приглашение по почте — только тем, кто согласился его получить (закон о рекламе). В письме будут ваше имя и ссылка для отказа.</li>
             <li>Не обещайте клиентам условий, которых нет в тарифах ZalPOS.</li>
             <li>Данные клиентов не передавайте третьим лицам: после регистрации вы видите только название заведения, тариф и суммы.</li>
             <li>Клиент закрепляется за тем, кто пригласил первым; уже работающих клиентов закрепить нельзя.</li>
           </ul>
-          <p class="small"><a href="#/partner-terms" target="_blank">Полный текст правил</a> · ${esc(p.termsEdition)}</p>
-          <label class="row small" style="gap:8px;align-items:flex-start;margin:10px 0"><input type="checkbox" id="f-partner-terms" style="width:auto;margin-top:3px"> <span>Принимаю правила партнёрской программы ZalPOS</span></label>
-          <button class="btn btn-primary" id="f-partner-accept">Продолжить</button>
-        </div>`;
+          <p class="small"><a href="#/partner-terms" target="_blank" rel="noopener">Полный текст правил</a> · ${esc(p.termsEdition)}</p>
+          <label class="row small pt-check"><input type="checkbox" id="f-partner-terms"> <span>Принимаю правила партнёрской программы ZalPOS</span></label>
+          <button class="btn btn-primary" id="f-partner-accept">Начать работу</button>
+        </div>`);
       bind();
       return;
     }
-    const clientsHtml = data.clients.length ? data.clients.map((c) => `
-      <div style="padding:10px 0;border-top:1px solid var(--border)">
-        <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
-          <b>${esc(c.venueName)}</b>
-          <span class="small">ваш доход: <b>${fmtMoney(c.income)}</b></span>
+
+    const live = data.accruals.filter((a) => a.status !== 'reversed');
+    const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
+    const thisMonth = live.filter((a) => a.paidAt >= monthStart).reduce((sum, a) => sum + a.amount, 0);
+    const activeInvites = data.invites.filter((x) => x.status === 'sent').length;
+    const termText = p.months ? `${p.months} мес. с регистрации клиента` : 'пока клиент платит';
+    const stopped = p.status !== 'active';
+
+    const hero = `
+      <div class="card venue-card pt-hero">
+        <div class="venue-kicker">К выплате</div>
+        <div class="pt-hero-sum">${fmtMoney(s.unpaid)}</div>
+        <div class="pt-hero-sub">Начислено всего ${fmtMoney(s.total)} · выплачено ${fmtMoney(s.paid)}</div>
+        <div class="venue-chips">
+          <span class="venue-chip ${stopped ? 'bad' : ''}"><i></i>${stopped ? 'Приостановлено' : 'Активно'}</span>
+          <span class="venue-chip">Ставка ${esc(String(p.percent))}%</span>
+          <span class="venue-chip">${esc(termText)}</span>
+          <span class="venue-chip">${esc(capitalize(p.taxStatusLabel || ''))}</span>
         </div>
-        <div class="small muted">${c.planName ? `${esc(c.planName)} · ` : ''}с ${fmtDay(c.attachedAt)} · ${c.source === 'invite' ? 'по приглашению' : 'по ссылке'}${c.payments ? ` · оплат: ${c.payments} на ${fmtMoney(c.paid)}` : ' · оплат ещё не было'}${c.paidUntil ? ` · оплачено до ${fmtDay(c.paidUntil)}` : ''}</div>
-      </div>`).join('') : '<p class="small muted" style="margin:0">Пока нет закреплённых клиентов. Отправьте ссылку или приглашение — клиент появится здесь после регистрации.</p>';
-    const invitesHtml = data.invites.length ? data.invites.slice(0, 30).map((x) => {
-      const [label, color] = PARTNER_INVITE_STATUS[x.status] || [x.status, 'var(--muted)'];
-      return `<div class="row small" style="justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--border);flex-wrap:wrap">
-        <span>${esc(x.email)}${x.venueName ? ` · ${esc(x.venueName)}` : ''}</span>
-        <span style="color:${color}">${label}${x.status === 'sent' ? ` · до ${fmtDay(x.expiresAt)}` : ''}</span></div>`;
-    }).join('') : '<p class="small muted" style="margin:0">Приглашений ещё не было.</p>';
-    const accrualsHtml = data.accruals.length ? data.accruals.slice(0, 50).map((a) => `
-      <div class="small" style="padding:8px 0;border-top:1px solid var(--border)">
-        <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
-          <span>${fmtDay(a.paidAt)} · ${esc(a.venueName || 'клиент')}</span>
-          <b style="${a.status === 'reversed' ? 'text-decoration:line-through;color:var(--muted)' : ''}">${fmtMoney(a.amount)}</b>
+        <div class="pt-hero-note">Процент — от каждой оплаты клиента после налога ${esc(String(st.taxPct ?? 6))}% и комиссии платёжной системы. Выплату отмечает администратор ZalPOS — она появится здесь и в Telegram.</div>
+      </div>`;
+    const stat = (icon, value, label, money = false) => `
+      <div class="card live-stat"><div class="live-stat-head">${navIconHtml(icon)}</div>
+        <div class="live-stat-value${money ? ' pt-money' : ''}">${value}</div><div class="live-stat-label">${label}</div></div>`;
+    const stats = `
+      <div class="live-stats-grid">
+        ${stat('users', s.clients, 'Клиентов закреплено')}
+        ${stat('bell', activeInvites, 'Приглашений ждут ответа')}
+        ${stat('card', live.length, 'Оплат от клиентов')}
+        ${stat('gem', fmtMoney(thisMonth), 'Доход в этом месяце', true)}
+      </div>`;
+    const linkCard = `
+      <div class="card pt-link">
+        <div class="pt-link-head">
+          <div><div class="pt-kicker">Ваша ссылка</div><div class="small muted">Кто зарегистрируется по ней в течение 30 дней после перехода — ваш клиент.</div></div>
         </div>
-        <div class="muted">оплата ${fmtMoney(a.gross)} − налог ${fmtMoney(a.tax)} − комиссия ${fmtMoney(a.fee)} = ${fmtMoney(a.base)} × ${a.percent}% · ${a.status === 'reversed' ? 'снято (возврат клиенту)' : a.paidOut ? 'выплачено' : 'к выплате'}</div>
-      </div>`).join('') : '<p class="small muted" style="margin:0">Начислений пока нет: они появятся после оплаты подписки вашим клиентом.</p>';
-    const payoutsHtml = data.payouts.length ? data.payouts.map((x) => `<div class="row small" style="justify-content:space-between;padding:6px 0;border-top:1px solid var(--border)"><span>${fmtDay(x.paidAt)}${x.note ? ` · ${esc(x.note)}` : ''}</span><b>${fmtMoney(x.amount)}</b></div>`).join('') : '';
-    renderKeepingInputs(screenEl(), `${header}
-      ${p.status !== 'active' ? '<div class="card" style="border-color:var(--warning)"><p class="small" style="margin:0">Программа для вас приостановлена: новые клиенты не закрепляются и начисления не идут. Вопросы — администратору ZalPOS.</p></div>' : ''}
-      <div class="admin-stat-grid">
-        ${[['Клиентов', s.clients], ['Начислено', fmtMoney(s.total)], ['К выплате', fmtMoney(s.unpaid)], ['Выплачено', fmtMoney(s.paid)]].map(([label, value]) => `
-          <div class="card" style="text-align:center;padding:14px 8px"><div style="font-size:20px;font-weight:700">${value}</div><div class="small muted">${label}</div></div>`).join('')}
-      </div>
-      <p class="small muted">Ваша ставка: <b>${esc(String(p.percent))}%</b> от каждой оплаты клиента после налога ${esc(String(st.taxPct ?? 6))}% и комиссии платёжной системы${p.months ? `, ${p.months} мес. после регистрации клиента` : ', пока клиент платит'}. Налоговый статус: ${esc(p.taxStatusLabel)}.</p>
-
-      <h2>Ваша ссылка</h2>
-      <div class="card">
-        <p class="small muted" style="margin-top:0">Отправьте её владельцу заведения. Кто зарегистрируется по ней в течение 30 дней после перехода, закрепится за вами.</p>
-        <div class="row" style="gap:8px;flex-wrap:wrap">
-          <input id="f-partner-link" class="grow" readonly value="${esc(p.link)}" style="margin:0;min-width:200px">
-          <button class="btn btn-ghost" id="f-partner-copy" style="width:auto">Скопировать</button>
-          ${navigator.share ? '<button class="btn btn-ghost" id="f-partner-share" style="width:auto">Поделиться</button>' : ''}
+        <div class="pt-link-row">
+          <input id="f-partner-link" readonly value="${esc(p.link)}" aria-label="Ваша ссылка">
+          <button class="btn btn-primary" id="f-partner-copy">Скопировать</button>
+          ${navigator.share ? '<button class="btn btn-ghost" id="f-partner-share">Поделиться</button>' : ''}
         </div>
-      </div>
+      </div>`;
+    const steps = !s.clients ? `
+      <div class="pt-steps">
+        ${[['1', 'Отправьте ссылку или приглашение', 'Владельцу кафе, бара или кальянной — в мессенджере или по почте.'],
+          ['2', 'Клиент регистрируется', 'По вашей ссылке или из письма-приглашения — и сразу закрепляется за вами.'],
+          ['3', 'Вы получаете процент', `${esc(String(p.percent))}% с каждой его оплаты подписки — ${esc(termText)}.`]].map(([n, t, d]) => `
+          <div class="pt-step"><span class="pt-step-n">${n}</span><div><b>${t}</b><span>${d}</span></div></div>`).join('')}
+      </div>` : '';
 
-      <h2>Пригласить заведение по почте</h2>
-      <div class="card">
-        <label class="field"><span>Почта владельца</span><input id="f-partner-email" type="email" placeholder="owner@cafe.ru" autocomplete="off"></label>
-        <label class="field"><span>Название заведения (необязательно)</span><input id="f-partner-venue" maxlength="80" placeholder="Кафе «Лето»"></label>
-        <label class="row small" style="gap:8px;align-items:flex-start;margin:6px 0 12px"><input type="checkbox" id="f-partner-consent" style="width:auto;margin-top:3px"> <span>Владелец этой почты согласился получить от ZalPOS письмо-приглашение</span></label>
-        <button class="btn btn-primary" id="f-partner-invite"${sending ? ' disabled' : ''}>${sending ? 'Отправляю…' : 'Отправить приглашение'}</button>
-        <p class="small muted" style="margin-bottom:0">Письмо придёт от ZalPOS с вашим именем и кнопкой регистрации. Приглашение действует 30 дней; если заведение уже пригласил другой менеджер или у почты есть аккаунт ZalPOS, письмо не отправится.</p>
-      </div>
+    const tabs = [
+      ['invite', 'Пригласить'],
+      ['clients', `Клиенты${data.clients.length ? ` · ${data.clients.length}` : ''}`],
+      ['money', 'Начисления'],
+      ['invites', `Приглашения${data.invites.length ? ` · ${data.invites.length}` : ''}`],
+    ];
+    const empty = (t) => `<p class="small muted pt-empty-text">${t}</p>`;
+    const panels = {
+      invite: `
+        <div class="card">
+          <label class="field"><span>Почта владельца заведения</span><input id="f-partner-email" type="email" placeholder="owner@cafe.ru" autocomplete="off"${stopped ? ' disabled' : ''}></label>
+          <label class="field"><span>Название заведения (необязательно)</span><input id="f-partner-venue" maxlength="80" placeholder="Кафе «Лето»"${stopped ? ' disabled' : ''}></label>
+          <label class="row small pt-check"><input type="checkbox" id="f-partner-consent"${stopped ? ' disabled' : ''}> <span>Владелец этой почты согласился получить от ZalPOS письмо-приглашение</span></label>
+          <button class="btn btn-primary" id="f-partner-invite"${sending || stopped ? ' disabled' : ''}>${sending ? 'Отправляю…' : 'Отправить приглашение'}</button>
+          <p class="small muted" style="margin:12px 0 0">Письмо придёт от ZalPOS с вашим именем и кнопкой регистрации, действует 30 дней. Если заведение уже пригласил другой менеджер или у почты есть аккаунт ZalPOS, письмо не отправится.</p>
+        </div>`,
+      clients: `<div class="card pt-rows">${data.clients.length ? data.clients.map((c) => `
+          <div class="pt-row">
+            <div class="pt-row-main"><b>${esc(c.venueName)}</b>
+              <span class="small muted">${c.planName ? `${esc(c.planName)} · ` : ''}с ${fmtDay(c.attachedAt)} · ${c.source === 'invite' ? 'по приглашению' : 'по ссылке'}${c.paidUntil ? ` · оплачено до ${fmtDay(c.paidUntil)}` : ''}</span></div>
+            <div class="pt-row-side"><b>${fmtMoney(c.income)}</b><span class="small muted">${c.payments ? `${c.payments} ${plural(c.payments, 'оплата', 'оплаты', 'оплат')} · ${fmtMoney(c.paid)}` : 'оплат ещё не было'}</span></div>
+          </div>`).join('') : empty('Пока нет закреплённых клиентов. Отправьте ссылку или приглашение — клиент появится здесь сразу после регистрации.')}</div>`,
+      money: `<div class="card pt-rows">${data.accruals.length ? data.accruals.slice(0, 100).map((a) => `
+          <div class="pt-row${a.status === 'reversed' ? ' pt-row-off' : ''}">
+            <div class="pt-row-main"><b>${esc(a.venueName || 'Клиент')}</b>
+              <span class="small muted">${fmtDay(a.paidAt)} · оплата ${fmtMoney(a.gross)} − налог ${fmtMoney(a.tax)} − комиссия ${fmtMoney(a.fee)} = ${fmtMoney(a.base)} × ${a.percent}%</span></div>
+            <div class="pt-row-side"><b>${fmtMoney(a.amount)}</b><span class="pt-badge ${a.status === 'reversed' ? 'off' : a.paidOut ? 'ok' : 'wait'}">${a.status === 'reversed' ? 'снято — возврат' : a.paidOut ? 'выплачено' : 'к выплате'}</span></div>
+          </div>`).join('') : empty('Начислений пока нет: они появятся после первой оплаты подписки вашим клиентом.')}</div>
+        ${data.payouts.length ? `<h2 class="pt-sub">Выплаты</h2><div class="card pt-rows">${data.payouts.map((x) => `
+          <div class="pt-row"><div class="pt-row-main"><b>${fmtDay(x.paidAt)}</b>${x.note ? `<span class="small muted">${esc(x.note)}</span>` : ''}</div>
+            <div class="pt-row-side"><b>${fmtMoney(x.amount)}</b></div></div>`).join('')}</div>` : ''}`,
+      invites: `<div class="card pt-rows">${data.invites.length ? data.invites.slice(0, 50).map((x) => {
+          const [label, tone] = { sent: ['ждёт регистрации', 'wait'], registered: ['зарегистрировано', 'ok'], expired: ['срок истёк', 'off'], optedOut: ['отказ от писем', 'bad'] }[x.status] || [x.status, 'off'];
+          return `<div class="pt-row"><div class="pt-row-main"><b>${esc(x.venueName || x.email)}</b>
+              <span class="small muted">${x.venueName ? `${esc(x.email)} · ` : ''}отправлено ${fmtDay(x.sentAt)}${x.status === 'sent' ? ` · действует до ${fmtDay(x.expiresAt)}` : ''}</span></div>
+            <div class="pt-row-side"><span class="pt-badge ${tone}">${label}</span></div></div>`;
+        }).join('') : empty('Приглашений ещё не было.')}</div>`,
+    };
+    const tg = data.bot && data.bot.connected ? `
+      <div class="card pt-tg">
+        <div class="pt-tg-text"><b>${p.telegram ? 'Telegram подключён' : 'Уведомления в Telegram'}</b>
+          <span class="small muted">${p.telegram ? 'Бот пишет о новых клиентах и оплатах; приглашать можно командой /invite.' : `Бот @${esc(data.bot.username)} сообщит о новых клиентах и оплатах, а приглашать можно прямо из чата.`}</span></div>
+        <button class="btn btn-ghost" id="f-partner-tg">${p.telegram ? 'Переподключить' : 'Подключить'}</button>
+      </div>` : '';
 
-      ${data.bot && data.bot.connected ? `<h2>Telegram</h2><div class="card"><p class="small" style="margin-top:0">${p.telegram ? '✓ Telegram подключён: бот пишет о новых клиентах и оплатах, а приглашать можно командой /invite.' : `Бот @${esc(data.bot.username)} сообщит о новых клиентах и оплатах, а приглашать можно прямо из Telegram.`}</p>
-        <button class="btn btn-ghost" id="f-partner-tg" style="width:auto">${p.telegram ? 'Переподключить Telegram' : 'Подключить Telegram'}</button></div>` : ''}
-
-      <h2>Клиенты</h2><div class="card">${clientsHtml}</div>
-      <h2>Начисления</h2><div class="card">${accrualsHtml}</div>
-      ${payoutsHtml ? `<h2>Выплаты</h2><div class="card">${payoutsHtml}</div>` : ''}
-      <h2>Приглашения</h2><div class="card">${invitesHtml}</div>
-      <p class="small center muted" style="margin-top:20px"><a href="#/partner-terms" target="_blank">Правила партнёрской программы</a></p>
-    `);
+    renderKeepingInputs(screenEl(), shell(p, `
+      ${hello}
+      ${stopped ? '<div class="card sec-warn pt-warn"><p class="small" style="margin:0">Программа для вас приостановлена: новые клиенты не закрепляются и начисления не идут. Вопросы — администратору ZalPOS.</p></div>' : ''}
+      ${hero}
+      ${stats}
+      ${linkCard}
+      ${steps}
+      <div class="pt-tabs" role="tablist">${tabs.map(([id, label]) => `<button type="button" role="tab" class="pt-tab${tab === id ? ' active' : ''}" data-ptab="${id}" aria-selected="${tab === id}">${label}</button>`).join('')}</div>
+      <div class="pt-panel">${panels[tab]}</div>
+      ${tg}
+    `));
     bind();
   };
 
   const bind = () => {
     if ($('f-partner-signout')) $('f-partner-signout').onclick = (e) => { e.preventDefault(); signOut(state.auth); };
+    if ($('f-partner-retry')) $('f-partner-retry').onclick = () => { error = ''; load(); };
+    screenEl().querySelectorAll('[data-ptab]').forEach((b) => {
+      b.onclick = () => { tab = b.dataset.ptab; draw(); };
+    });
     if ($('f-partner-accept')) {
       $('f-partner-accept').onclick = async () => {
         if (!$('f-partner-terms').checked) { toast('Отметьте, что принимаете правила'); return; }
@@ -7037,16 +7122,22 @@ function screenPartner() {
     if ($('f-partner-share')) $('f-partner-share').onclick = () => navigator.share({ title: 'ZalPOS', text: 'Касса и управление заведением — попробуйте бесплатно', url: $('f-partner-link').value }).catch(() => {});
     if ($('f-partner-tg')) {
       $('f-partner-tg').onclick = async () => {
+        // Окно — сразу по нажатию (иначе браузер считает его всплывающим).
+        const w = window.open('', '_blank');
         try {
           const r = await callSaasGateway('partnerTgLink', {});
-          window.open(r.data.url, '_blank', 'noopener');
-        } catch (e) { toast(`Не получилось: ${e?.message || e}`); }
+          if (w) w.location.href = r.data.url; else location.href = r.data.url;
+        } catch (e) {
+          if (w) w.close();
+          toast(`Не получилось: ${e?.message || e}`);
+        }
       };
     }
     if ($('f-partner-invite')) {
       $('f-partner-invite').onclick = async () => {
         const email = $('f-partner-email').value.trim();
         if (!email) { toast('Укажите почту владельца заведения'); return; }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { toast('Проверьте адрес почты'); return; }
         if (!$('f-partner-consent').checked) { toast('Отметьте, что владелец почты согласился получить приглашение'); return; }
         sending = true;
         draw();
@@ -7057,6 +7148,7 @@ function screenPartner() {
           $('f-partner-consent').checked = false;
           toast('Приглашение отправлено');
           sending = false;
+          tab = 'invites';
           await load();
         } catch (e) {
           sending = false;
@@ -7159,6 +7251,8 @@ function watchAdminPartners() {
     </div>`;
 
   const draw = () => {
+    // Раздел уже закрыт (перешли на другую вкладку), а данные пришли — не рисуем.
+    if (!body || !body.isConnected) return;
     const s = data.settings || {};
     const bot = data.bot || {};
     renderKeepingInputs(body, `
@@ -7699,6 +7793,8 @@ function watchSupportBotAdmin() {
   };
 
   const draw = () => {
+    // Раздел уже закрыт (перешли на другую вкладку), а данные пришли — не рисуем.
+    if (!body || !body.isConnected) return;
     if (!st && !loadError) { body.innerHTML = '<div class="spinner"></div>'; return; }
     const s = st || {};
     if (!provDraft) provDraft = draftFrom(s);
@@ -7931,7 +8027,7 @@ function watchSupportBotAdmin() {
         }
       };
     }
-    $('f-sb-purge').onclick = async () => {
+    if ($('f-sb-purge')) $('f-sb-purge').onclick = async () => {
       const btn = $('f-sb-purge');
       btn.disabled = true;
       try {
@@ -8077,6 +8173,8 @@ function watchAdminSupportTickets() {
   sub(() => clearInterval(messagesTimer));
 
   const draw = () => {
+    // Раздел уже закрыт (перешли на другую вкладку), а данные пришли — не рисуем.
+    if (!body || !body.isConnected) return;
     if (!tickets.length) {
       body.innerHTML = '<p class="small muted">Обращений пока не было.</p>';
       return;
@@ -8238,6 +8336,8 @@ function watchAdminBroadcasts() {
   let editingId = null; // объявление, которое сейчас правят на месте
 
   const draw = () => {
+    // Раздел уже закрыт (перешли на другую вкладку), а данные пришли — не рисуем.
+    if (!body || !body.isConnected) return;
     body.innerHTML = items.length ? `<div class="card">${items.map((b) => editingId === b.id ? `
       <div style="padding:10px 0;border-bottom:1px solid var(--border)">
         <label class="field"><span>Заголовок</span>
@@ -8709,6 +8809,8 @@ function watchAllTenants() {
   };
 
   const draw = () => {
+    // Раздел уже закрыт (перешли на другую вкладку), а данные пришли — не рисуем.
+    if (!body || !body.isConnected) return;
     const term = ($('f-tenant-search')?.value || '').trim().toLowerCase();
     const statusFilter = $('f-tenant-status-filter')?.value || '';
     let filtered = allTenants.filter((t) =>

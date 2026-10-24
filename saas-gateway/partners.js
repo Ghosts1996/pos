@@ -340,6 +340,12 @@ function createPartners(deps) {
       if (p && p.status === "active") { partner = p; source = "link"; }
     }
     if (!partner || partner.uid === uid || normEmail(partner.email) === e) return null;
+    // Закрепляется только новый клиент: аккаунт создан не раньше срока
+    // приглашения (иначе это давний клиент, у которого просто не было точки).
+    try {
+      const created = Date.parse(((await auth().getUser(uid)) || {}).metadata?.creationTime || "");
+      if (Number.isFinite(created) && created < now() - INVITE_TTL_MS) return null;
+    } catch (_) { /* нет данных о входе — проверка по заведениям уже прошла */ }
     await ref.set({ partnerId: partner.id, ownerUid: uid, source, inviteId: source === "invite" ? usedInvite.id : null, venueName: String(venueName || "").slice(0, 80), attachedAt: ts(now()) });
     if (source === "invite") await col("partnerInvites").doc(usedInvite.id).set({ status: "registered", registeredAt: ts(now()), email: maskEmail(usedInvite.email) }, { merge: true });
     notify(partner.id, `🎉 Новый клиент: «${venueName || "заведение"}» — регистрация ${source === "invite" ? "по вашему приглашению" : "по вашей ссылке"}, клиент закреплён за вами.`).catch(() => {});
@@ -426,7 +432,14 @@ function createPartners(deps) {
     }
     const email = normEmail(body.email);
     if (!EMAIL_RE.test(email)) throw new HttpError(400, "Проверьте почту менеджера");
-    if (!(await partnersCol().where("email", "==", email).limit(1).get()).empty) throw new HttpError(409, "Менеджер с этой почтой уже есть");
+    const same = await partnersCol().where("email", "==", email).limit(1).get();
+    if (!same.empty) {
+      const old = { id: same.docs[0].id, ...same.docs[0].data() };
+      if (old.status !== "removed") throw new HttpError(409, "Менеджер с этой почтой уже есть");
+      // Удалённого раньше — возвращаем с прежним кодом ссылки и историей.
+      await partnersCol().doc(old.id).set({ name, percent: round2(percent), months, taxStatus, status: "active", updatedAt: ts(now()), updatedBy: decoded.uid }, { merge: true });
+      return sendJson(res, 200, { ok: true, id: old.id, code: old.code, restored: true, mailed: false });
+    }
     let user;
     try {
       user = await auth().getUserByEmail(email);
@@ -462,12 +475,29 @@ function createPartners(deps) {
     sendJson(res, 200, { ok: true });
   }
 
+  // Одна выплата менеджера за раз: двойное нажатие не создаст двух выплат
+  // на одни и те же начисления.
+  const payoutLocks = new Map();
+  function withPayoutLock(partnerId, fn) {
+    const prev = payoutLocks.get(partnerId) || Promise.resolve();
+    const run = prev.then(fn);
+    const tail = run.catch(() => {});
+    payoutLocks.set(partnerId, tail);
+    tail.then(() => { if (payoutLocks.get(partnerId) === tail) payoutLocks.delete(partnerId); });
+    return run;
+  }
+
   /** «Выплачено»: все невыплаченные начисления менеджера закрываются выплатой. */
   async function handleAdminPayout(req, res) {
     const decoded = await verifyAuth(req);
     await requireSuperAdmin(decoded);
     const body = await parseJsonBody(req);
     const partnerId = String(body.partnerId || "");
+    if (!/^[\w-]{1,64}$/.test(partnerId)) throw new HttpError(400, "Не указан менеджер");
+    return withPayoutLock(partnerId, () => payout(decoded, body, partnerId, res));
+  }
+
+  async function payout(decoded, body, partnerId, res) {
     if (!(await partnersCol().doc(partnerId).get()).exists) throw new HttpError(404, "Менеджер не найден");
     const open = (await accrualsOf(partnerId)).filter((a) => a.status !== "reversed" && !a.payoutId);
     if (!open.length) throw new HttpError(400, "Невыплаченных начислений нет");
@@ -487,7 +517,9 @@ function createPartners(deps) {
   async function handleAdminReverse(req, res) {
     await requireSuperAdmin(await verifyAuth(req));
     const body = await parseJsonBody(req);
-    const ref = col("partnerAccruals").doc(String(body.accrualId || "x"));
+    const accrualId = String(body.accrualId || "");
+    if (!/^[\w-]{1,128}$/.test(accrualId)) throw new HttpError(400, "Не указано начисление");
+    const ref = col("partnerAccruals").doc(accrualId);
     const a = (await ref.get()).data();
     if (!a) throw new HttpError(404, "Начисление не найдено");
     if (a.payoutId) throw new HttpError(409, "Начисление уже выплачено — учтите это в следующей выплате вручную");

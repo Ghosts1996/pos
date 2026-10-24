@@ -23,12 +23,14 @@ function harness({ existingEmails = [] } = {}) {
   const sent = {};
   let clock = Date.UTC(2026, 9, 24, 12);
   const key = crypto.randomBytes(32);
+  const created = new Map(); // uid → когда создан аккаунт (по умолчанию — «сейчас»)
   const auth = {
     getUserByEmail: async (email) => {
       if (!users.has(email)) throw Object.assign(new Error("нет"), { code: "auth/user-not-found" });
       return { uid: users.get(email), email };
     },
     createUser: async ({ email }) => { users.set(email, `u_${email}`); return { uid: `u_${email}` }; },
+    getUser: async (uid) => ({ uid, metadata: { creationTime: new Date(created.get(uid) ?? clock).toUTCString() } }),
     generatePasswordResetLink: async (email) => `https://reset/${email}`,
   };
   const partners = createPartners({
@@ -52,7 +54,7 @@ function harness({ existingEmails = [] } = {}) {
   });
   const call = async (fn, req) => { await fn(req, {}); return sent.body; };
   const addManager = async (body) => call(partners.handleAdminSave, { uid: "sa", body: { email: "anna@zalpos.ru", name: "Анна Петрова", percent: 20, ...body } });
-  return { partners, store, mails, tg, sent, call, addManager, users, tick: (ms) => { clock += ms; }, now: () => clock };
+  return { partners, store, mails, tg, sent, call, addManager, users, created, tick: (ms) => { clock += ms; }, now: () => clock };
 }
 
 test("расчёт: процент от суммы после налога и комиссии; комиссия — из уведомления или из настроек", () => {
@@ -227,6 +229,34 @@ test("бот: подключение по ссылке из кабинета, /i
   assert.match(h.tg[h.tg.length - 1].body.text, /Кафе Лето/);
   await msg("/link");
   assert.match(h.tg[h.tg.length - 1].body.text, /\?p=ANNAPETROVA/);
+});
+
+test("логика: давний аккаунт не закрепляется, двойная «Выплачено» — одна выплата, удалённого менеджера можно вернуть", async () => {
+  const h = harness();
+  const { id: pid, code } = await h.addManager({});
+  await h.call(h.partners.handleAcceptTerms, { uid: "u_anna@zalpos.ru", body: { accept: true } });
+  // Аккаунт создан 40 дней назад, точек не было — это не новый клиент.
+  h.created.set("oldOwner", h.now() - 40 * 24 * 3600 * 1000);
+  assert.strictEqual(await h.partners.attachOwner({ uid: "oldOwner", email: "old@cafe.ru", code, venueName: "Старое" }), null);
+  assert.ok(await h.partners.attachOwner({ uid: "newOwner", email: "new@cafe.ru", code, venueName: "Новое" }));
+  await h.partners.onPayment({ invId: "p1", ownerUid: "newOwner", amount: 1000 });
+  await h.partners.onPayment({ invId: "p2", ownerUid: "newOwner", amount: 1000 });
+  const both = await Promise.allSettled([
+    h.partners.handleAdminPayout({ uid: "sa", body: { partnerId: pid } }, {}),
+    h.partners.handleAdminPayout({ uid: "sa", body: { partnerId: pid } }, {}),
+  ]);
+  assert.deepStrictEqual(both.map((r) => r.status).sort(), ["fulfilled", "rejected"], "вторая выплата — «нет невыплаченных»");
+  assert.strictEqual((await h.store.collection("partnerPayouts").get()).size, 1);
+  // Удалили и добавили снова той же почтой — тот же менеджер, код и история.
+  await h.call(h.partners.handleAdminSave, { uid: "sa", body: { id: pid, name: "Анна", percent: 20, status: "removed" } });
+  const back = await h.addManager({ percent: 25 });
+  assert.strictEqual(back.id, pid);
+  assert.strictEqual(back.code, code);
+  assert.strictEqual(back.restored, true);
+  const me = await h.call(h.partners.handleMe, { uid: "u_anna@zalpos.ru" });
+  assert.strictEqual(me.partner.status, "active");
+  assert.strictEqual(me.partner.percent, 25);
+  assert.strictEqual(me.summary.clients, 1);
 });
 
 test("договор: услуги (не агентский), реквизиты платформы и менеджера, налоги по статусу, акт", async () => {
