@@ -8106,7 +8106,10 @@ function dataApiOrNull() {
 
 /** GET /db/status — где сейчас данные (клиенты выбирают по нему). */
 function handleDataStatus(req, res) {
-  sendJson(res, 200, { backend: DATA_LOCAL ? "local" : "firestore", docs: DATA_LOCAL ? localDataStore().count() : null, auth: authOwn() ? "own" : "firebase" });
+  // authSince — с какого дня свой вход (по ней кабинет показывает редакцию политики).
+  let authSince = null;
+  if (authOwn()) { try { authSince = fs.readFileSync(AUTH_OWN_MARK, "utf8").trim().slice(0, 30) || null; } catch (_) {} }
+  sendJson(res, 200, { backend: DATA_LOCAL ? "local" : "firestore", docs: DATA_LOCAL ? localDataStore().count() : null, auth: authOwn() ? "own" : "firebase", authSince });
 }
 
 function dataRoute(name) {
