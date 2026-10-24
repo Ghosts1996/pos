@@ -6897,7 +6897,6 @@ function watchDashboardData(tenantId) {
     sub(() => { if (dayOff) dayOff(); onGeneralSettings = null; });
   }
 }
-}
 
 // draw() кабинета перерисовывает вкладку на любой снапшот, а живые цифры
 // «Обзора» меняются весь день. Без переноса введённого и фокуса формы
