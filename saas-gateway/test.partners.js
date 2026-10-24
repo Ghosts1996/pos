@@ -313,6 +313,54 @@ test("новая ссылка: код меняется, старые ссылк�
   assert.strictEqual(await h.partners.attachOwner({ uid: "o9", email: "o9@cafe.ru", code: oldCode, venueName: "Кафе 9" }), null);
 });
 
+test("бот: кнопки меню, приглашение в два шага, новая ссылка кнопкой", async () => {
+  const h = harness();
+  const { code: oldCode } = await h.addManager({});
+  const anna = { uid: "u_anna@zalpos.ru" };
+  await h.call(h.partners.handleAcceptTerms, { ...anna, body: { accept: true } });
+  await h.call(h.partners.handleAdminBot, { uid: "sa", body: { token: "123456789:AAAbbbCCCdddEEEfffGGGhhhIIIjjjKKKlll" } });
+  const { url } = await h.call(h.partners.handleTgLink, anna);
+  const chat = { id: 778, type: "private" };
+  const msg = (text) => h.partners._onMessage({ chat, text });
+  const last = () => h.tg[h.tg.length - 1].body;
+  // Не подключён — кнопка на кабинет.
+  await msg("привет");
+  assert.strictEqual(last().reply_markup.inline_keyboard[0][0].url, "https://zalpos.ru/#/partner");
+  await msg(`/start pl_${url.match(/pl_([a-f0-9]+)/)[1]}`);
+  const kb = last().reply_markup.keyboard.flat().map((b) => b.text);
+  assert.deepStrictEqual(kb, ["💼 Мой доход", "👥 Клиенты", "📨 Пригласить заведение", "🔗 Моя ссылка", "❓ Помощь"]);
+  assert.ok(last().reply_markup.is_persistent);
+  await msg("💼 Мой доход");
+  assert.match(last().text, /Ваш доход/);
+  await msg("👥 Клиенты");
+  assert.match(last().text, /Пока нет закреплённых клиентов/);
+  // Приглашение: кнопка → почта → подтверждение согласия.
+  await msg("📨 Пригласить заведение");
+  assert.match(last().text, /Напишите почту владельца/);
+  await msg("не почта");
+  assert.match(last().text, /Нужна почта владельца/);
+  await msg("Owner@Cafe.ru Кафе Лето");
+  assert.match(last().text, /owner@cafe\.ru<\/b> \(«Кафе Лето»\)/);
+  await h.partners._onCallback({ id: "q", data: "pinv_yes", message: { chat, message_id: 5 } });
+  assert.ok(h.tg.some((c) => c.method === "editMessageReplyMarkup" && c.body.message_id === 5));
+  assert.match(last().text, /Приглашение отправлено/);
+  assert.strictEqual(h.mails[h.mails.length - 1].to, "owner@cafe.ru");
+  // После отправки обычный текст — не приглашение.
+  await msg("owner2@cafe.ru");
+  assert.match(last().text, /Бот менеджеров ZalPOS/);
+  // Ссылка: «Поделиться» и «Новая ссылка» с подтверждением.
+  await msg("🔗 Моя ссылка");
+  assert.match(last().text, new RegExp(`\\?p=${oldCode}`));
+  assert.match(last().reply_markup.inline_keyboard[0][0].url, /^https:\/\/t\.me\/share\/url\?url=/);
+  await h.partners._onCallback({ id: "q", data: "plink_new", message: { chat, message_id: 6 } });
+  assert.match(last().text, /Создать новую ссылку/);
+  await h.partners._onCallback({ id: "q", data: "plink_yes", message: { chat, message_id: 7 } });
+  assert.match(last().text, /Новая ссылка готова/);
+  assert.doesNotMatch(last().text, new RegExp(`p=${oldCode}\\b`));
+  await h.partners._onCallback({ id: "q", data: "pmenu_income", message: { chat } });
+  assert.match(last().text, /Ваш доход/);
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try {

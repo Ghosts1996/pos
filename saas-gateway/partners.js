@@ -627,11 +627,11 @@ function createPartners(deps) {
     const url = hookBase ? `${hookBase}/${HOOK_ID}` : `${publicUrl}/tgHook/${HOOK_ID}`;
     await tg("setWebhook", { url, secret_token: hookSecret, allowed_updates: ["message", "callback_query"] }, token);
     await tg("setMyCommands", { commands: [
-      { command: "invite", description: "Пригласить заведение по почте" },
-      { command: "clients", description: "Мои клиенты" },
-      { command: "income", description: "Мой доход" },
-      { command: "link", description: "Моя ссылка для клиентов" },
-      { command: "help", description: "Что умеет бот" },
+      { command: "income", description: "💼 Мой доход" },
+      { command: "clients", description: "👥 Мои клиенты" },
+      { command: "invite", description: "📨 Пригласить заведение" },
+      { command: "link", description: "🔗 Моя ссылка для клиентов" },
+      { command: "help", description: "❓ Что умеет бот" },
     ] }, token).catch(() => {});
     await ref.set({ tokenEnc: encrypt(secretKey(), token), username: me.username || "", hookSecret, connectedAt: ts(now()) }, { merge: true });
     bot = { token, username: me.username || "", hookSecret };
@@ -643,8 +643,7 @@ function createPartners(deps) {
    * разосланные ссылки по-прежнему закрепляют клиентов. 30 дней идут у
    * каждого посетителя от его последнего перехода по любой из ссылок.
    */
-  async function handleNewLink(req, res) {
-    const { partner } = await requirePartner(req);
+  async function renewLink(partner) {
     if (partner.status !== "active") throw new HttpError(403, "Программа для вас приостановлена — обратитесь к администратору ZalPOS");
     if (now() - toMs(partner.linkRenewedAt) < 60 * 1000) throw new HttpError(429, "Ссылку только что обновили — подождите минуту");
     const base = (cleanCode(translit(partner.name || "")) || "ZAL").slice(0, 10);
@@ -656,7 +655,12 @@ function createPartners(deps) {
     if (!code) throw new HttpError(503, "Не удалось подобрать код — попробуйте ещё раз");
     await rememberOldCode(partner.id, partner.code);
     await partnersCol().doc(partner.id).set({ code, linkRenewedAt: ts(now()) }, { merge: true });
-    sendJson(res, 200, { ok: true, code, link: linkOf({ code }) });
+    return { code, link: linkOf({ code }) };
+  }
+
+  async function handleNewLink(req, res) {
+    const { partner } = await requirePartner(req);
+    sendJson(res, 200, { ok: true, ...(await renewLink(partner)) });
   }
 
   /** Кабинет: «Подключить Telegram» — одноразовая ссылка на бота. */
@@ -673,16 +677,43 @@ function createPartners(deps) {
     return snap.empty ? null : { id: snap.docs[0].id, ...snap.docs[0].data() };
   }
 
+  // Кнопки внизу чата — всегда под рукой, команды набирать не нужно.
+  const BTN = { income: "💼 Мой доход", clients: "👥 Клиенты", invite: "📨 Пригласить заведение", link: "🔗 Моя ссылка", help: "❓ Помощь" };
+  const MENU = {
+    keyboard: [[{ text: BTN.income }, { text: BTN.clients }], [{ text: BTN.invite }], [{ text: BTN.link }, { text: BTN.help }]],
+    resize_keyboard: true, is_persistent: true, input_field_placeholder: "Выберите действие",
+  };
+  const cabinetUrl = () => `${site}#/partner`;
+  const cabinetBtn = (text = "🖥 Открыть кабинет") => ({ text, url: cabinetUrl() });
   const HELP = [
-    "Бот менеджеров ZalPOS.",
+    "<b>Бот менеджеров ZalPOS</b>",
     "",
-    "/invite почта@заведения.ru Название — пригласить заведение по почте",
-    "/clients — ваши клиенты и их оплаты",
-    "/income — начислено, к выплате и выплачено",
-    "/link — ваша ссылка для клиентов",
+    `${BTN.income} — начислено, к выплате и выплачено`,
+    `${BTN.clients} — ваши заведения и их оплаты`,
+    `${BTN.invite} — письмо владельцу заведения`,
+    `${BTN.link} — ссылка для клиентов, её можно переслать`,
     "",
     "Об оплатах ваших клиентов бот пишет сам.",
   ].join("\n");
+  const ASK_EMAIL = "📨 <b>Пригласить заведение</b>\n\nНапишите почту владельца и, через пробел, название заведения:\n<code>owner@cafe.ru Кафе Лето</code>";
+  const askingEmail = new Map(); // chatId → когда спросили почту
+
+  const linkText = (p) => `🔗 <b>Ваша ссылка для клиентов</b>\n\n${h(linkOf(p))}\n\nКто зарегистрируется по ней в течение 30 дней после перехода, закрепится за вами. 30 дней считаются от последнего перехода — перешлите ссылку ещё раз, и отсчёт начнётся заново.`;
+  const linkButtons = (p) => ({
+    inline_keyboard: [
+      [{ text: "↗️ Поделиться", url: `https://t.me/share/url?url=${encodeURIComponent(linkOf(p))}&text=${encodeURIComponent("Касса и управление заведением — попробуйте ZalPOS бесплатно")}` }],
+      [{ text: "🔄 Новая ссылка", callback_data: "plink_new" }],
+    ],
+  });
+
+  async function askInvite(chatId, email, venueName) {
+    if (!EMAIL_RE.test(email)) return say(chatId, "Проверьте адрес почты — например, <code>owner@cafe.ru Кафе Лето</code>");
+    askingEmail.delete(chatId);
+    awaiting.set(chatId, { email, venueName: String(venueName || "").trim().slice(0, 80), at: now() });
+    return say(chatId, `Отправить приглашение на <b>${h(email)}</b>${venueName ? ` («${h(String(venueName).trim().slice(0, 80))}»)` : ""}?\n\nПисьмо можно отправить, только если владелец этой почты согласился его получить (закон о рекламе). В письме будет ваше имя и ссылка для отказа.`, {
+      reply_markup: { inline_keyboard: [[{ text: "✅ Клиент согласен — отправить", callback_data: "pinv_yes" }], [{ text: "✖️ Отмена", callback_data: "pinv_no" }]] },
+    });
+  }
 
   async function onMessage(msg) {
     const chatId = msg.chat.id;
@@ -692,66 +723,115 @@ function createPartners(deps) {
     if (start && start[1]) {
       const snap = await partnersCol().where("tgLinkCode", "==", start[1]).limit(1).get();
       const d = snap.empty ? null : snap.docs[0];
-      if (!d || toMs(d.data().tgLinkUntil) < now()) return say(chatId, "Ссылка устарела. Откройте кабинет менеджера на zalpos.ru и нажмите «Подключить Telegram» ещё раз.");
+      if (!d || toMs(d.data().tgLinkUntil) < now()) {
+        return say(chatId, "Ссылка устарела. Откройте кабинет менеджера и нажмите «Подключить Telegram» ещё раз.", { reply_markup: { inline_keyboard: [[cabinetBtn()]] } });
+      }
       // Один Telegram — один менеджер.
       const old = await partnerByChat(chatId);
       if (old && old.id !== d.id) await partnersCol().doc(old.id).set({ tgChatId: null }, { merge: true });
       await d.ref.set({ tgChatId: chatId, tgLinkCode: null, tgLinkedAt: ts(now()) }, { merge: true });
-      return say(chatId, `Готово, ${h(d.data().name || "менеджер")}! Telegram подключён.\n\n${HELP}`);
+      return say(chatId, `✅ Готово, ${h(d.data().name || "менеджер")}! Telegram подключён.\n\n${HELP}\n\nКнопки — внизу чата.`, { reply_markup: MENU });
     }
     const p = await partnerByChat(chatId);
     if (!p || p.status === "removed") {
-      return say(chatId, "Этот бот — для менеджеров партнёрской программы ZalPOS. Подключите его в кабинете менеджера: zalpos.ru/#/partner → «Подключить Telegram».");
+      return say(chatId, "Этот бот — для менеджеров партнёрской программы ZalPOS. Подключите его в кабинете менеджера: «Подключить Telegram».", {
+        reply_markup: { inline_keyboard: [[cabinetBtn("🖥 Кабинет менеджера")]] },
+      });
     }
-    const cmd = (text.match(/^\/(\w+)/) || [])[1] || "";
-    if (cmd === "start" || cmd === "help") return say(chatId, HELP);
-    if (cmd === "link") return say(chatId, `Ваша ссылка для клиентов:\n${linkOf(p)}\n\nКто зарегистрируется по ней в течение 30 дней после перехода, закрепится за вами.`);
+    const byButton = Object.keys(BTN).find((k) => BTN[k] === text);
+    const cmd = byButton || (text.match(/^\/(\w+)/) || [])[1] || "";
+    if (cmd) askingEmail.delete(chatId);
+    if (cmd === "start" || cmd === "help") return say(chatId, HELP, { reply_markup: MENU });
+    if (cmd === "link") return say(chatId, linkText(p), { reply_markup: linkButtons(p) });
     if (cmd === "income") {
       const s = await summaryOf(p);
       const st = await settings();
       return say(chatId, [
-        `💼 <b>Ваш доход</b> (${p.percent}% от оплат после налога ${st.taxPct}% и комиссии платёжной системы)`,
+        "💼 <b>Ваш доход</b>",
         "",
         `Клиентов: <b>${s.clients}</b>`,
         `Начислено всего: <b>${fmtRub(s.total)}</b>`,
         `К выплате: <b>${fmtRub(s.unpaid)}</b>`,
         `Выплачено: ${fmtRub(s.paid)}`,
-      ].join("\n"));
+        "",
+        `<i>${p.percent}% от оплат после налога ${st.taxPct}% и комиссии платёжной системы.</i>`,
+      ].join("\n"), { reply_markup: { inline_keyboard: [[{ text: "👥 Клиенты", callback_data: "pmenu_clients" }, cabinetBtn("🖥 Кабинет")]] } });
     }
     if (cmd === "clients") {
       const dsh = await dashboardOf(p);
-      if (!dsh.clients.length) return say(chatId, "Пока нет закреплённых клиентов. Пригласите заведение: /invite почта@заведения.ru");
-      const lines = dsh.clients.slice(0, 30).map((c) => `• <b>${h(c.venueName)}</b>${c.planName ? ` · ${h(c.planName)}` : ""} — оплачено ${fmtRub(c.paid)}, ваш доход ${fmtRub(c.income)}`);
-      return say(chatId, `👥 <b>Ваши клиенты</b> (${dsh.clients.length})\n\n${lines.join("\n")}`);
+      if (!dsh.clients.length) {
+        return say(chatId, "👥 Пока нет закреплённых клиентов.\n\nПригласите заведение по почте или отправьте владельцу свою ссылку.", {
+          reply_markup: { inline_keyboard: [[{ text: "📨 Пригласить", callback_data: "pmenu_invite" }, { text: "🔗 Моя ссылка", callback_data: "pmenu_link" }]] },
+        });
+      }
+      const lines = dsh.clients.slice(0, 30).map((c) => `• <b>${h(c.venueName)}</b>${c.planName ? ` · ${h(c.planName)}` : ""}\n   оплачено ${fmtRub(c.paid)}, ваш доход ${fmtRub(c.income)}`);
+      const more = dsh.clients.length > 30 ? `\n\n…и ещё ${dsh.clients.length - 30} — все в кабинете.` : "";
+      return say(chatId, `👥 <b>Ваши клиенты</b> (${dsh.clients.length})\n\n${lines.join("\n")}${more}`, { reply_markup: { inline_keyboard: [[cabinetBtn()]] } });
     }
     if (cmd === "invite") {
       const m = text.match(/^\/invite(?:@\w+)?\s+(\S+@\S+)(?:\s+(.+))?$/);
-      if (!m) return say(chatId, "Напишите так: /invite почта@заведения.ru Название заведения");
-      const email = normEmail(m[1]);
-      if (!EMAIL_RE.test(email)) return say(chatId, "Проверьте адрес почты.");
-      awaiting.set(chatId, { email, venueName: String(m[2] || "").trim().slice(0, 80), at: now() });
-      return say(chatId, `Отправить приглашение на <b>${h(email)}</b>?\n\nПисьмо можно отправить, только если владелец этой почты согласился его получить (закон о рекламе). В письме будет ваше имя и ссылка для отказа.`, {
-        reply_markup: { inline_keyboard: [[{ text: "✅ Клиент согласен — отправить", callback_data: "pinv_yes" }], [{ text: "Отмена", callback_data: "pinv_no" }]] },
-      });
+      if (!m) {
+        askingEmail.set(chatId, now());
+        return say(chatId, ASK_EMAIL, { reply_markup: { inline_keyboard: [[{ text: "✖️ Отмена", callback_data: "pinv_no" }]] } });
+      }
+      return askInvite(chatId, normEmail(m[1]), m[2]);
     }
-    return say(chatId, HELP);
+    // Ответ на «Напишите почту владельца».
+    if (!cmd && askingEmail.has(chatId) && now() - askingEmail.get(chatId) < 30 * 60 * 1000) {
+      const m = text.match(/^(\S+@\S+)(?:\s+(.+))?$/);
+      if (m) return askInvite(chatId, normEmail(m[1]), m[2]);
+      return say(chatId, "Нужна почта владельца — например, <code>owner@cafe.ru Кафе Лето</code>");
+    }
+    return say(chatId, HELP, { reply_markup: MENU });
   }
 
   async function onCallback(q) {
     const chatId = q.message && q.message.chat && q.message.chat.id;
     await tg("answerCallbackQuery", { callback_query_id: q.id }).catch(() => {});
     if (!chatId) return;
+    // Кнопки под ответом убираем — второй раз не нажмутся.
+    const dropButtons = () => q.message.message_id
+      && tg("editMessageReplyMarkup", { chat_id: chatId, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
+    const menu = String(q.data || "").match(/^pmenu_(\w+)$/);
+    if (menu && BTN[menu[1]]) return onMessage({ chat: { id: chatId, type: "private" }, text: BTN[menu[1]] });
+    if (q.data === "plink_new") {
+      return say(chatId, "Создать новую ссылку?\n\nСтарые ссылки, которые вы уже отправили, продолжат работать — клиенты по ним тоже закрепятся за вами.", {
+        reply_markup: { inline_keyboard: [[{ text: "🔄 Да, создать", callback_data: "plink_yes" }, { text: "✖️ Отмена", callback_data: "plink_no" }]] },
+      });
+    }
+    if (q.data === "plink_no") { await dropButtons(); return say(chatId, "Ссылка осталась прежней."); }
+    if (q.data === "plink_yes") {
+      await dropButtons();
+      const p = await partnerByChat(chatId);
+      if (!p || p.status === "removed") return;
+      try {
+        const r = await renewLink(p);
+        const np = { ...p, code: r.code };
+        return say(chatId, `✨ Новая ссылка готова.\n\n${linkText(np)}`, { reply_markup: linkButtons(np) });
+      } catch (e) {
+        return say(chatId, `Не получилось: ${h(e.message || e)}`);
+      }
+    }
+    if (q.data === "pinv_no") {
+      awaiting.delete(chatId);
+      askingEmail.delete(chatId);
+      await dropButtons();
+      return say(chatId, "Отменено.", { reply_markup: MENU });
+    }
+    if (q.data !== "pinv_yes") return;
     const pending = awaiting.get(chatId);
     awaiting.delete(chatId);
-    if (q.data === "pinv_no") return say(chatId, "Отменено.");
-    if (q.data !== "pinv_yes" || !pending || now() - pending.at > 30 * 60 * 1000) return say(chatId, "Приглашение устарело — отправьте /invite ещё раз.");
+    await dropButtons();
+    if (!pending || now() - pending.at > 30 * 60 * 1000) {
+      return say(chatId, "Приглашение устарело — нажмите «📨 Пригласить заведение» ещё раз.", { reply_markup: MENU });
+    }
     const p = await partnerByChat(chatId);
     if (!p) return;
     try {
       const r = await invite(p, { email: pending.email, venueName: pending.venueName, consent: true, ip: "telegram" });
-      return say(chatId, `📨 Приглашение отправлено на ${h(maskEmail(pending.email))}. Действует до ${new Date(r.expiresAt).toLocaleDateString("ru-RU")}: если заведение зарегистрируется по этой почте, оно закрепится за вами.`);
+      return say(chatId, `📨 Приглашение отправлено на ${h(maskEmail(pending.email))}.\n\nДействует до ${new Date(r.expiresAt).toLocaleDateString("ru-RU")}: если заведение зарегистрируется по этой почте, оно закрепится за вами.`, { reply_markup: MENU });
     } catch (e) {
-      return say(chatId, `Не отправлено: ${h(e.message || e)}`);
+      return say(chatId, `Не отправлено: ${h(e.message || e)}`, { reply_markup: MENU });
     }
   }
 
