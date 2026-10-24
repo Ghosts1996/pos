@@ -67,7 +67,39 @@ function passwordLetter(password, { siteUrl = "https://zalpos.ru/" } = {}) {
   });
 }
 
-function renderLetter({ subject, title, lead, code, button, link, note, siteUrl, hideRawLink = false }) {
+/**
+ * Приглашение заведения от менеджера партнёрской программы. Кто приглашает
+ * и почему пришло письмо — в самом письме; «Это не я» — отказ от писем
+ * (ст. 18 38-ФЗ: рассылка — только с согласия получателя).
+ */
+function partnerInviteLetter({ managerName, venueName = "", link, optOutLink, trialDays = 7, siteUrl = "https://zalpos.ru/" }) {
+  const who = managerName ? `${managerName}, менеджер ZalPOS,` : "Менеджер ZalPOS";
+  return renderLetter({
+    subject: "Приглашение в ZalPOS",
+    title: venueName ? `Приглашение для «${venueName}»` : "Приглашение в ZalPOS",
+    lead: `${who} приглашает вас попробовать ZalPOS — кассу и управление заведением: зал, склад, брони, лояльность гостей и приложение гостя. Первые ${trialDays} дней бесплатно, карта не нужна.`,
+    button: "Зарегистрироваться",
+    link,
+    note: "Вы получили это письмо, потому что сообщили этот адрес менеджеру и согласились получить приглашение. Регистрация ни к чему не обязывает, подписку оформляете только вы сами.",
+    siteUrl,
+    footer: optOutLink ? { text: "Согласия на это письмо не было — больше не присылать приглашения", link: optOutLink } : null,
+  });
+}
+
+/** Менеджера добавили в партнёрскую программу — задать пароль и войти. */
+function partnerWelcomeLetter({ name, link, siteUrl = "https://zalpos.ru/" }) {
+  return renderLetter({
+    subject: "Кабинет менеджера ZalPOS",
+    title: name ? `${name}, вас добавили в партнёрскую программу` : "Вас добавили в партнёрскую программу",
+    lead: "Задайте пароль — и откройте кабинет менеджера: личная ссылка для клиентов, приглашения по почте, клиенты и ваш доход.",
+    button: "Задать пароль и войти",
+    link,
+    note: "Если вы не ждали этого письма, просто удалите его.",
+    siteUrl,
+  });
+}
+
+function renderLetter({ subject, title, lead, code, button, link, note, siteUrl, hideRawLink = false, footer = null }) {
   const l = { subject, title, lead, button, note };
   const site = siteUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
   const text = [
@@ -79,6 +111,7 @@ function renderLetter({ subject, title, lead, code, button, link, note, siteUrl,
     `${l.button}: ${link}`,
     "",
     l.note,
+    ...(footer ? ["", `${footer.text}: ${footer.link}`] : []),
     "",
     "—",
     `ZalPOS — касса и управление заведением. ${siteUrl}`,
@@ -117,6 +150,7 @@ function renderLetter({ subject, title, lead, code, button, link, note, siteUrl,
               </tr>
             </table>
             <p style="margin:26px 0 0;font-size:14px;line-height:1.5;color:#5B6784;">${esc(l.note)}</p>
+            ${footer ? `<p style="margin:14px 0 0;font-size:13px;line-height:1.5;"><a href="${esc(footer.link)}" target="_blank" style="color:#5B6784;">${esc(footer.text)}</a></p>` : ""}
             ${hideRawLink ? "" : `<p style="margin:22px 0 0;padding-top:18px;border-top:1px solid #E3E8F2;font-size:12px;line-height:1.5;color:#8A94AD;">
               Кнопка не открывается? Скопируйте ссылку в адресную строку браузера:<br>
               <a href="${esc(link)}" target="_blank" style="color:#2F6FED;word-break:break-all;">${esc(link)}</a>
@@ -165,4 +199,4 @@ function createMailer(env = process.env) {
   };
 }
 
-module.exports = { authEmailLetter, passwordLetter, createMailer, AUTH_EMAIL_TYPES: Object.keys(LETTERS) };
+module.exports = { authEmailLetter, passwordLetter, partnerInviteLetter, partnerWelcomeLetter, createMailer, AUTH_EMAIL_TYPES: Object.keys(LETTERS) };

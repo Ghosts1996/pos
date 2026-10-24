@@ -1126,14 +1126,23 @@ function handleAuthChange(user) {
     state.tenantsLoaded = false;
     state.activeTenantId = null;
     state.isSuperAdmin = false;
+    state.partner = null;
+    state.partnerChecked = false;
     route();
     return;
   }
 
   state.uid = user.uid;
   state.tenantsLoaded = false;
+  state.partner = null;
+  state.partnerChecked = false;
   route();
   watchMemberships();
+  checkPartner().finally(() => {
+    if (state.uid !== user.uid) return;
+    state.partnerChecked = true;
+    if (location.hash === '#/partner') route();
+  });
 
   // Флаг платформы — отдельной лёгкой подпиской.
   state.accountSubs.push(onSnapshot(doc(state.db, 'superAdmins', state.uid), async (d) => {
@@ -1220,6 +1229,7 @@ const PUBLIC_ROUTES = {
   '#/faq': () => screenPublicFaq(),
   '#/guide': () => screenPublicGuide(),
   '#/demo-photos': () => screenDemoPhotos(),
+  '#/partner-terms': () => screenPartnerTerms(),
 };
 
 // Кнопка «Оплатить подписку» в кассе ведёт на #/billing: после входа кабинет
@@ -1278,6 +1288,17 @@ function route() {
     }
     history.replaceState(null, '', location.pathname + '#/');
   }
+  if (location.hash === '#/partner' && !state.uid) {
+    // Кабинет менеджера — после входа вернёмся сюда же.
+    try { sessionStorage.setItem('zalpos-after-login', '#/partner'); } catch (_) {}
+    authMode = 'login';
+    return screenAuth();
+  }
+  if (state.uid) {
+    let back = null;
+    try { back = sessionStorage.getItem('zalpos-after-login'); sessionStorage.removeItem('zalpos-after-login'); } catch (_) {}
+    if (back && location.hash !== back) { location.hash = back; return; }
+  }
   if (!state.uid) {
     // Не вошёл — лендинг; #/login и #/signup — вход и регистрация.
     if (location.hash === '#/login' || location.hash === '#/signup') {
@@ -1291,6 +1312,9 @@ function route() {
   }
   if (location.hash.startsWith('#/act/')) {
     return screenBankAct(location.hash.slice('#/act/'.length));
+  }
+  if (location.hash === '#/partner') {
+    return state.partner ? screenPartner() : (state.partnerChecked ? screenNotPartner() : screenLoading());
   }
   if (location.hash === '#/admin') {
     // Панель платформы не зависит от того, есть ли у супер-админа
@@ -1307,7 +1331,17 @@ function route() {
   if (state.isSuperAdmin && state.tenantsLoaded && !state.tenants.length) {
     return screenSuperAdmin();
   }
+  // Менеджер без своего заведения — сразу в кабинет менеджера.
+  if (state.partner && state.tenantsLoaded && !state.tenants.length) {
+    return screenPartner();
+  }
   return screenDashboardOrOnboarding();
+}
+
+function screenNotPartner() {
+  screenEl().innerHTML = `<div class="brand">ZalPOS</div><h1>Кабинет менеджера</h1>
+    <div class="card"><p class="small" style="margin:0">Этот аккаунт не подключён к партнёрской программе. Если вы менеджер ZalPOS — войдите под той почтой, на которую пришло письмо, или напишите администратору.</p></div>
+    <p class="small center muted"><a href="#/">← На главную</a></p>`;
 }
 
 function screenDashboardOrOnboarding() {
@@ -1317,6 +1351,7 @@ function screenDashboardOrOnboarding() {
 }
 
 window.addEventListener('hashchange', route);
+capturePartnerRef();
 boot();
 
 // ---------- ЛЕНДИНГ ----------
@@ -2562,7 +2597,7 @@ function legalSection(title, paragraphs) {
   return `<h2>${title}</h2>${paragraphs.map((p) => `<p class="small muted">${p}</p>`).join('')}`;
 }
 
-const LEGAL_EDITION = 'Редакция от 18 октября 2026 г.';
+const LEGAL_EDITION = 'Редакция от 24 октября 2026 г.';
 
 function screenLegalOffer() {
   screenEl().innerHTML = publicPageWrapHtml('Публичная оферта', `
@@ -2747,9 +2782,13 @@ function screenLegalPrivacy() {
         'Имена, телефоны и адреса Гостей, имена работников заведений, email пользователей личного кабинета, сведения о согласиях и реквизиты плательщиков по счёту первично записываются в базу данных на сервере Оператора, расположенном на территории Российской Федерации (ч. 5 ст. 18 Федерального закона № 152-ФЗ).',
         'Персональные данные Гостей и работников заведений хранятся только на этом сервере и за пределы РФ не передаются — у всех заведений на Платформе.',
         'Для синхронизации данных между устройствами, резервного копирования, авторизации пользователей и push-уведомлений используется облачная инфраструктура Google LLC: авторизация и push-уведомления — на серверах в США, хранение и синхронизация данных — в центрах обработки данных Google Cloud в Бельгии и Нидерландах. Данные заведений передаются туда только обезличенными — меню, заказы, суммы и идентификаторы без имён, телефонов и адресов.',
-        'Обращения в техническую поддержку принимаются в личном кабинете и проходят через сервер Оператора в РФ: до записи в облачную инфраструктуру, передачи сотрудникам поддержки (мессенджер Telegram) и ИИ-ассистенту поддержки из темы и текста обращения автоматически удаляются номера телефонов, адреса электронной почты, ИНН и другие номера, номера банковских карт, имена пользователей и фамилии, имена и отчества — дальше обрабатывается только обезличенный текст. Скриншоты и файлы обращений хранятся только на сервере в РФ и за её пределы не передаются; текст со скриншота распознаётся на этом сервере, обезличивается так же, как текст обращения, и только он передаётся ИИ-ассистенту и сотрудникам поддержки. Обращения в Telegram-бот поддержки не принимаются.',
+        'Обращения в техническую поддержку принимаются в личном кабинете и хранятся на сервере Оператора в РФ: до передачи сотрудникам поддержки (мессенджер Telegram) и ИИ-ассистенту поддержки из темы и текста обращения автоматически удаляются номера телефонов, адреса электронной почты, ИНН и другие номера, номера банковских карт, имена пользователей и фамилии, имена и отчества — дальше обрабатывается только обезличенный текст. Скриншоты и файлы обращений хранятся только на сервере в РФ и за её пределы не передаются; текст со скриншота распознаётся на этом сервере, обезличивается так же, как текст обращения, и только он передаётся ИИ-ассистенту и сотрудникам поддержки. Обращения в Telegram-бот поддержки не принимаются.',
         'Чат поддержки на сайте (кнопка в правом нижнем углу) работает и без входа в кабинет. Сообщения посетителя проходят через сервер Оператора в РФ и обезличиваются так же, как обращения из кабинета, до записи и до передачи ИИ-ассистенту и сотрудникам поддержки; указывать имя, телефон и другие контактные данные не нужно. Чтобы продолжить диалог, в браузере посетителя (localStorage) хранятся случайный ключ диалога и случайный ключ браузера; на сервере — только их хеши. По хешу ключа браузера сотрудники поддержки видят условный номер («Гость 4821»), чтобы не путать диалоги разных посетителей; имя, телефон и другие данные, позволяющие установить личность, для этого не используются. IP-адрес используется только для защиты от спама (ограничения частоты сообщений) и вместе с диалогом не сохраняется. Диалоги посетителей сайта удаляются автоматически через 30 дней. На вопросы отвечает ИИ-ассистент; по просьбе посетителя («оператор») подключается сотрудник поддержки.',
         'Трансграничная передача касается только пользователей личного кабинета: адрес электронной почты используется для входа через сервис авторизации Google LLC. Она осуществляется с согласия пользователя, данного при регистрации, и после уведомления Роскомнадзора в порядке ст. 12 Федерального закона № 152-ФЗ; получатель обеспечивает защиту данных (шифрование при хранении и передаче, сертификация ISO/IEC 27001, 27017, 27018).',
+      ])}
+      ${legalSection('6.1. Партнёрская программа', [
+        'Менеджеры партнёрской программы ZalPOS могут направить владельцу заведения приглашение на почту — только если владелец дал менеджеру согласие на его получение (ст. 18 Федерального закона № 38-ФЗ «О рекламе»). Оператор обрабатывает адрес почты приглашённого, имя менеджера и отметку о согласии (дата, текст отметки) для отправки приглашения и учёта вознаграждения менеджера; эти данные хранятся только на сервере Оператора в РФ. В каждом письме есть ссылка отказа: после неё приглашения на этот адрес больше не направляются, а адрес хранится только в виде хеша для исполнения отказа. Приглашение действует 30 дней; после регистрации, отказа или окончания срока адрес в записи о приглашении заменяется скрытым (например, a***@mail.ru).',
+        'Если владелец зарегистрировался по приглашению или по ссылке менеджера, менеджер видит только название заведения, тариф, даты и суммы оплат и своё вознаграждение — без адреса почты, телефона и других данных владельца. Для учёта перехода по ссылке менеджера в браузере (localStorage) на 30 дней сохраняется код ссылки.',
       ])}
       ${legalSection('7. Сроки обработки и хранения', [
         'Данные обрабатываются в течение срока действия договора с заведением и 10 календарных дней после его прекращения, после чего уничтожаются, если более длительный срок не требуется по закону. Данные, обработка которых прекращена по требованию субъекта, уничтожаются в течение 10 рабочих дней.',
@@ -3078,6 +3117,8 @@ function screenAuth() {
     </p>
     <p class="small center muted"><a href="#/">← На главную</a></p>
   `;
+  // Пришли по приглашению менеджера — почта уже известна.
+  if (authMode === 'signup' && partnerRefEmail() && $('f-email') && !$('f-email').value) $('f-email').value = partnerRefEmail();
 
   $('f-switch').onclick = (e) => {
     e.preventDefault();
@@ -3383,7 +3424,7 @@ function screenOnboarding() {
       if (isChain && !chainId) {
         const chainRes = await callSaasGateway(
           'createChain',
-          chosenPlanId ? { name: chainName, slug: chainSlug, planId: chosenPlanId } : { name: chainName, slug: chainSlug }
+          { name: chainName, slug: chainSlug, ...(chosenPlanId ? { planId: chosenPlanId } : {}), ...partnerRefBody() }
         );
         chainId = chainRes.data.chainId;
         createdChainId = chainId;
@@ -3392,9 +3433,10 @@ function screenOnboarding() {
         'createTenant',
         {
           name, slug, venueType: $('f-venue-type').value,
-          ...(chosenPlanId && !isChain ? { planId: chosenPlanId } : {}), ...(chainId ? { chainId } : {}),
+          ...(chosenPlanId && !isChain ? { planId: chosenPlanId } : {}), ...(chainId ? { chainId } : {}), ...partnerRefBody(),
         }
       );
+      forgetPartnerRef();
       window.localStorage.removeItem('selectedPlanId');
       window.localStorage.removeItem('skipTrial');
       window.localStorage.removeItem('presetIsChain');
@@ -3630,6 +3672,11 @@ function dashboardNavHtml(activeTab, showBillingDot, tenantName, chainId) {
         <div class="nav-divider"></div>
         <a href="#/admin" class="nav-item" style="text-decoration:none">
           ${navIconHtml('badge', '#F97316')}<span>Платформа</span>
+        </a>
+      ` : ''}
+      ${state.partner ? `
+        <a href="#/partner" class="nav-item" style="text-decoration:none">
+          ${navIconHtml('users', '#14B8A6')}<span>Кабинет менеджера</span>
         </a>
       ` : ''}
       <div class="nav-divider"></div>
@@ -6770,6 +6817,464 @@ function updateBrandPreview() {
   }
 }
 
+// ---------- ПАРТНЁРСКАЯ ПРОГРАММА (кабинет менеджера) ----------
+//
+// Менеджер приводит заведения: личная ссылка zalpos.ru/?p=КОД или
+// приглашение по почте (с согласием получателя — ст. 18 38-ФЗ). Новый
+// владелец закрепляется за ним, а с оплат подписки начисляется процент
+// после налога и комиссии платёжной системы (saas-gateway/partners.js).
+
+// Код ссылки и приглашение запоминаем на 30 дней: человек может
+// зарегистрироваться не сразу после перехода.
+const PARTNER_REF_KEY = 'zalpos-partner-ref';
+const PARTNER_REF_TTL_MS = 30 * 24 * 3600 * 1000;
+
+function capturePartnerRef() {
+  let params;
+  try { params = new URLSearchParams(location.search); } catch (_) { return; }
+  const code = (params.get('p') || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 20);
+  const invite = /^[a-f0-9]{32}$/.test(params.get('invite') || '') ? params.get('invite') : '';
+  if (!code && !invite) return;
+  try {
+    const prev = JSON.parse(localStorage.getItem(PARTNER_REF_KEY) || 'null') || {};
+    localStorage.setItem(PARTNER_REF_KEY, JSON.stringify({ code: code || prev.code || '', invite: invite || prev.invite || '', at: Date.now() }));
+  } catch (_) { /* приватный режим — без закрепления */ }
+  // Чистый адрес: код не уходит дальше в пересылаемые ссылки и закладки.
+  params.delete('p');
+  params.delete('invite');
+  const rest = params.toString();
+  history.replaceState(null, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash}`);
+  if (invite) {
+    callSaasGateway('partnerInviteInfo', { invite }).then((r) => {
+      if (!r.data.ok) return;
+      try {
+        const ref = JSON.parse(localStorage.getItem(PARTNER_REF_KEY) || 'null') || {};
+        localStorage.setItem(PARTNER_REF_KEY, JSON.stringify({ ...ref, code: ref.code || r.data.code || '', email: r.data.email, at: Date.now() }));
+      } catch (_) {}
+      const el = document.getElementById('f-email');
+      if (el && !el.value) el.value = r.data.email;
+    }).catch(() => {});
+  }
+}
+
+/** Для createTenant/createChain: кто привёл владельца (если не старше 30 дней). */
+function partnerRefBody() {
+  try {
+    const ref = JSON.parse(localStorage.getItem(PARTNER_REF_KEY) || 'null');
+    if (!ref || Date.now() - (ref.at || 0) > PARTNER_REF_TTL_MS) return {};
+    return { ...(ref.code ? { partnerCode: ref.code } : {}), ...(ref.invite ? { partnerInvite: ref.invite } : {}) };
+  } catch (_) {
+    return {};
+  }
+}
+
+function partnerRefEmail() {
+  try {
+    const ref = JSON.parse(localStorage.getItem(PARTNER_REF_KEY) || 'null');
+    return ref && Date.now() - (ref.at || 0) <= PARTNER_REF_TTL_MS ? ref.email || '' : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function forgetPartnerRef() {
+  try { localStorage.removeItem(PARTNER_REF_KEY); } catch (_) {}
+}
+
+/** Вошедший — менеджер программы? (фоном после входа) */
+async function checkPartner() {
+  const uid = state.uid;
+  try {
+    const r = await callSaasGateway('partnerMe', {});
+    if (state.uid !== uid) return;
+    const was = !!state.partner;
+    state.partner = r.data.partner || null;
+    if (!!state.partner !== was && (location.hash === '#/partner' || !state.tenants.length)) route();
+  } catch (_) { /* сервер недоступен — кабинет менеджера откроется позже */ }
+}
+
+const fmtMoney = (n) => {
+  const v = Math.round((Number(n) || 0) * 100) / 100;
+  const digits = Number.isInteger(v) ? 0 : 2;
+  return `${v.toLocaleString('ru-RU', { minimumFractionDigits: digits, maximumFractionDigits: digits })} ₽`;
+};
+const fmtDay = (ms) => (ms ? new Date(ms).toLocaleDateString('ru-RU') : '—');
+
+const PARTNER_INVITE_STATUS = {
+  sent: ['Отправлено', 'var(--muted)'],
+  registered: ['Зарегистрировано', 'var(--success)'],
+  expired: ['Срок истёк', 'var(--muted)'],
+  optedOut: ['Отказ от писем', 'var(--danger)'],
+};
+
+function screenPartner() {
+  screenEl().innerHTML = `<div class="brand">ZalPOS</div><div class="spinner"></div>`;
+  let data = null;
+  let error = '';
+  let sending = false;
+
+  const load = async () => {
+    try {
+      data = (await callSaasGateway('partnerDashboard', {})).data;
+      const me = (await callSaasGateway('partnerMe', {})).data;
+      data.settings = me.settings;
+      data.bot = me.bot;
+      error = '';
+    } catch (e) {
+      error = e?.message || String(e);
+    }
+    draw();
+  };
+
+  const draw = () => {
+    if (location.hash !== '#/partner' && state.tenants.length) return;
+    if (error && !data) {
+      screenEl().innerHTML = `<div class="brand">ZalPOS</div><h1>Кабинет менеджера</h1><div class="card"><p class="small">${esc(error)}</p></div>
+        <p class="small center muted"><a href="#/">← На главную</a></p>`;
+      return;
+    }
+    if (!data) return;
+    const p = data.partner;
+    const s = data.summary;
+    const st = data.settings || {};
+    const header = `
+      <div class="brand">ZalPOS</div>
+      <h1>Кабинет менеджера</h1>
+      <p class="small muted" style="margin-top:-6px">${esc(p.name || p.email)}${state.tenants.length ? ' · <a href="#/">кабинет заведения</a>' : ''} · <a href="#" id="f-partner-signout">выйти</a></p>`;
+    if (!p.termsAcceptedAt) {
+      screenEl().innerHTML = `${header}
+        <div class="card">
+          <h2 style="margin-top:0">Правила партнёрской программы</h2>
+          <p class="small">Вы приводите в ZalPOS новые заведения и получаете <b>${esc(String(p.percent))}%</b> с их оплат подписки после налога и комиссии платёжной системы${p.months ? ` в течение ${p.months} мес. после регистрации клиента` : ''}.</p>
+          <ul class="small" style="padding-left:18px;line-height:1.55">
+            <li>Приглашение по почте отправляйте только тем, кто согласился его получить (закон о рекламе). В письме будут ваше имя и ссылка для отказа.</li>
+            <li>Не обещайте клиентам условий, которых нет в тарифах ZalPOS.</li>
+            <li>Данные клиентов не передавайте третьим лицам: после регистрации вы видите только название заведения, тариф и суммы.</li>
+            <li>Клиент закрепляется за тем, кто пригласил первым; уже работающих клиентов закрепить нельзя.</li>
+          </ul>
+          <p class="small"><a href="#/partner-terms" target="_blank">Полный текст правил</a> · ${esc(p.termsEdition)}</p>
+          <label class="row small" style="gap:8px;align-items:flex-start;margin:10px 0"><input type="checkbox" id="f-partner-terms" style="width:auto;margin-top:3px"> <span>Принимаю правила партнёрской программы ZalPOS</span></label>
+          <button class="btn btn-primary" id="f-partner-accept">Продолжить</button>
+        </div>`;
+      bind();
+      return;
+    }
+    const clientsHtml = data.clients.length ? data.clients.map((c) => `
+      <div style="padding:10px 0;border-top:1px solid var(--border)">
+        <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
+          <b>${esc(c.venueName)}</b>
+          <span class="small">ваш доход: <b>${fmtMoney(c.income)}</b></span>
+        </div>
+        <div class="small muted">${c.planName ? `${esc(c.planName)} · ` : ''}с ${fmtDay(c.attachedAt)} · ${c.source === 'invite' ? 'по приглашению' : 'по ссылке'}${c.payments ? ` · оплат: ${c.payments} на ${fmtMoney(c.paid)}` : ' · оплат ещё не было'}${c.paidUntil ? ` · оплачено до ${fmtDay(c.paidUntil)}` : ''}</div>
+      </div>`).join('') : '<p class="small muted" style="margin:0">Пока нет закреплённых клиентов. Отправьте ссылку или приглашение — клиент появится здесь после регистрации.</p>';
+    const invitesHtml = data.invites.length ? data.invites.slice(0, 30).map((x) => {
+      const [label, color] = PARTNER_INVITE_STATUS[x.status] || [x.status, 'var(--muted)'];
+      return `<div class="row small" style="justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--border);flex-wrap:wrap">
+        <span>${esc(x.email)}${x.venueName ? ` · ${esc(x.venueName)}` : ''}</span>
+        <span style="color:${color}">${label}${x.status === 'sent' ? ` · до ${fmtDay(x.expiresAt)}` : ''}</span></div>`;
+    }).join('') : '<p class="small muted" style="margin:0">Приглашений ещё не было.</p>';
+    const accrualsHtml = data.accruals.length ? data.accruals.slice(0, 50).map((a) => `
+      <div class="small" style="padding:8px 0;border-top:1px solid var(--border)">
+        <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
+          <span>${fmtDay(a.paidAt)} · ${esc(a.venueName || 'клиент')}</span>
+          <b style="${a.status === 'reversed' ? 'text-decoration:line-through;color:var(--muted)' : ''}">${fmtMoney(a.amount)}</b>
+        </div>
+        <div class="muted">оплата ${fmtMoney(a.gross)} − налог ${fmtMoney(a.tax)} − комиссия ${fmtMoney(a.fee)} = ${fmtMoney(a.base)} × ${a.percent}% · ${a.status === 'reversed' ? 'снято (возврат клиенту)' : a.paidOut ? 'выплачено' : 'к выплате'}</div>
+      </div>`).join('') : '<p class="small muted" style="margin:0">Начислений пока нет: они появятся после оплаты подписки вашим клиентом.</p>';
+    const payoutsHtml = data.payouts.length ? data.payouts.map((x) => `<div class="row small" style="justify-content:space-between;padding:6px 0;border-top:1px solid var(--border)"><span>${fmtDay(x.paidAt)}${x.note ? ` · ${esc(x.note)}` : ''}</span><b>${fmtMoney(x.amount)}</b></div>`).join('') : '';
+    renderKeepingInputs(screenEl(), `${header}
+      ${p.status !== 'active' ? '<div class="card" style="border-color:var(--warning)"><p class="small" style="margin:0">Программа для вас приостановлена: новые клиенты не закрепляются и начисления не идут. Вопросы — администратору ZalPOS.</p></div>' : ''}
+      <div class="admin-stat-grid">
+        ${[['Клиентов', s.clients], ['Начислено', fmtMoney(s.total)], ['К выплате', fmtMoney(s.unpaid)], ['Выплачено', fmtMoney(s.paid)]].map(([label, value]) => `
+          <div class="card" style="text-align:center;padding:14px 8px"><div style="font-size:20px;font-weight:700">${value}</div><div class="small muted">${label}</div></div>`).join('')}
+      </div>
+      <p class="small muted">Ваша ставка: <b>${esc(String(p.percent))}%</b> от каждой оплаты клиента после налога ${esc(String(st.taxPct ?? 6))}% и комиссии платёжной системы${p.months ? `, ${p.months} мес. после регистрации клиента` : ', пока клиент платит'}. Налоговый статус: ${esc(p.taxStatusLabel)}.</p>
+
+      <h2>Ваша ссылка</h2>
+      <div class="card">
+        <p class="small muted" style="margin-top:0">Отправьте её владельцу заведения. Кто зарегистрируется по ней в течение 30 дней после перехода, закрепится за вами.</p>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <input id="f-partner-link" class="grow" readonly value="${esc(p.link)}" style="margin:0;min-width:200px">
+          <button class="btn btn-ghost" id="f-partner-copy" style="width:auto">Скопировать</button>
+          ${navigator.share ? '<button class="btn btn-ghost" id="f-partner-share" style="width:auto">Поделиться</button>' : ''}
+        </div>
+      </div>
+
+      <h2>Пригласить заведение по почте</h2>
+      <div class="card">
+        <label class="field"><span>Почта владельца</span><input id="f-partner-email" type="email" placeholder="owner@cafe.ru" autocomplete="off"></label>
+        <label class="field"><span>Название заведения (необязательно)</span><input id="f-partner-venue" maxlength="80" placeholder="Кафе «Лето»"></label>
+        <label class="row small" style="gap:8px;align-items:flex-start;margin:6px 0 12px"><input type="checkbox" id="f-partner-consent" style="width:auto;margin-top:3px"> <span>Владелец этой почты согласился получить от ZalPOS письмо-приглашение</span></label>
+        <button class="btn btn-primary" id="f-partner-invite"${sending ? ' disabled' : ''}>${sending ? 'Отправляю…' : 'Отправить приглашение'}</button>
+        <p class="small muted" style="margin-bottom:0">Письмо придёт от ZalPOS с вашим именем и кнопкой регистрации. Приглашение действует 30 дней; если заведение уже пригласил другой менеджер или у почты есть аккаунт ZalPOS, письмо не отправится.</p>
+      </div>
+
+      ${data.bot && data.bot.connected ? `<h2>Telegram</h2><div class="card"><p class="small" style="margin-top:0">${p.telegram ? '✓ Telegram подключён: бот пишет о новых клиентах и оплатах, а приглашать можно командой /invite.' : `Бот @${esc(data.bot.username)} сообщит о новых клиентах и оплатах, а приглашать можно прямо из Telegram.`}</p>
+        <button class="btn btn-ghost" id="f-partner-tg" style="width:auto">${p.telegram ? 'Переподключить Telegram' : 'Подключить Telegram'}</button></div>` : ''}
+
+      <h2>Клиенты</h2><div class="card">${clientsHtml}</div>
+      <h2>Начисления</h2><div class="card">${accrualsHtml}</div>
+      ${payoutsHtml ? `<h2>Выплаты</h2><div class="card">${payoutsHtml}</div>` : ''}
+      <h2>Приглашения</h2><div class="card">${invitesHtml}</div>
+      <p class="small center muted" style="margin-top:20px"><a href="#/partner-terms" target="_blank">Правила партнёрской программы</a></p>
+    `);
+    bind();
+  };
+
+  const bind = () => {
+    if ($('f-partner-signout')) $('f-partner-signout').onclick = (e) => { e.preventDefault(); signOut(state.auth); };
+    if ($('f-partner-accept')) {
+      $('f-partner-accept').onclick = async () => {
+        if (!$('f-partner-terms').checked) { toast('Отметьте, что принимаете правила'); return; }
+        try {
+          await callSaasGateway('partnerAcceptTerms', { accept: true });
+          await load();
+        } catch (e) { toast(`Не получилось: ${e?.message || e}`); }
+      };
+    }
+    if ($('f-partner-copy')) $('f-partner-copy').onclick = () => copyToClipboard($('f-partner-link').value);
+    if ($('f-partner-share')) $('f-partner-share').onclick = () => navigator.share({ title: 'ZalPOS', text: 'Касса и управление заведением — попробуйте бесплатно', url: $('f-partner-link').value }).catch(() => {});
+    if ($('f-partner-tg')) {
+      $('f-partner-tg').onclick = async () => {
+        try {
+          const r = await callSaasGateway('partnerTgLink', {});
+          window.open(r.data.url, '_blank', 'noopener');
+        } catch (e) { toast(`Не получилось: ${e?.message || e}`); }
+      };
+    }
+    if ($('f-partner-invite')) {
+      $('f-partner-invite').onclick = async () => {
+        const email = $('f-partner-email').value.trim();
+        if (!email) { toast('Укажите почту владельца заведения'); return; }
+        if (!$('f-partner-consent').checked) { toast('Отметьте, что владелец почты согласился получить приглашение'); return; }
+        sending = true;
+        draw();
+        try {
+          await callSaasGateway('partnerInvite', { email, venueName: $('f-partner-venue').value.trim(), consent: true });
+          $('f-partner-email').value = '';
+          $('f-partner-venue').value = '';
+          $('f-partner-consent').checked = false;
+          toast('Приглашение отправлено');
+          sending = false;
+          await load();
+        } catch (e) {
+          sending = false;
+          draw();
+          toast(`Не отправлено: ${e?.message || e}`);
+        }
+      };
+    }
+  };
+
+  load();
+}
+
+function screenPartnerTerms() {
+  screenEl().innerHTML = publicPageWrapHtml('Правила партнёрской программы ZalPOS', `
+    <p class="small muted">Редакция от 24 октября 2026 г.</p>
+    <div class="card">
+      ${legalSection('1. Что это', [
+        'Партнёрская программа — порядок, по которому менеджер (партнёр) привлекает в ZalPOS новые заведения и получает вознаграждение с их оплат. Правила дополняют договор, заключённый между партнёром и правообладателем платформы ZalPOS (<span id="legal-requisites" data-kind="privacy">реквизиты — в политике конфиденциальности</span>); при расхождении действует договор.',
+        'Партнёра добавляет администратор платформы. Принимая правила в кабинете менеджера, партнёр подтверждает, что ознакомился с ними; дата и редакция сохраняются.',
+      ])}
+      ${legalSection('2. Как закрепляется клиент', [
+        'Клиент — владелец, впервые зарегистрировавший в ZalPOS заведение или сеть. Он закрепляется за партнёром, если зарегистрировался по личной ссылке партнёра в течение 30 дней после перехода или по приглашению на свою почту в течение 30 дней после его отправки.',
+        'Если заведение пригласили несколько партнёров, клиент закрепляется за тем, кто пригласил первым. Владельцев, у которых уже есть аккаунт или заведение в ZalPOS, закрепить нельзя. Закрепление действует, пока действует участие партнёра в программе; администратор вправе исправить закрепление, если оно произошло по ошибке или в нарушение правил.',
+      ])}
+      ${legalSection('3. Вознаграждение', [
+        'С каждой поступившей оплаты закреплённого клиента — подписки, продления, дополнительной точки сети — начисляется процент, установленный партнёру. База — сумма оплаты за вычетом налога правообладателя (ставка указана в кабинете менеджера) и комиссии платёжной системы. Тестовые оплаты и пробный период не учитываются. Если партнёру установлен срок, начисления идут только в течение этого срока после регистрации клиента.',
+        'При возврате денег клиенту начисление по этой оплате снимается; если оно уже выплачено — учитывается в следующей выплате.',
+        'Начисления видны в кабинете менеджера и в Telegram-боте. Выплата производится переводом по реквизитам, согласованным в договоре, и отмечается в кабинете.',
+      ])}
+      ${legalSection('4. Налоги партнёра', [
+        'Самозанятый партнёр уплачивает налог на профессиональный доход сам и формирует чек на каждую выплату. Партнёр — индивидуальный предприниматель уплачивает налоги сам. Если партнёр — физическое лицо без этих статусов, правообладатель как налоговый агент удерживает налог на доходы физических лиц из суммы вознаграждения и уплачивает страховые взносы в порядке, установленном законодательством.',
+      ])}
+      ${legalSection('5. Обязанности партнёра', [
+        'Направлять приглашения по почте только лицам, которые дали предварительное согласие на их получение (ст. 18 Федерального закона № 38-ФЗ «О рекламе»), и отмечать это согласие при отправке. Отказ получателя от писем исполняется автоматически.',
+        'Сообщать клиентам только достоверные сведения о ZalPOS и не обещать условий, которых нет в тарифах и договоре-оферте. Не представляться сотрудником правообладателя, если это не так.',
+        'Сохранять конфиденциальность сведений о клиентах, ставших известными в рамках программы, и не передавать их третьим лицам. Адрес почты клиента партнёр передаёт ZalPOS только для отправки приглашения, с согласия его владельца.',
+      ])}
+      ${legalSection('6. Приостановка и прекращение', [
+        'Администратор вправе приостановить участие партнёра при нарушении правил (в том числе рассылке без согласия получателей); на время приостановки новые клиенты не закрепляются и начисления не идут. Начисления по оплатам, поступившим до приостановки, сохраняются и выплачиваются, если нарушение не связано с привлечением этих клиентов.',
+      ])}
+      ${legalSection('7. Персональные данные', [
+        'ZalPOS обрабатывает почту и имя партнёра, сведения о начислениях и выплатах, а также почту приглашённых лиц и отметки о согласии — для исполнения договора с партнёром, отправки приглашений и учёта вознаграждения. Данные хранятся на сервере в Российской Федерации. Подробнее — в <a href="#/legal/privacy">политике обработки персональных данных</a>.',
+      ])}
+    </div>
+  `);
+  fillLegalRequisites();
+}
+
+// ---------- ПАНЕЛЬ ПЛАТФОРМЫ: МЕНЕДЖЕРЫ ----------
+
+function watchAdminPartners() {
+  const body = $('admin-partners');
+  if (!body) return;
+  let data = null;
+  let openId = null;
+  let detail = null;
+  let editId = null;
+
+  const load = async () => {
+    try {
+      data = (await callSaasGateway('partnerAdminList', {})).data;
+      if (openId) detail = (await callSaasGateway('partnerAdminPartner', { id: openId })).data;
+    } catch (e) {
+      body.innerHTML = `<p class="small" style="color:var(--danger)">${esc(e?.status === 404 ? 'Сервер ещё не обновлён до версии с партнёрской программой — обновится сам после выкладки.' : e?.message || String(e))}</p>`;
+      return;
+    }
+    draw();
+  };
+
+  const taxOptions = (cur) => Object.entries(data.taxStatuses || {}).map(([k, v]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${esc(v)}</option>`).join('');
+
+  const detailHtml = (p) => {
+    if (!detail || detail.partner.id !== p.id) return '<div class="spinner"></div>';
+    const d = detail;
+    return `
+      <div style="margin-top:10px">
+        <div class="small muted">Клиенты (${d.clients.length})</div>
+        ${d.clients.map((c) => `<div class="small" style="padding:4px 0">${esc(c.venueName)} · с ${fmtDay(c.attachedAt)} · ${c.source === 'invite' ? 'приглашение' : 'ссылка'} · оплачено ${fmtMoney(c.paid)} · доход ${fmtMoney(c.income)}</div>`).join('') || '<div class="small muted">—</div>'}
+        <div class="small muted" style="margin-top:8px">Начисления</div>
+        ${d.accruals.slice(0, 50).map((a) => `<div class="row small" style="justify-content:space-between;gap:8px;padding:4px 0;border-top:1px solid var(--border);flex-wrap:wrap">
+          <span>${fmtDay(a.paidAt)} · ${esc(a.venueName)} · ${fmtMoney(a.gross)} → база ${fmtMoney(a.base)} × ${a.percent}%</span>
+          <span><b style="${a.status === 'reversed' ? 'text-decoration:line-through' : ''}">${fmtMoney(a.amount)}</b> ${a.paidOut ? '<span class="muted">выплачено</span>' : `<button class="btn-link f-pa-reverse" data-id="${esc(a.id)}" data-restore="${a.status === 'reversed' ? '1' : ''}">${a.status === 'reversed' ? 'вернуть' : 'снять (возврат)'}</button>`}</span>
+        </div>`).join('') || '<div class="small muted">—</div>'}
+        ${d.payouts.length ? `<div class="small muted" style="margin-top:8px">Выплаты</div>${d.payouts.map((x) => `<div class="small">${fmtDay(x.paidAt)} · ${fmtMoney(x.amount)}${x.note ? ` · ${esc(x.note)}` : ''}</div>`).join('')}` : ''}
+        <div class="small muted" style="margin-top:8px">Приглашения: ${d.invites.length}</div>
+      </div>`;
+  };
+
+  const editHtml = (p) => `
+    <div class="card" style="margin-top:10px">
+      <label class="field"><span>Имя</span><input id="f-pe-name" value="${esc(p.name)}" maxlength="80"></label>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <label class="field grow"><span>Процент</span><input id="f-pe-percent" type="number" min="0" max="100" step="0.1" value="${esc(String(p.percent))}"></label>
+        <label class="field grow"><span>Срок, мес. (0 — бессрочно)</span><input id="f-pe-months" type="number" min="0" max="120" value="${esc(String(p.months || 0))}"></label>
+      </div>
+      <label class="field"><span>Код ссылки</span><input id="f-pe-code" value="${esc(p.code)}" maxlength="20"></label>
+      <label class="field"><span>Налоговый статус</span><select id="f-pe-tax">${taxOptions(p.taxStatus)}</select></label>
+      <div class="row" style="gap:8px"><button class="btn btn-primary f-pe-save" data-id="${esc(p.id)}" style="width:auto">Сохранить</button><button class="btn btn-ghost" id="f-pe-cancel" style="width:auto">Отмена</button></div>
+    </div>`;
+
+  const draw = () => {
+    const s = data.settings || {};
+    const bot = data.bot || {};
+    renderKeepingInputs(body, `
+      <div class="card">
+        <b>Расчёт вознаграждения</b>
+        <p class="small muted">Процент менеджера считается от оплаты клиента после вашего налога и комиссии платёжной системы. Robokassa обычно присылает комиссию в уведомлении — тогда берётся она, иначе ставка ниже.</p>
+        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <label class="field grow" style="margin:0"><span>Ваш налог, %</span><input id="f-pa-tax" type="number" min="0" max="50" step="0.1" value="${esc(String(s.taxPct ?? 6))}"></label>
+          <label class="field grow" style="margin:0"><span>Комиссия платёжной системы, %</span><input id="f-pa-fee" type="number" min="0" max="20" step="0.1" value="${esc(String(s.feePct ?? 3.9))}"></label>
+          <button class="btn btn-ghost" id="f-pa-settings" style="width:auto">Сохранить</button>
+        </div>
+      </div>
+      <div class="card">
+        <b>Telegram-бот менеджеров</b>
+        ${bot.connected ? `<p class="small">✓ Подключён: @${esc(bot.username)}. Менеджеры подключают его кнопкой в своём кабинете.</p><button class="btn btn-ghost" id="f-pa-bot-off" style="width:auto">Отключить</button>`
+          : `<p class="small muted">Создайте бота в @BotFather (команда /newbot), вставьте токен. Бот сообщает менеджерам о новых клиентах и оплатах, принимает /invite, /clients, /income, /link.</p>
+            <div class="row" style="gap:8px;flex-wrap:wrap"><input id="f-pa-bot-token" class="grow" placeholder="123456789:AA…" autocomplete="off" style="margin:0;min-width:220px"><button class="btn btn-ghost" id="f-pa-bot-on" style="width:auto">Подключить</button></div>`}
+      </div>
+      <div class="card">
+        <b>Добавить менеджера</b>
+        <p class="small muted">Менеджеру придёт письмо «задайте пароль и войдите» — кабинет откроется по адресу zalpos.ru/#/partner.</p>
+        <label class="field"><span>Почта</span><input id="f-pa-email" type="email" placeholder="manager@example.com"></label>
+        <label class="field"><span>Имя (будет в письмах клиентам)</span><input id="f-pa-name" maxlength="80" placeholder="Анна Петрова"></label>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <label class="field grow"><span>Процент</span><input id="f-pa-percent" type="number" min="0" max="100" step="0.1" value="20"></label>
+          <label class="field grow"><span>Срок, мес. (0 — бессрочно)</span><input id="f-pa-months" type="number" min="0" max="120" value="0"></label>
+        </div>
+        <label class="field"><span>Налоговый статус менеджера</span><select id="f-pa-taxstatus">${taxOptions('npd')}</select></label>
+        <button class="btn btn-primary" id="f-pa-add" style="width:auto">Добавить</button>
+      </div>
+      ${(data.partners || []).length ? data.partners.map((p) => `
+        <div class="card">
+          <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:flex-start">
+            <div style="min-width:0">
+              <b>${esc(p.name || p.email)}</b>${p.status !== 'active' ? ' <span class="small" style="color:var(--warning)">приостановлен</span>' : ''}
+              <div class="small muted">${esc(p.email)} · ${esc(String(p.percent))}%${p.months ? ` · ${p.months} мес.` : ' · бессрочно'} · ${esc(p.taxStatusLabel)}${p.telegram ? ' · Telegram ✓' : ''}${p.termsAcceptedAt ? '' : ' · правила ещё не приняты'}</div>
+              <div class="small muted" style="word-break:break-all">${esc(p.link)}</div>
+            </div>
+            <div class="small" style="text-align:right">клиентов: <b>${p.summary.clients}</b><br>начислено: ${fmtMoney(p.summary.total)}<br>к выплате: <b>${fmtMoney(p.summary.unpaid)}</b><br>выплачено: ${fmtMoney(p.summary.paid)}</div>
+          </div>
+          ${p.taxStatus === 'person' && p.summary.unpaid > 0 ? '<p class="small" style="color:var(--warning)">Физлицо без статуса: при выплате удержите НДФЛ 13% и начислите страховые взносы — сумма к выплате указана до удержания.</p>' : ''}
+          <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:8px">
+            <button class="btn-link f-pa-open" data-id="${esc(p.id)}">${openId === p.id ? 'Скрыть' : 'Подробнее'}</button>
+            <button class="btn-link f-pa-edit" data-id="${esc(p.id)}">Изменить</button>
+            ${p.summary.unpaid > 0 ? `<button class="btn-link f-pa-pay" data-id="${esc(p.id)}" data-amount="${p.summary.unpaid}">Отметить выплату ${fmtMoney(p.summary.unpaid)}</button>` : ''}
+            <button class="btn-link f-pa-status" data-id="${esc(p.id)}" data-status="${p.status === 'active' ? 'stopped' : 'active'}">${p.status === 'active' ? 'Приостановить' : 'Возобновить'}</button>
+          </div>
+          ${editId === p.id ? editHtml(p) : ''}
+          ${openId === p.id ? detailHtml(p) : ''}
+        </div>`).join('') : '<p class="small muted">Менеджеров пока нет.</p>'}
+    `);
+    const partnerOf = (id) => data.partners.find((x) => x.id === id);
+    const save = async (p, patch) => {
+      await callSaasGateway('partnerAdminSave', { id: p.id, name: p.name, percent: p.percent, months: p.months, taxStatus: p.taxStatus, status: p.status, ...patch });
+    };
+    const act = (fn) => async (e) => {
+      try {
+        await fn(e.currentTarget);
+        await load();
+      } catch (err) {
+        if (err?.message !== 'отменено') toast(`Не получилось: ${err?.message || err}`);
+      }
+    };
+    if ($('f-pa-settings')) $('f-pa-settings').onclick = act(async () => {
+      await callSaasGateway('partnerAdminSettings', { taxPct: Number($('f-pa-tax').value), feePct: Number($('f-pa-fee').value) });
+      toast('Сохранено');
+    });
+    if ($('f-pa-bot-on')) $('f-pa-bot-on').onclick = act(async () => {
+      await callSaasGateway('partnerAdminBot', { token: $('f-pa-bot-token').value.trim() });
+      toast('Бот подключён');
+    });
+    if ($('f-pa-bot-off')) $('f-pa-bot-off').onclick = act(async () => {
+      if (!confirm('Отключить бота менеджеров?')) throw new Error('отменено');
+      await callSaasGateway('partnerAdminBot', { disconnect: true });
+    });
+    if ($('f-pa-add')) $('f-pa-add').onclick = act(async () => {
+      const r = await callSaasGateway('partnerAdminSave', {
+        email: $('f-pa-email').value.trim(), name: $('f-pa-name').value.trim(), percent: Number($('f-pa-percent').value),
+        months: Number($('f-pa-months').value), taxStatus: $('f-pa-taxstatus').value,
+      });
+      toast(r.data.mailed ? 'Менеджер добавлен, письмо отправлено' : 'Менеджер добавлен. Письмо не ушло — пусть войдёт на zalpos.ru/#/partner через «Забыли пароль?»');
+      $('f-pa-email').value = '';
+      $('f-pa-name').value = '';
+    });
+    document.querySelectorAll('.f-pa-open').forEach((el) => { el.onclick = act(async (b) => { openId = openId === b.dataset.id ? null : b.dataset.id; detail = null; }); });
+    document.querySelectorAll('.f-pa-edit').forEach((el) => { el.onclick = () => { editId = editId === el.dataset.id ? null : el.dataset.id; draw(); }; });
+    if ($('f-pe-cancel')) $('f-pe-cancel').onclick = () => { editId = null; draw(); };
+    document.querySelectorAll('.f-pe-save').forEach((el) => {
+      el.onclick = act(async (b) => {
+        await save(partnerOf(b.dataset.id), {
+          name: $('f-pe-name').value.trim(), percent: Number($('f-pe-percent').value), months: Number($('f-pe-months').value),
+          code: $('f-pe-code').value.trim(), taxStatus: $('f-pe-tax').value,
+        });
+        editId = null;
+        toast('Сохранено');
+      });
+    });
+    document.querySelectorAll('.f-pa-status').forEach((el) => { el.onclick = act(async (b) => { await save(partnerOf(b.dataset.id), { status: b.dataset.status }); }); });
+    document.querySelectorAll('.f-pa-pay').forEach((el) => {
+      el.onclick = act(async (b) => {
+        const note = prompt(`Отметить выплату ${fmtMoney(b.dataset.amount)}? Комментарий (например, «перевод на карту 24.10»):`, '');
+        if (note === null) throw new Error('отменено');
+        await callSaasGateway('partnerAdminPayout', { partnerId: b.dataset.id, expected: Number(b.dataset.amount), note });
+        toast('Выплата отмечена');
+      });
+    });
+    document.querySelectorAll('.f-pa-reverse').forEach((el) => {
+      el.onclick = act(async (b) => {
+        if (!b.dataset.restore && !confirm('Снять начисление (клиенту вернули деньги)?')) throw new Error('отменено');
+        await callSaasGateway('partnerAdminReverse', { accrualId: b.dataset.id, restore: !!b.dataset.restore });
+      });
+    });
+  };
+
+  load();
+}
+
 // ---------- ПАНЕЛЬ ПЛАТФОРМЫ (СУПЕР-АДМИН) ----------
 
 const ADMIN_NAV = [
@@ -6779,6 +7284,7 @@ const ADMIN_NAV = [
   { id: 'builds', icon: 'device', color: '#0EA5E9', label: 'Сборки APK' },
   { id: 'broadcasts', icon: 'bell', color: '#FB923C', label: 'Объявления' },
   { id: 'support', icon: 'chat', color: '#22C55E', label: 'Поддержка' },
+  { id: 'partners', icon: 'users', color: '#14B8A6', label: 'Менеджеры' },
   { id: 'staff', icon: 'badge', color: '#F97316', label: 'Сотрудники платформы' },
   { id: 'audit', icon: 'list', color: '#94A3B8', label: 'Журнал' },
   { id: 'security', icon: 'lock', color: '#DC2626', label: 'Безопасность' },
@@ -6921,6 +7427,12 @@ function screenSuperAdmin() {
         <div id="admin-support-bot"><div class="spinner"></div></div>
         <h2 style="margin-top:18px">Обращения</h2>
         <div id="admin-support"><div class="spinner"></div></div>
+      </div>
+
+      <div class="admin-tab-panel" data-panel="partners">
+        <h1>Менеджеры</h1>
+        <p class="small muted">Партнёрская программа: менеджеры приводят новые заведения по личной ссылке или приглашению на почту и получают процент с их оплат. Правила для менеджеров — <a href="#/partner-terms" target="_blank">zalpos.ru/#/partner-terms</a>.</p>
+        <div id="admin-partners"><div class="spinner"></div></div>
       </div>
 
       <div class="admin-tab-panel" data-panel="staff">
@@ -7097,6 +7609,7 @@ function screenSuperAdmin() {
   watchAdminBroadcasts();
   watchAdminSupportTickets();
   watchSupportBotAdmin();
+  watchAdminPartners();
   watchSecurity();
   // Отметка входа в панель (IP, браузер) — см. handleRecordAdminLogin в
   // saas-gateway. Сбой не мешает работе панели.

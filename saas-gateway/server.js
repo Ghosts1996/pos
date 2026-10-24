@@ -43,6 +43,7 @@ const { createTelegram, encrypt: tgEncrypt, decrypt: tgDecrypt, secretKey: tgSec
 const { createSupportBot } = require("./support-bot");
 const { createLocalDb } = require("./local-db");
 const { createTenantCache, guestMenu } = require("./tenant-cache");
+const { createPartners } = require("./partners");
 const { createPiiInternal } = require("./pii-internal");
 const { createPiiMigrate } = require("./pii-migrate");
 
@@ -783,7 +784,10 @@ async function handleCreateTenant(req, res) {
   });
   const tenantId = created.tenantId;
   // Точка своей сети — не новая регистрация.
-  if (!chainId) recordSignupEvent(req, "tenant", { uid, email: decoded.email, tenantId, slug });
+  if (!chainId) {
+    recordSignupEvent(req, "tenant", { uid, email: decoded.email, tenantId, slug });
+    await attachPartnerClient(decoded, body, name.trim());
+  }
   sendJson(res, 200, { tenantId, slug, chainId });
 }
 
@@ -867,6 +871,7 @@ async function handleCreateChain(req, res) {
   });
 
   recordSignupEvent(req, "chain", { uid, email: decoded.email, chainId, slug });
+  await attachPartnerClient(decoded, body, name.trim());
   sendJson(res, 200, { chainId, slug });
 }
 
@@ -2183,6 +2188,10 @@ async function handleRobokassaResult(req, res) {
       status: "paid", paidAt: admin.firestore.FieldValue.serverTimestamp(),
       paymentMethod: p.PaymentMethod || null, fee: p.Fee || null,
     }, { merge: true });
+    await partnerPayment({
+      invId, chainId: inv.chainId, amount: Number(inv.amount) || 0, fee: Number(p.Fee), purpose: "chainLocation",
+      test: inv.test === true || String(p.IsTest || "") === "1", planId: inv.planId,
+    });
     return sendPlain(res, 200, `OK${invId}`);
   }
 
@@ -2209,6 +2218,10 @@ async function handleRobokassaResult(req, res) {
     status: "paid", paidAt: admin.firestore.FieldValue.serverTimestamp(),
     paymentMethod: p.PaymentMethod || null, fee: p.Fee || null,
   }, { merge: true });
+  await partnerPayment({
+    invId, tenantId: inv.tenantId, chainId: inv.chainId, amount: Number(inv.amount) || 0, fee: Number(p.Fee),
+    purpose: inv.purpose || "subscription", test: inv.test === true || String(p.IsTest || "") === "1", planId: inv.planId,
+  });
   sendPlain(res, 200, `OK${invId}`);
 }
 
@@ -7707,6 +7720,7 @@ async function startSupportBot() {
 for (const sig of ["SIGTERM", "SIGINT"]) {
   process.once(sig, () => {
     try { supportDb.flushSync(); } catch (e) { console.error(`support-bot: запись хранилища: ${e.message || e}`); }
+    try { partnersDb.flushSync(); } catch (e) { console.error(`partners: запись хранилища: ${e.message || e}`); }
     process.exit(0);
   });
 }
@@ -7737,6 +7751,78 @@ const supportBot = createSupportBot({
   // когда база недоступна.
   cfgCachePath: process.env.SUPPORT_BOT_CFG_CACHE || path.join(__dirname, "state", "support-bot-config.json"),
 });
+
+// ------------------------------------------------ партнёрская программа
+//
+// Менеджеры приводят заведения и получают процент с оплат (partners.js).
+// Данные — в хранилище на сервере, лимит Firebase не тратится.
+const partnersDb = createLocalDb({
+  admin,
+  file: process.env.PARTNERS_DB_FILE || path.join(__dirname, "state", "partners-db.json"),
+});
+const partners = createPartners({
+  db,
+  store: () => partnersDb,
+  admin,
+  auth: () => getFirebaseApp().auth(),
+  verifyAuth,
+  parseJsonBody,
+  sendJson,
+  HttpError,
+  requireSuperAdmin,
+  mailer: () => {
+    if (authMailer === undefined) authMailer = createMailer();
+    return authMailer;
+  },
+  siteUrl: CONSOLE_URL,
+  publicUrl: (process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, ""),
+  secretKey: tgSecretKey,
+  encrypt: tgEncrypt,
+  decrypt: tgDecrypt,
+});
+
+/** Первое заведение или сеть владельца — только тогда закрепляем за менеджером. */
+async function isFirstVenueOf(uid) {
+  const firestore = db();
+  const [t, c] = await Promise.all([
+    firestore.collection("tenantMembers").where("userId", "==", uid).where("role", "==", "owner").limit(3).get(),
+    firestore.collection("chainMembers").where("userId", "==", uid).where("role", "==", "owner").limit(3).get(),
+  ]);
+  return t.size + c.size <= 1;
+}
+
+/** Закрепление нового владельца за менеджером — ошибка не мешает регистрации. */
+async function attachPartnerClient(decoded, body, venueName) {
+  try {
+    const inviteId = typeof body.partnerInvite === "string" ? body.partnerInvite.slice(0, 64) : "";
+    const code = typeof body.partnerCode === "string" ? body.partnerCode.slice(0, 40) : "";
+    await partners.attachOwner({ uid: decoded.uid, email: decoded.email || "", inviteId, code, venueName, firstVenue: await isFirstVenueOf(decoded.uid) });
+  } catch (e) {
+    console.error(`partners: закрепление клиента: ${e.message || e}`);
+  }
+}
+
+/** Оплата зачислена — начисление менеджеру, если владелец закреплён за ним. */
+async function partnerPayment({ invId, tenantId, chainId, amount, fee, test, purpose, planId }) {
+  if (test) return;
+  try {
+    const firestore = db();
+    const target = (await firestore.collection(chainId ? "chains" : "tenants").doc(chainId || tenantId).get()).data() || {};
+    const ownerUid = target.ownerUserId;
+    if (!ownerUid || !(await partnersDb.collection("partnerClients").doc(ownerUid).get()).exists) return;
+    const [plan, sub] = await Promise.all([
+      planId ? firestore.collection("plans").doc(planId).get().catch(() => null) : null,
+      firestore.collection("subscriptions").doc(chainId || tenantId).get().catch(() => null),
+    ]);
+    const end = sub && sub.data() && sub.data().currentPeriodEnd;
+    await partners.onPayment({
+      invId, ownerUid, amount, fee, test, purpose, venueName: target.name || "",
+      planName: (plan && plan.data() && plan.data().name) || "", paidUntil: end && end.toMillis ? end.toMillis() : null,
+    });
+  } catch (e) {
+    console.error(`partners: начисление по оплате ${invId}: ${e.message || e}`);
+  }
+}
 
 // ------------------------------------------------ кеш статических данных
 //
@@ -7894,6 +7980,20 @@ const ROUTES = {
   "/supportAdminTickets": supportBot.handleAdminTickets,
   "/supportAdminSend": supportBot.handleAdminSend,
   "/supportKnowledge": supportBot.handleKnowledgeList,
+  // Партнёрская программа: кабинет менеджера и панель платформы.
+  "/partnerMe": partners.handleMe,
+  "/partnerAcceptTerms": partners.handleAcceptTerms,
+  "/partnerInvite": partners.handleInvite,
+  "/partnerDashboard": partners.handleDashboard,
+  "/partnerInviteInfo": partners.handleInviteInfo,
+  "/partnerTgLink": partners.handleTgLink,
+  "/partnerAdminList": partners.handleAdminList,
+  "/partnerAdminPartner": partners.handleAdminPartner,
+  "/partnerAdminSave": partners.handleAdminSave,
+  "/partnerAdminSettings": partners.handleAdminSettings,
+  "/partnerAdminPayout": partners.handleAdminPayout,
+  "/partnerAdminReverse": partners.handleAdminReverse,
+  "/partnerAdminBot": partners.handleAdminBot,
   "/invalidateTenantCache": handleInvalidateTenantCache,
   "/recordImportConsent": handleRecordImportConsent,
   "/supportSiteMessages": supportBot.handleSiteMessages,
@@ -8048,8 +8148,10 @@ const server = http.createServer((req, res) => {
   // Статические данные заведения (меню, сотрудники, профиль) — кешируются 5 мин.
   if (req.method === "GET" && urlPath === "/tenantStaticData") return runHandler(handleTenantStaticData, req, res);
   if (req.method === "GET" && urlPath === "/publicMenu") return runHandler(handlePublicMenu, req, res);
+  if (req.method === "GET" && urlPath === "/partnerOptOut") return runHandler(partners.handleOptOut, req, res);
   // Обновления Telegram-бота заведения: /tgHook/<tenantId>, секрет в заголовке.
   if (req.method === "POST" && urlPath === `/tgHook/${supportBot.HOOK_ID}`) return runHandler(supportBot.handleHook, req, res);
+  if (req.method === "POST" && urlPath === `/tgHook/${partners.HOOK_ID}`) return runHandler((rq, rs) => partners.handleHook(rq, rs, readBody), req, res);
   if (req.method === "POST" && urlPath.startsWith("/tgHook/")) {
     return runHandler((rq, rs) => telegram.handleHook(rq, rs, urlPath.slice("/tgHook/".length)), req, res);
   }
@@ -8086,6 +8188,7 @@ if (process.env.PORT !== "8099") {
   telegram.start();
   guestPay.startSweeper();
   startSupportBot().catch((e) => console.error("support-bot: запуск:", e.message || e));
+  partners.start();
 }
 
 const port = Number(process.env.PORT || 8081);
