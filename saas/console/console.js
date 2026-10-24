@@ -7053,8 +7053,9 @@ function screenPartner() {
       }
       if (stopped) return '';
       if (!p.payoutDetails) return `<button type="button" class="btn pt-pay-btn" data-ptab-go="pay">Указать реквизиты для выплат</button>`;
+      if (s.statusOk === false) return '<div class="pt-hero-note" style="margin-top:12px">Выплаты — только самозанятым и ИП. Оформите самозанятость в «Мой налог» (5 минут) или ИП и напишите администратору ZalPOS: он сменит статус, и запросы откроются.</div>';
       if (!s.canRequest) return '';
-      return `<button type="button" class="btn pt-pay-btn" id="f-partner-pay">Запросить ${fmtMoney(s.calc.net)}</button>${s.calc.ndfl ? `<div class="pt-hero-note">Начислено ${fmtMoney(s.calc.gross)}, НДФЛ 13% (${fmtMoney(s.calc.ndfl)}) удержит и заплатит ZalPOS.</div>` : ''}`;
+      return `<button type="button" class="btn pt-pay-btn" id="f-partner-pay">Запросить ${fmtMoney(s.calc.net)}</button>`;
     }
     const stat = (icon, value, label, money = false) => `
       <div class="card live-stat"><div class="live-stat-head">${navIconHtml(icon)}</div>
@@ -7112,7 +7113,7 @@ function screenPartner() {
       <div class="card">
         <div class="pt-kicker">Реквизиты для перевода</div>
         ${p.payoutDetails && !editDetails ? `<p class="small" style="margin:8px 0">${esc(p.payoutDetails)}</p><button type="button" class="pt-link-renew" id="f-partner-details-edit">Изменить реквизиты</button>` : `
-          <p class="small muted" style="margin:6px 0 12px">Перевод по СБП на ваш номер. ФИО и ИНН — получателя (ваши): ${p.taxStatus === 'npd' ? 'по ИНН проверяется статус самозанятого, на выплату вы оформляете чек в «Мой налог».' : p.taxStatus === 'person' ? 'ИНН нужен для отчётности по НДФЛ, который удерживает ZalPOS.' : 'ИНН вашего ИП.'}</p>
+          <p class="small muted" style="margin:6px 0 12px">Перевод по СБП на ваш номер. ФИО и ИНН — получателя (ваши): ${p.taxStatus === 'ip' ? 'ИНН вашего ИП.' : 'по ИНН проверяется статус самозанятого, на выплату вы оформляете чек в «Мой налог».'}</p>
           <label class="field"><span>Телефон для СБП</span><input id="f-pd-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 900 123-45-67"></label>
           <label class="field"><span>Банк</span><input id="f-pd-bank" maxlength="60" placeholder="Сбербанк"></label>
           <label class="field"><span>ФИО полностью</span><input id="f-pd-name" maxlength="120" autocomplete="name" placeholder="Петрова Анна Сергеевна"></label>
@@ -7324,7 +7325,7 @@ function screenPartnerTerms() {
         'Выплату партнёр запрашивает сам — в кабинете или в Telegram-боте; в запрос входят все доступные начисления. Перевод производится по Системе быстрых платежей по реквизитам, указанным партнёром в кабинете, в течение 10 рабочих дней после запроса; партнёр отвечает за правильность реквизитов. Запрос можно отменить до выплаты; если администратор отклонит запрос (например, из-за неверных реквизитов), сумма снова становится доступной. Получив деньги, партнёр подтверждает это в кабинете или в боте; если деньги не пришли — сообщает там же.',
       ])}
       ${legalSection('4. Налоги партнёра', [
-        'Самозанятый партнёр уплачивает налог на профессиональный доход сам, формирует в «Мой налог» чек на каждую выплату (не позднее 9-го числа месяца, следующего за месяцем выплаты) и прикладывает ссылку на чек в кабинете или в боте. Статус самозанятого проверяется по открытому сервису ФНС при запросе и в день выплаты; если статус не подтверждён, выплата как самозанятому не производится. Пока не приложен просроченный чек, новые выплаты не производятся. Партнёр — индивидуальный предприниматель уплачивает налоги сам. Если партнёр — физическое лицо без этих статусов, правообладатель как налоговый агент удерживает налог на доходы физических лиц из суммы вознаграждения и уплачивает страховые взносы в порядке, установленном законодательством.',
+        'Самозанятый партнёр уплачивает налог на профессиональный доход сам, формирует в «Мой налог» чек на каждую выплату (не позднее 9-го числа месяца, следующего за месяцем выплаты) и прикладывает ссылку на чек в кабинете или в боте. Статус самозанятого проверяется по открытому сервису ФНС при запросе и в день выплаты; если статус не подтверждён, выплата как самозанятому не производится. Пока не приложен просроченный чек, новые выплаты не производятся. Партнёр — индивидуальный предприниматель уплачивает налоги сам. Участвовать в программе могут только самозанятые и индивидуальные предприниматели: физическим лицам без этих статусов вознаграждение не выплачивается; при утрате статуса выплаты приостанавливаются до его восстановления или регистрации ИП, начисленное сохраняется.',
       ])}
       ${legalSection('5. Обязанности партнёра', [
         'Направлять приглашения по почте только лицам, которые дали предварительное согласие на их получение (ст. 18 Федерального закона № 38-ФЗ «О рекламе»), и отмечать это согласие при отправке. Отказ получателя от писем исполняется автоматически.',
@@ -7382,7 +7383,8 @@ function watchAdminPartners() {
     draw();
   };
 
-  const taxOptions = (cur) => Object.entries(data.taxStatuses || {}).map(([k, v]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${esc(v)}</option>`).join('');
+  // У старого «физлица» статус надо выбрать явно — по умолчанию не подставляем.
+  const taxOptions = (cur) => `${data.taxStatuses && !data.taxStatuses[cur] ? '<option value="" selected disabled>физлицо — выберите статус</option>' : ''}${Object.entries(data.taxStatuses || {}).map(([k, v]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${esc(v)}</option>`).join('')}`;
 
   const detailHtml = (p) => {
     if (!detail || detail.partner.id !== p.id) return '<div class="spinner"></div>';
@@ -7435,7 +7437,7 @@ function watchAdminPartners() {
           <label class="field grow" style="margin:0"><span>Ожидание после оплаты, дней</span><input id="f-pa-hold" type="number" min="0" max="60" step="1" value="${esc(String(s.holdDays ?? 14))}"></label>
           <button class="btn btn-ghost" id="f-pa-settings" style="width:auto">Сохранить</button>
         </div>
-        <p class="small muted" style="margin:14px 0 6px">Для бухгалтера: все выплаты за год — суммы, НДФЛ и сроки по нему, проверка ФНС, чеки самозанятых, назначение платежа.</p>
+        <p class="small muted" style="margin:14px 0 6px">Для бухгалтера: все выплаты за год — суммы, проверка статуса в ФНС, чеки самозанятых, назначение платежа.</p>
         <button class="btn btn-ghost" id="f-pa-csv" style="width:auto">Реестр выплат за ${new Date().getFullYear()} (Excel)</button>
       </div>
       <div class="card">
@@ -7468,7 +7470,6 @@ function watchAdminPartners() {
           </div>
           ${p.request ? `<div class="sec-warn" style="margin-top:10px;padding:12px 14px;border-radius:12px">
             <b>💸 Запрос выплаты от ${fmtDay(p.request.requestedAt)}: перевести ${fmtMoney(p.request.net)}</b>
-            ${p.request.ndfl ? `<div class="small">Начислено ${fmtMoney(p.request.gross)}; НДФЛ ${fmtMoney(p.request.ndfl)} удержите и перечислите в бюджет, страховые взносы — сверху.</div>` : ''}
             ${p.request.fullDetails ? `<div class="small" style="margin-top:4px">СБП <b>${esc(p.request.fullDetails.phone)}</b> · ${esc(p.request.fullDetails.bank)} · ${esc(p.request.fullDetails.fullName)} · ИНН ${esc(p.request.fullDetails.inn)}</div>` : '<div class="small" style="color:var(--danger)">Реквизиты не расшифровались — попросите менеджера указать их заново и отклоните запрос.</div>'}
             ${p.request.taxStatus === 'npd' ? `<div class="small" style="margin-top:4px">${p.request.npdCheck?.ok ? `✅ ФНС подтвердила статус самозанятого на ${esc(p.request.npdCheck.date || '')}; перед отметкой выплаты проверим ещё раз` : '⚠️ ФНС не ответила при запросе — статус проверим при отметке выплаты'}</div>` : ''}
             <div class="small" style="margin-top:4px">Перевести по договору до <b>${fmtDay(p.request.payBy)}</b> · с расчётного счёта ИП, по СБП</div>
@@ -7479,7 +7480,7 @@ function watchAdminPartners() {
             </div>
           </div>` : ''}
           ${p.receiptsMissing ? `<p class="small" style="color:var(--warning)">🧾 Самозанятый ещё не прислал чек по ${p.receiptsMissing} ${plural(p.receiptsMissing, 'выплате', 'выплатам', 'выплатам')}. Чек обязателен (422-ФЗ, ст. 14) — бот напоминает менеджеру.</p>` : ''}
-          ${!p.request && p.taxStatus === 'person' && p.summary.unpaid > 0 ? '<p class="small" style="color:var(--warning)">Физлицо без статуса: при выплате удержите НДФЛ 13% и начислите страховые взносы — сумма к выплате указана до удержания.</p>' : ''}
+          ${p.taxStatus === 'person' ? '<p class="small" style="color:var(--warning)">Статус «физлицо» больше не поддерживается: выплаты закрыты. Когда менеджер оформит самозанятость или ИП, выберите статус в «Изменить».</p>' : ''}
           <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:8px">
             <button class="btn-link f-pa-open" data-id="${esc(p.id)}">${openId === p.id ? 'Скрыть' : 'Подробнее'}</button>
             <button class="btn-link f-pa-edit" data-id="${esc(p.id)}">Изменить</button>
@@ -7592,7 +7593,7 @@ function watchAdminPartners() {
         return (await callSaasGateway('partnerAdminPayout', { ...payload, npdManual: true })).data;
       }
     };
-    const paidToast = (r) => toast(r?.ndflDue ? `Выплата отмечена. НДФЛ ${fmtMoney(r.ndflDue.amount)}: уведомление до ${fmtDay(r.ndflDue.noticeBy)}, уплата до ${fmtDay(r.ndflDue.payBy)}` : 'Выплата отмечена — менеджеру ушло уведомление');
+    const paidToast = () => toast('Выплата отмечена — менеджеру ушло уведомление');
     document.querySelectorAll('.f-pa-reqpay').forEach((el) => {
       el.onclick = act(async (b) => {
         const note = prompt(`Вы перевели ${fmtMoney(b.dataset.net)}? Комментарий для менеджера (например, «СБП 24.10, Сбербанк»):`, '');

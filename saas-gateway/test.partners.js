@@ -6,7 +6,7 @@ const assert = require("assert");
 const crypto = require("crypto");
 const admin = require("firebase-admin");
 const { createLocalDb } = require("./local-db");
-const { createPartners, computeAccrual, maskEmail, cleanCode, translit, payoutCalc, innOk, cleanDetails, receiptDue, ndflDue } = require("./partners");
+const { createPartners, computeAccrual, maskEmail, cleanCode, translit, payoutCalc, innOk, cleanDetails, receiptDue } = require("./partners");
 const { HttpError } = require("./test-helpers");
 
 let passed = 0;
@@ -288,7 +288,8 @@ test("договор: услуги (не агентский), реквизиты
   assert.match(npd, /ст\. 18 Федерального закона от 13\.03\.2006 № 38-ФЗ/);
   assert.match(npd, /в течение всего срока действия Договора/);
   assert.match(npd, /ФОРМА АКТА/);
-  assert.match(text("person"), /налоговым агентом Исполнителя/);
+  assert.doesNotMatch(text("person"), /налоговым агентом Исполнителя|НДФЛ/, "физлиц нет — договор как с самозанятым");
+  assert.match(text("npd"), /выплаты приостанавливаются до восстановления статуса/);
   assert.match(text("ip"), /ИП Петрова Анна Сергеевна/);
   assert.match(text("npd", { months: 12 }), /в течение 12 \(_+\) месяцев/);
   assert.strictEqual(shortName("Иванов Иван Иванович"), "Иванов И. И.");
@@ -425,10 +426,7 @@ test("бот: доход по месяцам, выплаты списком, н�
 });
 
 test("выплаты: расчёт НДФЛ, ИНН, реквизиты, срок чека", () => {
-  assert.deepStrictEqual(payoutCalc(2684.98, "npd"), { gross: 2684.98, ndfl: 0, net: 2684.98 });
-  assert.deepStrictEqual(payoutCalc(2684.98, "ip"), { gross: 2684.98, ndfl: 0, net: 2684.98 });
-  // НДФЛ — в полных рублях: 2684,98 × 13% = 349,05 → 349.
-  assert.deepStrictEqual(payoutCalc(2684.98, "person"), { gross: 2684.98, ndfl: 349, net: 2335.98 });
+  assert.deepStrictEqual(payoutCalc(2684.98), { gross: 2684.98, ndfl: 0, net: 2684.98 });
   assert.ok(innOk("500100732259"));
   assert.ok(!innOk("500100732250"));
   assert.ok(!innOk("7707083893"), "ИНН организации — не подходит");
@@ -447,7 +445,7 @@ test("выплаты: запрос менеджера — ожидание 14 д
   const admins = [];
   const h = harness();
   h.partners = createPartners({ ...h.deps, notifyAdmins: (x) => admins.push(x) });
-  const { id: pid } = await h.addManager({ taxStatus: "person" });
+  const { id: pid } = await h.addManager({});
   const anna = { uid: "u_anna@zalpos.ru" };
   const call = (fn, body = {}) => h.call(fn, { ...anna, body });
   await call(h.partners.handleAcceptTerms, { accept: true });
@@ -469,10 +467,10 @@ test("выплаты: запрос менеджера — ожидание 14 д
   await h.partners.onPayment({ invId: "p2", ownerUid: "owner1", amount: 14900, venueName: "Кафе А" });
   dash = await call(h.partners.handleDashboard);
   assert.strictEqual(dash.summary.available, 2684.98);
-  assert.deepStrictEqual(dash.summary.calc, { gross: 2684.98, ndfl: 349, net: 2335.98 });
+  assert.deepStrictEqual(dash.summary.calc, { gross: 2684.98, ndfl: 0, net: 2684.98 });
   const r = await call(h.partners.handlePayoutRequest);
-  assert.deepStrictEqual([r.gross, r.ndfl, r.net], [2684.98, 349, 2335.98]);
-  assert.match(admins[admins.length - 1], /Запрос выплаты.*\n.*2\s335,98 ₽.*НДФЛ 349 ₽/);
+  assert.deepStrictEqual([r.gross, r.ndfl, r.net], [2684.98, 0, 2684.98]);
+  assert.match(admins[admins.length - 1], /Запрос выплаты.*\n.*2\s684,98 ₽/);
   assert.match(admins[admins.length - 1], /\+79001234567 · Т-Банк · Петрова Анна Сергеевна · ИНН 500100732259/);
   await assert.rejects(h.partners.handlePayoutRequest({ ...anna, body: {} }, {}), (e) => e.status === 409);
   // Пока запрос открыт — начисление из него не снять; админ видит полные реквизиты.
@@ -491,11 +489,11 @@ test("выплаты: запрос менеджера — ожидание 14 д
   assert.strictEqual(dash.summary.available, 2684.98, "вторая оплата созрела, но в запрос не входит");
   assert.strictEqual(dash.summary.requested, 2684.98);
   const paid = await h.call(h.partners.handleAdminPayout, { uid: "sa", body: { partnerId: pid, requestId: r2.id, note: "СБП" } });
-  assert.deepStrictEqual([paid.amount, paid.ndfl, paid.net], [2684.98, 349, 2335.98]);
+  assert.deepStrictEqual([paid.amount, paid.ndfl, paid.net], [2684.98, 0, 2684.98]);
   await assert.rejects(h.partners.handleAdminPayout({ uid: "sa", body: { partnerId: pid, requestId: r2.id } }, {}), (e) => e.status === 409);
   dash = await call(h.partners.handleDashboard);
   assert.deepStrictEqual([dash.summary.paid, dash.summary.unpaid, dash.summary.available], [2684.98, 2684.98, 2684.98]);
-  assert.strictEqual(dash.payouts[0].net, 2335.98);
+  assert.strictEqual(dash.payouts[0].net, 2684.98);
   // Клиенту вернули первую (уже выплаченную) оплату — удержание из следующей.
   await h.call(h.partners.handleAdminReverse, { uid: "sa", body: { accrualId: "p1" } });
   await assert.rejects(h.partners.handleAdminReverse({ uid: "sa", body: { accrualId: "p1" } }, {}), (e) => e.status === 409);
@@ -561,14 +559,7 @@ test("выплаты: самозанятый — чек из «Мой налог
   assert.match(last().text, /чек ✓/);
 });
 
-test("бухгалтерия: сроки НДФЛ, сумма прописью, акт за месяц", () => {
-  const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
-  let d = ndflDue(Date.UTC(2026, 9, 10, 9));
-  assert.deepStrictEqual([iso(d.noticeBy), iso(d.payBy)], ["2026-10-25", "2026-10-28"]);
-  d = ndflDue(Date.UTC(2026, 9, 24, 9));
-  assert.deepStrictEqual([iso(d.noticeBy), iso(d.payBy)], ["2026-11-03", "2026-11-05"]);
-  d = ndflDue(Date.UTC(2026, 11, 25, 9));
-  assert.ok(d.yearEnd);
+test("бухгалтерия: сумма прописью, акт за месяц", () => {
   const { rubWords, actBlocks } = require("./partner-contract");
   assert.strictEqual(rubWords(2684.98), "две тысячи шестьсот восемьдесят четыре");
   assert.strictEqual(rubWords(1021), "одна тысяча двадцать один");
@@ -677,7 +668,7 @@ test("чеки и подтверждение: чужой ИНН и повтор 
   assert.ok(csv.startsWith("\uFEFF"));
   const rows = csv.trim().split("\r\n");
   assert.strictEqual(rows.length, 3);
-  assert.match(rows[1], /"Анна Петрова";"Петрова Анна";"500100732259";"самозанятый";"ANNAPETROVA-2026";"2684,98";"0,00";"2684,98";"";"";"подтверждён \d{4}-\d{2}-\d{2}";"https:\/\/lknpd/);
+  assert.match(rows[1], /"Анна Петрова";"Петрова Анна";"500100732259";"самозанятый";"ANNAPETROVA-2026";"2684,98";"подтверждён \d{4}-\d{2}-\d{2}";"https:\/\/lknpd/);
   assert.match(rows[2], /нет \(срок/);
   // Акт за октябрь — для менеджера и админа.
   await h.partners.handleAct({ ...anna, body: { month: "2026-10" } }, res);
@@ -687,28 +678,33 @@ test("чеки и подтверждение: чужой ИНН и повтор 
   assert.strictEqual(file.slice(0, 2).toString(), "PK");
 });
 
-test("НДФЛ физлица: в реестре — сроки уведомления и уплаты, админу — напоминание", async () => {
-  const admins = [];
+test("физлиц нет: нового — нельзя добавить; у старого «физлица» выплаты закрыты до смены статуса", async () => {
   const h = harness();
-  h.partners = createPartners({ ...h.deps, notifyAdmins: (x) => admins.push(x) });
-  const { id: pid } = await h.addManager({ taxStatus: "person" });
+  await assert.rejects(h.partners.handleAdminSave({ uid: "sa", body: { email: "p@x.ru", name: "Пётр", percent: 10, taxStatus: "person" } }, {}), (e) => e.status === 400 && /самозанятость или ИП/.test(e.message));
+  const { id: pid } = await h.addManager({});
+  // Старый менеджер со статусом «физлицо» (до изменения правил).
+  await h.store.collection("partners").doc(pid).set({ taxStatus: "person" }, { merge: true });
   const anna = { uid: "u_anna@zalpos.ru" };
   await h.call(h.partners.handleAcceptTerms, { ...anna, body: { accept: true } });
   await h.call(h.partners.handleInvite, { ...anna, body: { email: "a@cafe.ru", consent: true } });
   await h.partners.attachOwner({ uid: "owner1", email: "a@cafe.ru", venueName: "Кафе А" });
   await h.partners.onPayment({ invId: "p1", ownerUid: "owner1", amount: 14900, venueName: "Кафе А" });
-  h.tick(15 * 86400000); // 08.11
+  h.tick(15 * 86400000);
   await h.call(h.partners.handlePayoutDetails, { ...anna, body: { phone: "9001234567", bank: "Сбербанк", fullName: "Петрова Анна", inn: "500100732259" } });
+  let dash = await h.call(h.partners.handleDashboard, { ...anna, body: {} });
+  assert.strictEqual(dash.partner.taxStatusLabel, "физлицо — нужен статус самозанятого или ИП");
+  assert.strictEqual(dash.summary.canRequest, false);
+  assert.strictEqual(dash.summary.statusOk, false);
+  await assert.rejects(h.partners.handlePayoutRequest({ ...anna, body: {} }, {}), (e) => e.status === 412 && /только самозанятым и ИП/.test(e.message));
+  await assert.rejects(h.partners.handleAdminPayout({ uid: "sa", body: { partnerId: pid, npdManual: true } }, {}), (e) => e.status === 412);
+  // Приостановка из панели не меняет статус молча; смена на «самозанятый» открывает выплаты.
+  await h.call(h.partners.handleAdminSave, { uid: "sa", body: { id: pid, name: "Анна Петрова", percent: 20, taxStatus: "person", status: "active" } });
+  assert.strictEqual((await h.store.collection("partners").doc(pid).get()).data().taxStatus, "person");
+  await h.call(h.partners.handleAdminSave, { uid: "sa", body: { id: pid, name: "Анна Петрова", percent: 20, taxStatus: "npd", status: "active" } });
+  dash = await h.call(h.partners.handleDashboard, { ...anna, body: {} });
+  assert.strictEqual(dash.summary.canRequest, true);
   const r = await h.call(h.partners.handlePayoutRequest, { ...anna, body: {} });
-  const calls = h.npdCalls.length;
-  const paid = await h.call(h.partners.handleAdminPayout, { uid: "sa", body: { partnerId: pid, requestId: r.id } });
-  assert.strictEqual(h.npdCalls.length, calls, "физлицо — ФНС о НПД не спрашиваем");
-  assert.strictEqual(paid.ndfl, 349);
-  assert.strictEqual(new Date(paid.ndflDue.payBy).toISOString().slice(0, 10), "2026-11-28");
-  assert.match(admins[admins.length - 1], /НДФЛ 349 ₽.*\nУведомление об исчисленных суммах — до 25\.11\.2026, уплата ЕНП — до 28\.11\.2026/);
-  let file = null;
-  await h.partners.handleAdminPayoutsCsv({ uid: "sa", body: {} }, { writeHead: () => {}, end: (b) => { file = b; } });
-  assert.match(file.toString(), /"2684,98";"349,00";"2335,98";"25\.11\.2026";"28\.11\.2026"/);
+  assert.strictEqual(r.net, 2684.98);
 });
 
 (async () => {
