@@ -24,7 +24,7 @@ const crypto = require("crypto");
 
 const KEEP_DAYS = 14;
 
-function createLocalDb({ file = null, admin, flushMs = 400, keepDays = KEEP_DAYS, now = () => Date.now() } = {}) {
+function createLocalDb({ file = null, persist = null, admin, flushMs = 400, keepDays = KEEP_DAYS, now = () => Date.now() } = {}) {
   const Timestamp = admin.firestore.Timestamp;
   const FieldValue = admin.firestore.FieldValue;
   /** path документа → данные. */
@@ -176,15 +176,24 @@ function createLocalDb({ file = null, admin, flushMs = 400, keepDays = KEEP_DAYS
 
   const newId = () => crypto.randomBytes(15).toString("base64").replace(/[^A-Za-z0-9]/g, "").slice(0, 20).padEnd(20, "x");
   const parentOf = (docPath) => docPath.slice(0, docPath.lastIndexOf("/"));
+  const lastSeg = (p) => p.slice(p.lastIndexOf("/") + 1);
+  /** FieldPath.documentId() / "__name__" — сравнение и порядок по документу. */
+  const isDocId = (f) => String(f) === "__name__";
+  const tsOfVer = (ver) => Timestamp.fromMillis(Math.floor((ver || 0) / 1000));
 
   function docSnap(docPath) {
     const data = docs.get(docPath);
+    const ver = versions.get(docPath) || 0;
     return {
-      id: docPath.split("/").pop(),
+      id: lastSeg(docPath),
       ref: docRef(docPath),
       exists: data !== undefined,
       data: () => (data === undefined ? undefined : clone(data)),
-      get: (field) => (data === undefined ? undefined : clone(fieldOf(data, field))),
+      get: (field) => (data === undefined ? undefined : isDocId(field) ? lastSeg(docPath) : clone(fieldOf(data, field))),
+      updateTime: data === undefined ? undefined : tsOfVer(ver),
+      createTime: data === undefined ? undefined : tsOfVer(created.get(docPath) || ver),
+      readTime: Timestamp.fromMillis(now()),
+      version: ver,
     };
   }
 
@@ -194,27 +203,39 @@ function createLocalDb({ file = null, admin, flushMs = 400, keepDays = KEEP_DAYS
       size: list.length,
       empty: list.length === 0,
       forEach: (fn) => list.forEach(fn),
+      readTime: Timestamp.fromMillis(now()),
       docChanges: () => changes || list.map((d, i) => ({ type: "added", doc: d, oldIndex: -1, newIndex: i })),
     };
   }
 
+  function subcollections(prefix) {
+    const out = new Set();
+    for (const c of byCol.keys()) {
+      if (!(byCol.get(c).size)) continue;
+      if (prefix === "") { if (!c.includes("/")) out.add(c); }
+      else if (c.startsWith(`${prefix}/`) && !c.slice(prefix.length + 1).includes("/")) out.add(c);
+    }
+    return [...out].map(colRef);
+  }
+
   function docRef(docPath) {
     const ref = {
-      id: docPath.split("/").pop(),
+      id: lastSeg(docPath),
       path: docPath,
       get parent() { return colRef(parentOf(docPath)); },
       collection: (name) => colRef(`${docPath}/${name}`),
       get: async () => docSnap(docPath),
       set: async (data, opts) => { write(docPath, data, { merge: !!(opts && (opts.merge || opts.mergeFields)) }); },
       update: async (data) => {
-        if (!docs.has(docPath)) throw Object.assign(new Error(`NOT_FOUND: ${docPath}`), { code: 5 });
+        if (!docs.has(docPath)) throw Object.assign(new Error(`5 NOT_FOUND: No document to update: ${docPath}`), { code: 5 });
         write(docPath, data, { update: true });
       },
       create: async (data) => {
-        if (docs.has(docPath)) throw Object.assign(new Error(`ALREADY_EXISTS: ${docPath}`), { code: 6 });
+        if (docs.has(docPath)) throw Object.assign(new Error(`6 ALREADY_EXISTS: ${docPath}`), { code: 6 });
         write(docPath, data, {});
       },
       delete: async () => { remove(docPath); },
+      listCollections: async () => subcollections(docPath),
       onSnapshot: (next, onErr) => listen({ doc: docPath }, next, onErr),
       isEqual: (other) => !!other && other.path === docPath,
     };
@@ -222,10 +243,11 @@ function createLocalDb({ file = null, admin, flushMs = 400, keepDays = KEEP_DAYS
   }
 
   function colRef(colPath) {
-    const q = query(colPath, [], [], Infinity);
+    const q = query({ col: colPath });
     return Object.assign(q, {
-      id: colPath.split("/").pop(),
+      id: lastSeg(colPath),
       path: colPath,
+      get parent() { return colPath.includes("/") ? docRef(parentOf(colPath)) : null; },
       doc: (id) => docRef(`${colPath}/${id || newId()}`),
       add: async (data) => {
         const r = docRef(`${colPath}/${newId()}`);
@@ -236,49 +258,119 @@ function createLocalDb({ file = null, admin, flushMs = 400, keepDays = KEEP_DAYS
     });
   }
 
-  function query(colPath, filters, orders, max) {
+  /** Курсор: значения полей orderBy или снимок документа. */
+  function cursor(args, inclusive) {
+    if (args.length === 1 && args[0] && typeof args[0] === "object" && args[0].ref && typeof args[0].data === "function") {
+      return { snap: args[0], inclusive };
+    }
+    return { values: args, inclusive };
+  }
+
+  function query(spec) {
+    const q = (patch) => query({ ...spec, ...patch });
     return {
-      where: (field, op, value) => query(colPath, [...filters, [field, op, value]], orders, max),
-      orderBy: (field, dir = "asc") => query(colPath, filters, [...orders, [field, dir]], max),
-      limit: (n) => query(colPath, filters, orders, Number(n)),
-      get: async () => querySnap(run(colPath, filters, orders, max).map(docSnap)),
-      onSnapshot: (next, onErr) => listen({ col: colPath, filters, orders, max }, next, onErr),
+      where: (field, op, value) => q({ filters: [...(spec.filters || []), [field, op, value]] }),
+      orderBy: (field, dir = "asc") => q({ orders: [...(spec.orders || []), [field, dir]] }),
+      limit: (n) => q({ limit: Number(n), limitToLast: false }),
+      limitToLast: (n) => q({ limit: Number(n), limitToLast: true }),
+      offset: (n) => q({ offset: Number(n) }),
+      startAt: (...a) => q({ start: cursor(a, true) }),
+      startAfter: (...a) => q({ start: cursor(a, false) }),
+      endAt: (...a) => q({ end: cursor(a, true) }),
+      endBefore: (...a) => q({ end: cursor(a, false) }),
+      select: () => q({}),
+      withConverter: () => q({}),
+      count: () => ({ get: async () => { const n = run(spec).length; return { data: () => ({ count: n }) }; } }),
+      get: async () => querySnap(run(spec).map(docSnap)),
+      onSnapshot: (next, onErr) => listen({ query: spec }, next, onErr),
+      _spec: spec,
     };
   }
 
-  function run(colPath, filters, orders, max) {
-    let list = [...(byCol.get(colPath) || [])].filter((p) => {
-      const d = docs.get(p);
-      return d !== undefined && filters.every((f) => matches(d, f));
-    });
-    if (orders.length) {
-      list.sort((a, b) => {
-        for (const [field, dir] of orders) {
-          const c = compare(fieldOf(docs.get(a), field), fieldOf(docs.get(b), field));
-          if (c) return dir === "desc" ? -c : c;
-        }
-        return 0;
-      });
+  function candidates(spec) {
+    if (!spec.group) return [...(byCol.get(spec.col) || [])];
+    const out = [];
+    for (const [c, set] of byCol) if (lastSeg(c) === spec.col) out.push(...set);
+    return out;
+  }
+
+  const fieldVal = (p, field) => (isDocId(field) ? p : fieldOf(docs.get(p), field));
+
+  function matchesDoc(p, [field, op, value]) {
+    if (isDocId(field)) {
+      const id = (x) => (typeof x === "string" && x.includes("/") ? p : lastSeg(p));
+      const norm = (x) => (x && typeof x === "object" && x.path ? x.path : x);
+      const v = norm(value);
+      const cmpTo = Array.isArray(v) ? v.map(norm) : v;
+      const mine = Array.isArray(cmpTo) ? (cmpTo.some((x) => String(x).includes("/")) ? p : lastSeg(p)) : id(cmpTo);
+      return matches({ __id: mine }, ["__id", op, cmpTo]);
     }
-    // Без orderBy — в порядке создания: сообщения с одинаковой меткой
-    // времени (до миллисекунды) не перемешиваются.
-    if (Number.isFinite(max)) list = list.slice(0, Math.max(0, max));
+    return matches(docs.get(p), [field, op, value]);
+  }
+
+  function run(spec) {
+    const filters = spec.filters || [];
+    let list = candidates(spec).filter((p) => docs.get(p) !== undefined && filters.every((f) => matchesDoc(p, f)));
+    let orders = spec.orders || [];
+    // Поле с неравенством без orderBy — сортировка по нему (как в Firestore).
+    if (!orders.length) {
+      const ineq = filters.find(([, op]) => ["<", "<=", ">", ">=", "!=", "not-in"].includes(op));
+      if (ineq) orders = [[ineq[0], "asc"]];
+    }
+    // В Firestore документы без поля orderBy в выборку не попадают.
+    for (const [field] of orders) if (!isDocId(field)) list = list.filter((p) => fieldOf(docs.get(p), field) !== undefined);
+    const sortable = orders.length || spec.start || spec.end || spec.group;
+    const full = [...orders];
+    if (sortable && !orders.some(([f]) => isDocId(f))) full.push(["__name__", orders.length ? orders[orders.length - 1][1] : "asc"]);
+    const cmpPaths = (a, b) => {
+      for (const [field, dir] of full) {
+        const c = compare(fieldVal(a, field), fieldVal(b, field));
+        if (c) return dir === "desc" ? -c : c;
+      }
+      return 0;
+    };
+    // Без orderBy и курсоров — в порядке создания: сообщения с одинаковой
+    // меткой времени (до миллисекунды) не перемешиваются.
+    if (sortable) list.sort(cmpPaths);
+    const cursorCmp = (p, cur) => {
+      let vals = cur.values;
+      if (cur.snap) vals = full.map(([f]) => (isDocId(f) ? cur.snap.ref.path : fieldOf(cur.snap.data() || {}, f)));
+      for (let i = 0; i < full.length && i < vals.length; i++) {
+        const [field, dir] = full[i];
+        let v = vals[i];
+        if (isDocId(field) && typeof v === "string" && !v.includes("/")) v = `${parentOf(p)}/${v}`;
+        const c = compare(fieldVal(p, field), v);
+        if (c) return dir === "desc" ? -c : c;
+      }
+      return 0;
+    };
+    if (spec.start) list = list.filter((p) => { const c = cursorCmp(p, spec.start); return spec.start.inclusive ? c >= 0 : c > 0; });
+    if (spec.end) list = list.filter((p) => { const c = cursorCmp(p, spec.end); return spec.end.inclusive ? c <= 0 : c < 0; });
+    if (spec.offset) list = list.slice(spec.offset);
+    if (Number.isFinite(spec.limit)) list = spec.limitToLast ? list.slice(Math.max(0, list.length - spec.limit)) : list.slice(0, Math.max(0, spec.limit));
     return list;
   }
 
   // ---------------------------------------------------------- запись
 
-  const versions = new Map(); // path документа → номер изменения
+  const versions = new Map(); // path документа → версия (мкс, растёт всегда)
+  const created = new Map();
+  let clock = 0;
+  const nextVer = () => (clock = Math.max(clock + 1, now() * 1000));
+
+  function index(docPath) {
+    const col = parentOf(docPath);
+    if (!byCol.has(col)) byCol.set(col, new Set());
+    byCol.get(col).add(docPath);
+  }
 
   function write(docPath, data, { merge = false, update = false }) {
     if (!data || typeof data !== "object") throw new Error("local-db: данные документа — объект");
     const cur = docs.get(docPath);
     const next = update ? applyUpdate(clone(cur) || {}, data) : merge ? mergeInto(clone(cur) || {}, data, true) : mergeInto({}, data, false);
     docs.set(docPath, next);
-    const col = parentOf(docPath);
-    if (!byCol.has(col)) byCol.set(col, new Set());
-    byCol.get(col).add(docPath);
-    changed(docPath);
+    index(docPath);
+    changed(docPath, cur === undefined);
   }
 
   function remove(docPath) {
@@ -286,18 +378,28 @@ function createLocalDb({ file = null, admin, flushMs = 400, keepDays = KEEP_DAYS
     docs.delete(docPath);
     const col = byCol.get(parentOf(docPath));
     if (col) col.delete(docPath);
+    created.delete(docPath);
     changed(docPath);
+  }
+
+  /** Удалить документ и всё, что под ним (как recursiveDelete). */
+  function removeTree(prefix) {
+    for (const p of [...docs.keys()]) if (p === prefix || p.startsWith(`${prefix}/`)) remove(p);
   }
 
   let notifyQueued = false;
   const touched = new Set();
-  function changed(docPath) {
+  const pending = new Set();
+  function changed(docPath, isNew = false) {
     version++;
-    versions.set(docPath, version);
+    const ver = nextVer();
+    versions.set(docPath, ver);
+    if (isNew) created.set(docPath, ver);
     touched.add(docPath);
+    pending.add(docPath);
     dirty = true;
     scheduleFlush();
-    if (!notifyQueued && listeners.size) {
+    if (!notifyQueued && (listeners.size || changeHooks.size)) {
       notifyQueued = true;
       setImmediate(notify);
     }
@@ -307,21 +409,29 @@ function createLocalDb({ file = null, admin, flushMs = 400, keepDays = KEEP_DAYS
 
   function resultOf(l) {
     if (l.doc) return docs.has(l.doc) ? [l.doc] : [];
-    return run(l.col, l.filters, l.orders, l.max);
+    return run(l.query);
   }
 
   function emit(l, initial) {
-    const ids = resultOf(l);
+    let ids;
+    try {
+      ids = resultOf(l);
+    } catch (e) {
+      if (l.onErr) l.onErr(e);
+      return;
+    }
     const prev = l.seen;
     const seen = new Map(ids.map((p) => [p, versions.get(p) || 0]));
     const changes = [];
+    const prevOrder = [...prev.keys()];
     ids.forEach((p, i) => {
       if (!prev.has(p)) changes.push({ type: "added", doc: docSnap(p), oldIndex: -1, newIndex: i });
-      else if (prev.get(p) !== seen.get(p)) changes.push({ type: "modified", doc: docSnap(p), oldIndex: i, newIndex: i });
+      else if (prev.get(p) !== seen.get(p)) changes.push({ type: "modified", doc: docSnap(p), oldIndex: prevOrder.indexOf(p), newIndex: i });
     });
-    for (const p of prev.keys()) if (!seen.has(p)) changes.push({ type: "removed", doc: docSnap(p), oldIndex: -1, newIndex: -1 });
+    for (const p of prev.keys()) if (!seen.has(p)) changes.push({ type: "removed", doc: docSnap(p), oldIndex: prevOrder.indexOf(p), newIndex: -1 });
+    const reordered = !changes.length && prevOrder.join("\n") !== ids.join("\n");
     l.seen = seen;
-    if (!initial && !changes.length) return;
+    if (!initial && !changes.length && !reordered) return;
     try {
       if (l.doc) l.next(docSnap(l.doc));
       else l.next(querySnap(ids.map(docSnap), changes));
@@ -337,14 +447,20 @@ function createLocalDb({ file = null, admin, flushMs = 400, keepDays = KEEP_DAYS
     return () => { l.live = false; listeners.delete(l); };
   }
 
+  const changeHooks = new Set();
   function notify() {
     notifyQueued = false;
     const paths = [...touched];
     touched.clear();
+    for (const h of changeHooks) {
+      try { h(paths); } catch (e) { console.error(`local-db: подписчик изменений: ${e && e.stack ? e.stack : e}`); }
+    }
     const cols = new Set(paths.map(parentOf));
+    const groups = new Set([...cols].map(lastSeg));
     for (const l of [...listeners]) {
       if (!l.live) continue;
-      if (l.doc ? paths.includes(l.doc) : cols.has(l.col)) emit(l, false);
+      const hit = l.doc ? paths.includes(l.doc) : l.query.group ? groups.has(l.query.col) : cols.has(l.query.col);
+      if (hit) emit(l, false);
     }
   }
 
@@ -413,6 +529,17 @@ function createLocalDb({ file = null, admin, flushMs = 400, keepDays = KEEP_DAYS
   }
 
   function load() {
+    if (persist) {
+      let any = false;
+      for (const [p, json, ver] of persist.load()) {
+        docs.set(p, unwire(JSON.parse(json)));
+        index(p);
+        versions.set(p, Number(ver) || 0);
+        clock = Math.max(clock, Number(ver) || 0);
+        any = true;
+      }
+      return any;
+    }
     if (!file || !fs.existsSync(file)) return false;
     const raw = JSON.parse(fs.readFileSync(file, "utf8"));
     for (const [p, d] of Object.entries(raw.docs || {})) {
@@ -424,7 +551,30 @@ function createLocalDb({ file = null, admin, flushMs = 400, keepDays = KEEP_DAYS
     return true;
   }
 
+  /** Изменённые документы — в постоянное хранилище (SQLite) одной транзакцией. */
+  function persistNow() {
+    if (!pending.size) return;
+    const changes = [...pending].map((p) => ({ path: p, json: docs.has(p) ? JSON.stringify(wire(docs.get(p))) : null, ver: versions.get(p) || 0 }));
+    pending.clear();
+    try {
+      persist.save(changes);
+      dirty = false;
+    } catch (e) {
+      for (const c of changes) pending.add(c.path);
+      throw e;
+    }
+  }
+
   function scheduleFlush() {
+    if (persist) {
+      if (flushTimer) return;
+      flushTimer = setTimeout(() => {
+        flushTimer = null;
+        try { persistNow(); } catch (e) { console.error(`local-db: запись в хранилище: ${e.message || e}`); scheduleFlush(); }
+      }, Math.min(flushMs, 50));
+      if (flushTimer.unref) flushTimer.unref();
+      return;
+    }
     if (!file || flushTimer) return;
     flushTimer = setTimeout(() => {
       flushTimer = null;
@@ -450,6 +600,7 @@ function createLocalDb({ file = null, admin, flushMs = 400, keepDays = KEEP_DAYS
 
   /** Записать на диск сейчас (асинхронно; вызовы во время записи склеиваются). */
   async function flush() {
+    if (persist) return persistNow();
     if (!file) return;
     if (writing) {
       await writing;
@@ -477,6 +628,7 @@ function createLocalDb({ file = null, admin, flushMs = 400, keepDays = KEEP_DAYS
 
   /** При остановке сервиса — синхронно, чтобы последние записи не потерялись. */
   function flushSync() {
+    if (persist) return persistNow();
     if (!file || !dirty) return;
     dirty = false;
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -492,11 +644,10 @@ function createLocalDb({ file = null, admin, flushMs = 400, keepDays = KEEP_DAYS
     get: (p) => docs.get(p),
     has: (p) => docs.has(p),
     set: (p, d) => {
+      const isNew = !docs.has(p);
       docs.set(p, clone(d));
-      const col = parentOf(p);
-      if (!byCol.has(col)) byCol.set(col, new Set());
-      byCol.get(col).add(p);
-      changed(p);
+      index(p);
+      changed(p, isNew);
       return storeView;
     },
     delete: (p) => { const had = docs.has(p); remove(p); return had; },
@@ -509,9 +660,28 @@ function createLocalDb({ file = null, admin, flushMs = 400, keepDays = KEEP_DAYS
 
   return {
     collection: (name) => colRef(name),
+    collectionGroup: (id) => query({ col: id, group: true }),
     doc: (p) => docRef(p),
+    listCollections: async () => subcollections(""),
+    getAll: async (...refs) => refs.map((r) => docSnap(r.path)),
+    recursiveDelete: async (ref) => { removeTree(ref.path); },
+    settings: () => {},
     runTransaction,
     batch,
+    /** Для сервера данных: версия, запросы по описанию и правка без оберток. */
+    versionOf: (p) => versions.get(p) || 0,
+    exists: (p) => docs.has(p),
+    raw: (p) => docs.get(p),
+    runSpec: (spec) => run(spec),
+    snap: (p) => docSnap(p),
+    query,
+    write,
+    remove,
+    listen,
+    /** Состояние документа после записи — без сохранения (для проверки правил). */
+    computeNext: (cur, data, { merge = false, update = false } = {}) => (update ? applyUpdate(clone(cur) || {}, data) : merge ? mergeInto(clone(cur) || {}, data, true) : mergeInto({}, data, false)),
+    unwire,
+    onChange: (fn) => { changeHooks.add(fn); return () => changeHooks.delete(fn); },
     flush,
     flushSync,
     loaded,

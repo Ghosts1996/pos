@@ -138,7 +138,24 @@ function getFirebaseApp() {
   firebaseApp = admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
   return firebaseApp;
 }
+// ---- Собственный сервер данных (data-server.js) вместо Cloud Firestore.
+// Включается, когда данные перенесены (метка DATA_DB_FILE.active) или
+// DATA_BACKEND=local; DATA_BACKEND=firestore — принудительно старый режим.
+const DATA_DB_FILE = process.env.DATA_DB_FILE || path.join(__dirname, "state", "data.sqlite");
+const DATA_ACTIVE_MARK = `${DATA_DB_FILE}.active`;
+const DATA_LOCAL = process.env.DATA_BACKEND === "local"
+  || (process.env.DATA_BACKEND !== "firestore" && fs.existsSync(DATA_ACTIVE_MARK));
+let dataStore = null;
+function localDataStore() {
+  if (!dataStore) dataStore = require("./data-server").createDataStore({ admin, file: DATA_DB_FILE });
+  return dataStore;
+}
 function db() {
+  if (DATA_LOCAL) {
+    // Вход (Firebase Auth) остаётся у Google — приложение Firebase нужно и здесь.
+    if (!firebaseApp && process.env.FIREBASE_SERVICE_ACCOUNT_B64) getFirebaseApp();
+    return localDataStore();
+  }
   return admin.firestore(getFirebaseApp());
 }
 
@@ -7767,6 +7784,7 @@ for (const sig of ["SIGTERM", "SIGINT"]) {
   process.once(sig, () => {
     try { supportDb.flushSync(); } catch (e) { console.error(`support-bot: запись хранилища: ${e.message || e}`); }
     try { partnersDb.flushSync(); } catch (e) { console.error(`partners: запись хранилища: ${e.message || e}`); }
+    try { if (dataStore) dataStore.flushSync(); } catch (e) { console.error(`сервер данных: запись: ${e.message || e}`); }
     process.exit(0);
   });
 }
@@ -7797,6 +7815,151 @@ const supportBot = createSupportBot({
   // когда база недоступна.
   cfgCachePath: process.env.SUPPORT_BOT_CFG_CACHE || path.join(__dirname, "state", "support-bot-config.json"),
 });
+
+// ------------------------------------------------ собственный сервер данных
+//
+// Перенос из Firestore в SQLite на этом сервере (кнопка в панели платформы)
+// и API для кассы, приложения гостя и кабинета (data-server.js). До переноса
+// API отвечает 503 и клиенты работают с Firestore как раньше.
+
+function rulesSource() {
+  for (const f of [process.env.RULES_FILE, path.join(__dirname, "kb", "firestore.rules"), path.join(__dirname, "..", "saas", "firestore.rules")]) {
+    if (f && fs.existsSync(f)) return fs.readFileSync(f, "utf8");
+  }
+  throw new Error("не найден firestore.rules для сервера данных");
+}
+
+let dataSecure = null;
+let dataApi = null;
+function dataApiOrNull() {
+  if (!DATA_LOCAL) return null;
+  if (!dataApi) {
+    const ds = require("./data-server");
+    dataSecure = ds.createSecureDb({ store: localDataStore(), rulesSource: rulesSource(), admin });
+    dataApi = ds.createDataApi({ store: localDataStore(), secure: dataSecure, verifyAuth, parseJsonBody, sendJson, HttpError });
+  }
+  return dataApi;
+}
+
+/** GET /db/status — где сейчас данные (клиенты выбирают по нему). */
+function handleDataStatus(req, res) {
+  sendJson(res, 200, { backend: DATA_LOCAL ? "local" : "firestore", docs: DATA_LOCAL ? localDataStore().count() : null });
+}
+
+function dataRoute(name) {
+  return async (req, res) => {
+    const api = dataApiOrNull();
+    if (!api) return sendJson(res, 503, { error: "Сервер данных ещё не включён", code: "unavailable" });
+    return api.routes[name](req, res);
+  };
+}
+
+let dataMigration = null; // { state, source, docs, error, at }
+
+/** Все документы Firestore → SQLite. source: firestore | backup (последняя копия, без чтений Firebase). */
+async function migrateToLocal(source) {
+  const ds = require("./data-server");
+  const tmp = `${DATA_DB_FILE}.import`;
+  for (const f of [tmp, `${tmp}-wal`, `${tmp}-shm`]) { try { fs.unlinkSync(f); } catch (_) {} }
+  const target = ds.createDataStore({ admin, file: tmp });
+  let n = 0;
+  const put = (p, data) => { target.write(p, data, {}); n++; };
+  if (source === "backup") {
+    const last = listBackups()[0];
+    if (!last) throw new Error("резервных копий нет");
+    const raw = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(BACKUP_DIR, last.name))).toString("utf8"));
+    const des = (v) => {
+      if (v === null || typeof v !== "object") return v;
+      if (Array.isArray(v)) return v.map(des);
+      if (v.__t === "ts") return admin.firestore.Timestamp.fromMillis(v.v);
+      if (v.__t === "geo") return { latitude: v.lat, longitude: v.lng };
+      if (v.__t === "ref") return v.v;
+      if (v.__t === "bytes") return v.v;
+      const out = {};
+      for (const [k, x] of Object.entries(v)) out[k] = des(x);
+      return out;
+    };
+    for (const [p, d] of Object.entries(raw.docs || {})) put(p, des(d));
+  } else {
+    const firestore = admin.firestore(getFirebaseApp());
+    for (const id of await discoverCollectionIds(firestore)) {
+      let last = null;
+      for (;;) {
+        let q = firestore.collectionGroup(id).orderBy(admin.firestore.FieldPath.documentId()).limit(500);
+        if (last) q = q.startAfter(last);
+        const snap = await q.get();
+        for (const d of snap.docs) {
+          const conv = (v) => {
+            if (v === null || typeof v !== "object") return v;
+            if (v instanceof admin.firestore.Timestamp) return v;
+            if (v instanceof admin.firestore.GeoPoint) return { latitude: v.latitude, longitude: v.longitude };
+            if (v instanceof admin.firestore.DocumentReference) return v.path;
+            if (Buffer.isBuffer(v)) return v.toString("base64");
+            if (Array.isArray(v)) return v.map(conv);
+            const out = {};
+            for (const [k, x] of Object.entries(v)) out[k] = conv(x);
+            return out;
+          };
+          put(d.ref.path, conv(d.data()));
+        }
+        if (snap.size < 500) break;
+        last = snap.docs[snap.docs.length - 1];
+        dataMigration.docs = n;
+      }
+    }
+  }
+  target.write("_platform/dataMigration", { source, docs: n, at: admin.firestore.Timestamp.now() }, {});
+  target.close();
+  for (const ext of ["", "-wal", "-shm"]) {
+    try { fs.renameSync(`${tmp}${ext}`, `${DATA_DB_FILE}${ext}`); } catch (_) {}
+  }
+  return n;
+}
+
+/** Панель: перенести данные и переключиться (или вернуться на Firestore). */
+async function handleDataMigrate(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  requireRecentAuth(decoded);
+  const body = await parseJsonBody(req);
+  if (body.action === "rollback") {
+    try { fs.unlinkSync(DATA_ACTIVE_MARK); } catch (_) {}
+    await writeSecurityEvent(req, decoded, "dataBackendRollback", {});
+    sendJson(res, 200, { ok: true, restarting: true });
+    setTimeout(() => process.exit(75), 500); // systemd перезапустит (Restart=on-failure)
+    return;
+  }
+  if (DATA_LOCAL) throw new HttpError(409, "Данные уже на своём сервере");
+  if (dataMigration && dataMigration.state === "running") throw new HttpError(409, "Перенос уже идёт");
+  const source = body.source === "backup" ? "backup" : "firestore";
+  dataMigration = { state: "running", source, docs: 0, at: Date.now() };
+  sendJson(res, 200, { ok: true });
+  try {
+    dataMigration.docs = await migrateToLocal(source);
+    fs.writeFileSync(DATA_ACTIVE_MARK, new Date().toISOString(), { mode: 0o600 });
+    dataMigration.state = "done";
+    await writeSecurityEvent(req, decoded, "dataBackendMigrated", { metadata: { source, docs: dataMigration.docs } }).catch(() => {});
+    console.log(`сервер данных: перенесено ${dataMigration.docs} документов (${source}) — перезапуск на своём сервере данных`);
+    setTimeout(() => process.exit(75), 1000);
+  } catch (e) {
+    dataMigration.state = "error";
+    dataMigration.error = String(e.message || e).slice(0, 300);
+    console.error(`сервер данных: перенос не удался: ${e.stack || e}`);
+  }
+}
+
+async function handleDataMigrateStatus(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const last = listBackups()[0] || null;
+  sendJson(res, 200, {
+    backend: DATA_LOCAL ? "local" : "firestore",
+    docs: DATA_LOCAL ? localDataStore().count() : null,
+    migration: dataMigration,
+    lastBackup: last,
+    sessions: dataApi ? dataApi.sessions.size : 0,
+  });
+}
 
 // ------------------------------------------------ партнёрская программа
 //
@@ -8054,6 +8217,14 @@ const ROUTES = {
   "/partnerAdminReverse": partners.handleAdminReverse,
   "/partnerAdminBot": partners.handleAdminBot,
   "/partnerAdminContract": partners.handleAdminContract,
+  // Собственный сервер данных.
+  "/db/get": dataRoute("/db/get"),
+  "/db/query": dataRoute("/db/query"),
+  "/db/commit": dataRoute("/db/commit"),
+  "/db/session": dataRoute("/db/session"),
+  "/db/listen": dataRoute("/db/listen"),
+  "/dataMigrate": handleDataMigrate,
+  "/dataMigrateStatus": handleDataMigrateStatus,
   "/invalidateTenantCache": handleInvalidateTenantCache,
   "/recordImportConsent": handleRecordImportConsent,
   "/supportSiteMessages": supportBot.handleSiteMessages,
@@ -8209,6 +8380,12 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/tenantStaticData") return runHandler(handleTenantStaticData, req, res);
   if (req.method === "GET" && urlPath === "/publicMenu") return runHandler(handlePublicMenu, req, res);
   if (req.method === "GET" && urlPath === "/partnerOptOut") return runHandler(partners.handleOptOut, req, res);
+  if (req.method === "GET" && urlPath === "/db/status") return handleDataStatus(req, res);
+  if (req.method === "GET" && urlPath === "/db/listen") {
+    const api = dataApiOrNull();
+    if (!api) return sendJson(res, 503, { error: "Сервер данных ещё не включён", code: "unavailable" });
+    return runHandler(async (rq, rs) => api.handleListen(rq, rs), req, res);
+  }
   // Обновления Telegram-бота заведения: /tgHook/<tenantId>, секрет в заголовке.
   if (req.method === "POST" && urlPath === `/tgHook/${supportBot.HOOK_ID}`) return runHandler(supportBot.handleHook, req, res);
   if (req.method === "POST" && urlPath === `/tgHook/${partners.HOOK_ID}`) return runHandler((rq, rs) => partners.handleHook(rq, rs, readBody), req, res);
@@ -8250,6 +8427,8 @@ if (process.env.PORT !== "8099") {
   startSupportBot().catch((e) => console.error("support-bot: запуск:", e.message || e));
   partners.start();
 }
+
+if (DATA_LOCAL && process.env.FIREBASE_SERVICE_ACCOUNT_B64) getFirebaseApp();
 
 const port = Number(process.env.PORT || 8081);
 server.listen(port, "127.0.0.1", () => {

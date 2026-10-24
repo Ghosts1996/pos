@@ -53,7 +53,17 @@ test("запросы: where (==, >, in, array-contains), orderBy, limit, вло�
   const ids = (snap) => snap.docs.map((d) => d.id);
   assert.deepStrictEqual(ids(await col.where("status", "==", "open").get()), ["a", "b"]);
   assert.deepStrictEqual(ids(await col.where("status", "==", "open").where("lastAuthorRole", "==", "owner").get()), ["a"]);
-  assert.deepStrictEqual(ids(await col.where("updatedAt", ">", Timestamp.fromMillis(150)).get()), ["a", "c"]);
+  // Как в Firestore: неравенство без orderBy сортирует по этому полю.
+  assert.deepStrictEqual(ids(await col.where("updatedAt", ">", Timestamp.fromMillis(150)).get()), ["c", "a"]);
+  // Курсоры, offset, limitToLast, поиск по всем одноимённым коллекциям, подсчёт.
+  const ordered = col.orderBy("no");
+  assert.deepStrictEqual(ids(await ordered.startAfter(1).get()), ["c", "a"]);
+  assert.deepStrictEqual(ids(await ordered.endBefore(3).get()), ["b", "c"]);
+  assert.deepStrictEqual(ids(await ordered.startAt((await col.doc("c").get())).get()), ["c", "a"]);
+  assert.deepStrictEqual(ids(await ordered.offset(1).limit(1).get()), ["c"]);
+  assert.deepStrictEqual(ids(await ordered.limitToLast(2).get()), ["c", "a"]);
+  assert.strictEqual((await col.where("status", "==", "open").count().get()).data().count, 2);
+  assert.deepStrictEqual(ids(await col.orderBy(admin.firestore.FieldPath.documentId()).startAfter("a").limit(1).get()), ["b"]);
   assert.deepStrictEqual(ids(await col.where("no", "in", [1, 2]).get()), ["b", "c"]);
   assert.deepStrictEqual(ids(await col.where("tags", "array-contains", "x").get()), ["a"]);
   assert.deepStrictEqual(ids(await col.orderBy("updatedAt", "desc").limit(2).get()), ["a", "c"]);
@@ -65,6 +75,13 @@ test("запросы: where (==, >, in, array-contains), orderBy, limit, вло�
   assert.strictEqual((await col.doc("a").collection("messages").get()).size, 1);
   assert.strictEqual((await col.get()).size, 3, "вложенные документы не в выборке коллекции");
   assert.strictEqual(m.parent.path, "supportTickets/a/messages");
+  await col.doc("b").collection("messages").add({ text: "ещё" });
+  assert.strictEqual((await db.collectionGroup("messages").get()).size, 2);
+  assert.deepStrictEqual((await db.listCollections()).map((c) => c.id), ["supportTickets"]);
+  assert.deepStrictEqual((await col.doc("a").listCollections()).map((c) => c.id), ["messages"]);
+  await db.recursiveDelete(col.doc("a"));
+  assert.strictEqual((await db.collectionGroup("messages").get()).size, 1);
+  assert.strictEqual((await col.doc("a").get()).exists, false);
 });
 
 test("слежение: первый снимок, добавление, изменение, выход из выборки", async () => {
