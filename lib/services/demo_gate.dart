@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/widgets.dart';
 
 import '../models/tenant_models.dart';
+import '../data/app_db.dart';
 
 /// Навигатор кассы — чтобы после сброса демо открыть вход в новое демо с
 /// любого экрана (см. DemoResetScreen, main.dart).
@@ -42,7 +43,7 @@ class DemoGate {
     _expiresAt = expiryOf(config.tenant);
     _check();
     _timer = Timer.periodic(const Duration(minutes: 1), (_) => _check());
-    _sub = FirebaseFirestore.instance.collection('tenants').doc(config.tenant.id).snapshots().listen(
+    _sub = AppDb.instance.collection('tenants').doc(config.tenant.id).snapshots().listen(
       (snap) {
         // Демо удалено на сервере — сбрасываемся, даже если по часам
         // телефона срок ещё не вышел. Пустой ответ из кэша не в счёт.

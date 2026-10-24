@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -14,6 +13,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../build_info.dart';
 import 'app_lock.dart';
 import 'app_scope.dart';
+import '../data/app_db.dart';
 
 /// Что сейчас с обновлением — по этому рисуется плашка (AppUpdateBanner).
 enum AppUpdatePhase {
@@ -501,7 +501,7 @@ class AppUpdateService {
 
   Future<void> _flushPendingWrites() async {
     try {
-      await FirebaseFirestore.instance.waitForPendingWrites().timeout(const Duration(seconds: 5));
+      await AppDb.instance.waitForPendingWrites().timeout(const Duration(seconds: 5));
     } catch (_) {
       // Нет сети — изменения лежат в офлайн-кэше на диске и уйдут после перезапуска.
     }

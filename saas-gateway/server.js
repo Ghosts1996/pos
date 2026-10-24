@@ -173,27 +173,27 @@ function sendJson(res, statusCode, obj) {
   res.end(body);
 }
 
-function readBody(req) {
+function readBody(req, maxBytes = 262144) {
   return new Promise((resolve, reject) => {
     // Буферы, а не строка: иначе кириллица бьётся на стыке чанков.
     const chunks = [];
     let size = 0;
     req.on("data", (chunk) => {
       size += chunk.length;
-      if (size <= 262144) {
+      if (size <= maxBytes) {
         chunks.push(chunk);
         return;
       }
       reject(new HttpError(413, "тело запроса слишком большое"));
-      if (size > 1048576) req.destroy();
+      if (size > maxBytes * 4) req.destroy();
     });
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
 }
 
-async function parseJsonBody(req) {
-  const raw = await readBody(req);
+async function parseJsonBody(req, maxBytes) {
+  const raw = await readBody(req, maxBytes);
   let body;
   try {
     body = JSON.parse(raw || "{}");
@@ -7836,7 +7836,8 @@ function dataApiOrNull() {
   if (!dataApi) {
     const ds = require("./data-server");
     dataSecure = ds.createSecureDb({ store: localDataStore(), rulesSource: rulesSource(), admin });
-    dataApi = ds.createDataApi({ store: localDataStore(), secure: dataSecure, verifyAuth, parseJsonBody, sendJson, HttpError });
+    // Пачка записей кассы (до 500 документов) больше обычного лимита тела.
+    dataApi = ds.createDataApi({ store: localDataStore(), secure: dataSecure, verifyAuth, parseJsonBody: (req) => parseJsonBody(req, 8 * 1048576), sendJson, HttpError });
   }
   return dataApi;
 }

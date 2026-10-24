@@ -7,6 +7,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
 import '../../utils/promo_policy.dart';
+import '../../data/app_db.dart';
 
 /// Лента заведения: карточки, которые видит гость в своём приложении.
 ///
@@ -21,7 +22,7 @@ class StoriesEditorScreen extends StatefulWidget {
 }
 
 class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
-  final _db = FirebaseFirestore.instance;
+  final _db = AppDb.instance;
   bool _busy = false;
 
   @override

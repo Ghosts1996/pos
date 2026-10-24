@@ -11,6 +11,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../models/tenant_models.dart';
+import '../data/app_db.dart';
 
 class SubscriptionGate {
   SubscriptionGate._();
@@ -56,7 +57,7 @@ class SubscriptionGate {
     _subscription = initialConfig.subscription;
     _recompute();
 
-    final db = FirebaseFirestore.instance;
+    final db = AppDb.instance;
     _tenantSub = db.collection('tenants').doc(tenantId).snapshots().listen((snap) {
       _tenantStatus = TenantStatusX.fromId(snap.data()?['status'] as String?);
       _recompute();
@@ -103,7 +104,7 @@ class SubscriptionGate {
 /// Та же формула, что и [TenantConfig.operationsAllowed] (лежит рядом,
 /// в tenant_models.dart) — здесь выделена в отдельную чистую функцию, не
 /// зависящую от Firestore, специально для юнит-теста: [SubscriptionGate]
-/// сам по себе завязан на реальный `FirebaseFirestore.instance`, которого
+/// сам по себе завязан на реальный `AppDb.instance`, которого
 /// в `flutter test` нет (см. тот же приём для AppScope.scopedPath).
 bool computeBlocked(TenantStatus tenantStatus, String? subscriptionStatus, {TenantStatus? chainStatus}) {
   final operationsAllowed = tenantStatus.allowsOperations &&

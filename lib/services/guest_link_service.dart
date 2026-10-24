@@ -18,13 +18,14 @@ import '../utils/promo_policy.dart';
 import '../utils/venue_terms.dart';
 import 'people_directory.dart';
 import 'signals/signal_hub.dart';
+import '../data/app_db.dart';
 
 /// Мост между кассой и приложением гостя:
 /// профиль гостя, привязка к живому чеку, вызовы персонала, заказы из-за
 /// стола, бонусы и отзывы. Оба приложения работают с одними коллекциями,
 /// поэтому любое изменение прилетает второй стороне мгновенно.
 class GuestLinkService {
-  final _db = FirebaseFirestore.instance;
+  final _db = AppDb.instance;
   final PiiGatewayService _piiGateway;
 
   GuestLinkService({PiiGatewayService? piiGateway})

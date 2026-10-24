@@ -7,6 +7,7 @@ import '../app_scope.dart';
 import 'lan_signal_codec.dart';
 import 'lan_signals.dart';
 import 'signal_settings.dart';
+import '../../data/app_db.dart';
 
 /// Держит настройки сигналов свежими на устройстве и включает приём по
 /// Wi‑Fi заведения. Документ settings/integrations лежит и в памяти
@@ -33,7 +34,7 @@ class SignalBootstrap {
 
   static Future<void> _createKey(DocumentReference<Map<String, dynamic>> ref) async {
     try {
-      await FirebaseFirestore.instance.runTransaction((tx) async {
+      await AppDb.instance.runTransaction((tx) async {
         final cur = (await tx.get(ref)).data();
         if ((cur?['lanSignalKey'] ?? '').toString().isNotEmpty) return;
         tx.set(ref, {'lanSignalKey': newLanKey()}, SetOptions(merge: true));

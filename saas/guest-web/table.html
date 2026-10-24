@@ -293,16 +293,29 @@
       var configResult = await configPromise;
       if (!configResult.ok || !configResult.json || !configResult.json.projectId) return;
 
-      var app = initializeApp(configResult.json);
-      var db = getFirestore(app);
       // Брендинг читается без входа — анонимный аккаунт на каждый заход не
       // заводим. У точки сети — брендинг сети, как в app.js.
       var chainId = resolveResult.json.chainId;
-      var snap = await getDoc(chainId
-        ? doc(db, 'chains', chainId, 'branding', 'config')
-        : doc(db, 'tenants', tenantId, 'branding', 'config'));
-      if (!snap.exists()) return;
-      var b = snap.data();
+      var brandingPath = chainId ? 'chains/' + chainId + '/branding/config' : 'tenants/' + tenantId + '/branding/config';
+      var b;
+      // Данные на собственном сервере платформы — читаем оттуда.
+      var status = await fetch(GATEWAY + '/db/status').then((r) => r.json()).catch(() => ({}));
+      if (status.backend === 'local') {
+        var got = await fetch(GATEWAY + '/db/get', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paths: [brandingPath] }),
+        }).then((r) => r.json());
+        var d = got && got.docs && got.docs[0];
+        if (!d || !d.exists) return;
+        b = d.data;
+      } else {
+        var app = initializeApp(configResult.json);
+        var db = getFirestore(app);
+        var snap = await getDoc(doc(db, brandingPath));
+        if (!snap.exists()) return;
+        b = snap.data();
+      }
       if (window.applyBrandPalette) window.applyBrandPalette(b);
       if (b.appName) {
         document.getElementById('brand-opening').textContent = b.appName;

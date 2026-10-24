@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
 import 'push_service.dart';
 import '../utils/table_label.dart';
+import '../data/app_db.dart';
 
 /// Дни рождения гостей.
 ///
@@ -12,7 +13,7 @@ class BirthdayService {
   BirthdayService._();
   static final BirthdayService instance = BirthdayService._();
 
-  final _db = FirebaseFirestore.instance;
+  final _db = AppDb.instance;
 
   /// Подарок имениннику — бонусы на счёт.
   static const double giftBonus = 500;

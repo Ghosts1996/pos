@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/table_model.dart';
 import 'app_scope.dart';
+import '../data/app_db.dart';
 
 /// Секреты столов для QR-наклеек (только SaaS).
 ///
@@ -93,7 +94,7 @@ class TableKeyService {
 
   Future<bool> _createIfMissing(String tableId) async {
     final ref = _keys.doc(tableId);
-    return FirebaseFirestore.instance.runTransaction<bool>((tx) async {
+    return AppDb.instance.runTransaction<bool>((tx) async {
       if ((await tx.get(ref)).exists) return false;
       tx.set(ref, {'key': newKey(), 'issuedAt': FieldValue.serverTimestamp()});
       return true;

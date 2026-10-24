@@ -45,10 +45,11 @@ import '../models/client_models.dart';
 import 'guest_link_service.dart';
 import '../build_info.dart';
 import 'gateway_cache_service.dart';
+import '../data/app_db.dart';
 
 /// Единая точка доступа к Firestore. Простая, без лишней абстракции.
 class FirestoreService {
-  final _db = FirebaseFirestore.instance;
+  final _db = AppDb.instance;
   final _uuid = const Uuid();
 
   // Подписки, которые экраны берут прямо в build, — общие (см.

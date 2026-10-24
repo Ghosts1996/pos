@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../build_info.dart';
 import '../models/tenant_models.dart';
+import '../data/app_db.dart';
 
 /// Присоединение планшета кассы к заведению по коду приглашения (вместо
 /// общего staffSecret сборки одного заведения).
@@ -164,7 +165,7 @@ class SaasDeviceJoinService {
     required String uid,
     String deviceName = '',
   }) async {
-    final db = FirebaseFirestore.instance;
+    final db = AppDb.instance;
 
     // Удалённое владельцем устройство кодом приглашения обратно не входит:
     // вернуть его может только владелец в кабинете. Без этой проверки
@@ -211,7 +212,7 @@ class SaasDeviceJoinService {
     required String uid,
   }) async {
     if (chainId.isEmpty || tenantId.isEmpty || uid.isEmpty) return;
-    final ref = FirebaseFirestore.instance.collection('chainMembers').doc('${chainId}_$uid');
+    final ref = AppDb.instance.collection('chainMembers').doc('${chainId}_$uid');
     try {
       if ((await ref.get()).exists) return;
     } on FirebaseException catch (e) {

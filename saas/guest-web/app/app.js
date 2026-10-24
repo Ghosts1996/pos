@@ -12,11 +12,12 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
   getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+// Данные — Firestore или свой сервер платформы (zal-db.js решает по серверу).
 import {
-  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot,
+  openDb, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot,
   collection, query, where, orderBy, limit, addDoc, deleteDoc, Timestamp,
   disableNetwork, enableNetwork,
-} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+} from './zal-db.js';
 
 // Сервер платформы: поиск заведения по поддомену, конфиг Firebase, удаление данных.
 const GATEWAY = 'https://pii.zalpos.ru/saas';
@@ -630,7 +631,7 @@ async function boot() {
   }
 
   const app = initializeApp(config);
-  state.db = getFirestore(app);
+  state.db = await openDb(app, { gateway: GATEWAY, auth: getAuth(app) });
   watchResume();
   state.root = doc(state.db, 'tenants', tenantId);
   state.loyaltyRoot = chainId ? doc(state.db, 'chains', chainId) : state.root;

@@ -4,6 +4,7 @@ import '../app_scope.dart';
 import 'ai_agents.dart';
 import 'ai_context_service.dart';
 import 'ai_settings.dart';
+import '../../data/app_db.dart';
 
 /// Фоновые задания ИИ на POS-планшете.
 ///
@@ -22,7 +23,7 @@ class AiScheduler {
   AiScheduler._();
   static final AiScheduler instance = AiScheduler._();
 
-  final _db = FirebaseFirestore.instance;
+  final _db = AppDb.instance;
   Timer? _timer;
   String _deviceId = '';
   bool _running = false;

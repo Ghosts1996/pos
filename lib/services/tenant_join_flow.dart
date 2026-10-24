@@ -1,4 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'app_bootstrap.dart';
@@ -13,6 +12,7 @@ import 'plan_capabilities.dart';
 import 'subscription_gate.dart';
 import 'tenant_config_service.dart';
 import '../utils/startup_log.dart';
+import '../data/app_db.dart';
 
 /// Записать устройство в заведение, забрать конфигурацию (брендинг,
 /// длительность сеанса и т. п.), войти в него и перезапустить фоновые
@@ -48,7 +48,7 @@ Future<void> enterJoinedTenant({required String tenantId, required String uid}) 
   // записываемся в неё до того, как читать конфигурацию.
   StartupLog.step('вход в заведение: документ заведения');
   try {
-    final tenant = await FirebaseFirestore.instance.collection('tenants').doc(tenantId).get();
+    final tenant = await AppDb.instance.collection('tenants').doc(tenantId).get();
     final chainId = tenant.data()?['chainId'];
     if (chainId is String && chainId.isNotEmpty) {
       StartupLog.step('вход в заведение: участник сети');

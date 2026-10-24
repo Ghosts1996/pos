@@ -11,6 +11,7 @@ import 'lan_signal_codec.dart';
 import 'lan_signals.dart';
 import 'relay_client.dart';
 import 'signal_settings.dart';
+import '../../data/app_db.dart';
 
 /// Куда уходит сигнал о событии в зале: другим планшетам по Wi‑Fi
 /// заведения, на Wi‑Fi реле (звонок, лампа, пейджер официанта) и на
@@ -89,7 +90,7 @@ class SignalHub {
     final me = FirebaseAuth.instance.currentUser?.uid ?? '';
     if (me.isEmpty) return;
     try {
-      final won = await FirebaseFirestore.instance.runTransaction<bool>((tx) async {
+      final won = await AppDb.instance.runTransaction<bool>((tx) async {
         final cur = await tx.get(doc);
         if (!cur.exists || (cur.data()?['signaledBy'] ?? '').toString().isNotEmpty) return false;
         tx.update(doc, {'signaledBy': me});

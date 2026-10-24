@@ -11,6 +11,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
 import '../build_info.dart';
+import '../data/app_db.dart';
 
 class PlanCapabilities {
   final bool guestApp;
@@ -50,7 +51,7 @@ class PlanCapabilitiesService {
   static StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sub;
 
   static DocumentReference<Map<String, dynamic>> _doc(String tenantId) =>
-      FirebaseFirestore.instance.collection('tenants').doc(tenantId).collection('public').doc('features');
+      AppDb.instance.collection('tenants').doc(tenantId).collection('public').doc('features');
 
   /// Следить за тарифом заведения, в котором работает касса: владелец
   /// сменил тариф в кабинете — касса узнаёт без перезапуска.
@@ -123,7 +124,7 @@ class DeviceLimitGate {
     if (!kSaasMode || uid.isEmpty) return;
     _uid = uid;
     PlanCapabilitiesService.current.addListener(_recompute);
-    _sub = FirebaseFirestore.instance.collection('tenants').doc(tenantId).collection('devices').snapshots().listen(
+    _sub = AppDb.instance.collection('tenants').doc(tenantId).collection('devices').snapshots().listen(
       (snap) {
         _devices = [for (final d in snap.docs) DeviceSlot.fromMap(d.id, d.data())];
         devices.value = sorted(_devices);
@@ -132,7 +133,7 @@ class DeviceLimitGate {
       // Нет прав или связи — кассу не блокируем.
       onError: (_) {},
     );
-    _selfSub = FirebaseFirestore.instance.collection('tenants').doc(tenantId).collection('devices').doc(uid).snapshots().listen(
+    _selfSub = AppDb.instance.collection('tenants').doc(tenantId).collection('devices').doc(uid).snapshots().listen(
       (d) {
         final data = d.data();
         _mine = data == null ? null : DeviceSlot.fromMap(d.id, data);

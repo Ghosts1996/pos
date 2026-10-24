@@ -5,6 +5,7 @@ import 'app_scope.dart';
 import '../models/venue_models.dart';
 import 'push_service.dart';
 import '../utils/shared_stream.dart';
+import '../data/app_db.dart';
 
 /// Бонусные сертификаты: код, по которому гость получает бонусы на счёт.
 /// Заведение выпускает код (например, для поста в канале), гость вводит
@@ -13,7 +14,7 @@ class GiftCardService {
   GiftCardService._();
   static final GiftCardService instance = GiftCardService._();
 
-  final _db = FirebaseFirestore.instance;
+  final _db = AppDb.instance;
   final _rnd = Random.secure();
 
   CollectionReference<Map<String, dynamic>> get _col => AppScope.col('giftCards');

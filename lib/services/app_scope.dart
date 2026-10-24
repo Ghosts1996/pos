@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/tenant_models.dart';
 import 'gateway_cache_service.dart';
+import '../data/app_db.dart';
 
 /// Единая точка входа в Firestore для всех сервисов.
 ///
@@ -88,15 +89,15 @@ class AppScope {
   }
 
   /// Коллекция [name] — при выключенном SaaS-режиме идентична прямому
-  /// `FirebaseFirestore.instance.collection(name)`.
+  /// `AppDb.instance.collection(name)`.
   static CollectionReference<Map<String, dynamic>> col(String name) {
-    return FirebaseFirestore.instance.collection(scopedPath(_tenantId, name));
+    return AppDb.instance.collection(scopedPath(_tenantId, name));
   }
 
   /// Документ по пути «коллекция/документ» одной строкой, например
   /// `"meta/aiSettings"`. Для обычного случая — `AppScope.col(name).doc(id)`.
   static DocumentReference<Map<String, dynamic>> doc(String path) {
-    return FirebaseFirestore.instance.doc(scopedPath(_tenantId, path));
+    return AppDb.instance.doc(scopedPath(_tenantId, path));
   }
 
   /// Коллекции лояльности (clients, phoneIndex, referralCodes,
@@ -105,13 +106,13 @@ class AppScope {
   /// Лояльность всегда читаем и пишем через этот метод.
   static CollectionReference<Map<String, dynamic>> loyaltyCol(String name) {
     if (_chainId == null) return col(name);
-    return FirebaseFirestore.instance.collection('chains/$_chainId/$name');
+    return AppDb.instance.collection('chains/$_chainId/$name');
   }
 }
 
 /// Чистая функция построения пути — вынесена отдельно от [AppScope.col]/
 /// [AppScope.doc], чтобы её можно было проверить юнит-тестом без реального
-/// Firebase-приложения (`FirebaseFirestore.instance` требует
+/// Firebase-приложения (`AppDb.instance` требует
 /// `Firebase.initializeApp()`, которого в обычных `flutter test` нет).
 String scopedPath(String? tenantId, String path) {
   return tenantId == null ? path : 'tenants/$tenantId/$path';

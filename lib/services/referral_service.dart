@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
 import 'push_service.dart';
+import '../data/app_db.dart';
 
 /// Реферальная программа «приведи друга».
 ///
@@ -11,7 +12,7 @@ class ReferralService {
   ReferralService._();
   static final ReferralService instance = ReferralService._();
 
-  final _db = FirebaseFirestore.instance;
+  final _db = AppDb.instance;
 
   /// Обезличенный указатель «код → uid».
   ///

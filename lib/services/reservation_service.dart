@@ -9,12 +9,13 @@ import '../models/session_model.dart';
 import '../models/table_model.dart';
 import 'pii_gateway_service.dart';
 import 'people_directory.dart';
+import '../data/app_db.dart';
 
 /// Работа с бронями. Один и тот же сервис используется и на кассе
 /// (подтверждение/посадка), и в приложении гостя (создание/отмена своей
 /// брони). Всё в реальном времени через snapshots().
 class ReservationService {
-  final _db = FirebaseFirestore.instance;
+  final _db = AppDb.instance;
 
   CollectionReference<Map<String, dynamic>> get _col => AppScope.col('reservations');
 

@@ -6,6 +6,7 @@ import '../models/reservation_model.dart';
 import 'birthday_service.dart';
 import 'venue_service.dart';
 import '../utils/table_label.dart';
+import '../data/app_db.dart';
 
 /// Фоновые задания заведения на кассе: Cloud Functions есть только на
 /// тарифе Blaze.
@@ -21,7 +22,7 @@ class BackgroundJobsService {
   BackgroundJobsService._();
   static final BackgroundJobsService instance = BackgroundJobsService._();
 
-  final _db = FirebaseFirestore.instance;
+  final _db = AppDb.instance;
 
   /// Как часто просыпаться. Десять минут — как у серверного сторожа броней:
   /// чаще незачем, реже — неявка висит слишком долго.

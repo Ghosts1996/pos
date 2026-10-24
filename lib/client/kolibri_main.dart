@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -26,6 +25,7 @@ import 'services/kolibri_auth_service.dart';
 import 'theme/kolibri_theme.dart';
 import '../widgets/people_refresh.dart';
 import '../services/people_directory.dart';
+import '../data/app_db.dart';
 
 /// Точка входа приложения гостя: тот же Firebase, модели и сервисы, что у
 /// кассы, свой main (`flutter build apk -t lib/client/kolibri_main.dart`).
@@ -55,6 +55,7 @@ void main() async {
     }
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      await AppDb.init();
     } catch (e) {
       runApp(KolibriApp(ready: false, startupError: e.toString()));
       return;
@@ -70,6 +71,7 @@ void main() async {
     }
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      await AppDb.init();
     } catch (e) {
       runApp(KolibriApp(ready: false, startupError: e.toString()));
       return;
@@ -86,6 +88,7 @@ void main() async {
   if (DefaultFirebaseOptions.isConfigured) {
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      await AppDb.init();
 
       if (kSaasMode) {
         final resolved = await _resolveSaasTenantId();
@@ -201,7 +204,7 @@ Future<BrandingConfig?> _applyTenantBranding() async {
 /// переключении гостем заведения внутри одной сети (см. её же docstring).
 Future<BrandingConfig?> _applyChainBranding(String chainId) async {
   try {
-    final doc = await FirebaseFirestore.instance.collection('chains/$chainId/branding').doc('config').get();
+    final doc = await AppDb.instance.collection('chains/$chainId/branding').doc('config').get();
     final branding = BrandingConfig.fromMap(doc.data());
     KolibriColors.applyBranding(branding);
     unawaited(KolibriColors.cacheBranding(branding));

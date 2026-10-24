@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/tenant_models.dart';
+import '../data/app_db.dart';
 
 class TenantConfigService {
   static const _cacheConfigKey = 'saas_tenant_config_cache_v1';
@@ -16,7 +17,7 @@ class TenantConfigService {
 
   final FirebaseFirestore _db;
 
-  TenantConfigService({FirebaseFirestore? firestore}) : _db = firestore ?? FirebaseFirestore.instance;
+  TenantConfigService({FirebaseFirestore? firestore}) : _db = firestore ?? AppDb.instance;
 
   TenantConfig? _current;
   DateTime? _lastVerifiedAt;

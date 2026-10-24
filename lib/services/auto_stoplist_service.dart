@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
 import '../models/inventory_models.dart';
 import '../models/menu_models.dart';
+import '../data/app_db.dart';
 
 /// Автоматический стоп-лист: снимает с продажи позиции, на которые не
 /// хватает склада, и возвращает их при приходе, чтобы гость не видел в меню
@@ -12,7 +13,7 @@ class AutoStopListService {
   AutoStopListService._();
   static final AutoStopListService instance = AutoStopListService._();
 
-  final _db = FirebaseFirestore.instance;
+  final _db = AppDb.instance;
   StreamSubscription? _sub;
   Timer? _pending;
 

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../app_scope.dart';
 import '../plan_capabilities.dart';
+import '../../data/app_db.dart';
 
 /// Готовый провайдер ИИ: адрес API, формат и модели по умолчанию.
 ///
@@ -535,7 +536,7 @@ class AiSettingsStore {
   bool get isChainShared => AppScope.chainId != null;
 
   DocumentReference<Map<String, dynamic>> _chainDoc(String path) =>
-      FirebaseFirestore.instance.doc('chains/${AppScope.chainId}/$path');
+      AppDb.instance.doc('chains/${AppScope.chainId}/$path');
 
   /// Куда сохранять: сеть — на уровень сети, иначе — заведение.
   DocumentReference<Map<String, dynamic>> _target(String path) =>

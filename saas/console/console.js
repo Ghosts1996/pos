@@ -10,10 +10,11 @@ import {
   reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail,
   updatePassword,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+// Данные — Firestore или свой сервер платформы (zal-db.js решает по серверу).
 import {
-  getFirestore, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
+  openDb, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
   collection, query, where, orderBy, limit, Timestamp, deleteField, writeBatch,
-} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+} from './zal-db.js';
 
 // saas-gateway — сервер платформы (saas-gateway/README.md), живёт на том же
 // домене, что и pii-gateway, по пути /saas/.
@@ -1069,7 +1070,7 @@ async function boot() {
 
   const app = initializeApp(config);
   state.auth = getAuth(app);
-  state.db = getFirestore(app);
+  state.db = await openDb(app, { gateway: SAAS_GATEWAY_URL, auth: state.auth });
 
   // Вход по ссылке из письма: пароль не нужен, клик по ссылке и так
   // доказывает владение почтой.
@@ -10160,6 +10161,9 @@ async function loadSecurityPlatform() {
       + (files.length ? '<br>' + files.slice(0, 5).map((f) => `${esc(f.name)} · ${fmtBytes(f.bytes)} <button type="button" class="btn-link sec-inline-link f-sec-backup-dl" data-name="${esc(f.name)}">скачать</button>`).join('<br>') : ''),
     '<button type="button" class="btn btn-ghost" id="f-sec-backup-now" style="width:auto">Сделать копию сейчас</button>'));
 
+  // Где хранятся данные: Firestore или собственный сервер (заполняется ниже).
+  rows.push('<div id="sec-data-backend"></div>');
+
   // Супер-админы и сервер
   const n = st.superAdmins || 0;
   rows.push(checkRowHtml(n === 1 || n > 5 ? 'warn' : 'ok', `Супер-админов: ${n}`,
@@ -10249,6 +10253,76 @@ async function loadSecurityPlatform() {
   box.querySelectorAll('.f-sec-backup-dl').forEach((el) => {
     el.onclick = () => downloadBackup(el.dataset.name);
   });
+  loadDataBackend();
+}
+
+/** Хранилище данных: перенос из Firestore на свой сервер и возврат. */
+async function loadDataBackend() {
+  const box = $('sec-data-backend');
+  if (!box) return;
+  let st;
+  try {
+    st = (await callSaasGateway('dataMigrateStatus', {})).data;
+  } catch (e) {
+    box.innerHTML = checkRowHtml('unknown', 'Хранилище данных: нет ответа сервера', esc(e?.message || String(e)));
+    return;
+  }
+  const m = st.migration;
+  const running = m && m.state === 'running';
+  if (st.backend === 'local') {
+    box.innerHTML = checkRowHtml('ok', 'Данные на собственном сервере',
+      `Документов: ${st.docs ?? '—'} · подключено устройств и страниц: ${st.sessions || 0}. Лимиты Firebase на данные больше не тратятся; вход — по-прежнему через Firebase Auth.`
+        + '<br>Вернуть данные в Firestore можно кнопкой справа: сервер перезапустится и снова будет работать с Firestore (изменения, сделанные после переноса, в Firestore не попадут).',
+      '<button type="button" class="btn btn-ghost" id="f-data-rollback" style="width:auto">Вернуть в Firestore</button>');
+  } else {
+    const last = st.lastBackup;
+    box.innerHTML = checkRowHtml(m && m.state === 'error' ? 'bad' : 'warn',
+      running ? `Перенос данных идёт… ${m.docs || ''}` : m && m.state === 'error' ? 'Перенос данных не удался' : 'Данные в Cloud Firestore',
+      (m && m.state === 'error' ? `${esc(m.error || '')}<br>` : '')
+        + 'Перенос на собственный сервер: все документы копируются в базу на этом сервере, сервер перезапускается (около минуты), кассы, кабинет и приложение гостя переходят на него сами — перезапустите кассы, чтобы они подхватили его сразу.'
+        + `<br>Источник: Firestore (читает всю базу один раз) или последняя резервная копия${last ? ` (${esc(last.name)})` : ' (копий пока нет)'} — если лимит чтений Firebase на сегодня исчерпан.`,
+      running ? '' : `<button type="button" class="btn btn-primary" id="f-data-migrate" style="width:auto">Перенести из Firestore</button>`
+        + (last ? ' <button type="button" class="btn btn-ghost" id="f-data-migrate-backup" style="width:auto">Из резервной копии</button>' : ''));
+  }
+  const start = async (source) => {
+    if (!confirm(source === 'backup'
+      ? 'Перенести данные из последней резервной копии на собственный сервер? Изменения после этой копии не перенесутся.'
+      : 'Перенести все данные из Firestore на собственный сервер?')) return;
+    if (!(await reauthenticate('Перенос данных'))) return;
+    try {
+      await callSaasGateway('dataMigrate', { source }, { forceRefresh: true });
+      toast('Перенос начался — сервер перезапустится сам');
+    } catch (e) { toast(`Не удалось: ${e?.message || e}`); }
+    pollDataBackend();
+  };
+  if ($('f-data-migrate')) $('f-data-migrate').onclick = () => start('firestore');
+  if ($('f-data-migrate-backup')) $('f-data-migrate-backup').onclick = () => start('backup');
+  if ($('f-data-rollback')) $('f-data-rollback').onclick = async () => {
+    if (!confirm('Вернуть данные в Firestore? Изменения, сделанные на своём сервере, в Firestore не попадут.')) return;
+    if (!(await reauthenticate('Возврат данных в Firestore'))) return;
+    try {
+      await callSaasGateway('dataMigrate', { action: 'rollback' }, { forceRefresh: true });
+      toast('Сервер перезапускается с Firestore');
+    } catch (e) { toast(`Не удалось: ${e?.message || e}`); }
+    pollDataBackend();
+  };
+  if (running) setTimeout(loadDataBackend, 3000);
+}
+
+/** После переноса сервер перезапускается — ждём его и перезагружаем панель. */
+function pollDataBackend() {
+  let tries = 0;
+  const tick = async () => {
+    tries++;
+    try {
+      const st = (await callSaasGateway('dataMigrateStatus', {})).data;
+      if (st.migration && st.migration.state === 'running') { loadDataBackend(); setTimeout(tick, 3000); return; }
+      if (st.migration && st.migration.state === 'error') { loadDataBackend(); return; }
+      if (tries > 2) { location.reload(); return; }
+    } catch (_) { /* сервер перезапускается */ }
+    if (tries < 60) setTimeout(tick, 3000);
+  };
+  setTimeout(tick, 3000);
 }
 
 /** Скачивание копии базы — только после ввода пароля (на сервере

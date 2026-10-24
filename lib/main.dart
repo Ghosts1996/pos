@@ -38,6 +38,7 @@ import 'utils/release_error_widget.dart';
 import 'utils/startup_log.dart';
 import 'widgets/app_update_banner.dart';
 import 'widgets/people_refresh.dart';
+import 'data/app_db.dart';
 
 // Данные проекта Supabase (Project Settings → API в Supabase Dashboard).
 // Используется ТОЛЬКО для хранения фото меню (Storage) — anon key публичный
@@ -85,6 +86,7 @@ void main() async {
         StartupLog.step('конфигурация Firebase получена');
       }
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      await AppDb.init();
       StartupLog.step('Firebase инициализирован');
 
       // Офлайн-режим кассы: при обрыве интернета зал продолжает работать

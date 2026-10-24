@@ -1,4 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -7,6 +6,7 @@ import '../../models/client_models.dart';
 import '../../models/venue_models.dart';
 import '../../services/app_scope.dart';
 import '../../services/pii_gateway_service.dart';
+import '../../data/app_db.dart';
 
 /// Согласие гостя перед первой отправкой имени, телефона или адреса.
 ///
@@ -106,7 +106,7 @@ class GuestConsent extends ChangeNotifier {
 
   static Future<void> _loadPlatform() async {
     try {
-      final d = await FirebaseFirestore.instance.collection('platformConfig').doc('legal').get();
+      final d = await AppDb.instance.collection('platformConfig').doc('legal').get();
       _platform = d.data() ?? const {};
     } catch (_) {
       _platformLoad = null; // попробуем при следующем показе

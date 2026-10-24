@@ -171,7 +171,8 @@ function createSecureDb({ store, rulesSource, admin, now = () => Date.now() }) {
 
   /**
    * Пачка записей атомарно. writes: [{ op: "set"|"update"|"delete", path,
-   * data, merge, exists (предусловие), ver (предусловие транзакции) }].
+   * data, merge, exists (предусловие), ver (предусловие транзакции) }];
+   * op "check" — только сверка ver прочитанного в транзакции документа.
    */
   function commit(auth, writes) {
     if (!Array.isArray(writes) || !writes.length) throw new DataError("invalid-argument", "Нет записей", 400);
@@ -187,6 +188,8 @@ function createSecureDb({ store, rulesSource, admin, now = () => Date.now() }) {
       if (w.ver !== undefined && w.ver !== null && store.versionOf(p) !== Number(w.ver) && !(Number(w.ver) === 0 && store.raw(p) === undefined)) {
         throw new DataError("aborted", "Данные изменились на другом устройстве — повторите", 409);
       }
+      // Транзакция: прочитанный, но не изменённый документ — только сверка версии.
+      if (w.op === "check") continue;
       if (w.exists === true && before === undefined) throw new DataError("not-found", `Нет документа ${p}`, 404);
       if (w.exists === false && before !== undefined) throw new DataError("already-exists", `Документ уже есть: ${p}`, 409);
       let after;
@@ -248,10 +251,14 @@ function resolveServerTs(v, t, admin) {
 function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, HttpError, now = () => Date.now() }) {
   const sessions = new Map(); // sid → { auth, subs: Map(id → sub), res, expiresAt, queue }
 
+  // Без входа (экран входа, витрина) — как в Firestore: request.auth == null.
   async function authOf(req) {
+    if (!String(req.headers["authorization"] || "").replace(/^Bearer\s*/i, "").trim()) return null;
     const decoded = await verifyAuth(req);
     return { uid: decoded.uid, token: decoded, expiresAt: (Number(decoded.exp) || 0) * 1000 };
   }
+
+  const uidOf = (a) => (a ? a.uid : "");
 
   const fail = (res, e) => {
     if (e instanceof DataError) return sendJson(res, e.status, { error: e.message, code: e.code });
@@ -290,13 +297,13 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     const body = await parseJsonBody(req);
     let sid = typeof body.sid === "string" ? body.sid : "";
     let s = sid && sessions.get(sid);
-    if (s && s.auth.uid !== auth.uid) s = null;
+    if (s && uidOf(s.auth) !== uidOf(auth)) s = null;
     if (!s) {
       sid = crypto.randomBytes(18).toString("hex");
       s = { sid, auth, subs: new Map(), res: null, lastSeen: now() };
       sessions.set(sid, s);
     } else s.auth = auth; // свежий токен — продление
-    sendJson(res, 200, { sid, expiresAt: auth.expiresAt });
+    sendJson(res, 200, { sid, expiresAt: auth ? auth.expiresAt : null });
   }
 
   function send(s, event) {
@@ -310,7 +317,7 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
   function pump(s, sub, initial = false) {
     let docsNow;
     try {
-      if (s.auth.expiresAt && s.auth.expiresAt < now()) throw new DataError("unauthenticated", "Сеанс истёк — обновите вход", 401);
+      if (s.auth && s.auth.expiresAt && s.auth.expiresAt < now()) throw new DataError("unauthenticated", "Сеанс истёк — обновите вход", 401);
       if (sub.doc) docsNow = [secure.get(s.auth, sub.doc)];
       else docsNow = secure.queryDocs(s.auth, sub.spec);
     } catch (e) {
@@ -341,7 +348,7 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     const auth = await authOf(req);
     const body = await parseJsonBody(req);
     const s = sessions.get(String(body.sid || ""));
-    if (!s || s.auth.uid !== auth.uid) return sendJson(res, 404, { error: "Сессия не найдена", code: "not-found" });
+    if (!s || uidOf(s.auth) !== uidOf(auth)) return sendJson(res, 404, { error: "Сессия не найдена", code: "not-found" });
     s.auth = auth;
     for (const id of Array.isArray(body.remove) ? body.remove : []) s.subs.delete(String(id));
     const errors = [];
