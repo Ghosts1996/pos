@@ -8836,7 +8836,20 @@ function runHandler(handler, req, res) {
   });
 }
 
+// Заголовки безопасности на любой ответ (обработчик может переопределить):
+// браузер не угадывает тип файла, страницы сервера не встраиваются в чужие
+// сайты, на них не выполняются скрипты, адрес не утекает в Referer.
+const SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "no-referrer",
+  "Strict-Transport-Security": "max-age=31536000",
+  "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+  "Cross-Origin-Resource-Policy": "cross-origin",
+};
+
 const server = http.createServer((req, res) => {
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
   if (req.method === "OPTIONS") return sendJson(res, 200, { ok: true });
 
   const urlPath = (req.url || "").split("?")[0];

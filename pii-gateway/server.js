@@ -93,6 +93,12 @@ function sendJson(res, statusCode, obj) {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Pii-Internal",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
+    // Ответы с персональными данными — не в кэш, тип не угадывать, не встраивать.
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
   });
   res.end(body);
 }
