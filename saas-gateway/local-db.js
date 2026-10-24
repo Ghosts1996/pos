@@ -673,6 +673,13 @@ function createLocalDb({ file = null, persist = null, admin, flushMs = 400, keep
     exists: (p) => docs.has(p),
     raw: (p) => docs.get(p),
     runSpec: (spec) => run(spec),
+    /** Документ есть и подходит под коллекцию и условия запроса (без сортировки и лимита). */
+    matchesSpec: (p, spec) => {
+      const c = p.slice(0, p.lastIndexOf("/"));
+      if (spec.group ? lastSeg(c) !== spec.col : c !== spec.col) return false;
+      if (docs.get(p) === undefined) return false;
+      return (spec.filters || []).every((f) => matchesDoc(p, f));
+    },
     snap: (p) => docSnap(p),
     query,
     write,

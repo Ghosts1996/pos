@@ -396,6 +396,7 @@ class LocalQuery implements Query<Map<String, dynamic>> {
         }
         final fromCache = !sub.synced;
         final paths = _e.evalQuery(spec, sub.membership);
+        sub.localPaths = paths.toSet();
         // Первый снимок из памяти — если там что-то есть (или сервер молчит).
         if (last == null && fromCache && paths.isEmpty && !fromTimer) return;
         final views = {for (final p in paths) p: _e.view(p)};

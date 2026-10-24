@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test.smoke.js && node test.auth-email.js && node test.telegram.js && node test.relay.mjs && node test.pay.js && node test.delivery.js && node test.requisites.js && node test.migrate.js && node test.support.js && node test.localdb.js && node --experimental-eventsource test.zal-db.mjs && node test.own-auth.js && node test.auth-server.js && node test.zal-auth.mjs && node test.firestore-purge.js"
+    "test": "node test.smoke.js && node test.auth-email.js && node test.telegram.js && node test.relay.mjs && node test.pay.js && node test.delivery.js && node test.requisites.js && node test.migrate.js && node test.support.js && node test.localdb.js && node --experimental-eventsource test.zal-db.mjs && node --experimental-eventsource test.data-peak.mjs && node test.own-auth.js && node test.auth-server.js && node test.zal-auth.mjs && node test.firestore-purge.js"
   },
   "engines": {
     "node": ">=20"

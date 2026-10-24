@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -305,6 +306,86 @@ class PendingWrite {
       data: (j['data'] as Map?)?.cast<String, Object?>(), merge: j['merge'] == true, ver: (j['ver'] as num?)?.toInt());
 }
 
+/// Очередь неподтверждённых записей. Любое изменение увеличивает [version]:
+/// по нему движок перестраивает индекс «документ → его записи» только когда
+/// очередь изменилась, а не перебирает её целиком на каждый документ.
+class PendingQueue extends ListBase<PendingBatch> {
+  final List<PendingBatch> _l = [];
+  int version = 0;
+
+  /// Растёт при всём, кроме добавления в конец: тогда индекс можно не
+  /// перестраивать, а дописать.
+  int structVersion = 0;
+
+  @override
+  int get length => _l.length;
+  @override
+  set length(int n) {
+    _l.length = n;
+    version++;
+    structVersion++;
+  }
+
+  @override
+  PendingBatch operator [](int i) => _l[i];
+  @override
+  void operator []=(int i, PendingBatch v) {
+    _l[i] = v;
+    version++;
+    structVersion++;
+  }
+
+  @override
+  void add(PendingBatch element) {
+    _l.add(element);
+    version++;
+  }
+
+  @override
+  void addAll(Iterable<PendingBatch> iterable) {
+    _l.addAll(iterable);
+    version++;
+  }
+
+  @override
+  void insert(int index, PendingBatch element) {
+    _l.insert(index, element);
+    version++;
+    structVersion++;
+  }
+
+  @override
+  bool remove(Object? element) {
+    final r = _l.remove(element);
+    if (r) {
+      version++;
+      structVersion++;
+    }
+    return r;
+  }
+
+  @override
+  PendingBatch removeAt(int index) {
+    version++;
+    structVersion++;
+    return _l.removeAt(index);
+  }
+
+  @override
+  void removeWhere(bool Function(PendingBatch element) test) {
+    _l.removeWhere(test);
+    version++;
+    structVersion++;
+  }
+
+  @override
+  void clear() {
+    _l.clear();
+    version++;
+    structVersion++;
+  }
+}
+
 class PendingBatch {
   final int id;
   final List<PendingWrite> writes;
@@ -369,6 +450,9 @@ class Sub {
   final QSpec? spec;
   final Set<SubListener> listeners = {};
   List<String>? membership; // порядок документов по данным сервера
+  /// Документы последнего показанного результата (на экране): изменение
+  /// документа вне его, который запросу и не подходит, экран не будит.
+  Set<String>? localPaths;
   bool synced = false;
   FirebaseException? error;
   Timer? dropTimer;
@@ -409,7 +493,59 @@ class LocalEngine {
 
   final Map<String, CachedDoc> docs = {};
   final Map<String, Set<String>> _byCol = {};
-  final List<PendingBatch> pending = [];
+  final PendingQueue pending = PendingQueue();
+
+  /// Индекс очереди: путь документа → его записи по порядку (с номером пачки).
+  int _pendingIdxVer = -1;
+  int _pendingIdxStruct = -1;
+  int _pendingIdxLen = 0;
+  Map<String, List<(int, PendingWrite)>> _pendingIdx = const {};
+  Map<String, List<(int, PendingWrite)>> get _pendingByPath {
+    if (_pendingIdxVer == pending.version) return _pendingIdx;
+    // Только дописали в конец (обычная запись кассы) — дописываем и индекс.
+    if (_pendingIdxStruct == pending.structVersion && pending.length >= _pendingIdxLen && _pendingIdxVer >= 0) {
+      for (var i = _pendingIdxLen; i < pending.length; i++) {
+        final b = pending[i];
+        for (final w in b.writes) {
+          if (w.op == 'check') continue;
+          (_pendingIdx[w.path] ??= []).add((b.id, w));
+          _viewCache.remove(w.path);
+        }
+      }
+      _pendingIdxLen = pending.length;
+      _pendingIdxVer = pending.version;
+      return _pendingIdx;
+    }
+    final m = <String, List<(int, PendingWrite)>>{};
+    for (final b in pending) {
+      for (final w in b.writes) {
+        if (w.op == 'check') continue;
+        (m[w.path] ??= []).add((b.id, w));
+      }
+    }
+    // Готовые виды сбрасываем только у документов, чьи записи в очереди изменились.
+    if (_viewCache.isNotEmpty) {
+      for (final path in {..._pendingIdx.keys, ...m.keys}) {
+        final a = _pendingIdx[path];
+        final b = m[path];
+        var same = a != null && b != null && a.length == b.length;
+        for (var i = 0; same && i < a!.length; i++) {
+          if (!identical(a[i].$2, b![i].$2) || a[i].$1 != b[i].$1) same = false;
+        }
+        if (!same) _viewCache.remove(path);
+      }
+    }
+    _pendingIdx = m;
+    _pendingIdxVer = pending.version;
+    _pendingIdxStruct = pending.structVersion;
+    _pendingIdxLen = pending.length;
+    return m;
+  }
+
+  /// Вид документа (кэш + очередь) — считается один раз, пока не изменится
+  /// сам документ или его записи в очереди: десять экранов-подписок не
+  /// пересчитывают одно и то же.
+  final Map<String, DocView> _viewCache = {};
   final Map<String, Sub> _subs = {};
   final Map<String, Sub> _subsById = {};
   int _nextBatch = 1;
@@ -540,6 +676,7 @@ class LocalEngine {
     final cur = docs[path];
     if (cur != null && !force && cur.ver > ver) return;
     docs[path] = CachedDoc(data, ver, seenAt ?? _now ~/ 1000);
+    _viewCache.remove(path);
     (_byCol[parentOf(path)] ??= <String>{}).add(path);
     if (notify) _changed(path);
     _scheduleCacheSave();
@@ -547,47 +684,48 @@ class LocalEngine {
 
   void _dropDoc(String path, {bool notify = true}) {
     if (docs.remove(path) == null) return;
+    _viewCache.remove(path);
     _byCol[parentOf(path)]?.remove(path);
     if (notify) _changed(path);
     _scheduleCacheSave();
   }
 
-  bool _hasPending(String path) => pending.any((b) => b.writes.any((w) => w.path == path && w.op != 'check'));
+  bool _hasPending(String path) => _pendingByPath.containsKey(path);
 
   DocView view(String path) {
+    final byPath = _pendingByPath; // перестроит индекс и сбросит устаревшие виды
+    final hit = _viewCache[path];
+    if (hit != null) return hit;
+    final v = _computeView(path, byPath);
+    if (_viewCache.length > 50000) _viewCache.clear();
+    _viewCache[path] = v;
+    return v;
+  }
+
+  DocView _computeView(String path, Map<String, List<(int, PendingWrite)>> byPath) {
     final base = docs[path];
     var known = base != null;
     Map<String, Object?>? data = base?.data;
     var stamp = '${base?.ver ?? -1}';
     var hasPending = false;
-    for (final b in pending) {
-      for (final w in b.writes) {
-        if (w.path != path || w.op == 'check') continue;
-        hasPending = true;
-        stamp = '$stamp+${b.id}';
-        switch (w.op) {
-          case 'delete':
-            data = null;
-            known = true;
-          case 'set':
-            data = computeNext(w.merge ? data : null, w.data ?? const {}, merge: w.merge);
-            known = true;
-          case 'update':
-            if (known && data != null) data = computeNext(data, w.data ?? const {}, update: true);
-        }
+    for (final (batchId, w) in byPath[path] ?? const <(int, PendingWrite)>[]) {
+      hasPending = true;
+      stamp = '$stamp+$batchId';
+      switch (w.op) {
+        case 'delete':
+          data = null;
+          known = true;
+        case 'set':
+          data = computeNext(w.merge ? data : null, w.data ?? const {}, merge: w.merge);
+          known = true;
+        case 'update':
+          if (known && data != null) data = computeNext(data, w.data ?? const {}, update: true);
       }
     }
     return DocView(data, known, hasPending, stamp);
   }
 
-  Iterable<String> _pendingPathsWhere(bool Function(String) test) sync* {
-    final seen = <String>{};
-    for (final b in pending) {
-      for (final w in b.writes) {
-        if (w.op != 'check' && test(w.path) && seen.add(w.path)) yield w.path;
-      }
-    }
-  }
+  Iterable<String> _pendingPathsWhere(bool Function(String) test) => _pendingByPath.keys.where(test);
 
   Iterable<String> _cachedIn(QSpec q) sync* {
     if (!q.group) {
@@ -650,8 +788,21 @@ class LocalEngine {
   bool _flushQueued = false;
 
   void _changed(String path) {
+    DocView? v;
     for (final s in _subs.values) {
-      if (s.docPath != null ? s.docPath == path : s.spec!.inCollection(path)) _dirty.add(s);
+      if (s.docPath != null) {
+        if (s.docPath == path) _dirty.add(s);
+        continue;
+      }
+      final q = s.spec!;
+      if (!q.inCollection(path)) continue;
+      final shown = s.localPaths;
+      if (shown == null || shown.contains(path)) {
+        _dirty.add(s);
+        continue;
+      }
+      v ??= view(path);
+      if (v.data != null && q.matches(path, v.data!)) _dirty.add(s);
     }
     _queueNotify();
   }

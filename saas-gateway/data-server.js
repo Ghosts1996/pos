@@ -358,6 +358,42 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     send(s, { sub: sub.id, docs: adds, removes, order: orderChanged || initial ? order : undefined, exists: existsNow, initial: initial || undefined });
   }
 
+  /** Простой запрос (без сортировки, лимита, курсоров, не по группе): выдачу
+   *  можно обновить по изменённым документам, не перебирая всю коллекцию. */
+  const canDelta = (sub) => !sub.doc && Array.isArray(sub.order) && !sub.spec.group && !(sub.spec.orders || []).length
+    && !sub.spec.limit && !sub.spec.offset && !sub.spec.start && !sub.spec.end
+    && !(sub.spec.filters || []).some(([, op]) => ["<", "<=", ">", ">=", "!=", "not-in"].includes(op));
+
+  /** Обновить выдачу подписки по изменённым документам — то же, что pump, но
+   *  без полного перебора. Права проверяются для каждого входящего документа. */
+  function pumpDelta(s, sub, changed) {
+    if (s.auth && s.auth.expiresAt && s.auth.expiresAt < now()) return pump(s, sub);
+    const adds = [];
+    const removes = [];
+    let order = sub.order;
+    let orderChanged = false;
+    for (const p of changed) {
+      const was = sub.seen.has(p);
+      if (store.matchesSpec(p, sub.spec)) {
+        const data = store.raw(p);
+        // Нет права — полный пересчёт: он ответит ошибкой, как запрос целиком.
+        if (!secure.canRead(s.auth, "list", p, data)) return pump(s, sub);
+        const ver = store.versionOf(p);
+        if (sub.seen.get(p) !== ver) adds.push({ path: p, exists: true, data: toWire(data), ver });
+        if (!was) { order = [...order, p]; orderChanged = true; }
+        sub.seen.set(p, ver);
+      } else if (was) {
+        removes.push(p);
+        sub.seen.delete(p);
+        order = order.filter((x) => x !== p);
+        orderChanged = true;
+      }
+    }
+    if (!adds.length && !removes.length) return;
+    sub.order = order;
+    send(s, { sub: sub.id, docs: adds, removes, order: orderChanged ? order : undefined, exists: null });
+  }
+
   async function handleListenOps(req, res) {
     const auth = await authOf(req);
     const body = await parseJsonBody(req);
@@ -416,14 +452,29 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     const cols = new Set(paths.map((p) => p.slice(0, p.lastIndexOf("/"))));
     const groups = new Set([...cols].map((c) => c.slice(c.lastIndexOf("/") + 1)));
     const pathSet = new Set(paths);
+    // Права зависят от других документов (участники, смены) — их правка
+    // пересчитывает и подписки, где они могли что-то открыть или закрыть.
+    const rulesDoc = paths.some((p) => /^(tenantMembers|chainMembers|superAdmins)\//.test(p));
+    // Подходит ли изменённый документ запросу — один раз на запрос, а не на каждую кассу.
+    const fits = new Map();
+    const touches = (sub) => {
+      const key = sub.specKey || (sub.specKey = JSON.stringify(sub.spec));
+      let r = fits.get(key);
+      if (r === undefined) { r = paths.some((p) => store.matchesSpec(p, sub.spec)); fits.set(key, r); }
+      return r;
+    };
     for (const s of sessions.values()) {
       if (!s.res) continue;
       for (const sub of [...s.subs.values()]) {
-        const hit = sub.doc ? pathSet.has(sub.doc) : sub.spec.group ? groups.has(sub.spec.col) : cols.has(sub.spec.col);
-        // Права зависят от других документов (участники, смены) — их правка
-        // пересчитывает и подписки, где они могли что-то открыть или закрыть.
-        const rulesDoc = paths.some((p) => /^(tenantMembers|chainMembers|superAdmins)\//.test(p));
-        if (hit || rulesDoc) pump(s, sub);
+        if (rulesDoc) { pump(s, sub); continue; }
+        if (sub.doc) { if (pathSet.has(sub.doc)) pump(s, sub); continue; }
+        const colHit = sub.spec.group ? groups.has(sub.spec.col) : cols.has(sub.spec.col);
+        if (!colHit) continue;
+        // Документ был в выдаче (мог измениться или уйти) или подходит под
+        // условия (может войти) — пересчитываем; иначе выдача та же.
+        if (!(paths.some((p) => sub.seen && sub.seen.has(p)) || touches(sub))) continue;
+        if (canDelta(sub)) pumpDelta(s, sub, paths);
+        else pump(s, sub);
       }
     }
   });
