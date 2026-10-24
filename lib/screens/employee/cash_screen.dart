@@ -31,24 +31,37 @@ class _CashScreenState extends State<CashScreen> {
   final _fs = FirestoreService();
 
   /// Чеки текущей смены: наличные за них — часть суммы в кассе. Операции
-  /// кассы приходят живым потоком, а чеки перечитываем раз в минуту и по
-  /// «потянуть вниз» — чтобы не держать лишнюю подписку на все чеки.
+  /// кассы приходят живым потоком, а чеки перечитываем, когда какой-то
+  /// открытый чек закрылся (общая подписка на открытые чеки уже есть на
+  /// кассе), и по «потянуть вниз». Раньше перечитывали все чеки смены
+  /// каждую минуту — сотни чтений из лимита Firebase в час.
   String? _sessionsShiftId;
   Future<List<SessionModel>>? _sessions;
   Future<List<ShiftModel>>? _history;
   Timer? _refresh;
+  StreamSubscription<List<SessionModel>>? _openSub;
+  Set<String>? _openIds;
   bool _busy = false;
 
   @override
   void initState() {
     super.initState();
     _history = _loadHistory();
-    _refresh = Timer.periodic(const Duration(minutes: 1), (_) => _reloadSessions());
+    _openSub = _fs.openChecksStream().listen((list) {
+      final ids = {for (final s in list) s.id};
+      final before = _openIds;
+      _openIds = ids;
+      // Чек пропал из открытых — его закрыли: наличные в кассе изменились.
+      if (before != null && before.any((id) => !ids.contains(id))) _reloadSessions();
+    }, onError: (_) {});
+    // Страховка — редко: закрыть чек могли и без кассы (возврат из кабинета).
+    _refresh = Timer.periodic(const Duration(minutes: 10), (_) => _reloadSessions());
   }
 
   @override
   void dispose() {
     _refresh?.cancel();
+    _openSub?.cancel();
     super.dispose();
   }
 

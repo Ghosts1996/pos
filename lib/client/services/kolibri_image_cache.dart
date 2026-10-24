@@ -1,5 +1,6 @@
 import 'dart:async';
 import '../../services/app_scope.dart';
+import '../../services/public_menu_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import '../../models/menu_models.dart';
@@ -31,9 +32,16 @@ class KolibriImageCache {
     if (_running || _done) return;
     _running = true;
     try {
-      final snap = await AppScope.col('menuItems').get();
-      final urls = snap.docs
-          .map(MenuItem.fromDoc)
+      // Меню — с сервера платформы (лимит Firebase не тратится), из базы —
+      // только если сервер не ответил.
+      List<MenuItem> items;
+      try {
+        if (!PublicMenuService.enabled) throw StateError('нет сервера');
+        items = (await PublicMenuService.fetch()).items;
+      } catch (_) {
+        items = (await AppScope.col('menuItems').get()).docs.map(MenuItem.fromDoc).toList();
+      }
+      final urls = items
           .where((i) => i.available && i.imageUrl.isNotEmpty)
           .map((i) => i.imageUrl)
           .toSet()

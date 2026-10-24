@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
+import 'public_menu_service.dart';
 import 'firestore_service.dart';
 import '../models/delivery_status.dart';
 import '../models/client_models.dart';
@@ -1129,18 +1130,24 @@ class GuestLinkService {
 
   // ---------- МЕНЮ ДЛЯ ГОСТЯ ----------
 
+  /// Меню гостя — с сервера платформы (см. [PublicMenuService]), из базы —
+  /// только если сервер недоступен.
   Stream<List<MenuItem>> publicMenuStream() => _menuS.get(
       _key(),
-      () => AppScope.col('menuItems')
-          .snapshots()
-          .map((s) => s.docs.map(MenuItem.fromDoc).where((i) => i.available).toList()));
+      () => PublicMenuService.stream(
+          (m) => m.items,
+          () => AppScope.col('menuItems')
+              .snapshots()
+              .map((s) => s.docs.map(MenuItem.fromDoc).where((i) => i.available).toList())));
 
   Stream<List<MenuCategory>> publicCategoriesStream() => _categoriesS.get(
       _key(),
-      () => AppScope.col('menuCategories')
-          .orderBy('order')
-          .snapshots()
-          .map((s) => s.docs.map(MenuCategory.fromDoc).toList()));
+      () => PublicMenuService.stream(
+          (m) => m.categories,
+          () => AppScope.col('menuCategories')
+              .orderBy('order')
+              .snapshots()
+              .map((s) => s.docs.map(MenuCategory.fromDoc).toList())));
 }
 
 /// Чек уже открыт у другого гостя.

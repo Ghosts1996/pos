@@ -45,6 +45,20 @@ function check(name, cond) {
 async function main() {
   await new Promise((r) => setTimeout(r, 200)); // дать серверу подняться
 
+  for (const path of ["/tenantStaticData?tenantId=t1", "/publicMenu?tenantId=t1"]) {
+    const r = await request("GET", path);
+    check(`GET ${path} без токена -> 401`, r.status === 401);
+  }
+  {
+    const { guestMenu } = require("./tenant-cache");
+    const m = guestMenu({
+      menuItems: [{ id: "a", name: "Латте", price: 200, costPrice: 40, components: [{ id: "milk" }], staffBonus: 5, inventoryItemId: "s1" }, { id: "b", name: "Раф", available: false }],
+      menuCategories: [{ id: "c2", name: "Чай", order: 2 }, { id: "c1", name: "Кофе", order: 1, secret: 1 }],
+    });
+    check("меню гостя: только доступные блюда", m.menuItems.length === 1 && m.menuItems[0].name === "Латте");
+    check("меню гостя: без себестоимости, рецепта, склада и премий", !["costPrice", "components", "staffBonus", "inventoryItemId"].some((k) => k in m.menuItems[0]));
+    check("меню гостя: категории по порядку, без лишних полей", m.menuCategories[0].name === "Кофе" && !("secret" in m.menuCategories[0]));
+  }
   {
     const q = server.isQuotaExhausted;
     check("квота Firestore: код 8", q({ code: 8, message: "8 RESOURCE_EXHAUSTED: Quota exceeded." }));

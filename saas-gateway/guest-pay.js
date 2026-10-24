@@ -314,6 +314,9 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   const http = httpImpl || bankHttp;
   const tenantRef = (t) => db().collection("tenants").doc(t);
   const pendingCol = () => db().collection("pendingGuestPayments");
+  // Есть ли, возможно, ожидающие оплаты — чтобы не опрашивать базу впустую.
+  let pendingMaybe = true;
+  let pendingCheckedAt = 0;
   const doneUrl = `${publicUrl}/guestPayDone`;
 
   async function call(url, opts, bankName) {
@@ -699,6 +702,7 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       createdAt: now,
     });
     await pendingCol().doc(`${tenantId}__${paymentId}`).set({ tenantId, paymentId, createdAt: now });
+    pendingMaybe = true;
     sendJson(res, 200, { paymentId, payload: made.url, url: made.url, amount: due, provider: creds.provider });
   }
 
@@ -966,6 +970,7 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       createdAt: now,
     });
     await pendingCol().doc(`${tenantId}__${paymentId}`).set({ tenantId, paymentId, kind: "kassa", createdAt: now });
+    pendingMaybe = true;
     sendJson(res, 200, {
       paymentId,
       url: made.url,
@@ -1072,7 +1077,12 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   }
 
   async function sweepOnce() {
+    // Ожидающих оплат не было и новых не появилось — базу не читаем каждую
+    // минуту (лимит Firebase); раз в 10 минут проверяем всё равно.
+    if (!pendingMaybe && Date.now() - pendingCheckedAt < 10 * 60 * 1000) return;
+    pendingCheckedAt = Date.now();
     const snap = await pendingCol().limit(200).get();
+    pendingMaybe = !snap.empty;
     for (const d of snap.docs) {
       const { tenantId, paymentId, createdAt, kind } = d.data();
       const age = Date.now() - (createdAt?.toMillis?.() || 0);

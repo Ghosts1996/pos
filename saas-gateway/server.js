@@ -42,6 +42,7 @@ const { createGuestDelivery } = require("./guest-delivery");
 const { createTelegram, encrypt: tgEncrypt, decrypt: tgDecrypt, secretKey: tgSecretKey } = require("./telegram");
 const { createSupportBot } = require("./support-bot");
 const { createLocalDb } = require("./local-db");
+const { createTenantCache, guestMenu } = require("./tenant-cache");
 const { createPiiInternal } = require("./pii-internal");
 const { createPiiMigrate } = require("./pii-migrate");
 
@@ -2594,10 +2595,16 @@ async function runEnforceGracePeriod() {
  */
 function scheduleDailyJob(name, intervalMs, run, firstDelayMs = 5 * 60 * 1000) {
   const ref = () => db().collection("platformStatus").doc("cronJobs");
+  // Время последнего запуска — в памяти: базу читаем один раз после
+  // старта, а не каждый час.
+  let known = null;
   const tick = async () => {
     try {
+      if (known !== null && Date.now() - known < intervalMs - 60 * 60 * 1000) return;
       const last = (await ref().get()).data()?.[name]?.toMillis?.() ?? 0;
+      known = last;
       if (Date.now() - last < intervalMs - 60 * 60 * 1000) return;
+      known = Date.now();
       await ref().set({ [name]: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
       await run();
     } catch (e) {
@@ -2958,6 +2965,7 @@ const APP_ROLLOUT_DELAY_MS = 5 * 60 * 1000;
 const APP_ROLLOUT_CONCURRENCY = 2;
 const APP_ROLLOUT_STALE_MS = 90 * 60 * 1000; // «в очереди» дольше — сборка потерялась, место не держит
 const appRolloutRef = () => db().collection("platformStatus").doc("appRollout");
+let appRolloutIdleUntil = 0;
 
 async function handleRolloutApps(req, res) {
   const body = await parseJsonBody(req);
@@ -2989,6 +2997,7 @@ async function handleRolloutApps(req, res) {
     pausedReason: null,
     finishedAt: null,
   });
+  appRolloutIdleUntil = 0;
   sendJson(res, 200, { ok: true, sha });
 }
 
@@ -3012,8 +3021,14 @@ async function runAppRolloutTick() {
   appRolloutRunning = true;
   try {
     const firestore = db();
+    // Раскатки нет — не читаем базу каждую минуту: новую запускает
+    // handleRolloutApps (он сбрасывает паузу), а раз в 30 минут проверяем сами.
+    if (Date.now() < appRolloutIdleUntil) return;
     const r = (await appRolloutRef().get()).data();
-    if (!r || !r.sha || r.state === "done" || r.state === "paused") return;
+    if (!r || !r.sha || r.state === "done" || r.state === "paused") {
+      appRolloutIdleUntil = Date.now() + 30 * 60 * 1000;
+      return;
+    }
     if (r.startAfter && Date.now() < r.startAfter.toMillis()) return;
 
     // Сборка этой версии у кого-то упала — дальше не раскатываем.
@@ -3201,7 +3216,9 @@ async function handleDownloadBuild(req, res) {
  */
 const APP_UPDATE_TYPES = { pos: "pos", guest: "guest" };
 const APP_UPDATE_PLATFORMS = ["android", "windows"];
-const APP_UPDATE_CACHE_TTL_MS = 30 * 60 * 1000;
+// Новая сборка сбрасывает кеш сама (forgetAppUpdates), поэтому держим его
+// долго: каждая касса спрашивает раз в 30 минут.
+const APP_UPDATE_CACHE_TTL_MS = 6 * 3600 * 1000;
 const appUpdateCache = new Map(); // tenantId -> { at, points: [tenantId], jobs: [{ id, tenantId, type, platform, buildNumber, completedAt }] | null }
 
 /** Сборка заведения изменилась — сбросить ответы его и всех точек его сети. */
@@ -3275,7 +3292,10 @@ async function handleAppUpdate(req, res) {
 
   if (type === "pos") {
     const decoded = await verifyAuth(req);
-    await requireTenantRole(tenantId, decoded.uid, ["owner", "admin", "manager", "employee"]);
+    const member = await tenantCache.member(tenantId, decoded.uid);
+    if (!member || member.status !== "active" || !["owner", "admin", "manager", "employee"].includes(member.role)) {
+      throw new HttpError(403, "Недостаточно прав в этом заведении");
+    }
   }
 
   const jobs = await latestTenantBuilds(tenantId);
@@ -5777,7 +5797,9 @@ function scheduleCertificateCheck() {
 const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, "backups");
 const BACKUP_KEEP = Math.max(1, Number(process.env.BACKUP_KEEP) || 14);
 const BACKUP_MAX_DOCS = Math.max(100, Number(process.env.BACKUP_MAX_DOCS) || 20000);
-const BACKUP_INTERVAL_MS = Math.max(1, Number(process.env.BACKUP_INTERVAL_HOURS) || 24) * 60 * 60 * 1000;
+// Копия читает базу целиком (каждый документ — чтение из суточного лимита
+// Firebase), поэтому по умолчанию раз в 3 дня; чаще — BACKUP_INTERVAL_HOURS.
+const BACKUP_INTERVAL_MS = Math.max(1, Number(process.env.BACKUP_INTERVAL_HOURS) || 72) * 60 * 60 * 1000;
 // Вложенные коллекции, которые не всегда удаётся найти выборкой (пустые
 // у первых документов): известные заранее + найденные по ходу обхода.
 const KNOWN_SUBCOLLECTIONS = [...TENANT_SUBCOLLECTIONS, "visits", "messages", "logins"];
@@ -5826,7 +5848,10 @@ async function runFirestoreBackup({ reason = "schedule" } = {}) {
     const statusRef = firestore.collection("platformStatus").doc("backup");
     const startedAt = Date.now();
     try {
-      const ids = await discoverCollectionIds(firestore);
+      // Данные бота поддержки живут на сервере (свои ежедневные копии) — их
+      // старые копии в Firestore не перечитываем.
+      const ids = (await discoverCollectionIds(firestore))
+        .filter((id) => !(supportUseLocal && (SUPPORT_LOCAL_COLLECTIONS.has(id) || id === "messages")));
       let estimate = 0;
       for (const id of ids) estimate += (await firestore.collectionGroup(id).count().get()).data().count;
       if (estimate > BACKUP_MAX_DOCS) {
@@ -5885,11 +5910,15 @@ function listBackups() {
 function scheduleFirestoreBackup() {
   // Первая копия — через 10 минут после старта и только если последняя
   // была давно: перезапуски сервиса не должны каждый раз читать всю базу.
+  let known = null;
   const tick = async () => {
     try {
+      if (known !== null && Date.now() - known < BACKUP_INTERVAL_MS - 60 * 60 * 1000) return;
       const st = (await db().collection("platformStatus").doc("backup").get()).data() || {};
       const last = st.lastRunAt && st.lastRunAt.toMillis ? st.lastRunAt.toMillis() : 0;
+      known = last;
       if (Date.now() - last < BACKUP_INTERVAL_MS - 60 * 60 * 1000) return;
+      known = Date.now();
       await runFirestoreBackup({ reason: "schedule" });
     } catch (e) {
       console.error("резервная копия базы:", e.message || e);
@@ -6271,6 +6300,7 @@ async function setDeviceEnabled(req, res, enabled) {
       reason: typeof reason === "string" ? reason.slice(0, 200) : null,
     },
   });
+  tenantCache.forgetMember(tenantId, uid);
   sendJson(res, 200, { ok: true });
 }
 
@@ -6321,6 +6351,7 @@ async function handleRemoveDevice(req, res) {
     if (others.empty) await syncChainMembership(chainId, uid, "employee", "disabled");
   }
   await writeAuditLog({ tenantId, actorId: decoded.uid, action: "deviceRemoved", metadata: { uid, deviceName: deviceSnap.data().deviceName || null } });
+  tenantCache.forgetMember(tenantId, uid);
   sendJson(res, 200, { ok: true });
 }
 
@@ -6357,6 +6388,7 @@ async function handleRestoreDevice(req, res) {
   // Устройства, удалённые прежней версией, остались с выключенным входом.
   try { await getFirebaseApp().auth().updateUser(uid, { disabled: false }); } catch (_) {}
   await writeAuditLog({ tenantId, actorId: decoded.uid, action: "deviceRestored", metadata: { uid, deviceName: deviceSnap.data().deviceName || null } });
+  tenantCache.forgetMember(tenantId, uid);
   sendJson(res, 200, { ok: true });
 }
 
@@ -7708,16 +7740,17 @@ const supportBot = createSupportBot({
 
 // ------------------------------------------------ кеш статических данных
 //
-// Уменьшает прямые чтения Firestore из Flutter-приложения: данные меню,
-// сотрудников и профиля заведения кешируются на сервере (STATIC_DATA_TTL_MS).
-// Все устройства одного заведения получают один набор данных за одно обращение
-// к базе вместо N параллельных подписок.
-const STATIC_DATA_TTL_MS = 5 * 60 * 1000; // 5 минут
-const _staticDataCache = new Map(); // tenantId -> { data, expiresAt }
+// Меню, сотрудники и профиль заведения — живая копия в памяти сервера
+// (tenant-cache.js): сервер подписан на них в Firestore и получает только
+// изменения. Кассы и гости берут их отсюда, лимит Firebase на это почти не
+// тратится.
+const tenantCache = createTenantCache({ db });
+setInterval(() => tenantCache.sweep(), 30 * 60 * 1000).unref();
 
-/** Сбрасывает кеш заведения — вызывается при изменениях меню/профиля через API. */
+/** Сбрасывает кеш заведения — живая копия обновляется сама, а права
+ *  участников перечитываем. */
 function invalidateTenantStaticCache(tenantId) {
-  if (tenantId) _staticDataCache.delete(tenantId);
+  if (tenantId) tenantCache.forgetMember(tenantId);
 }
 
 /** Кабинет перенёс меню или сотрудников (перенос данных) — кассы должны
@@ -7769,52 +7802,69 @@ async function handleTenantStaticData(req, res) {
   const decoded = await verifyAuth(req);
   const params = new URL(`http://x${req.url}`).searchParams;
   const tenantId = params.get("tenantId");
-  if (!tenantId) throw new HttpError(400, "tenantId обязателен");
+  if (!tenantId || !/^[A-Za-z0-9_-]{1,128}$/.test(tenantId)) throw new HttpError(400, "tenantId обязателен");
 
   // Любой активный участник заведения может читать статику.
-  const memberDoc = await db().collection("tenantMembers").doc(`${tenantId}_${decoded.uid}`).get();
-  const member = memberDoc.data();
-  if (!memberDoc.exists || member.status !== "active") {
+  const member = await tenantCache.member(tenantId, decoded.uid);
+  if (!member || member.status !== "active") {
     throw new HttpError(403, "Нет доступа к этому заведению");
   }
 
-  const cached = _staticDataCache.get(tenantId);
-  if (cached && cached.expiresAt > Date.now()) {
-    res.writeHead(200, {
-      "Content-Type": "application/json; charset=utf-8",
-      "Access-Control-Allow-Origin": "*",
-      "Cache-Control": "no-store",
-      "X-Cache": "HIT",
-    });
-    res.end(cached.raw);
-    return;
-  }
-
-  const firestore = db();
-  const tenantRef = firestore.collection("tenants").doc(tenantId);
-  const [catSnap, itemsSnap, empSnap, profileSnap] = await Promise.all([
-    tenantRef.collection("menuCategories").orderBy("order").get(),
-    tenantRef.collection("menuItems").get(),
-    tenantRef.collection("employees").get(),
-    tenantRef.collection("meta").doc("venueProfile").get(),
-  ]);
-
-  const data = {
-    menuCategories: catSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
-    menuItems: itemsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
-    employees: empSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
-    venueProfile: profileSnap.exists ? profileSnap.data() : null,
+  const raw = await tenantCache.json(tenantId, "staff", (d) => ({
+    menuCategories: (d.menuCategories || []).slice().sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0)),
+    menuItems: d.menuItems || [],
+    employees: d.employees || [],
+    venueProfile: d.venueProfile || null,
     cachedAt: Date.now(),
-  };
-  const raw = JSON.stringify(data);
-  _staticDataCache.set(tenantId, { raw, expiresAt: Date.now() + STATIC_DATA_TTL_MS });
-
+  }));
   res.writeHead(200, {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Cache-Control": "no-store",
-    "X-Cache": "MISS",
+  });
+  res.end(raw);
+}
+
+/** Гость заведения (или сети) — с кешем, как участники. */
+const guestAccess = new Map(); // `${tenantId}_${uid}` → { ok, at }
+async function isTenantGuest(tenantId, uid, tenant) {
+  const key = `${tenantId}_${uid}`;
+  const c = guestAccess.get(key);
+  if (c && Date.now() - c.at < (c.ok ? 30 : 2) * 60 * 1000) return c.ok;
+  const firestore = db();
+  let ok = (await firestore.collection("tenants").doc(tenantId).collection("clients").doc(uid).get()).exists;
+  if (!ok && tenant && tenant.chainId) ok = (await firestore.collection("chains").doc(tenant.chainId).collection("clients").doc(uid).get()).exists;
+  if (guestAccess.size > 50000) guestAccess.clear();
+  guestAccess.set(key, { ok, at: Date.now() });
+  return ok;
+}
+
+/**
+ * GET /publicMenu?tenantId=... — меню для приложения гостя (те же условия,
+ * что в правилах базы: гость заведения и включённое приложение гостя) без
+ * себестоимости, рецептов и премий. Раньше каждый гость читал всё меню
+ * прямо из Firestore — сотни чтений за открытие.
+ */
+async function handlePublicMenu(req, res) {
+  const decoded = await verifyAuth(req);
+  const tenantId = new URL(`http://x${req.url}`).searchParams.get("tenantId");
+  if (!tenantId || !/^[A-Za-z0-9_-]{1,128}$/.test(tenantId)) throw new HttpError(400, "tenantId обязателен");
+  const e = await tenantCache.get(tenantId);
+  const tenant = e.data.tenant;
+  if (!tenant || tenant.status === "deleted") throw new HttpError(404, "Заведение не найдено");
+  const member = await tenantCache.member(tenantId, decoded.uid);
+  const staff = member && member.status === "active";
+  if (!staff) {
+    if (e.data.features && e.data.features.guestApp === false) throw new HttpError(403, "Приложение гостя в этом заведении выключено");
+    if (!(await isTenantGuest(tenantId, decoded.uid, tenant))) throw new HttpError(403, "Нет доступа к меню");
+  }
+  const raw = await tenantCache.json(tenantId, "guest", guestMenu);
+  res.writeHead(200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Cache-Control": "no-store",
   });
   res.end(raw);
 }
@@ -7997,6 +8047,7 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/supportFile") return runHandler(handleSupportFile, req, res);
   // Статические данные заведения (меню, сотрудники, профиль) — кешируются 5 мин.
   if (req.method === "GET" && urlPath === "/tenantStaticData") return runHandler(handleTenantStaticData, req, res);
+  if (req.method === "GET" && urlPath === "/publicMenu") return runHandler(handlePublicMenu, req, res);
   // Обновления Telegram-бота заведения: /tgHook/<tenantId>, секрет в заголовке.
   if (req.method === "POST" && urlPath === `/tgHook/${supportBot.HOOK_ID}`) return runHandler(supportBot.handleHook, req, res);
   if (req.method === "POST" && urlPath.startsWith("/tgHook/")) {
