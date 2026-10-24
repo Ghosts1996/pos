@@ -2,6 +2,9 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
+<!-- Скрипты — только свои (и библиотеки Firebase, пока данные у Firebase):
+     внедрённая ссылка на чужой скрипт браузером не выполнится. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://pii.zalpos.ru https://zalpos.ru https://*.googleapis.com https://www.gstatic.com; media-src 'self' blob: https://pii.zalpos.ru; worker-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <!--
   Один и тот же файл раздаётся ВСЕМ заведениям платформы (браузер узнаёт

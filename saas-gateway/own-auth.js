@@ -480,15 +480,24 @@ function createOwnAuth({
    *  сменившие вход (старая версия приложения), остаются — иначе потеряли бы
    *  аккаунт. includePending — ещё и владельцы с почтой, не входившие сюда:
    *  они войдут по ссылке «Забыли пароль?». */
+  /**
+   * Удалить учётные записи из Firebase Authentication. Обычно — только тех,
+   * кто уже входил своим входом и 14 дней не входил по-старому.
+   * includePending — всех (владелец так решил): сначала переносим записи,
+   * появившиеся в Firebase после включения, чтобы не потерять uid; кто ещё
+   * не входил своим входом — задаст пароль по «Забыли пароль», старые версии
+   * приложений войдут заново после обновления.
+   */
   async function purgeFirebase({ includePending = false } = {}) {
     const fb = firebaseAuth();
     if (!fb) return { deleted: 0, kept: 0 };
+    if (includePending) await importAllFromFirebase();
     let deleted = 0;
     let kept = 0;
     for (const d of (await users().get()).docs) {
       const u = d.data();
       const stillOld = u.fbTokenAt && now() - u.fbTokenAt < FIREBASE_RECENT_MS;
-      const ready = !stillOld && (!!u.lastSignInAt || (includePending && !!u.email));
+      const ready = includePending || (!stillOld && !!u.lastSignInAt);
       if (!ready && !u.firebaseDeletedAt) kept++;
       if (!ready || u.firebaseDeletedAt) continue;
       try { await fb.deleteUser(d.id); } catch (e) { if (!e || e.code !== "auth/user-not-found") continue; }

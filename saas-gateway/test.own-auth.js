@@ -175,6 +175,17 @@ test("перенос из Firebase: тот же uid, пароль проверя
   const p = await h.auth.purgeFirebase();
   assert.deepStrictEqual(p, { deleted: 1, kept: 1 }, "теперь и владелец; несменившее остаётся");
   assert.deepStrictEqual(fb._users.map((u) => u.uid), ["DEVICE2abcdefghijklmnopqrst", "OTHERabcdefghijklmnopqrstuv"]);
+  // «Удалить всех»: и несменившие, и появившиеся в Firebase позже — uid сохраняется.
+  fb._users.push({ uid: "LATEabcdefghijklmnopqrstuvw", email: "late@fb.ru", _password: "late-pass-1", metadata: {}, providerData: [] });
+  await h.auth.noteFirebaseUse("DEVICE2abcdefghijklmnopqrst");
+  const all = await h.auth.purgeFirebase({ includePending: true });
+  assert.strictEqual(all.kept, 0);
+  assert.deepStrictEqual(fb._users, [], "в Firebase никого");
+  // Не входивший своим входом — пароль по «Забыли пароль», тот же uid.
+  await assert.rejects(h.auth.signIn("late@fb.ru", "late-pass-1"));
+  const link = await h.auth.adminAuth().generatePasswordResetLink("late@fb.ru");
+  await h.auth.applyCode("resetPassword", decodeURIComponent(link.match(/code=([^&]+)/)[1]), { password: "new-late-123" });
+  assert.strictEqual((await h.auth.signIn("late@fb.ru", "new-late-123")).uid, "LATEabcdefghijklmnopqrstuvw");
 });
 
 test("фасад Admin Auth: создать, найти по почте, изменить, отключить, удалить", async () => {

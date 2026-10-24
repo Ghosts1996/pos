@@ -11072,9 +11072,9 @@ function firestorePurgeRowHtml(p, running, oldClients = null) {
 }
 
 async function startFirestorePurge() {
-  const word = prompt('Удалить копию данных в Cloud Firestore (Google)? Сначала будет сделана и проверена полная резервная копия на этом сервере. Вернуть данные в Firestore потом будет нельзя.\n\nДля подтверждения введите УДАЛИТЬ');
-  if (word === null) return;
-  if (word.trim().toUpperCase() !== 'УДАЛИТЬ') { toast('Не подтверждено — ничего не удалено'); return; }
+  // Подтверждение — кнопкой и паролем панели: ввод слова в окне браузера
+  // на телефоне легко сбить (автозамена, отмена окна).
+  if (!confirm('Удалить копию данных в Cloud Firestore (Google)?\n\nСначала будет сделана и проверена полная резервная копия на этом сервере. Вернуть данные в Firestore потом будет нельзя.')) return;
   if (!(await reauthenticate('Удаление копии в Google'))) return;
   try {
     await callSaasGateway('dataMigrate', { action: 'purgeFirestore', confirm: 'УДАЛИТЬ' }, { forceRefresh: true });
@@ -11106,6 +11106,7 @@ async function loadAuthBackend() {
         + ` · на старой версии (входили через Firebase за 14 дней): ${s.firebaseRecent ?? 0}. `
         + 'Раз в сутки сервер сам удаляет из Firebase тех, кто уже перешёл и 14 дней не входил по-старому; кассы и приложения на старой версии остаются там, пока не обновятся (обновления приходят сами).',
       '<button type="button" class="btn btn-ghost" id="f-auth-purge" style="width:auto">Удалить вошедших из Firebase</button>'
+        + ' <button type="button" class="btn btn-ghost" id="f-auth-purge-all" style="width:auto">Удалить всех из Firebase</button>'
         + (s.firebaseDeleted ? '' : ' <button type="button" class="btn btn-ghost" id="f-auth-firebase" style="width:auto">Вернуть вход Firebase</button>'));
   }
   const act = async (action, label, extra = {}) => {
@@ -11113,7 +11114,7 @@ async function loadAuthBackend() {
     try {
       const r = (await callSaasGateway('authBackend', { action, ...extra }, { forceRefresh: true })).data;
       toast(action === 'enable' ? `Свой вход включён: перенесено ${r.imported?.imported ?? 0} из ${r.imported?.total ?? 0}`
-        : action === 'purgeFirebase' ? `Удалено из Firebase: ${r.deleted}, оставлено до обновления: ${r.kept ?? 0}` : 'Готово');
+        : action === 'purgeFirebase' ? (r.kept ? `Удалено из Firebase: ${r.deleted}, оставлено до обновления: ${r.kept}` : `Удалено из Firebase: ${r.deleted}. В Firebase Authentication никого не осталось`) : 'Готово');
     } catch (e) { toast(`Не удалось: ${e?.message || e}`); }
     loadAuthBackend();
   };
@@ -11122,6 +11123,13 @@ async function loadAuthBackend() {
   };
   if ($('f-auth-purge')) $('f-auth-purge').onclick = () => {
     if (confirm('Удалить из Firebase Authentication тех, кто уже входил через свой вход? Вернуться на вход Firebase после этого будет нельзя.')) act('purgeFirebase', 'Удаление пользователей из Firebase');
+  };
+  if ($('f-auth-purge-all')) $('f-auth-purge-all').onclick = () => {
+    if (confirm('Удалить из Firebase Authentication всех пользователей?\n\n'
+      + 'Кто ещё ни разу не входил через свой вход, один раз задаст пароль по ссылке «Забыли пароль» — аккаунт и данные те же. '
+      + 'Кассы и приложения на старой версии войдут заново после обновления. Вернуться на вход Firebase будет нельзя.')) {
+      act('purgeFirebase', 'Удаление всех пользователей из Firebase', { includePending: true });
+    }
   };
   if ($('f-auth-firebase')) $('f-auth-firebase').onclick = () => {
     if (confirm('Вернуть вход через Firebase? Свои входы продолжат работать до истечения.')) act('disable', 'Возврат входа Firebase');
