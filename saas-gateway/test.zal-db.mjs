@@ -38,7 +38,7 @@ if (typeof EventSource === "undefined") {
   process.exit(1);
 }
 
-const { server, port } = await startHarness(0);
+const { server, port, store } = await startHarness(0);
 const gateway = `http://127.0.0.1:${port}`;
 const authAs = (uid) => ({ currentUser: { uid, getIdToken: async () => `test:${uid}` }, onAuthStateChanged() {} });
 const waitFor = (fn, ms = 5000) => new Promise((resolve, reject) => {
@@ -153,6 +153,34 @@ await test("защита сервера: __proto__, «..», документ б�
   await bad({ op: "set", path: "tenants/tenantB/tables/x", data: { a: 1 } }, /доступа/);
   const r = await fetch(`${gateway}/db/get`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paths: ["tenants/tenantA/tables/t1"] }) });
   assert.strictEqual(r.status, 403, "без входа данные заведения закрыты");
+});
+
+await test("заказ гостя: части одной пачкой; повтор узнаётся по номеру документа", async () => {
+  // Гость за своим столом — профиль и занятый чек, как после QR.
+  await store.doc("tenants/tenantA/clients/guest1").set({ phoneOnFile: true });
+  await store.doc("tenants/tenantA/sessionClaims/s1").set({ uid: "guest1" });
+  const g = await Z.openDb({}, { gateway, auth: authAs("guest1") });
+  const col = Z.collection(g, "tenants/tenantA/guestOrders");
+  const ids = [Z.doc(col).id, Z.doc(col).id];
+  const order = (target) => ({ sessionId: "s1", tableId: "t1", tableName: "", clientUid: "guest1", guestName: "",
+    items: [{ menuItemId: "m1", name: "Чай", price: 100, qty: 1 }], comment: "", targetPosition: target, status: "new", rejectReason: "" });
+  // До отправки: проверка «уже дошло?» — нет (чужое/несуществующее не читается).
+  let delivered = false;
+  try { delivered = (await Z.getDoc(Z.doc(g, "tenants/tenantA/guestOrders", ids[0]))).exists(); } catch (_) { delivered = false; }
+  assert.strictEqual(delivered, false);
+  const b = Z.writeBatch(g);
+  b.set(Z.doc(g, "tenants/tenantA/guestOrders", ids[0]), order("waiter"));
+  b.set(Z.doc(g, "tenants/tenantA/guestOrders", ids[1]), order("hookah_master"));
+  await b.commit();
+  // Повтор после потерянного ответа: документ уже есть — второй раз не пишем.
+  assert.strictEqual((await Z.getDoc(Z.doc(g, "tenants/tenantA/guestOrders", ids[0]))).exists(), true);
+  // Чужой чек — отказ всей пачке, ни одной части не записано.
+  const bad = Z.writeBatch(g);
+  const x = Z.doc(col).id;
+  bad.set(Z.doc(g, "tenants/tenantA/guestOrders", x), order("waiter"));
+  bad.set(Z.doc(g, "tenants/tenantA/guestOrders", Z.doc(col).id), { ...order("waiter"), sessionId: "чужой" });
+  await assert.rejects(bad.commit());
+  assert.strictEqual(store.raw(`tenants/tenantA/guestOrders/${x}`), undefined, "пачка — всё или ничего");
 });
 
 server.closeAllConnections();

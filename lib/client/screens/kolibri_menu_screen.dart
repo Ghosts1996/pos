@@ -17,6 +17,7 @@ import '../../utils/promo_policy.dart';
 import '../../models/venue_models.dart';
 import '../../utils/remote_sale.dart';
 import 'kolibri_checkout_screen.dart';
+import '../../build_info.dart';
 
 /// Живое меню заведения для гостя — как в кассе: сначала плитки категорий
 /// с фото (и «Популярное» лентой), внутри категории — карточки позиций
@@ -957,8 +958,12 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
   /// Отправка заказа на POS. Заказ не попадает в чек автоматически: блюда
   /// и напитки подтверждает официант, кальян — кальянщик, каждый у себя.
   Future<void> _sendOrder() async {
+    // Платформа: второе нажатие, пока первое отправляется, — не второй заказ.
+    if (kSaasMode && _sending) return;
+    if (kSaasMode) setState(() => _sending = true);
     final profile = await _link.profileStream(_auth.uid).first;
     if (profile == null || profile.activeSessionId.isEmpty) {
+      if (kSaasMode && mounted) setState(() => _sending = false);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Сначала откройте свой стол на вкладке «Мой стол»')),

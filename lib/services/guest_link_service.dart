@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'app_scope.dart';
 import 'public_menu_service.dart';
 import 'firestore_service.dart';
@@ -19,6 +21,7 @@ import '../utils/venue_terms.dart';
 import 'people_directory.dart';
 import 'signals/signal_hub.dart';
 import '../data/app_db.dart';
+import '../build_info.dart';
 
 /// Мост между кассой и приложением гостя:
 /// профиль гостя, привязка к живому чеку, вызовы персонала, заказы из-за
@@ -732,6 +735,10 @@ class GuestLinkService {
       );
       (groups[target] ??= []).add(item);
     }
+    if (kSaasMode && groups.isNotEmpty) {
+      await _placeGroupsOnce(sessionId: sessionId, tableId: tableId, groups: groups, clientUid: clientUid, guestName: guestName);
+      return groups.keys.toList();
+    }
     for (final group in groups.entries) {
       await placeGuestOrder(
         sessionId: sessionId,
@@ -744,6 +751,76 @@ class GuestLinkService {
       );
     }
     return groups.keys.toList();
+  }
+
+  // Последняя отправка заказа: пока корзина та же — те же номера документов.
+  static String? _attemptSig;
+  static Map<String, String> _attemptIds = {};
+
+  /// Тесты: запись прошла, а ответ «потерялся» (как обрыв связи).
+  @visibleForTesting
+  static bool debugLoseReply = false;
+
+  /// Части заказа одной записью (уходят все или ни одна) и с номерами,
+  /// которые не меняются при повторе: связь оборвалась после записи, гость
+  /// нажал ещё раз — заказ не задвоится.
+  Future<void> _placeGroupsOnce({
+    required String sessionId,
+    required String tableId,
+    required Map<String, List<OrderItem>> groups,
+    required String clientUid,
+    required String guestName,
+  }) async {
+    final sig = jsonEncode([sessionId, for (final g in groups.entries) [g.key, for (final i in g.value) i.toMap()]],
+        toEncodable: (Object? o) => o.toString());
+    if (_attemptSig != sig) {
+      _attemptSig = sig;
+      _attemptIds = {};
+    }
+    final first = _attemptIds[groups.keys.first];
+    if (first != null) {
+      try {
+        if ((await _orders.doc(first).get()).exists) {
+          _attemptSig = null;
+          return; // прошлая попытка дошла — второй раз не пишем
+        }
+      } catch (_) {}
+    }
+    var resolvedTableId = tableId;
+    var resolvedTable = '';
+    if (sessionId.isNotEmpty) {
+      try {
+        final data = (await AppScope.col('sessions').doc(sessionId).get()).data();
+        final id = (data?['tableId'] as String?) ?? '';
+        final name = (data?['tableName'] as String?) ?? '';
+        if (id.isNotEmpty) resolvedTableId = id;
+        if (name.isNotEmpty) resolvedTable = name;
+      } catch (_) {}
+    }
+    final batch = AppDb.instance.batch();
+    for (final g in groups.entries) {
+      final id = _attemptIds[g.key] ??= _orders.doc().id;
+      batch.set(
+          _orders.doc(id),
+          GuestOrder(
+            id: '',
+            sessionId: sessionId,
+            tableId: resolvedTableId,
+            tableName: resolvedTable,
+            clientUid: clientUid,
+            guestName: guestName,
+            items: g.value,
+            comment: '',
+            targetPosition: g.key,
+            createdAt: DateTime.now(),
+          ).toMap());
+    }
+    await batch.commit();
+    if (debugLoseReply) {
+      debugLoseReply = false;
+      throw StateError('ответ сервера потерян');
+    }
+    _attemptSig = null;
   }
 
   Future<String> placeGuestOrder({

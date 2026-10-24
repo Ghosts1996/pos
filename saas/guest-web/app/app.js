@@ -16,7 +16,7 @@ import {
 import {
   dataBackend, openDb, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot,
   collection, query, where, orderBy, limit, addDoc, deleteDoc, Timestamp,
-  disableNetwork, enableNetwork,
+  disableNetwork, enableNetwork, writeBatch,
 } from './zal-db.js';
 
 // Сервер платформы: поиск заведения по поддомену, конфиг Firebase, удаление данных.
@@ -1558,6 +1558,8 @@ function orderSentText(targets) {
 async function placeOrder(items, redraw, isTobacco = (i) => TOBACCO_RE.test(i.name || '')) {
   const p = state.profile;
   if (!p || !p.activeSessionId) return toast('Сначала откройте свой стол');
+  // Второе нажатие, пока первое отправляется, — не второй заказ.
+  if (state.orderSending) return;
   const chosen = Object.entries(state.cart).map(([key, qty]) => {
     const { id, mods } = parseLine(key);
     const it = items.find((i) => i.id === id);
@@ -1572,6 +1574,13 @@ async function placeOrder(items, redraw, isTobacco = (i) => TOBACCO_RE.test(i.na
     groups.get(target).push(item);
   });
 
+  // Номера документов заказа — одни и те же, пока корзина не изменилась:
+  // связь оборвалась после записи, гость нажал ещё раз — заказ не задвоится.
+  const sig = JSON.stringify([p.activeSessionId, Object.entries(state.cart).sort()]);
+  if (!state.orderAttempt || state.orderAttempt.sig !== sig) state.orderAttempt = { sig, ids: new Map() };
+  const attempt = state.orderAttempt;
+  state.orderSending = true;
+  document.querySelectorAll('#sendOrder').forEach((b) => { b.disabled = true; b.textContent = 'Отправляем…'; });
   try {
     // Стол — из самого чека: гостя могли пересадить, а стол в профиле ещё
     // прежний. Без имени стола персонал видел заказ как «Стол · …» и не
@@ -1585,8 +1594,18 @@ async function placeOrder(items, redraw, isTobacco = (i) => TOBACCO_RE.test(i.na
         tableName = ses.data().tableName || '';
       }
     } catch (_) { /* не критично — заказ всё равно уйдёт с id стола */ }
+    // Прошлая попытка уже дошла (ответ потерялся) — второй раз не пишем.
+    const firstId = attempt.ids.get([...groups.keys()][0]);
+    let delivered = false;
+    if (firstId) {
+      try { delivered = (await getDoc(doc(state.root, 'guestOrders', firstId))).exists(); } catch (_) { delivered = false; }
+    }
+    // Все части (официанту, кальянщику) — одной записью: либо уходят все, либо ни одна.
+    const batch = writeBatch(state.db);
     for (const [target, list] of groups) {
-      await addDoc(collection(state.root, 'guestOrders'), {
+      let id = attempt.ids.get(target);
+      if (!id) { id = doc(collection(state.root, 'guestOrders')).id; attempt.ids.set(target, id); }
+      batch.set(doc(state.root, 'guestOrders', id), {
         sessionId: p.activeSessionId,
         tableId,
         tableName,
@@ -1601,7 +1620,9 @@ async function placeOrder(items, redraw, isTobacco = (i) => TOBACCO_RE.test(i.na
         createdAt: Timestamp.fromDate(new Date()),
       });
     }
+    if (!delivered) await batch.commit();
     state.cart = {};
+    state.orderAttempt = null;
     toast(orderSentText([...groups.keys()]));
     if (state.orderFromTable) {
       state.orderFromTable = false;
@@ -1610,7 +1631,10 @@ async function placeOrder(items, redraw, isTobacco = (i) => TOBACCO_RE.test(i.na
       redraw();
     }
   } catch (e) {
-    toast('Не удалось отправить заказ');
+    toast('Не удалось отправить заказ — проверьте интернет и нажмите ещё раз');
+  } finally {
+    state.orderSending = false;
+    document.querySelectorAll('#sendOrder').forEach((b) => { b.disabled = false; b.textContent = 'Отправить заказ'; });
   }
 }
 
