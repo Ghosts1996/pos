@@ -6204,7 +6204,7 @@ async function handleDownloadBackup(req, res) {
   await requireSuperAdmin(decoded);
   requireRecentAuth(decoded);
   const { name } = await parseJsonBody(req);
-  if (typeof name !== "string" || !/^firestore-[0-9T-]+\.json\.gz$/.test(name)) throw new HttpError(400, "Неизвестная копия");
+  if (typeof name !== "string" || !/^(firestore|google-copy)-[0-9T-]+\.json\.gz$/.test(name)) throw new HttpError(400, "Неизвестная копия");
   const file = path.join(BACKUP_DIR, name);
   if (!fs.existsSync(file)) throw new HttpError(404, "Копия не найдена");
   await writeSecurityEvent(req, decoded, "backupDownloaded", { metadata: { file: name } });
@@ -7567,6 +7567,9 @@ async function handleAuthBackend(req, res) {
     return sendJson(res, 200, { ok: true, backend: "own", imported: imp, stats: await ownAuth().migrationStats() });
   }
   if (action === "disable") {
+    if ((await ownAuth().migrationStats()).firebaseDeleted > 0) {
+      throw new HttpError(409, "Пользователи уже удалены из Firebase — вернуться на вход Firebase нельзя");
+    }
     try { fs.unlinkSync(AUTH_OWN_MARK); } catch (_) {}
     authOwnCache = { at: 0, on: false };
     return sendJson(res, 200, { ok: true, backend: authOwn() ? "own" : "firebase" });
@@ -8183,10 +8186,25 @@ async function handleDataMigrate(req, res) {
   requireRecentAuth(decoded);
   const body = await parseJsonBody(req);
   if (body.action === "rollback") {
+    if (firestorePurgeState()) throw new HttpError(409, "Копия в Firestore удаляется или удалена — вернуться на неё нельзя");
     try { fs.unlinkSync(DATA_ACTIVE_MARK); } catch (_) {}
     await writeSecurityEvent(req, decoded, "dataBackendRollback", {});
     sendJson(res, 200, { ok: true, restarting: true });
     setTimeout(() => process.exit(75), 500); // systemd перезапустит (Restart=on-failure)
+    return;
+  }
+  if (body.action === "purgeFirestore") {
+    if (!DATA_LOCAL) throw new HttpError(412, "Сначала перенесите данные на свой сервер");
+    // pii-gateway читает права доступа через этот сервер, а не из Firestore.
+    if (!process.env.PII_INTERNAL_TOKEN) throw new HttpError(412, "Нет PII_INTERNAL_TOKEN — справочник в РФ ещё читает Firestore; запустите update-server.sh");
+    if (String(body.confirm || "") !== "УДАЛИТЬ") throw new HttpError(400, "Подтвердите удаление словом УДАЛИТЬ");
+    const cur = firestorePurgeState();
+    if (!cur || cur.phase === "done") {
+      saveFirestorePurge({ phase: "backup", startedAt: new Date().toISOString(), by: decoded.uid, deleted: 0 });
+    }
+    await writeSecurityEvent(req, decoded, "firestorePurge", {}).catch(() => {});
+    sendJson(res, 200, { ok: true, purge: firestorePurgeState() });
+    runFirestorePurge().catch(() => {});
     return;
   }
   if (DATA_LOCAL) throw new HttpError(409, "Данные уже на своём сервере");
@@ -8208,6 +8226,125 @@ async function handleDataMigrate(req, res) {
   }
 }
 
+// ---- Старая копия данных в Google (Cloud Firestore) после переноса на свой
+// сервер: полная резервная копия сюда, проверка, затем удаление. Firebase на
+// бесплатном тарифе даёт ~20 тыс. удалений в сутки — большая база удаляется
+// за несколько дней, задание продолжается само (state/firestore-purge.json).
+const FS_PURGE_FILE = process.env.FIRESTORE_PURGE_FILE || path.join(__dirname, "state", "firestore-purge.json");
+function firestorePurgeState() {
+  try { return JSON.parse(fs.readFileSync(FS_PURGE_FILE, "utf8")); } catch (_) { return null; }
+}
+function saveFirestorePurge(st) {
+  fs.mkdirSync(path.dirname(FS_PURGE_FILE), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(FS_PURGE_FILE, JSON.stringify(st, null, 1), { mode: 0o600 });
+}
+let firestorePurgeRunning = null;
+
+/** Все документы Firestore — полным обходом (каждый документ, его вложенные
+ *  коллекции и «сироты» без родителя) — в файл на этом сервере. */
+async function firestoreFullCopy(firestore, round = 1) {
+  const docs = {};
+  const walk = async (col) => {
+    const refs = await col.listDocuments(); // и «пустые» родители вложенных коллекций
+    for (let i = 0; i < refs.length; i += 300) {
+      const snaps = await firestore.getAll(...refs.slice(i, i + 300));
+      snaps.forEach((d) => { if (d.exists) docs[d.ref.path] = serializeFirestoreValue(d.data()); });
+    }
+    for (const ref of refs) for (const sub of await ref.listCollections()) await walk(sub);
+  };
+  const roots = await firestore.listCollections();
+  for (const col of roots) await walk(col);
+  fs.mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 });
+  const stamp = new Date().toISOString().replace(/:/g, "-").slice(0, 16);
+  const name = `google-copy-${stamp}${round > 1 ? `-${round}` : ""}.json.gz`;
+  const file = path.join(BACKUP_DIR, name);
+  const count = Object.keys(docs).length;
+  fs.writeFileSync(file, zlib.gzipSync(JSON.stringify({ format: 1, createdAt: new Date().toISOString(), source: "firestore", collections: roots.map((c) => c.id), docs })), { mode: 0o600 });
+  // Проверка: файл читается и в нём те же документы.
+  const back = JSON.parse(zlib.gunzipSync(fs.readFileSync(file)).toString("utf8"));
+  if (Object.keys(back.docs || {}).length !== count) throw new Error("копия не сошлась при проверке — удаление отменено");
+  return { name, count, bytes: fs.statSync(file).size };
+}
+
+/** Удаляет только то, что есть в проверенной копии; остаток — новой копией. */
+async function runFirestorePurge() {
+  if (firestorePurgeRunning) return firestorePurgeRunning;
+  firestorePurgeRunning = (async () => {
+    const st = firestorePurgeState();
+    if (!st || st.phase === "done") return st;
+    const firestore = admin.firestore(getFirebaseApp());
+    try {
+      for (;;) {
+        if (st.phase === "backup") {
+          st.round = (st.round || 0) + 1;
+          if (st.round > 3) throw new Error("в Firestore продолжают появляться документы — кто-то ещё пишет в него; удаление остановлено");
+          const copy = await firestoreFullCopy(firestore, st.round);
+          st.backups = [...(st.backups || []), { name: copy.name, docs: copy.count, bytes: copy.bytes }];
+          Object.assign(st, { phase: copy.count ? "delete" : "check", backup: copy.name, backupDocs: (st.backupDocs || 0) + copy.count, cursor: 0, error: null });
+          saveFirestorePurge(st);
+          console.log(`firestore-purge: копия ${copy.name} (${copy.count} документов) — удаляю из Google`);
+        }
+        if (st.phase === "delete") {
+          const paths = Object.keys(JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(BACKUP_DIR, st.backup))).toString("utf8")).docs || {});
+          let quota = null;
+          for (let i = st.cursor || 0; i < paths.length && !quota; i += 400) {
+            const batch = firestore.batch();
+            paths.slice(i, i + 400).forEach((p) => batch.delete(firestore.doc(p)));
+            try {
+              await batch.commit();
+            } catch (e) {
+              if (!isQuotaExhausted(e)) throw e;
+              quota = e;
+              break;
+            }
+            st.deleted = (st.deleted || 0) + Math.min(400, paths.length - i);
+            st.cursor = i + 400;
+            saveFirestorePurge(st);
+          }
+          if (quota) {
+            Object.assign(st, { error: "дневной лимит удалений Firebase — продолжу завтра", pausedAt: new Date().toISOString() });
+            saveFirestorePurge(st);
+            return st;
+          }
+          st.phase = "check";
+          saveFirestorePurge(st);
+        }
+        if (st.phase === "check") {
+          if ((await firestore.listCollections()).length) {
+            st.phase = "backup"; // появилось после копии — сначала копируем и его
+            continue;
+          }
+          Object.assign(st, { phase: "done", finishedAt: new Date().toISOString(), error: null });
+          saveFirestorePurge(st);
+          console.log(`firestore-purge: готово, удалено ${st.deleted} документов`);
+          return st;
+        }
+        return st;
+      }
+    } catch (e) {
+      st.error = isQuotaExhausted(e) ? "дневной лимит Firebase — продолжу завтра" : String(e.message || e).slice(0, 300);
+      saveFirestorePurge(st);
+      console.error(`firestore-purge: ${e.stack || e}`);
+      return st;
+    }
+  })();
+  try {
+    return await firestorePurgeRunning;
+  } finally {
+    firestorePurgeRunning = null;
+  }
+}
+
+/** Незаконченное удаление — продолжаем раз в сутки (после сброса лимитов). */
+function scheduleFirestorePurge() {
+  const tick = () => {
+    const st = firestorePurgeState();
+    if (st && st.phase !== "done" && DATA_LOCAL) runFirestorePurge().catch(() => {});
+  };
+  setTimeout(tick, 15 * 60 * 1000);
+  setInterval(tick, 24 * 60 * 60 * 1000);
+}
+
 async function handleDataMigrateStatus(req, res) {
   const decoded = await verifyAuth(req);
   await requireSuperAdmin(decoded);
@@ -8217,6 +8354,9 @@ async function handleDataMigrateStatus(req, res) {
     docs: DATA_LOCAL ? localDataStore().count() : null,
     migration: dataMigration,
     lastBackup: last,
+    purge: firestorePurgeState(),
+    purgeRunning: !!firestorePurgeRunning,
+    auth: authOwn() ? "own" : "firebase",
     sessions: dataApi ? dataApi.sessions.size : 0,
   });
 }
@@ -8705,6 +8845,7 @@ scheduleCapabilitiesCron();
 schedulePlatformMetricsCron();
 scheduleCertificateCheck();
 scheduleFirestoreBackup();
+scheduleFirestorePurge();
 scheduleAiSecretsMigration();
 scheduleBuildsSweep();
 scheduleAppRollout();
@@ -8769,4 +8910,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor });
+Object.assign(module.exports, { runFirestorePurge, firestorePurgeState, saveFirestorePurge, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor });

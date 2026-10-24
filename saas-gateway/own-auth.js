@@ -457,23 +457,31 @@ function createOwnAuth({
       withPassword: all.filter((u) => u.pwHash).length,
       passwordPending: all.filter((u) => u.email && !u.pwHash).length,
       imported: all.filter((u) => u.importedAt).length,
+      signedInHere: all.filter((u) => u.lastSignInAt).length,
+      firebaseDeleted: all.filter((u) => u.firebaseDeletedAt).length,
     };
   }
 
-  /** Удалить из Firebase тех, кто уже полностью здесь (пароль у нас или без почты и сеанс сменён). */
+  /** Удалить из Firebase тех, кто уже входил сюда (своим входом или обменом
+   *  прежнего): им Firebase больше не нужен. Устройства и гости, ещё не
+   *  сменившие вход (старая версия приложения), остаются — иначе потеряли бы
+   *  аккаунт. includePending — ещё и владельцы с почтой, не входившие сюда:
+   *  они войдут по ссылке «Забыли пароль?». */
   async function purgeFirebase({ includePending = false } = {}) {
     const fb = firebaseAuth();
-    if (!fb) return { deleted: 0 };
+    if (!fb) return { deleted: 0, kept: 0 };
     let deleted = 0;
+    let kept = 0;
     for (const d of (await users().get()).docs) {
       const u = d.data();
-      const ready = u.pwHash || !u.email || includePending;
+      const ready = !!u.lastSignInAt || (includePending && !!u.email);
+      if (!ready && !u.firebaseDeletedAt) kept++;
       if (!ready || u.firebaseDeletedAt) continue;
       try { await fb.deleteUser(d.id); } catch (e) { if (!e || e.code !== "auth/user-not-found") continue; }
       await users().doc(d.id).set({ firebaseDeletedAt: now() }, { merge: true });
       deleted++;
     }
-    return { deleted };
+    return { deleted, kept };
   }
 
   return {

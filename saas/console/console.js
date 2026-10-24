@@ -10862,10 +10862,17 @@ async function loadDataBackend() {
   const m = st.migration;
   const running = m && m.state === 'running';
   if (st.backend === 'local') {
+    const purge = st.purge;
     box.innerHTML = checkRowHtml('ok', 'Данные на собственном сервере',
-      `Документов: ${st.docs ?? '—'} · подключено устройств и страниц: ${st.sessions || 0}. Лимиты Firebase на данные больше не тратятся; вход — по-прежнему через Firebase Auth.`
-        + '<br>Вернуть данные в Firestore можно кнопкой справа: сервер перезапустится и снова будет работать с Firestore (изменения, сделанные после переноса, в Firestore не попадут).',
-      '<button type="button" class="btn btn-ghost" id="f-data-rollback" style="width:auto">Вернуть в Firestore</button>');
+      `Документов: ${st.docs ?? '—'} · подключено устройств и страниц: ${st.sessions || 0}. Лимиты Firebase на данные больше не тратятся.`
+        + (purge ? '' : '<br>Вернуть данные в Firestore можно кнопкой справа: сервер перезапустится и снова будет работать с Firestore (изменения, сделанные после переноса, в Firestore не попадут).'),
+      purge ? '' : '<button type="button" class="btn btn-ghost" id="f-data-rollback" style="width:auto">Вернуть в Firestore</button>')
+      + '<div id="sec-auth-backend"></div>'
+      + firestorePurgeRowHtml(purge, st.purgeRunning);
+    loadAuthBackend();
+    if ($('f-fs-purge')) $('f-fs-purge').onclick = startFirestorePurge;
+    box.querySelectorAll('.f-sec-backup-dl').forEach((el) => { el.onclick = () => downloadBackup(el.dataset.name); });
+    if (st.purgeRunning || (purge && purge.phase !== 'done' && !purge.error)) setTimeout(loadDataBackend, 4000);
   } else {
     const last = st.lastBackup;
     box.innerHTML = checkRowHtml(m && m.state === 'error' ? 'bad' : 'warn',
@@ -10899,6 +10906,80 @@ async function loadDataBackend() {
     pollDataBackend();
   };
   if (running) setTimeout(loadDataBackend, 3000);
+}
+
+/** Старая копия данных в Google (Cloud Firestore): удалить после переноса. */
+function firestorePurgeRowHtml(p, running) {
+  if (!p) {
+    return checkRowHtml('warn', 'В Cloud Firestore (Google) осталась копия данных',
+      'Копия на момент переноса: кассы и кабинет её больше не используют. Удаление: сначала полная резервная копия на этот сервер в РФ и её проверка, затем удаление в Google — только того, что попало в копию. На бесплатном тарифе Firebase большая база удаляется за несколько дней, задание продолжается само. Вернуть данные в Firestore после этого будет нельзя.',
+      '<button type="button" class="btn btn-ghost" id="f-fs-purge" style="width:auto">Удалить копию в Google</button>');
+  }
+  const copies = (p.backups || []).map((b) => `<a href="#" class="f-sec-backup-dl" data-name="${esc(b.name)}">${esc(b.name)}</a> (${b.docs})`).join(', ');
+  if (p.phase === 'done') {
+    return checkRowHtml('ok', 'Копия в Google удалена',
+      `${p.finishedAt ? `${esc(new Date(p.finishedAt).toLocaleString('ru-RU'))} · ` : ''}удалено документов: ${p.deleted || 0}. Резервная копия на этом сервере: ${copies || '—'}.`);
+  }
+  const step = p.phase === 'backup' ? 'делаю резервную копию' : p.phase === 'delete' ? `удаляю: ${p.deleted || 0} из ${p.backupDocs || '?'}` : 'проверяю, что в Google ничего не осталось';
+  return checkRowHtml(p.error ? 'warn' : 'unknown', `Удаление копии в Google: ${step}${running ? '…' : ''}`,
+    (p.error ? `${esc(p.error)}<br>` : '') + (copies ? `Резервная копия: ${copies}.` : ''),
+    p.error && !running ? '<button type="button" class="btn btn-ghost" id="f-fs-purge" style="width:auto">Продолжить</button>' : '');
+}
+
+async function startFirestorePurge() {
+  const word = prompt('Удалить копию данных в Cloud Firestore (Google)? Сначала будет сделана и проверена полная резервная копия на этом сервере. Вернуть данные в Firestore потом будет нельзя.\n\nДля подтверждения введите УДАЛИТЬ');
+  if (word === null) return;
+  if (word.trim().toUpperCase() !== 'УДАЛИТЬ') { toast('Не подтверждено — ничего не удалено'); return; }
+  if (!(await reauthenticate('Удаление копии в Google'))) return;
+  try {
+    await callSaasGateway('dataMigrate', { action: 'purgeFirestore', confirm: 'УДАЛИТЬ' }, { forceRefresh: true });
+    toast('Начато: резервная копия, затем удаление');
+  } catch (e) { toast(`Не удалось: ${e?.message || e}`); }
+  loadDataBackend();
+}
+
+/** Вход: Firebase Authentication или свой вход платформы (сервер в РФ). */
+async function loadAuthBackend() {
+  const box = $('sec-auth-backend');
+  if (!box) return;
+  let st;
+  try {
+    st = (await callSaasGateway('authBackend', { action: 'status' })).data;
+  } catch (e) {
+    box.innerHTML = checkRowHtml('unknown', 'Вход: нет ответа сервера', esc(e?.message || String(e)));
+    return;
+  }
+  const s = st.stats || {};
+  if (st.backend !== 'own') {
+    box.innerHTML = checkRowHtml('warn', 'Вход — через Firebase Authentication (Google)',
+      'Свой вход: почта и пароли владельцев, входы устройств и гостей — на этом сервере в РФ. Пользователи переносятся с теми же учётными записями, пароль — при первом входе; кассы и приложения переходят сами (касса — в версии с поддержкой своего входа). Нужна почта платформы (SMTP): письма подтверждения и сброса пароля отправляет этот сервер.'
+        + (st.mail ? '' : '<br><b>Почта платформы не настроена</b> — задайте SMTP_HOST, SMTP_USER, SMTP_PASS в /etc/saas-gateway.env и перезапустите сервис.'),
+      `<button type="button" class="btn btn-primary" id="f-auth-own" style="width:auto"${st.mail ? '' : ' disabled'}>Включить свой вход</button>`);
+  } else {
+    box.innerHTML = checkRowHtml('ok', 'Вход — на собственном сервере',
+      `Учётных записей: ${s.users ?? '—'} · уже входили сюда: ${s.signedInHere ?? '—'} · удалены из Firebase: ${s.firebaseDeleted ?? 0}. `
+        + 'Удаление из Firebase касается только тех, кто уже входил сюда; устройства со старой версией кассы остаются в Firebase, пока не обновятся.',
+      '<button type="button" class="btn btn-ghost" id="f-auth-purge" style="width:auto">Удалить вошедших из Firebase</button>'
+        + (s.firebaseDeleted ? '' : ' <button type="button" class="btn btn-ghost" id="f-auth-firebase" style="width:auto">Вернуть вход Firebase</button>'));
+  }
+  const act = async (action, label, extra = {}) => {
+    if (!(await reauthenticate(label))) return;
+    try {
+      const r = (await callSaasGateway('authBackend', { action, ...extra }, { forceRefresh: true })).data;
+      toast(action === 'enable' ? `Свой вход включён: перенесено ${r.imported?.imported ?? 0} из ${r.imported?.total ?? 0}`
+        : action === 'purgeFirebase' ? `Удалено из Firebase: ${r.deleted}, оставлено до обновления: ${r.kept ?? 0}` : 'Готово');
+    } catch (e) { toast(`Не удалось: ${e?.message || e}`); }
+    loadAuthBackend();
+  };
+  if ($('f-auth-own')) $('f-auth-own').onclick = () => {
+    if (confirm('Включить свой вход платформы? Пользователи Firebase перенесутся с теми же учётными записями.')) act('enable', 'Включение своего входа');
+  };
+  if ($('f-auth-purge')) $('f-auth-purge').onclick = () => {
+    if (confirm('Удалить из Firebase Authentication тех, кто уже входил через свой вход? Вернуться на вход Firebase после этого будет нельзя.')) act('purgeFirebase', 'Удаление пользователей из Firebase');
+  };
+  if ($('f-auth-firebase')) $('f-auth-firebase').onclick = () => {
+    if (confirm('Вернуть вход через Firebase? Свои входы продолжат работать до истечения.')) act('disable', 'Возврат входа Firebase');
+  };
 }
 
 /** После переноса сервер перезапускается — ждём его и перезагружаем панель. */

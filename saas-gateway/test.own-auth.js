@@ -142,10 +142,11 @@ test("перенос из Firebase: тот же uid, пароль проверя
   const fb = fakeFirebase([
     { uid: "OWNER1abcdefghijklmnopqrstu", email: "owner@cafe.ru", emailVerified: true, _password: "old-pass-123" },
     { uid: "DEVICE1abcdefghijklmnopqrst" },
+    { uid: "DEVICE2abcdefghijklmnopqrst" }, // старая версия кассы: вход ещё не сменён
   ]);
   const h = harness({ firebase: fb });
   const imp = await h.auth.importAllFromFirebase();
-  assert.deepStrictEqual(imp, { imported: 2, total: 2 });
+  assert.deepStrictEqual(imp, { imported: 3, total: 3 });
   // Вход по старому паролю: проверка у Firebase, затем свой хеш.
   const r = await h.auth.signIn("owner@cafe.ru", "old-pass-123");
   assert.strictEqual(r.uid, "OWNER1abcdefghijklmnopqrstu");
@@ -162,12 +163,13 @@ test("перенос из Firebase: тот же uid, пароль проверя
   // Регистрация на почту, что есть только в Firebase, — нельзя: это вход.
   fb._users.push({ uid: "OTHERabcdefghijklmnopqrstuv", email: "only@fb.ru", _password: "x-pass-1234", metadata: {}, providerData: [] });
   await assert.rejects(h.auth.signUp("only@fb.ru", "whatever-123"), /уже есть/);
-  // Статистика и удаление из Firebase тех, кто полностью перенесён.
+  // Статистика и удаление из Firebase тех, кто уже входил сюда.
   const st = await h.auth.migrationStats();
   assert.strictEqual(st.withPassword, 1);
+  assert.strictEqual(st.signedInHere, 2);
   const p = await h.auth.purgeFirebase();
-  assert.strictEqual(p.deleted, 2, "владелец с паролем и устройство без почты");
-  assert.deepStrictEqual(fb._users.map((u) => u.uid), ["OTHERabcdefghijklmnopqrstuv"]);
+  assert.deepStrictEqual(p, { deleted: 2, kept: 1 }, "владелец и сменившее вход устройство; несменившее остаётся");
+  assert.deepStrictEqual(fb._users.map((u) => u.uid), ["DEVICE2abcdefghijklmnopqrst", "OTHERabcdefghijklmnopqrstuv"]);
 });
 
 test("фасад Admin Auth: создать, найти по почте, изменить, отключить, удалить", async () => {
