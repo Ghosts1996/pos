@@ -213,6 +213,14 @@ test("бот: подключение по ссылке из кабинета, /i
   await h.call(h.partners.handleAcceptTerms, { ...anna, body: { accept: true } });
   await h.call(h.partners.handleAdminBot, { uid: "sa", body: { token: "123456789:AAAbbbCCCdddEEEfffGGGhhhIIIjjjKKKlll" } });
   assert.ok(h.tg.some((c) => c.method === "setWebhook" && /\/tgHook\/_partners$/.test(c.body.url)));
+  // Оформление: описание (≤512), короткое (≤120), команды со значками, кнопка «Меню».
+  const desc = h.tg.find((c) => c.method === "setMyDescription").body.description;
+  const short = h.tg.find((c) => c.method === "setMyShortDescription").body.short_description;
+  assert.ok(desc.length <= 512 && /партнёрской программы ZalPOS/.test(desc), desc.length);
+  assert.ok(short.length <= 120, short.length);
+  const cmds = h.tg.find((c) => c.method === "setMyCommands").body.commands;
+  assert.ok(cmds.every((c) => /^[a-z]{1,32}$/.test(c.command) && c.description.length <= 256));
+  assert.deepStrictEqual(h.tg.find((c) => c.method === "setChatMenuButton").body, { menu_button: { type: "commands" } });
   const { url } = await h.call(h.partners.handleTgLink, anna);
   const code = url.match(/start=pl_([a-f0-9]+)/)[1];
   const chat = { id: 777, type: "private" };

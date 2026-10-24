@@ -1062,6 +1062,42 @@ function createPartners(deps) {
     }
   }
 
+  // Оформление бота: описание до /start, короткое в профиле, меню команд.
+  const BOT_PROFILE_VER = 2;
+  const BOT_SHORT = "Бот партнёров ZalPOS: клиенты, доход, выплаты и приглашения — в одном чате.";
+  const BOT_DESCRIPTION = [
+    "💼 Бот для менеджеров партнёрской программы ZalPOS.",
+    "",
+    "🎉 сообщает о новых клиентах и их оплатах",
+    "📊 показывает доход за месяц и за всё время",
+    "💸 запрос выплаты в два нажатия и приём чека из «Мой налог»",
+    "📨 приглашения заведений и ваша ссылка для клиентов",
+    "✍️ готовые тексты для владельцев заведений",
+    "",
+    "Чтобы начать, откройте кабинет менеджера на zalpos.ru и нажмите «Подключить Telegram».",
+  ].join("\n");
+  const BOT_COMMANDS = [
+    { command: "income", description: "💼 Мой доход" },
+    { command: "payouts", description: "💸 Выплаты и чеки" },
+    { command: "clients", description: "👥 Мои клиенты" },
+    { command: "invite", description: "📨 Пригласить заведение" },
+    { command: "link", description: "🔗 Моя ссылка для клиентов" },
+    { command: "pitch", description: "✍️ Текст для клиента" },
+    { command: "invites", description: "📋 Мои приглашения" },
+    { command: "help", description: "❓ Что умеет бот" },
+  ];
+  async function ensureBotProfile(token = bot && bot.token, { force = false } = {}) {
+    if (!token) return;
+    const ref = col("partnerSettings").doc("bot");
+    if (!force && ((await ref.get()).data() || {}).profileVer === BOT_PROFILE_VER) return;
+    const quiet = (pr) => pr.catch((e) => { console.error(`partners: оформление бота: ${e.message || e}`); return null; });
+    await quiet(tg("setMyShortDescription", { short_description: BOT_SHORT }, token));
+    await quiet(tg("setMyDescription", { description: BOT_DESCRIPTION }, token));
+    await quiet(tg("setMyCommands", { commands: BOT_COMMANDS, scope: { type: "all_private_chats" } }, token));
+    await quiet(tg("setChatMenuButton", { menu_button: { type: "commands" } }, token));
+    await ref.set({ profileVer: BOT_PROFILE_VER }, { merge: true });
+  }
+
   function botInfo() {
     return bot ? { connected: true, username: bot.username } : { connected: false };
   }
@@ -1106,16 +1142,7 @@ function createPartners(deps) {
     const hookSecret = crypto.randomBytes(24).toString("hex");
     const url = hookBase ? `${hookBase}/${HOOK_ID}` : `${publicUrl}/tgHook/${HOOK_ID}`;
     await tg("setWebhook", { url, secret_token: hookSecret, allowed_updates: ["message", "callback_query"] }, token);
-    await tg("setMyCommands", { commands: [
-      { command: "income", description: "💼 Мой доход" },
-      { command: "clients", description: "👥 Мои клиенты" },
-      { command: "invite", description: "📨 Пригласить заведение" },
-      { command: "link", description: "🔗 Моя ссылка для клиентов" },
-      { command: "pitch", description: "✍️ Текст для клиента" },
-      { command: "invites", description: "📋 Мои приглашения" },
-      { command: "payouts", description: "💸 Мои выплаты" },
-      { command: "help", description: "❓ Что умеет бот" },
-    ] }, token).catch(() => {});
+    await ensureBotProfile(token, { force: true });
     await ref.set({ tokenEnc: encrypt(secretKey(), token), username: me.username || "", hookSecret, connectedAt: ts(now()) }, { merge: true });
     bot = { token, username: me.username || "", hookSecret };
     sendJson(res, 200, { ok: true, bot: botInfo() });
@@ -1178,17 +1205,22 @@ function createPartners(deps) {
   const cabinetUrl = () => `${site}#/partner`;
   const cabinetBtn = (text = "🖥 Открыть кабинет") => ({ text, url: cabinetUrl() });
   const HELP = [
-    "<b>Бот менеджеров ZalPOS</b>",
+    "💼 <b>Бот менеджеров ZalPOS</b>",
     "",
-    `${BTN.income} — начислено, к выплате и выплачено`,
-    `${BTN.clients} — ваши заведения и их оплаты`,
-    `${BTN.invite} — письмо владельцу заведения`,
-    `${BTN.link} — ссылка для клиентов, её можно переслать`,
-    `${BTN.pitch} — готовое сообщение владельцу со ссылкой`,
-    `${BTN.invites} — кому отправлены письма и кто зарегистрировался`,
-    `${BTN.payouts} — запросить выплату, история выплат и чеки`,
+    "<b>Деньги</b>",
+    `${BTN.income} — за месяц, всего, к выплате`,
+    `${BTN.payouts} — запросить выплату, чеки «Мой налог»`,
     "",
-    "Бот сам сообщит о новых клиентах, оплатах и выплатах, а за 3 дня до конца подписки клиента — напомнит предложить продление.",
+    "<b>Клиенты</b>",
+    `${BTN.clients} — заведения, оплаты, сроки подписки`,
+    `${BTN.invites} — кто получил письмо и зарегистрировался`,
+    "",
+    "<b>Привлечь новых</b>",
+    `${BTN.invite} — письмо владельцу (с его согласия)`,
+    `${BTN.link} — ссылка, которую можно переслать`,
+    `${BTN.pitch} — готовое сообщение со ссылкой`,
+    "",
+    "<i>Бот сам пишет о новых клиентах, оплатах и выплатах и за 3 дня до конца подписки клиента напомнит предложить продление.</i>",
   ].join("\n");
   const ASK_EMAIL = "📨 <b>Пригласить заведение</b>\n\nНапишите почту владельца и, через пробел, название заведения:\n<code>owner@cafe.ru Кафе Лето</code>";
   const askingEmail = new Map(); // chatId → когда спросили почту
@@ -1558,6 +1590,7 @@ function createPartners(deps) {
 
   async function start() {
     await loadBot().catch((e) => console.error(`partners: бот: ${e.message || e}`));
+    ensureBotProfile().catch(() => {});
     sweepInvites().catch(() => {});
     remindRenewals().catch(() => {});
     const t = setInterval(() => {

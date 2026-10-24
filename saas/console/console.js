@@ -7443,7 +7443,7 @@ function watchAdminPartners() {
       <div class="card">
         <b>Telegram-бот менеджеров</b>
         ${bot.connected ? `<p class="small">✓ Подключён: @${esc(bot.username)}. Менеджеры подключают его кнопкой в своём кабинете.</p><button class="btn btn-ghost" id="f-pa-bot-off" style="width:auto">Отключить</button>`
-          : `<p class="small muted">Создайте бота в @BotFather (команда /newbot), вставьте токен. Бот сообщает менеджерам о новых клиентах и оплатах, принимает /invite, /clients, /income, /link.</p>
+          : `<p class="small muted">Создайте бота в @BotFather (команда /newbot), вставьте токен. Бот сообщает менеджерам о новых клиентах, оплатах и выплатах; приглашения, доход, выплаты и чеки — кнопками. Описание и меню бот оформит сам; аватарку поставьте в @BotFather → /setuserpic.</p>
             <div class="row" style="gap:8px;flex-wrap:wrap"><input id="f-pa-bot-token" class="grow" placeholder="123456789:AA…" autocomplete="off" style="margin:0;min-width:220px"><button class="btn btn-ghost" id="f-pa-bot-on" style="width:auto">Подключить</button></div>`}
       </div>
       <div class="card">
