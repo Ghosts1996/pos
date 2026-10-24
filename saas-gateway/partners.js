@@ -645,7 +645,7 @@ function createPartners(deps) {
     let mailError = mailer() ? "" : "почта платформы (SMTP) не настроена";
     if (mailer() && body.sendWelcome !== false) {
       try {
-        const link = await auth().generatePasswordResetLink(email, { url: `${site}#/partner` });
+        const link = letters.brandAuthLink(await auth().generatePasswordResetLink(email, { url: `${site}#/partner` }), site);
         await mailer().send({ to: email, ...letters.partnerWelcomeLetter({ name, link, siteUrl: site }) });
         mailed = true;
       } catch (e) {
@@ -1376,8 +1376,7 @@ function createPartners(deps) {
       // Письмо на почту менеджера: если Telegram подключил не он — заметит сразу.
       const pd = d.data();
       if (mailer() && pd.email) {
-        const text = `К вашему кабинету менеджера ZalPOS подключён Telegram${msg.chat.username ? ` @${msg.chat.username}` : ""}. Теперь кабинет открывается из бота без пароля.\n\nЕсли это были не вы — войдите на ${site}#/partner по паролю, нажмите «Переподключить» и напишите в поддержку.`;
-        mailer().send({ to: pd.email, subject: "Telegram подключён к кабинету менеджера ZalPOS", text, html: text.split("\n").map((l) => `<p>${h(l)}</p>`).join("") })
+        mailer().send({ to: pd.email, ...letters.partnerTelegramLetter({ username: msg.chat.username || "", siteUrl: site }) })
           .catch((e) => console.error(`partners: письмо о Telegram: ${e.message || e}`));
       }
       return say(chatId, `✅ Готово! Telegram подключён.\n\n${HELP}\n\nКнопки — внизу чата.`, { reply_markup: MENU });

@@ -35,7 +35,10 @@ const tls = require("tls");
 const dns = require("dns");
 const net = require("net");
 const zlib = require("zlib");
-const { authEmailLetter, passwordLetter, createMailer, AUTH_EMAIL_TYPES } = require("./auth-email");
+const {
+  authEmailLetter, passwordLetter, superAdminGrantedLetter, superAdminRevokedLetter, passwordChangedLetter, brandAuthLink,
+  createMailer, AUTH_EMAIL_TYPES,
+} = require("./auth-email");
 const { createGuestPay, onlinePaySettings, credsPrint, sellerReady } = require("./guest-pay");
 const requisites = require("./requisites");
 const { createGuestDelivery } = require("./guest-delivery");
@@ -5750,6 +5753,7 @@ async function handleGrantSuperAdmin(req, res) {
     grantedByEmail: decoded.email || null,
   });
   await writeSecurityEvent(req, decoded, "superAdminGranted", { targetUid: user.uid, targetEmail: email });
+  notifyByMail(email, superAdminGrantedLetter({ byEmail: decoded.email || "", siteUrl: CONSOLE_URL }), "доступ к панели");
   sendJson(res, 200, { ok: true, uid: user.uid });
 }
 
@@ -5774,6 +5778,7 @@ async function handleRevokeSuperAdmin(req, res) {
     console.error(`revokeRefreshTokens(${uid}) не удался:`, e.message || e);
   }
   await writeSecurityEvent(req, decoded, "superAdminRevoked", { targetUid: uid, targetEmail: snap.data().email || null });
+  notifyByMail(snap.data().email, superAdminRevokedLetter({ siteUrl: CONSOLE_URL }), "доступ к панели закрыт");
   sendJson(res, 200, { ok: true });
 }
 
@@ -7391,9 +7396,18 @@ async function handleSendAuthEmail(req, res) {
     }
     throw e;
   }
-  const letter = authEmailLetter(type, link, { siteUrl: CONSOLE_URL });
+  // Ссылка ведёт на страницы кабинета на zalpos.ru, а не на страницу Google.
+  const letter = authEmailLetter(type, brandAuthLink(link, CONSOLE_URL), { siteUrl: CONSOLE_URL });
   await authMailer.send({ to: email, ...letter });
   sendJson(res, 200, { ok: true });
+}
+
+/** Письмо-уведомление: не дошло — не мешает самому действию. */
+function notifyByMail(to, letter, what) {
+  if (!to) return;
+  if (authMailer === undefined) authMailer = createMailer();
+  if (!authMailer) return;
+  authMailer.send({ to, ...letter }).catch((e) => console.error(`письмо «${what}»: ${String(e.message || e).slice(0, 160)}`));
 }
 
 // ------------------------------------------------------------- свой вход (/auth/*)
@@ -7460,6 +7474,7 @@ async function handleAuth(req, res) {
       authLimit(`ap:${ip}`, 30, 15 * 60 * 1000);
       const mode = String(body.mode || "");
       const r = await ownAuth().applyCode(mode, String(body.code || ""), { password: body.password });
+      if (mode === "resetPassword") notifyByMail(r.email, passwordChangedLetter({ siteUrl: CONSOLE_URL }), "пароль изменён");
       return sendJson(res, 200, r);
     }
     if (action === "reauth") {
@@ -7474,6 +7489,8 @@ async function handleAuth(req, res) {
         return sendJson(res, 401, { error: "Для смены пароля войдите заново", code: "auth/requires-recent-login" });
       }
       await ownAuth().changePassword(decoded.uid, String(body.password || ""));
+      // Пароль, созданный кабинетом сразу после входа по ссылке, приходит отдельным письмом.
+      if (body.notify !== false) notifyByMail(decoded.email, passwordChangedLetter({ siteUrl: CONSOLE_URL }), "пароль изменён");
       return sendJson(res, 200, { ok: true });
     }
     if (action === "me") {

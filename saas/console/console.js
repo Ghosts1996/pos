@@ -385,10 +385,10 @@ async function callSaasGateway(path, data, { forceRefresh = false } = {}) {
 /** Письмо входа, смены пароля или подтверждения почты в оформлении ZalPOS
  *  (handleSendAuthEmail). Сервер не смог — отправляет Firebase своим
  *  шаблоном (fallback). Упор в лимит (429) не обходим. */
-async function sendAuthEmail(type, email, fallback) {
+async function sendAuthEmail(type, email, fallback, continueHashPath = '#/') {
   try {
     await callSaasGateway('sendAuthEmail', {
-      type, email, continueUrl: `${location.origin}${location.pathname}#/`,
+      type, email, continueUrl: `${location.origin}${location.pathname}${continueHashPath}`,
     });
   } catch (e) {
     if (e?.status === 429) throw e;
@@ -1026,7 +1026,7 @@ function genReadablePassword() {
  *  при ошибке auth/requires-recent-login вызывающий просит войти заново. */
 async function issueNewPassword(user) {
   const pass = genReadablePassword();
-  await updatePassword(user, pass);
+  await updatePassword(user, pass, { notify: false });
   try { await setDoc(doc(state.db, 'users', user.uid), { passwordSet: true }, { merge: true }); } catch (_) {}
   let emailed = false;
   try {
@@ -1119,7 +1119,7 @@ async function boot() {
   }
 
   // Ссылки из писем своего входа: подтверждение почты и новый пароль.
-  const action = isOwnAuth(state.auth) ? actionFromUrl(window.location.href) : null;
+  const action = actionFromUrl(window.location.href);
   if (action && action.mode !== 'signIn') await handleAuthAction(action);
 
   // Вход по ссылке из письма: пароль не нужен, клик по ссылке и так
@@ -1182,13 +1182,28 @@ function continueHash(url) {
 async function handleAuthAction(action) {
   const back = continueHash(action.continueUrl);
   if (action.mode === 'verifyEmail') {
+    screenEl().innerHTML = '<div class="brand">ZalPOS</div><div class="spinner"></div>';
+    let ok = true;
+    let msg = '';
     try {
       await applyActionCode(state.auth, action.code);
-      toast('Почта подтверждена');
     } catch (e) {
-      toast(e?.code === 'auth/too-many-requests' ? authErrorMessage(e) : 'Ссылка подтверждения устарела или уже использована — запросите новую в кабинете');
+      ok = false;
+      msg = e?.code === 'auth/too-many-requests' || e?.code === 'auth/network-request-failed'
+        ? authErrorMessage(e)
+        : 'Ссылка устарела или уже использована. Войдите в кабинет — там можно отправить письмо ещё раз.';
     }
-    history.replaceState(null, '', location.pathname + back);
+    await new Promise((done) => {
+      screenEl().innerHTML = `
+        <div class="brand">ZalPOS</div>
+        <h1>${ok ? 'Почта подтверждена' : 'Не удалось подтвердить почту'}</h1>
+        <p class="muted">${ok ? 'Готово — адрес подтверждён. На него будут приходить ссылки для входа, уведомления об оплате и важные события заведения.' : esc(msg)}</p>
+        <button class="btn btn-primary" id="f-verify-next">${ok ? 'Продолжить' : 'Войти в кабинет'}</button>`;
+      $('f-verify-next').onclick = () => {
+        history.replaceState(null, '', location.pathname + (ok ? back : '#/login'));
+        done();
+      };
+    });
     return;
   }
   if (action.mode !== 'resetPassword') {
@@ -1383,7 +1398,7 @@ function setSupportChat(ctx) {
 const SUPPORT_PAGE_NAMES = {
   '#/guide': 'Инструкция', '#/faq': 'Частые вопросы', '#/status': 'Статус сервиса', '#/demo-photos': 'Демо',
   '#/legal/offer': 'Оферта', '#/legal/privacy': 'Конфиденциальность', '#/legal/payment': 'Оплата и возврат',
-  '#/legal/consent': 'Согласие', '#/login': 'Вход', '#/signup': 'Регистрация', '#/onboarding': 'Создание заведения',
+  '#/legal/consent': 'Согласие', '#/login': 'Вход', '#/signup': 'Регистрация', '#/forgot': 'Восстановление пароля', '#/onboarding': 'Создание заведения',
 };
 /** Режим чата для текущей страницы; кабинет уточняет раздел сам (draw). */
 function supportChatForRoute() {
@@ -1398,6 +1413,12 @@ function supportChatForRoute() {
 }
 
 function route() {
+  // Ссылка из письма открылась в уже открытой вкладке (сменился только хеш) —
+  // разбирается она при запуске страницы.
+  if (location.hash.startsWith('#/auth?')) {
+    if (actionFromUrl(location.href)) { location.reload(); return; }
+    history.replaceState(null, '', location.pathname + '#/');
+  }
   queueMicrotask(supportChatForRoute);
   // Панель платформы уже открыта для этого входа: route() зовётся снова, пока
   // догружаются заведения, проверка менеджера и флаг платформы. Ничего не
@@ -1439,6 +1460,7 @@ function route() {
       authMode = location.hash === '#/signup' ? 'signup' : 'login';
       return screenAuth();
     }
+    if (location.hash === '#/forgot') return screenForgot();
     return screenLanding();
   }
   if (location.hash.startsWith('#/invoice/')) {
@@ -3241,6 +3263,88 @@ function screenDemoPhotos() {
   });
 }
 
+// ---------- ВОССТАНОВЛЕНИЕ ПАРОЛЯ ----------
+
+/** «Забыли пароль?»: почта → письмо со ссылкой. Есть ли такой аккаунт, не
+ *  сообщаем (иначе по форме можно перебирать чужие адреса) — ответ один. */
+function screenForgot(sentTo = '') {
+  let email = sentTo;
+  if (!email) { try { email = sessionStorage.getItem('zalpos-forgot-email') || ''; } catch (_) {} }
+  if (!sentTo) {
+    screenEl().innerHTML = `
+      <div class="brand">ZalPOS</div>
+      <h1>Восстановление пароля</h1>
+      <p class="muted">Укажите почту, с которой входите в ZalPOS. Пришлём ссылку — по ней вы зададите новый пароль.</p>
+      <div class="card">
+        <label class="field"><span>Email</span>
+          <input id="f-forgot-email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" value="${esc(email)}">
+        </label>
+        <div id="f-forgot-error" class="small" style="color:var(--danger);margin-bottom:10px"></div>
+        <button class="btn btn-primary" id="f-forgot-send">Отправить ссылку</button>
+      </div>
+      <p class="small center muted"><a href="#/login">← Вернуться ко входу</a></p>`;
+    const input = $('f-forgot-email');
+    if (!email) input.focus();
+    const send = async () => {
+      const value = input.value.trim().toLowerCase();
+      const errEl = $('f-forgot-error');
+      errEl.textContent = '';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)) { errEl.textContent = 'Проверьте адрес почты'; input.focus(); return; }
+      $('f-forgot-send').disabled = true;
+      $('f-forgot-send').textContent = 'Отправляем…';
+      try {
+        await sendAuthEmail('passwordReset', value, () => sendPasswordResetEmail(state.auth, value), '#/login');
+        try { sessionStorage.setItem('zalpos-forgot-email', value); } catch (_) {}
+        screenForgot(value);
+      } catch (e) {
+        // Неизвестный адрес — тот же ответ, что и для известного.
+        if (e?.code === 'auth/user-not-found' || e?.code === 'auth/invalid-email') { screenForgot(value); return; }
+        $('f-forgot-send').disabled = false;
+        $('f-forgot-send').textContent = 'Отправить ссылку';
+        errEl.textContent = e?.status === 429 ? 'Слишком много запросов — попробуйте через несколько минут' : authErrorMessage(e);
+      }
+    };
+    $('f-forgot-send').onclick = send;
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+    return;
+  }
+  screenEl().innerHTML = `
+    <div class="brand">ZalPOS</div>
+    <h1>Проверьте почту</h1>
+    <p class="muted">Если в ZalPOS есть аккаунт с адресом <b>${esc(sentTo)}</b>, на него отправлено письмо со ссылкой для смены пароля. Ссылка действует 1 час.</p>
+    <div class="card">
+      <p class="small muted" style="margin:0 0 14px">Письма нет через пару минут? Проверьте папки «Спам» и «Промоакции» и что адрес написан верно.</p>
+      <button class="btn btn-ghost" id="f-forgot-again" disabled>Отправить ещё раз</button>
+      <p class="small center muted" style="margin:14px 0 0"><a href="#/forgot" id="f-forgot-other">Указать другую почту</a></p>
+    </div>
+    <p class="small center muted"><a href="#/login">← Вернуться ко входу</a></p>`;
+  const again = $('f-forgot-again');
+  let left = 60;
+  const tick = () => {
+    if (!document.body.contains(again)) return;
+    if (left <= 0) { again.disabled = false; again.textContent = 'Отправить ещё раз'; return; }
+    again.textContent = `Отправить ещё раз · ${left} с`;
+    left--;
+    setTimeout(tick, 1000);
+  };
+  tick();
+  again.onclick = async () => {
+    again.disabled = true;
+    try {
+      await sendAuthEmail('passwordReset', sentTo, () => sendPasswordResetEmail(state.auth, sentTo), '#/login');
+      toast('Письмо отправлено ещё раз');
+    } catch (e) {
+      if (e?.code !== 'auth/user-not-found') toast(e?.status === 429 ? 'Слишком много запросов — попробуйте позже' : authErrorMessage(e));
+    }
+    screenForgot(sentTo);
+  };
+  $('f-forgot-other').onclick = (e) => {
+    e.preventDefault();
+    try { sessionStorage.removeItem('zalpos-forgot-email'); } catch (_) {}
+    screenForgot();
+  };
+}
+
 // ---------- ВХОД / РЕГИСТРАЦИЯ ----------
 
 let authMode = 'login'; // 'login' | 'signup' — держим отдельно от state: это выбор экрана, а не данные аккаунта.
@@ -3259,7 +3363,7 @@ function screenAuth() {
         <label class="field"><span>Пароль</span>
           <input id="f-pass" type="password" autocomplete="current-password" placeholder="Минимум 8 символов">
         </label>
-        <p class="small center muted" style="margin:-6px 0 14px"><a href="#" id="f-forgot">Забыли пароль?</a></p>
+        <p class="small center muted" style="margin:-6px 0 14px"><a href="#/forgot" id="f-forgot">Забыли пароль?</a></p>
       ` : `
         <p class="small muted" style="margin-bottom:14px">Пароль придумывать не
         нужно — сразу после регистрации пришлём на почту ссылку, чтобы задать
@@ -3293,24 +3397,10 @@ function screenAuth() {
     screenAuth();
   };
 
+  // Введённую почту — на страницу восстановления, чтобы не вводить заново.
   if ($('f-forgot')) {
-    $('f-forgot').onclick = async (e) => {
-      e.preventDefault();
-      const email = $('f-email').value.trim();
-      const errEl = $('f-error');
-      errEl.style.color = 'var(--danger)';
-      errEl.textContent = '';
-      if (!email) {
-        errEl.textContent = 'Сначала введите свой email выше';
-        return;
-      }
-      try {
-        await sendAuthEmail('passwordReset', email, () => sendPasswordResetEmail(state.auth, email));
-        errEl.style.color = 'var(--primary)';
-        errEl.textContent = `Письмо со ссылкой для сброса пароля отправлено на ${email}`;
-      } catch (e2) {
-        errEl.textContent = authErrorMessage(e2);
-      }
+    $('f-forgot').onclick = () => {
+      try { sessionStorage.setItem('zalpos-forgot-email', $('f-email').value.trim()); } catch (_) {}
     };
   }
 
@@ -7581,20 +7671,22 @@ function screenPartnerTerms() {
 
 // ---------- ПАНЕЛЬ ПЛАТФОРМЫ: МЕНЕДЖЕРЫ ----------
 
-/** Письмо менеджеру «задайте пароль и войдите» — его отправляет сам Firebase
- *  (своя почта платформы не нужна): по ссылке менеджер задаёт пароль и
- *  попадает в кабинет менеджера. Возвращает текст для уведомления. */
+/** Письмо менеджеру «задайте пароль и войдите» — через почту платформы, в
+ *  оформлении ZalPOS (почты нет — запасным путём через Firebase): по ссылке
+ *  менеджер задаёт пароль и попадает в кабинет менеджера. Возвращает текст
+ *  для уведомления. */
 async function sendPartnerLoginLetter(email) {
-  const settings = { url: `${location.origin}/#/partner` };
   try {
-    try {
-      await sendPasswordResetEmail(state.auth, email, settings);
-    } catch (e) {
-      // Адрес возврата не в списке разрешённых доменов Firebase — письмо без него.
-      if (e?.code !== 'auth/unauthorized-continue-uri' && e?.code !== 'auth/invalid-continue-uri') throw e;
-      await sendPasswordResetEmail(state.auth, email);
-    }
-    return `Письмо для входа отправлено на ${email} — тема «Сброс пароля». По ссылке менеджер задаст пароль и войдёт на zalpos.ru/#/partner. Не пришло за 5 минут — пусть проверит «Спам» и «Промоакции».`;
+    await sendAuthEmail('passwordReset', email, async () => {
+      try {
+        await sendPasswordResetEmail(state.auth, email, { url: `${location.origin}/#/partner` });
+      } catch (e) {
+        // Адрес возврата не в списке разрешённых доменов Firebase — письмо без него.
+        if (e?.code !== 'auth/unauthorized-continue-uri' && e?.code !== 'auth/invalid-continue-uri') throw e;
+        await sendPasswordResetEmail(state.auth, email);
+      }
+    }, '#/partner');
+    return `Письмо для входа отправлено на ${email} — тема «Новый пароль для ZalPOS». По ссылке менеджер задаст пароль и войдёт на zalpos.ru/#/partner. Не пришло за 5 минут — пусть проверит «Спам» и «Промоакции».`;
   } catch (e) {
     return `Письмо не отправилось: ${e?.message || e}. Менеджер может войти сам: zalpos.ru/#/partner → «Забыли пароль?».`;
   }

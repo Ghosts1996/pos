@@ -333,14 +333,22 @@ export async function signInWithEmailLink(auth, email, href) {
 
 /** Подтверждение почты по коду из ссылки. */
 export async function applyActionCode(auth, code) {
-  if (!isOwn(auth)) return FA.applyActionCode(auth, code);
+  if (!isOwn(auth)) {
+    await FA.applyActionCode(auth, code);
+    if (auth.currentUser) await auth.currentUser.reload().catch(() => {});
+    return;
+  }
   await auth._post('/auth/apply', { mode: 'verifyEmail', code });
   if (auth.currentUser) await auth.currentUser.reload().catch(() => {});
 }
 
 /** Новый пароль по коду из письма. Возвращает почту аккаунта. */
 export async function confirmPasswordReset(auth, code, newPassword) {
-  if (!isOwn(auth)) return FA.confirmPasswordReset(auth, code, newPassword);
+  if (!isOwn(auth)) {
+    const email = await FA.verifyPasswordResetCode(auth, code).catch(() => null);
+    await FA.confirmPasswordReset(auth, code, newPassword);
+    return email;
+  }
   const r = await auth._post('/auth/apply', { mode: 'resetPassword', code, password: newPassword });
   return r.email || null;
 }
@@ -357,7 +365,8 @@ export async function reauthenticateWithCredential(user, cred) {
   return auth._signedIn(r, { email: user.email, createdAt: auth._session && auth._session.createdAt, quiet: true });
 }
 
-export async function updatePassword(user, password) {
+/** notify: false — без письма «Пароль изменён» (пароль и так уходит письмом). */
+export async function updatePassword(user, password, { notify = true } = {}) {
   if (!user || !isOwn(user._auth)) return FA.updatePassword(user, password);
-  await user._auth._post('/auth/password', { password }, true);
+  await user._auth._post('/auth/password', { password, notify }, true);
 }

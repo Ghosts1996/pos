@@ -3,10 +3,9 @@
 /**
  * Письма входа, смены пароля и подтверждения почты в оформлении ZalPOS.
  *
- * Firebase отправляет такие письма своим шаблоном, текст которого в его
- * консоли не меняется. Поэтому ссылку делает Firebase Admin (ровно ту же,
- * что прислал бы сам Firebase), а письмо уходит через SMTP платформы —
- * см. handleSendAuthEmail в server.js.
+ * Ссылку делает вход платформы (свой или Firebase Admin), письмо уходит
+ * через SMTP платформы — см. handleSendAuthEmail в server.js. Ссылки
+ * Firebase ведут на страницы самого кабинета (brandAuthLink).
  *
  * Вёрстка — таблицами и встроенными стилями: так письмо одинаково
  * выглядит в Яндекс Почте, Mail.ru, Gmail и Outlook.
@@ -99,6 +98,97 @@ function partnerWelcomeLetter({ name, link, siteUrl = "https://zalpos.ru/" }) {
   });
 }
 
+/** Уведомление о безопасности: выданы права администратора платформы. */
+function superAdminGrantedLetter({ byEmail = "", siteUrl = "https://zalpos.ru/" } = {}) {
+  return renderLetter({
+    subject: "Доступ к панели платформы ZalPOS",
+    title: "Вам открыт доступ к панели платформы",
+    lead: `${byEmail ? `Администратор ${byEmail}` : "Администратор платформы"} выдал вашей учётной записи права администратора платформы ZalPOS: заведения, тарифы, менеджеры, поддержка и безопасность.`,
+    button: "Открыть панель",
+    link: `${siteUrl}#/admin`,
+    note: "Если вы не ожидали этого письма, ответьте в поддержку в личном кабинете — доступ снимут. Никому не сообщайте пароль: сотрудники ZalPOS его не спрашивают.",
+    siteUrl,
+    hideRawLink: true,
+  });
+}
+
+/** Уведомление о безопасности: права администратора платформы сняты. */
+function superAdminRevokedLetter({ siteUrl = "https://zalpos.ru/" } = {}) {
+  return renderLetter({
+    subject: "Доступ к панели платформы ZalPOS закрыт",
+    title: "Доступ к панели платформы закрыт",
+    lead: "Права администратора платформы ZalPOS для вашей учётной записи сняты, открытые сеансы завершены. Ваши заведения работают как раньше — в личный кабинет войдите заново.",
+    note: "Если это ошибка, обратитесь к администратору платформы.",
+    siteUrl,
+  });
+}
+
+/** Уведомление о безопасности: к кабинету менеджера подключили Telegram. */
+function partnerTelegramLetter({ username = "", siteUrl = "https://zalpos.ru/" } = {}) {
+  return renderLetter({
+    subject: "Telegram подключён к кабинету менеджера ZalPOS",
+    title: "Подключён Telegram",
+    lead: `К вашему кабинету менеджера ZalPOS подключён Telegram${username ? ` @${username}` : ""}. Теперь кабинет открывается из бота без пароля.`,
+    button: "Открыть кабинет",
+    link: `${siteUrl}#/partner`,
+    note: "Если это были не вы — войдите в кабинет по паролю, нажмите «Переподключить» и напишите в поддержку.",
+    siteUrl,
+    hideRawLink: true,
+  });
+}
+
+/** Уведомление о безопасности: пароль изменён. */
+function passwordChangedLetter({ siteUrl = "https://zalpos.ru/" } = {}) {
+  return renderLetter({
+    subject: "Пароль ZalPOS изменён",
+    title: "Пароль изменён",
+    lead: "Пароль для входа в ZalPOS только что изменён. Входы на других устройствах завершены — там нужно войти заново.",
+    button: "Войти в ZalPOS",
+    link: `${siteUrl}#/login`,
+    note: "Если вы не меняли пароль, сразу восстановите его по ссылке «Забыли пароль?» на странице входа и напишите в поддержку.",
+    siteUrl,
+    hideRawLink: true,
+  });
+}
+
+/**
+ * Ссылка Firebase (…firebaseapp.com/__/auth/action?mode=…&oobCode=…) →
+ * страница самого кабинета: смена пароля и подтверждение почты открываются
+ * в оформлении ZalPOS на zalpos.ru, без страницы Google. Свои ссылки
+ * платформы (#/auth?…) не меняются.
+ */
+function brandAuthLink(link, siteUrl = "https://zalpos.ru/") {
+  let u;
+  try { u = new URL(String(link)); } catch (_) { return link; }
+  if (!u.pathname.endsWith("/__/auth/action")) return link;
+  const mode = u.searchParams.get("mode");
+  const code = u.searchParams.get("oobCode");
+  if (!mode || !code) return link;
+  const base = String(siteUrl).replace(/\/?$/, "/");
+  let cont = null;
+  try { cont = new URL(u.searchParams.get("continueUrl") || base); } catch (_) { cont = new URL(base); }
+  if (mode === "signIn") {
+    // Вход по ссылке Firebase узнаёт по параметрам запроса; хеш — экран кабинета.
+    const q = new URLSearchParams({ apiKey: u.searchParams.get("apiKey") || "", oobCode: code, mode: "signIn", lang: "ru" });
+    return `${cont.origin}${cont.pathname}?${q}${cont.hash || "#/"}`;
+  }
+  if (mode === "resetPassword" || mode === "verifyEmail") {
+    const back = u.searchParams.get("continueUrl");
+    return `${base}#/auth?mode=${mode}&code=${encodeURIComponent(code)}${back ? `&continueUrl=${encodeURIComponent(back)}` : ""}`;
+  }
+  return link;
+}
+
+// Цвета и шрифты — как у сайта (saas/console/console.css): бумага, медь,
+// чернильная кнопка, заголовки с засечками. Шрифты не подгружаем (письмо не
+// должно ходить на сторонние серверы): Cormorant, если установлен, иначе Georgia.
+const C = {
+  bg: "#F3EEE6", card: "#FBF8F3", border: "#DFD5C5", text: "#1D1A16", muted: "#736A5D",
+  primary: "#A4502A", soft: "#F1E1D3", ink: "#1D1A16", onInk: "#FBF8F3", faint: "#A99E8E",
+};
+const SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif";
+const SERIF = "'Cormorant Garamond',Cormorant,Georgia,'Times New Roman',serif";
+
 function renderLetter({ subject, title, lead, code, button, link, note, siteUrl, hideRawLink = false, footer = null }) {
   const l = { subject, title, lead, button, note };
   const site = siteUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
@@ -107,10 +197,8 @@ function renderLetter({ subject, title, lead, code, button, link, note, siteUrl,
     "",
     l.lead,
     ...(code ? ["", code] : []),
-    "",
-    `${l.button}: ${link}`,
-    "",
-    l.note,
+    ...(button && link ? ["", `${l.button}: ${link}`] : []),
+    ...(l.note ? ["", l.note] : []),
     ...(footer ? ["", `${footer.text}: ${footer.link}`] : []),
     "",
     "—",
@@ -118,48 +206,52 @@ function renderLetter({ subject, title, lead, code, button, link, note, siteUrl,
     "Письмо отправлено автоматически, отвечать на него не нужно.",
   ].join("\n");
 
+  const buttonHtml = button && link ? `
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 4px;">
+              <tr>
+                <td align="center" bgcolor="${C.ink}" style="border-radius:12px;">
+                  <a href="${esc(link)}" target="_blank" style="display:inline-block;padding:15px 30px;font-family:${SANS};font-size:16px;font-weight:600;color:${C.onInk};text-decoration:none;border-radius:12px;">${esc(l.button)}</a>
+                </td>
+              </tr>
+            </table>` : "";
+
   const html = `<!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
 <title>${esc(l.subject)}</title>
 </head>
-<body style="margin:0;padding:0;background:#EEF2F8;">
+<body style="margin:0;padding:0;background:${C.bg};">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(l.lead)}</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#EEF2F8;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${C.bg};">
   <tr>
-    <td align="center" style="padding:32px 12px;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;">
+    <td align="center" style="padding:36px 14px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:540px;">
         <tr>
-          <td style="background:#0B1630;border-radius:16px 16px 0 0;padding:22px 32px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;">
-            <span style="font-size:22px;font-weight:800;color:#FFFFFF;letter-spacing:0.2px;">Zal<span style="color:#59A6FF;">POS</span></span>
+          <td style="padding:0 6px 22px;">
+            <div style="font-family:${SERIF};font-size:30px;font-weight:600;line-height:1;color:${C.text};letter-spacing:0.2px;">Zal<i style="color:${C.primary};">POS</i></div>
+            <div style="width:28px;height:1px;line-height:1px;font-size:1px;background:${C.primary};margin-top:12px;">&nbsp;</div>
           </td>
         </tr>
         <tr>
-          <td style="background:#FFFFFF;border-radius:0 0 16px 16px;padding:32px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#16213A;">
-            <h1 style="margin:0 0 12px;font-size:22px;line-height:1.3;font-weight:700;color:#0B1630;">${esc(l.title)}</h1>
-            <p style="margin:0 0 26px;font-size:16px;line-height:1.55;color:#3A4763;">${esc(l.lead)}</p>
-            ${code ? `<div style="margin:0 0 26px;padding:16px;border-radius:12px;background:#EEF2F8;text-align:center;font-family:Menlo,Consolas,'Courier New',monospace;font-size:22px;font-weight:700;letter-spacing:1px;color:#0B1630;">${esc(code)}</div>` : ""}
-            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-              <tr>
-                <td align="center" bgcolor="#2F6FED" style="border-radius:12px;">
-                  <a href="${esc(link)}" target="_blank" style="display:inline-block;padding:15px 30px;font-size:16px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:12px;">${esc(l.button)}</a>
-                </td>
-              </tr>
-            </table>
-            <p style="margin:26px 0 0;font-size:14px;line-height:1.5;color:#5B6784;">${esc(l.note)}</p>
-            ${footer ? `<p style="margin:14px 0 0;font-size:13px;line-height:1.5;"><a href="${esc(footer.link)}" target="_blank" style="color:#5B6784;">${esc(footer.text)}</a></p>` : ""}
-            ${hideRawLink ? "" : `<p style="margin:22px 0 0;padding-top:18px;border-top:1px solid #E3E8F2;font-size:12px;line-height:1.5;color:#8A94AD;">
+          <td style="background:${C.card};border:1px solid ${C.border};border-radius:16px;padding:34px 32px 30px;font-family:${SANS};color:${C.text};">
+            <h1 style="margin:0 0 14px;font-family:${SERIF};font-size:30px;line-height:1.12;font-weight:600;color:${C.text};">${esc(l.title)}</h1>
+            <p style="margin:0 0 26px;font-size:16px;line-height:1.6;color:${C.muted};">${esc(l.lead)}</p>
+            ${code ? `<div style="margin:0 0 26px;padding:16px;border-radius:12px;background:${C.soft};text-align:center;font-family:Menlo,Consolas,'Courier New',monospace;font-size:22px;font-weight:700;letter-spacing:1px;color:${C.text};">${esc(code)}</div>` : ""}${buttonHtml}
+            ${l.note ? `<p style="margin:24px 0 0;font-size:14px;line-height:1.55;color:${C.muted};">${esc(l.note)}</p>` : ""}
+            ${footer ? `<p style="margin:14px 0 0;font-size:13px;line-height:1.5;"><a href="${esc(footer.link)}" target="_blank" style="color:${C.muted};">${esc(footer.text)}</a></p>` : ""}
+            ${hideRawLink || !link || !button ? "" : `<p style="margin:24px 0 0;padding-top:18px;border-top:1px solid ${C.border};font-size:12px;line-height:1.55;color:${C.faint};">
               Кнопка не открывается? Скопируйте ссылку в адресную строку браузера:<br>
-              <a href="${esc(link)}" target="_blank" style="color:#2F6FED;word-break:break-all;">${esc(link)}</a>
+              <a href="${esc(link)}" target="_blank" style="color:${C.primary};word-break:break-all;">${esc(link)}</a>
             </p>`}
           </td>
         </tr>
         <tr>
-          <td align="center" style="padding:20px 12px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:12px;line-height:1.5;color:#8A94AD;">
-            ZalPOS — касса и управление заведением · <a href="${esc(siteUrl)}" style="color:#8A94AD;">${esc(site)}</a><br>
+          <td align="center" style="padding:22px 12px 0;font-family:${SANS};font-size:12px;line-height:1.6;color:${C.faint};">
+            ZalPOS — касса и управление заведением · <a href="${esc(siteUrl)}" style="color:${C.muted};text-decoration:none;">${esc(site)}</a><br>
             Письмо отправлено автоматически, отвечать на него не нужно.
           </td>
         </tr>
@@ -199,4 +291,6 @@ function createMailer(env = process.env) {
   };
 }
 
-module.exports = { authEmailLetter, passwordLetter, partnerInviteLetter, partnerWelcomeLetter, createMailer, AUTH_EMAIL_TYPES: Object.keys(LETTERS) };
+module.exports = {
+  authEmailLetter, passwordLetter, partnerInviteLetter, partnerWelcomeLetter, superAdminGrantedLetter, superAdminRevokedLetter,
+  partnerTelegramLetter, passwordChangedLetter, brandAuthLink, createMailer, AUTH_EMAIL_TYPES: Object.keys(LETTERS) };
