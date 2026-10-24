@@ -137,6 +137,24 @@ await test("связь пропала и вернулась — подписка
   u();
 });
 
+await test("защита сервера: __proto__, «..», документ больше 1 МБ, чужой путь", async () => {
+  const post = (body) => fetch(`${gateway}/db/commit`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer test:ownerA" }, body: JSON.stringify(body) });
+  const bad = async (w, re) => {
+    const r = await post({ writes: [w] });
+    assert.ok(r.status >= 400 && r.status < 500, `ожидали отказ, а ${r.status}`);
+    const j = await r.json();
+    assert.ok(re.test(j.error || ""), j.error);
+  };
+  await bad({ op: "set", path: "tenants/tenantA/tables/p1", data: JSON.parse('{"__proto__":{"role":"owner"}}') }, /имя поля/);
+  await bad({ op: "update", path: "tenants/tenantA/tables/t1", data: { "a.__proto__.b": 1 } }, /имя поля/);
+  await bad({ op: "set", path: "tenants/tenantA/tables/..", data: { a: 1 } }, /путь/);
+  await bad({ op: "set", path: "tenants/tenantA/tables/__x__", data: { a: 1 } }, /путь/);
+  await bad({ op: "set", path: "tenants/tenantA/tables/big", data: { s: "x".repeat(1100000) } }, /1 МБ/);
+  await bad({ op: "set", path: "tenants/tenantB/tables/x", data: { a: 1 } }, /доступа/);
+  const r = await fetch(`${gateway}/db/get`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paths: ["tenants/tenantA/tables/t1"] }) });
+  assert.strictEqual(r.status, 403, "без входа данные заведения закрыты");
+});
+
 server.closeAllConnections();
 server.close();
 console.log(`zal-db: ${passed} проверок`);

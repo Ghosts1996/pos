@@ -91,11 +91,14 @@ function fromWire(v, admin) {
       case "arrayUnion": return { __union: (v.value || []).map((x) => fromWire(x, admin)) };
       case "arrayRemove": return { __remove: (v.value || []).map((x) => fromWire(x, admin)) };
       case "delete": return { __del: true };
-      default: throw Object.assign(new Error(`неизвестная операция ${v.__op}`), { status: 400 });
+      default: throw new DataError("invalid-argument", `Неизвестная операция ${v.__op}`, 400);
     }
   }
   const out = {};
-  for (const [k, x] of Object.entries(v)) out[k] = fromWire(x, admin);
+  for (const [k, x] of Object.entries(v)) {
+    if (k === "__proto__") throw new DataError("invalid-argument", "Недопустимое имя поля", 400);
+    out[k] = fromWire(x, admin);
+  }
   return out;
 }
 
@@ -111,8 +114,14 @@ function toWire(v) {
 }
 
 const PATH_RE = /^[^/]+(\/[^/]+)*$/;
-const isDocPath = (p) => typeof p === "string" && PATH_RE.test(p) && p.split("/").length % 2 === 0 && p.length <= 1500;
-const isColPath = (p) => typeof p === "string" && PATH_RE.test(p) && p.split("/").length % 2 === 1 && p.length <= 1500;
+// Как в Firestore: без «.», «..» и служебных __имён__.
+const BAD_SEGMENT = /(^|\/)(\.|\.\.|__.*__)(\/|$)/;
+const okPath = (p) => typeof p === "string" && p.length <= 1500 && PATH_RE.test(p) && !BAD_SEGMENT.test(p);
+const isDocPath = (p) => okPath(p) && p.split("/").length % 2 === 0;
+const isColPath = (p) => okPath(p) && p.split("/").length % 2 === 1;
+const MAX_DOC_BYTES = 1048576; // предел документа Firestore — 1 МиБ
+const MAX_SUBS_PER_SESSION = 500;
+const MAX_SESSIONS = 20000;
 
 class DataError extends Error {
   constructor(code, message, status) {
@@ -199,6 +208,10 @@ function createSecureDb({ store, rulesSource, admin, now = () => Date.now() }) {
         method = "delete";
       } else if (w.op === "set" || w.op === "update") {
         if (!w.data || typeof w.data !== "object" || Array.isArray(w.data)) throw new DataError("invalid-argument", "Данные документа — объект", 400);
+        if (JSON.stringify(w.data).length > MAX_DOC_BYTES) throw new DataError("invalid-argument", "Документ больше 1 МБ", 400);
+        if (w.op === "update" && Object.keys(w.data).some((k) => k.split(".").includes("__proto__"))) {
+          throw new DataError("invalid-argument", "Недопустимое имя поля", 400);
+        }
         const data = fromWire(w.data, admin);
         if (w.op === "update" && before === undefined) {
           // Как Firestore: сначала правила (не выдаём, есть ли документ), потом «нет документа».
@@ -299,6 +312,7 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     let s = sid && sessions.get(sid);
     if (s && uidOf(s.auth) !== uidOf(auth)) s = null;
     if (!s) {
+      if (sessions.size >= MAX_SESSIONS) throw new DataError("resource-exhausted", "Сервер перегружен — попробуйте через минуту", 503);
       sid = crypto.randomBytes(18).toString("hex");
       s = { sid, auth, subs: new Map(), res: null, lastSeen: now() };
       sessions.set(sid, s);
@@ -354,6 +368,7 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     const errors = [];
     for (const a of (Array.isArray(body.add) ? body.add : []).slice(0, 200)) {
       try {
+        if (s.subs.size >= MAX_SUBS_PER_SESSION && !s.subs.has(String(a.id))) throw new DataError("resource-exhausted", "Слишком много подписок", 429);
         const sub = { id: String(a.id), seen: new Map(), order: null, exists: undefined };
         if (a.doc) {
           if (!isDocPath(a.doc)) throw new DataError("invalid-argument", "Неверный путь документа", 400);

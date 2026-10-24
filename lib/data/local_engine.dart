@@ -308,6 +308,7 @@ class PendingBatch {
   final int id;
   final List<PendingWrite> writes;
   final Completer<void> done = Completer<void>();
+  int serverFailures = 0;
   PendingBatch(this.id, this.writes) {
     // Ошибку записи без ожидающего (unawaited) не роняем в зону приложения.
     done.future.catchError((_) {});
@@ -692,6 +693,8 @@ class LocalEngine {
     if (resp.statusCode == 401) throw dbError('unauthenticated', msg);
     if (resp.statusCode == 413) throw dbError('payload-too-large', msg);
     if (code.isNotEmpty && code != 'unavailable' && code != 'internal') throw dbError(code, msg);
+    // Сервер ответил, но упал на этом запросе: повтор возможен, но не вечный.
+    if (resp.statusCode == 500) throw dbError('internal', msg);
     if (resp.statusCode >= 500 || code == 'unavailable') {
       _lastFailure = DateTime.now();
       throw const _Offline();
@@ -812,6 +815,13 @@ class LocalEngine {
             } catch (_) {}
             _retryTimer = Timer(Duration(seconds: _retryDelay), _kickFlush);
             _retryDelay = min(_retryDelay * 2, 30);
+            return;
+          }
+          if (e.code == 'internal' && ++b.serverFailures < 5) {
+            // Сбой на сервере — ещё попытка позже; после пятой запись снимается,
+            // чтобы одна сломанная пачка не держала все остальные.
+            _retryTimer = Timer(Duration(seconds: _retryDelay), _kickFlush);
+            _retryDelay = min(_retryDelay * 2, 15);
             return;
           }
           if (e.code == 'payload-too-large' && b.writes.length > 1) {
