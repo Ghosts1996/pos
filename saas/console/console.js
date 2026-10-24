@@ -1309,6 +1309,15 @@ function supportChatForRoute() {
 
 function route() {
   queueMicrotask(supportChatForRoute);
+  // Панель платформы уже открыта для этого входа: route() зовётся снова, пока
+  // догружаются заведения, проверка менеджера и флаг платформы. Ничего не
+  // пересобираем и не переподписываем — иначе 13 разделов грузятся заново,
+  // телефон «замирает» на секунды, а накопленные нажатия срабатывают не там.
+  if (keepAdminScreen()) {
+    const link = $('admin-console-link');
+    if (link) link.outerHTML = adminConsoleLinkHtml();
+    return;
+  }
   clearScreen();
   if (PUBLIC_ROUTES[location.hash]) {
     return PUBLIC_ROUTES[location.hash]();
@@ -7754,6 +7763,13 @@ const ADMIN_NAV = [
   { id: 'security', icon: 'lock', color: '#DC2626', label: 'Безопасность' },
 ];
 
+function keepAdminScreen() {
+  if (!state.uid || !state.isSuperAdmin) return false;
+  if ($('admin-root')?.dataset.uid !== String(state.uid)) return false;
+  const h = location.hash;
+  return h === '#/admin' || ((h === '' || h === '#/' || h === '#') && state.tenantsLoaded && !state.tenants.length);
+}
+
 function adminConsoleLinkHtml() {
   return state.tenants.length
     ? `<a href="#/" id="admin-console-link" class="nav-item" style="text-decoration:none">${navIconHtml('back', '#64748B')}<span>В консоль</span></a>`
@@ -7803,10 +7819,10 @@ function screenSuperAdmin() {
   // пока догружаются заведения и проверка менеджера) — не пересобираем её:
   // иначе само закрывается открытое меню и сбрасывается вкладка. Только
   // обновляем ссылку «В консоль» и заново подписываемся на данные.
-  if ($('admin-root')?.dataset.uid === String(state.uid)) {
+  if ($('admin-root')?.dataset.uid === String(state.uid) && state.screenSubs.length) {
     const link = $('admin-console-link');
     if (link) link.outerHTML = adminConsoleLinkHtml();
-    return watchAdminData();
+    return;
   }
   screenEl().innerHTML = `
     <div id="admin-root" data-uid="${esc(String(state.uid))}">
