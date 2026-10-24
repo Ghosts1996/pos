@@ -316,6 +316,26 @@ function ownAuth() {
   }
   return ownAuthInst;
 }
+/** Отметка «этот uid ещё входит через Firebase» — не чаще раза в час на uid. */
+const firebaseTokenSeen = new Map();
+function noteFirebaseToken(uid) {
+  const last = firebaseTokenSeen.get(uid) || 0;
+  if (Date.now() - last < 60 * 60 * 1000) return;
+  if (firebaseTokenSeen.size > 50000) firebaseTokenSeen.clear();
+  firebaseTokenSeen.set(uid, Date.now());
+  ownAuth().noteFirebaseUse(uid).catch((e) => console.warn(`own-auth: отметка входа Firebase: ${e.message || e}`));
+}
+
+/** Раз в сутки — из Firebase Authentication тех, кто уже перешёл на свой вход
+ *  и 14 дней не входил токеном Firebase: их данные у Google больше не нужны. */
+function scheduleFirebaseAuthPurge() {
+  scheduleDailyJob("firebaseAuthPurge", 24 * 60 * 60 * 1000, async () => {
+    if (!authOwn() || !firebaseAuthOrNull()) return;
+    const r = await ownAuth().purgeFirebase();
+    if (r.deleted) console.log(`own-auth: удалено из Firebase ${r.deleted}, ещё на прежнем входе ${r.kept}`);
+  }, 30 * 60 * 1000);
+}
+
 /** Управление пользователями: свой вход или Firebase — тот же набор методов. */
 function authApi() {
   return authOwn() ? ownAuth().adminAuth() : getFirebaseApp().auth();
@@ -338,7 +358,9 @@ async function verifyIdTokenAny(idToken) {
     }
   }
   try {
-    return await getFirebaseApp().auth().verifyIdToken(idToken);
+    const decoded = await getFirebaseApp().auth().verifyIdToken(idToken);
+    if (authOwn()) noteFirebaseToken(decoded.uid);
+    return decoded;
   } catch (e) {
     // Код причины — в журнал (сам токен не пишем): по нему видно, истёк
     // ли сеанс, отозван или часы сервера разошлись с Google.
@@ -8382,6 +8404,8 @@ async function handleDataMigrateStatus(req, res) {
     purge: firestorePurgeState(),
     purgeRunning: !!firestorePurgeRunning,
     auth: authOwn() ? "own" : "firebase",
+    // Сколько пользователей и устройств за 14 дней входили токеном Firebase (старые версии).
+    oldClients: authOwn() ? (await ownAuth().migrationStats()).firebaseRecent : null,
     sessions: dataApi ? dataApi.sessions.size : 0,
   });
 }
@@ -8871,6 +8895,7 @@ schedulePlatformMetricsCron();
 scheduleCertificateCheck();
 scheduleFirestoreBackup();
 scheduleFirestorePurge();
+scheduleFirebaseAuthPurge();
 scheduleAiSecretsMigration();
 scheduleBuildsSweep();
 scheduleAppRollout();

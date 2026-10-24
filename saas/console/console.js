@@ -10987,7 +10987,7 @@ async function loadDataBackend() {
         + (purge ? '' : '<br>Вернуть данные в Firestore можно кнопкой справа: сервер перезапустится и снова будет работать с Firestore (изменения, сделанные после переноса, в Firestore не попадут).'),
       purge ? '' : '<button type="button" class="btn btn-ghost" id="f-data-rollback" style="width:auto">Вернуть в Firestore</button>')
       + '<div id="sec-auth-backend"></div>'
-      + firestorePurgeRowHtml(purge, st.purgeRunning);
+      + firestorePurgeRowHtml(purge, st.purgeRunning, st.oldClients);
     loadAuthBackend();
     if ($('f-fs-purge')) $('f-fs-purge').onclick = startFirestorePurge;
     box.querySelectorAll('.f-sec-backup-dl').forEach((el) => { el.onclick = () => downloadBackup(el.dataset.name); });
@@ -11028,10 +11028,11 @@ async function loadDataBackend() {
 }
 
 /** Старая копия данных в Google (Cloud Firestore): удалить после переноса. */
-function firestorePurgeRowHtml(p, running) {
+function firestorePurgeRowHtml(p, running, oldClients = null) {
   if (!p) {
+    const wait = oldClients ? ` <b>Сейчас ${oldClients} — на старой версии приложения</b> (входили по-старому за 14 дней): лучше подождать, пока обновятся, — самые старые версии читают данные прямо из Firestore.` : '';
     return checkRowHtml('warn', 'В Cloud Firestore (Google) осталась копия данных',
-      'Копия на момент переноса: кассы и кабинет её больше не используют. Удаление: сначала полная резервная копия на этот сервер в РФ и её проверка, затем удаление в Google — только того, что попало в копию. На бесплатном тарифе Firebase большая база удаляется за несколько дней, задание продолжается само. Вернуть данные в Firestore после этого будет нельзя.',
+      'Копия на момент переноса: кассы и кабинет её больше не используют.' + wait + ' Удаление: сначала полная резервная копия на этот сервер в РФ и её проверка, затем удаление в Google — только того, что попало в копию. На бесплатном тарифе Firebase большая база удаляется за несколько дней, задание продолжается само. Вернуть данные в Firestore после этого будет нельзя.',
       '<button type="button" class="btn btn-ghost" id="f-fs-purge" style="width:auto">Удалить копию в Google</button>');
   }
   const copies = (p.backups || []).map((b) => `<a href="#" class="f-sec-backup-dl" data-name="${esc(b.name)}">${esc(b.name)}</a> (${b.docs})`).join(', ');
@@ -11076,8 +11077,9 @@ async function loadAuthBackend() {
       `<button type="button" class="btn btn-primary" id="f-auth-own" style="width:auto"${st.mail ? '' : ' disabled'}>Включить свой вход</button>`);
   } else {
     box.innerHTML = checkRowHtml('ok', 'Вход — на собственном сервере',
-      `Учётных записей: ${s.users ?? '—'} · уже входили сюда: ${s.signedInHere ?? '—'} · удалены из Firebase: ${s.firebaseDeleted ?? 0}. `
-        + 'Удаление из Firebase касается только тех, кто уже входил сюда; устройства со старой версией кассы остаются в Firebase, пока не обновятся.',
+      `Учётных записей: ${s.users ?? '—'} · уже входили сюда: ${s.signedInHere ?? '—'} · удалены из Firebase: ${s.firebaseDeleted ?? 0}`
+        + ` · на старой версии (входили через Firebase за 14 дней): ${s.firebaseRecent ?? 0}. `
+        + 'Раз в сутки сервер сам удаляет из Firebase тех, кто уже перешёл и 14 дней не входил по-старому; кассы и приложения на старой версии остаются там, пока не обновятся (обновления приходят сами).',
       '<button type="button" class="btn btn-ghost" id="f-auth-purge" style="width:auto">Удалить вошедших из Firebase</button>'
         + (s.firebaseDeleted ? '' : ' <button type="button" class="btn btn-ghost" id="f-auth-firebase" style="width:auto">Вернуть вход Firebase</button>'));
   }

@@ -167,8 +167,13 @@ test("перенос из Firebase: тот же uid, пароль проверя
   const st = await h.auth.migrationStats();
   assert.strictEqual(st.withPassword, 1);
   assert.strictEqual(st.signedInHere, 2);
+  // Владелец ещё входит и с телефона со старой версией — его пока не трогаем.
+  await h.auth.noteFirebaseUse("OWNER1abcdefghijklmnopqrstu");
+  assert.strictEqual((await h.auth.migrationStats()).firebaseRecent, 1);
+  assert.deepStrictEqual(await h.auth.purgeFirebase(), { deleted: 1, kept: 2 }, "сменившее вход устройство; владелец на старой версии и несменившее — остаются");
+  h.tick(15 * 24 * 3600 * 1000); // две недели без старой версии
   const p = await h.auth.purgeFirebase();
-  assert.deepStrictEqual(p, { deleted: 2, kept: 1 }, "владелец и сменившее вход устройство; несменившее остаётся");
+  assert.deepStrictEqual(p, { deleted: 1, kept: 1 }, "теперь и владелец; несменившее остаётся");
   assert.deepStrictEqual(fb._users.map((u) => u.uid), ["DEVICE2abcdefghijklmnopqrst", "OTHERabcdefghijklmnopqrstuv"]);
 });
 

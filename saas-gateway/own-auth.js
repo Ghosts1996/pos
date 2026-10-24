@@ -27,6 +27,8 @@ const REFRESH_TTL_MS = 180 * 24 * 3600 * 1000; // вход на устройст
 const CODE_TTL_MS = { verifyEmail: 3 * 24 * 3600 * 1000, passwordReset: 3600 * 1000, signIn: 3600 * 1000, custom: 5 * 60 * 1000 };
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const KID = "zalpos-1";
+/** Кто входил токеном Firebase за это время — ещё на старой версии, из Firebase не удаляем. */
+const FIREBASE_RECENT_MS = 14 * 24 * 3600 * 1000;
 
 const b64u = (buf) => Buffer.from(buf).toString("base64").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
 const fromB64u = (s) => Buffer.from(String(s).replace(/-/g, "+").replace(/_/g, "/"), "base64");
@@ -459,7 +461,18 @@ function createOwnAuth({
       imported: all.filter((u) => u.importedAt).length,
       signedInHere: all.filter((u) => u.lastSignInAt).length,
       firebaseDeleted: all.filter((u) => u.firebaseDeletedAt).length,
+      // Ещё входят токеном Firebase (старая версия кассы или приложения).
+      firebaseRecent: all.filter((u) => u.fbTokenAt && now() - u.fbTokenAt < FIREBASE_RECENT_MS && !u.firebaseDeletedAt).length,
     };
+  }
+
+  /** Сервер принял токен Firebase от этого uid — значит, где-то ещё старая
+   *  версия; такого пользователя из Firebase пока не удаляем. */
+  async function noteFirebaseUse(uid) {
+    if (!uid) return;
+    const u = await userDoc(uid);
+    if (u) await users().doc(uid).set({ fbTokenAt: now() }, { merge: true });
+    else await importFirebaseUser(uid).then((x) => x && users().doc(uid).set({ fbTokenAt: now() }, { merge: true })).catch(() => {});
   }
 
   /** Удалить из Firebase тех, кто уже входил сюда (своим входом или обменом
@@ -474,7 +487,8 @@ function createOwnAuth({
     let kept = 0;
     for (const d of (await users().get()).docs) {
       const u = d.data();
-      const ready = !!u.lastSignInAt || (includePending && !!u.email);
+      const stillOld = u.fbTokenAt && now() - u.fbTokenAt < FIREBASE_RECENT_MS;
+      const ready = !stillOld && (!!u.lastSignInAt || (includePending && !!u.email));
       if (!ready && !u.firebaseDeletedAt) kept++;
       if (!ready || u.firebaseDeletedAt) continue;
       try { await fb.deleteUser(d.id); } catch (e) { if (!e || e.code !== "auth/user-not-found") continue; }
@@ -486,7 +500,7 @@ function createOwnAuth({
 
   return {
     isOwnToken, verifyIdToken, refresh, logout, signUp, signIn, anonymous, exchange, signInWithCustomToken,
-    applyCode, changePassword, reauth, adminAuth, setSiteUrl, importAllFromFirebase, migrationStats, purgeFirebase,
+    applyCode, changePassword, reauth, adminAuth, setSiteUrl, importAllFromFirebase, migrationStats, purgeFirebase, noteFirebaseUse,
     _hashPassword: hashPassword, _checkPassword: checkPassword, _userDoc: userDoc,
   };
 }
