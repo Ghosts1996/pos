@@ -8,7 +8,7 @@ import {
   signInWithEmailAndPassword, createUserWithEmailAndPassword,
   sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink,
   reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail,
-  updatePassword,
+  updatePassword, signInWithCustomToken,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 // Данные — Firestore или свой сервер платформы (zal-db.js решает по серверу).
 import {
@@ -1148,6 +1148,11 @@ function handleAuthChange(user) {
   state.accountSubs.forEach((off) => { try { off(); } catch (_) {} });
   state.accountSubs = [];
 
+  // Открыли из Telegram и ещё не вошли — входим по подписи Telegram.
+  if (!user && state.tgInit && !state.tgTried) {
+    state.tgTried = true;
+    telegramLogin();
+  }
   if (!user) {
     state.uid = null;
     state.tenants = [];
@@ -1316,6 +1321,7 @@ function route() {
     }
     history.replaceState(null, '', location.pathname + '#/');
   }
+  if (location.hash === '#/partner' && !state.uid && state.tgInit && !state.tgError) return screenLoading();
   if (location.hash === '#/partner' && !state.uid) {
     // Кабинет менеджера — после входа вернёмся сюда же.
     try { sessionStorage.setItem('zalpos-after-login', '#/partner'); } catch (_) {}
@@ -1387,6 +1393,7 @@ function screenDashboardOrOnboarding() {
 }
 
 window.addEventListener('hashchange', route);
+captureTelegramApp();
 capturePartnerRef();
 boot();
 
@@ -6887,6 +6894,42 @@ function capturePartnerRef() {
       const el = document.getElementById('f-email');
       if (el && !el.value) el.value = r.data.email;
     }).catch(() => {});
+  }
+}
+
+// ---------- МИНИ-ПРИЛОЖЕНИЕ TELEGRAM ----------
+// Бот менеджеров открывает https://zalpos.ru/?tgapp=1; Telegram кладёт
+// подписанные данные в адрес (#tgWebAppData=…). Сервер проверяет подпись и
+// выдаёт вход для менеджера, к которому привязан этот Telegram.
+const TG_INIT_KEY = 'zalpos-tg-init';
+
+function captureTelegramApp() {
+  let init = '';
+  try { init = new URLSearchParams(location.hash.slice(1)).get('tgWebAppData') || ''; } catch (_) {}
+  if (!init) init = window.Telegram?.WebApp?.initData || '';
+  if (init) { try { sessionStorage.setItem(TG_INIT_KEY, init); } catch (_) {} } else {
+    try { init = sessionStorage.getItem(TG_INIT_KEY) || ''; } catch (_) {}
+  }
+  let params;
+  try { params = new URLSearchParams(location.search); } catch (_) { params = new URLSearchParams(); }
+  const fromBot = params.get('tgapp') === '1';
+  if (!init && !fromBot) return;
+  state.tgInit = init;
+  document.documentElement.classList.add('tg-app');
+  params.delete('tgapp');
+  const rest = params.toString();
+  const hash = location.hash.includes('tgWebApp') || !location.hash || location.hash === '#/' ? '#/partner' : location.hash;
+  history.replaceState(null, '', `${location.pathname}${rest ? `?${rest}` : ''}${hash}`);
+}
+
+async function telegramLogin() {
+  try {
+    const r = await callSaasGateway('partnerTgAuth', { initData: state.tgInit });
+    await signInWithCustomToken(state.auth, r.data.token);
+  } catch (e) {
+    state.tgError = e?.message || String(e);
+    toast(`${state.tgError}`);
+    route();
   }
 }
 

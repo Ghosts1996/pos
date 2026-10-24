@@ -34,6 +34,7 @@ function harness({ existingEmails = [] } = {}) {
     createUser: async ({ email }) => { users.set(email, `u_${email}`); return { uid: `u_${email}` }; },
     getUser: async (uid) => ({ uid, metadata: { creationTime: new Date(created.get(uid) ?? clock).toUTCString() } }),
     generatePasswordResetLink: async (email) => `https://reset/${email}`,
+    createCustomToken: async (uid, claims) => `ct:${uid}:${JSON.stringify(claims || {})}`,
   };
   const deps = {
     db: () => null, store: () => store, admin, auth: () => auth,
@@ -344,10 +345,10 @@ test("бот: кнопки меню, приглашение в два шага, 
   const last = () => h.tg[h.tg.length - 1].body;
   // Не подключён — кнопка на кабинет.
   await msg("привет");
-  assert.strictEqual(last().reply_markup.inline_keyboard[0][0].url, "https://zalpos.ru/#/partner");
+  assert.strictEqual(last().reply_markup.inline_keyboard[0][0].web_app.url, "https://zalpos.ru/?tgapp=1");
   await msg(`/start pl_${url.match(/pl_([a-f0-9]+)/)[1]}`);
   const kb = last().reply_markup.keyboard.flat().map((b) => b.text);
-  assert.deepStrictEqual(kb, ["💼 Мой доход", "👥 Клиенты", "📨 Пригласить заведение", "🔗 Моя ссылка", "✍️ Текст для клиента", "📋 Приглашения", "💸 Выплаты", "❓ Помощь"]);
+  assert.deepStrictEqual(kb, ["🖥 Личный кабинет", "💼 Мой доход", "👥 Клиенты", "📨 Пригласить заведение", "🔗 Моя ссылка", "✍️ Текст для клиента", "📋 Приглашения", "💸 Выплаты", "❓ Помощь"]);
   assert.ok(last().reply_markup.is_persistent);
   await msg("💼 Мой доход");
   assert.match(last().text, /Ваш доход/);
@@ -713,6 +714,45 @@ test("физлиц нет: нового — нельзя добавить; у с
   assert.strictEqual(dash.summary.canRequest, true);
   const r = await h.call(h.partners.handlePayoutRequest, { ...anna, body: {} });
   assert.strictEqual(r.net, 2684.98);
+});
+
+test("мини-приложение: вход по подписи Telegram — только привязанный менеджер, свежая подпись, не админ", async () => {
+  const h = harness();
+  await h.addManager({});
+  const anna = { uid: "u_anna@zalpos.ru" };
+  const token = "123456789:AAAbbbCCCdddEEEfffGGGhhhIIIjjjKKKlll";
+  await h.call(h.partners.handleAdminBot, { uid: "sa", body: { token } });
+  assert.ok(h.tg.find((c) => c.method === "setMyCommands").body.commands.some((c) => c.command === "start"));
+  const sign = (fields, botToken = token) => {
+    const params = new URLSearchParams(fields);
+    const check = [...params.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, v]) => `${k}=${v}`).join("\n");
+    const secret = crypto.createHmac("sha256", "WebAppData").update(botToken).digest();
+    params.set("hash", crypto.createHmac("sha256", secret).update(check).digest("hex"));
+    return params.toString();
+  };
+  const auth = (initData) => h.call(h.partners.handleTgAuth, { body: { initData } });
+  const fresh = () => String(Math.floor(h.now() / 1000));
+  const user = JSON.stringify({ id: 777, first_name: "Анна" });
+  // Ещё не привязан — нет входа.
+  await assert.rejects(h.partners.handleTgAuth({ body: { initData: sign({ auth_date: fresh(), user }) } }, {}), (e) => e.status === 404);
+  const { url } = await h.call(h.partners.handleTgLink, anna);
+  await h.partners._onMessage({ chat: { id: 777, type: "private" }, text: `/start pl_${url.match(/pl_([a-f0-9]+)/)[1]}` });
+  const r = await auth(sign({ auth_date: fresh(), query_id: "AAA", user }));
+  assert.strictEqual(r.token, 'ct:u_anna@zalpos.ru:{"tgApp":true}');
+  // Подделка, чужой токен бота, старая подпись — отказ.
+  const good = sign({ auth_date: fresh(), user });
+  await assert.rejects(h.partners.handleTgAuth({ body: { initData: good.replace("777", "778") } }, {}), (e) => e.status === 403);
+  await assert.rejects(h.partners.handleTgAuth({ body: { initData: sign({ auth_date: fresh(), user }, "999:other") } }, {}), (e) => e.status === 403);
+  await assert.rejects(h.partners.handleTgAuth({ body: { initData: sign({ auth_date: String(Math.floor(h.now() / 1000) - 2 * 86400), user }) } }, {}), /устарела/);
+  await assert.rejects(h.partners.handleTgAuth({ body: { initData: "" } }, {}), (e) => e.status === 400);
+  // Администратор платформы — только по паролю.
+  const h2 = harness();
+  h2.partners = createPartners({ ...h2.deps, requireSuperAdmin: async () => {} });
+  await h2.call(h2.partners.handleAdminSave, { uid: "sa", body: { email: "boss@zalpos.ru", name: "Босс", percent: 10 } });
+  await h2.call(h2.partners.handleAdminBot, { uid: "sa", body: { token } });
+  const { url: u2 } = await h2.call(h2.partners.handleTgLink, { uid: "u_boss@zalpos.ru" });
+  await h2.partners._onMessage({ chat: { id: 900, type: "private" }, text: `/start pl_${u2.match(/pl_([a-f0-9]+)/)[1]}` });
+  await assert.rejects(h2.partners.handleTgAuth({ body: { initData: sign({ auth_date: String(Math.floor(h2.now() / 1000)), user: JSON.stringify({ id: 900 }) }) } }, {}), /только по паролю/);
 });
 
 (async () => {

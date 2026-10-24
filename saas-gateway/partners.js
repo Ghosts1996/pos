@@ -133,6 +133,9 @@ function createPartners(deps) {
   const aliasesCol = () => col("partnerCodeAliases");
   const settingsRef = () => col("partnerSettings").doc("main");
   const site = siteUrl.replace(/\/?$/, "/");
+  // Мини-приложение: кабинет менеджера открывается прямо в Telegram, вход —
+  // по подписанным данным Telegram (handleTgAuth), без пароля.
+  const appUrl = () => `${site}?tgapp=1`;
 
   async function settings() {
     const d = (await settingsRef().get()).data() || {};
@@ -1063,7 +1066,7 @@ function createPartners(deps) {
   }
 
   // Оформление бота: описание до /start, короткое в профиле, меню команд.
-  const BOT_PROFILE_VER = 2;
+  const BOT_PROFILE_VER = 3;
   const BOT_SHORT = "Бот партнёров ZalPOS: клиенты, доход, выплаты и приглашения — в одном чате.";
   const BOT_DESCRIPTION = [
     "💼 Бот для менеджеров партнёрской программы ZalPOS.",
@@ -1077,6 +1080,8 @@ function createPartners(deps) {
     "Чтобы начать, откройте кабинет менеджера на zalpos.ru и нажмите «Подключить Telegram».",
   ].join("\n");
   const BOT_COMMANDS = [
+    { command: "start", description: "🚀 Начать" },
+    { command: "cabinet", description: "🖥 Личный кабинет" },
     { command: "income", description: "💼 Мой доход" },
     { command: "payouts", description: "💸 Выплаты и чеки" },
     { command: "clients", description: "👥 Мои клиенты" },
@@ -1173,6 +1178,43 @@ function createPartners(deps) {
     sendJson(res, 200, { ok: true, ...(await renewLink(partner)) });
   }
 
+  /**
+   * Вход в мини-приложение: Telegram подписывает initData токеном бота
+   * (HMAC-SHA256, ключ — HMAC("WebAppData", токен)). Пускаем только того,
+   * чей Telegram привязан к менеджеру; администратору платформы — нет.
+   */
+  function verifyInitData(initData) {
+    if (!bot || !bot.token) throw new HttpError(503, "Бот менеджеров не подключён");
+    const raw = String(initData || "");
+    if (!raw || raw.length > 4096) throw new HttpError(400, "Откройте кабинет из бота в Telegram");
+    const params = new URLSearchParams(raw);
+    const hash = params.get("hash") || "";
+    params.delete("hash");
+    const check = [...params.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => `${k}=${v}`).join("\n");
+    const secret = crypto.createHmac("sha256", "WebAppData").update(bot.token).digest();
+    const calc = crypto.createHmac("sha256", secret).update(check).digest("hex");
+    if (!/^[a-f0-9]{64}$/.test(hash) || !crypto.timingSafeEqual(Buffer.from(calc), Buffer.from(hash))) throw new HttpError(403, "Подпись Telegram не сошлась — откройте кабинет из бота заново");
+    const authDate = Number(params.get("auth_date")) * 1000;
+    if (!authDate || now() - authDate > DAY_MS) throw new HttpError(403, "Ссылка устарела — откройте кабинет из бота заново");
+    let user = null;
+    try { user = JSON.parse(params.get("user") || "null"); } catch (_) {}
+    if (!user || !Number.isSafeInteger(user.id)) throw new HttpError(400, "Нет данных пользователя Telegram");
+    return user;
+  }
+
+  async function handleTgAuth(req, res) {
+    const body = await parseJsonBody(req);
+    const user = verifyInitData(body.initData);
+    const p = await partnerByChat(user.id);
+    if (!p || p.status === "removed" || !p.uid) throw new HttpError(404, "Этот Telegram не подключён к кабинету менеджера — войдите по почте и паролю и нажмите «Подключить Telegram»");
+    let isAdmin = false;
+    try { await requireSuperAdmin({ uid: p.uid, email: p.email }); isAdmin = true; } catch (_) {}
+    if (isAdmin) throw new HttpError(403, "Администратор платформы входит только по паролю");
+    const token = await auth().createCustomToken(p.uid, { tgApp: true });
+    await partnersCol().doc(p.id).set({ tgAppAt: ts(now()) }, { merge: true });
+    sendJson(res, 200, { token });
+  }
+
   /** Кабинет: «Подключить Telegram» — одноразовая ссылка на бота. */
   async function handleTgLink(req, res) {
     const { partner } = await requirePartner(req);
@@ -1194,6 +1236,7 @@ function createPartners(deps) {
   };
   const MENU = {
     keyboard: [
+      [{ text: "🖥 Личный кабинет", web_app: { url: appUrl() } }],
       [{ text: BTN.income }, { text: BTN.clients }],
       [{ text: BTN.invite }],
       [{ text: BTN.link }, { text: BTN.pitch }],
@@ -1203,7 +1246,7 @@ function createPartners(deps) {
     resize_keyboard: true, is_persistent: true, input_field_placeholder: "Выберите действие",
   };
   const cabinetUrl = () => `${site}#/partner`;
-  const cabinetBtn = (text = "🖥 Открыть кабинет") => ({ text, url: cabinetUrl() });
+  const cabinetBtn = (text = "🖥 Открыть кабинет") => ({ text, web_app: { url: appUrl() } });
   const HELP = [
     "💼 <b>Бот менеджеров ZalPOS</b>",
     "",
@@ -1312,6 +1355,7 @@ function createPartners(deps) {
     const cmd = byButton || (text.match(/^\/(\w+)/) || [])[1] || "";
     if (cmd) askingEmail.delete(chatId);
     if (cmd === "start" || cmd === "help") return say(chatId, HELP, { reply_markup: MENU });
+    if (cmd === "cabinet") return say(chatId, "🖥 <b>Личный кабинет менеджера</b> — откроется прямо в Telegram, вход без пароля.", { reply_markup: { inline_keyboard: [[cabinetBtn("🖥 Открыть кабинет")]] } });
     if (cmd === "link") return say(chatId, linkText(p), { reply_markup: linkButtons(p) });
     if (cmd === "income") {
       const s = await summaryOf(p);
@@ -1606,7 +1650,7 @@ function createPartners(deps) {
     start, attachOwner, onPayment, invite, dashboardOf, computeAccrual, sweepInvites, remindRenewals, remindReceipts, remindRequests,
     handleMe, handleAcceptTerms, handleInvite, handleDashboard, handleInviteInfo, handleOptOut, handleTgLink, handleNewLink,
     handlePayoutDetails, handlePayoutRequest, handlePayoutReceipt, handleAdminPayoutReject,
-    handlePayoutConfirm, handleAct, handleAdminAct, handleAdminPayoutsCsv,
+    handlePayoutConfirm, handleAct, handleAdminAct, handleAdminPayoutsCsv, handleTgAuth,
     handleAdminList, handleAdminPartner, handleAdminSave, handleAdminSettings, handleAdminPayout, handleAdminReverse, handleAdminBot, handleAdminContract,
     handleHook, HOOK_ID, TERMS_EDITION, _onMessage: onMessage, _onCallback: onCallback,
   };

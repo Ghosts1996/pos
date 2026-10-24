@@ -8218,6 +8218,7 @@ const ROUTES = {
   "/partnerPayoutReceipt": partners.handlePayoutReceipt,
   "/partnerAdminPayoutReject": partners.handleAdminPayoutReject,
   "/partnerPayoutConfirm": partners.handlePayoutConfirm,
+  "/partnerTgAuth": partners.handleTgAuth,
   "/partnerAct": partners.handleAct,
   "/partnerAdminAct": partners.handleAdminAct,
   "/partnerAdminPayoutsCsv": partners.handleAdminPayoutsCsv,
