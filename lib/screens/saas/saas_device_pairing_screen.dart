@@ -1,4 +1,7 @@
+import 'dart:io' show Platform;
+
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import '../../services/auth_service.dart';
 import 'package:flutter/material.dart';
 
@@ -72,6 +75,14 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
       _presetNaming = true;
       _slug.text = kSaasPresetSlug;
       _code.text = kSaasPresetInviteCode;
+      // Название задано заранее (массовая установка, проверка сборки) —
+      // переменная окружения ZALPOS_DEVICE_NAME; тогда не спрашиваем.
+      final preset = kIsWeb ? '' : (Platform.environment['ZALPOS_DEVICE_NAME'] ?? '').trim();
+      if (preset.isNotEmpty) {
+        _label.text = preset;
+        _autoJoining = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) => _join());
+      }
     } else if (widget.lostDemo) {
       // Демо прожило свои 3 дня — новое в исходном виде, без лишних
       // нажатий. Не вышло (нет сети) — обычный экран с кнопкой «Демо».

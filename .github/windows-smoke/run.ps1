@@ -9,6 +9,8 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+# Название устройства при первом запуске — заранее (касса его спрашивает).
+$env:ZALPOS_DEVICE_NAME = "Windows smoke ($Name)"
 $log = Join-Path $env:LOCALAPPDATA 'ZalPOS\startup.log'
 $out = Join-Path $env:RUNNER_TEMP "smoke-$Name"
 New-Item -ItemType Directory -Force -Path $out | Out-Null
