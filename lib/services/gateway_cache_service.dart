@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import '../data/app_db.dart';
+
 import '../build_info.dart';
 import '../models/employee.dart';
 import '../models/menu_models.dart';
@@ -44,7 +46,8 @@ class GatewayCacheService {
   String? _tenantId;
 
   Future<void> init(String tenantId) async {
-    if (!kSaasMode || kSaasGatewayUrl.isEmpty) return;
+    // Свой сервер данных: меню и сотрудники приходят живой подпиской.
+    if (!kSaasMode || kSaasGatewayUrl.isEmpty || AppDb.isLocal) return;
     _tenantId = tenantId;
     await _fetch(tenantId);
     _timer?.cancel();

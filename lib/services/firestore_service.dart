@@ -2344,14 +2344,15 @@ class FirestoreService {
 
   // ---------- МЕНЮ ----------
 
-  /// Категории меню. В SaaS с настроенным shлюзом данные берутся из
-  /// серверного кеша (обновляется раз в 5 мин) вместо прямой Firestore-подписки.
+  /// Категории меню. В SaaS, пока данные в Firebase, — из серверного кеша
+  /// (обновляется раз в 5 мин) вместо прямой Firestore-подписки.
   Stream<List<MenuCategory>> categoriesStream() => _menuCatS.get(_k(), () => _menuCatSource());
 
   Stream<List<MenuCategory>> _menuCatSource() async* {
     final cache = GatewayCacheService.instance;
-    // Кеш сервера — только когда он уже ответил; пока нет, читаем базу.
-    if (kSaasMode && kSaasGatewayUrl.isNotEmpty && cache.loaded) {
+    // Кеш сервера (раз в 5 мин) — только пока данные в Firebase и он уже
+    // ответил: на своём сервере данных подписка живая и лимитов нет.
+    if (kSaasMode && kSaasGatewayUrl.isNotEmpty && !AppDb.isLocal && cache.loaded) {
       yield cache.menuCategories;
       yield* cache.menuCategoriesStream;
       return;
@@ -2373,8 +2374,9 @@ class FirestoreService {
 
   Stream<List<MenuItem>> _menuItemSource() async* {
     final cache = GatewayCacheService.instance;
-    // Кеш сервера — только когда он уже ответил; пока нет, читаем базу.
-    if (kSaasMode && kSaasGatewayUrl.isNotEmpty && cache.loaded) {
+    // Кеш сервера (раз в 5 мин) — только пока данные в Firebase и он уже
+    // ответил: на своём сервере данных подписка живая и лимитов нет.
+    if (kSaasMode && kSaasGatewayUrl.isNotEmpty && !AppDb.isLocal && cache.loaded) {
       yield cache.menuItems;
       yield* cache.menuItemsStream;
       return;
@@ -2501,8 +2503,9 @@ class FirestoreService {
 
   Stream<List<Employee>> _employeeSource() async* {
     final cache = GatewayCacheService.instance;
-    // Кеш сервера — только когда он уже ответил; пока нет, читаем базу.
-    if (kSaasMode && kSaasGatewayUrl.isNotEmpty && cache.loaded) {
+    // Кеш сервера (раз в 5 мин) — только пока данные в Firebase и он уже
+    // ответил: на своём сервере данных подписка живая и лимитов нет.
+    if (kSaasMode && kSaasGatewayUrl.isNotEmpty && !AppDb.isLocal && cache.loaded) {
       yield cache.employees;
       yield* cache.employeesStream;
       return;

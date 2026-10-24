@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../build_info.dart';
+import '../data/app_db.dart';
 import '../models/menu_models.dart';
 import 'app_scope.dart';
 import 'gateway_api.dart';
@@ -51,7 +52,9 @@ class PublicMenuService {
 
   /// Поток: сервер (раз в [refreshEvery]), а если он не ответил — [fallback].
   static Stream<T> stream<T>(T Function(PublicMenu menu) pick, Stream<T> Function() fallback) {
-    if (!enabled) return fallback();
+    // Свой сервер данных: живая подписка — стоп-лист и цены у гостя сразу,
+    // без опроса раз в 2 минуты (лимитов Firebase больше нет).
+    if (!enabled || AppDb.isLocal) return fallback();
     late final StreamController<T> out;
     Timer? timer;
     StreamSubscription<T>? direct;
