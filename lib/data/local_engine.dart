@@ -386,6 +386,14 @@ class PendingQueue extends ListBase<PendingBatch> {
   }
 }
 
+final _batchRand = Random.secure();
+
+/// Случайный ключ пачки записей (20 символов).
+String newBatchKey() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  return List.generate(20, (_) => chars[_batchRand.nextInt(chars.length)]).join();
+}
+
 class PendingBatch {
   final int id;
   final List<PendingWrite> writes;
@@ -404,7 +412,12 @@ class PendingBatch {
   /// Отложенная транзакция: при конфликте — выполнить заново по данным
   /// сервера (живёт только в памяти, до перезапуска приложения).
   final Future<void> Function()? retry;
-  PendingBatch(this.id, this.writes, {this.retry}) {
+  /// Ключ пачки для сервера: повтор после потерянного ответа (связь моргнула,
+  /// а запись уже прошла) сервер узнаёт и не применяет второй раз — иначе
+  /// «+1 бонус» или «−1 со склада» удвоились бы.
+  final String key;
+
+  PendingBatch(this.id, this.writes, {this.retry, String? key}) : key = key ?? newBatchKey() {
     // Ошибку записи без ожидающего (unawaited) не роняем в зону приложения.
     done.future.catchError((_) {});
     accepted.future.catchError((_) {});
@@ -553,6 +566,14 @@ class LocalEngine {
 
   /// Связь с сервером данных (поток подписок открыт).
   final ValueNotifier<bool> online = ValueNotifier(false);
+
+  /// Сколько пачек изменений ещё не дошло до сервера (для плашки «без связи»).
+  final ValueNotifier<int> unsent = ValueNotifier(0);
+
+  /// Сервер не принял изменение, сделанное, например, без связи (смену уже
+  /// закрыли с другой кассы, нет прав) — кассир должен об этом узнать.
+  /// null — всё принято (или предупреждение закрыли).
+  final ValueNotifier<String?> lastRejected = ValueNotifier(null);
   DateTime _lastFailure = DateTime.fromMillisecondsSinceEpoch(0);
 
   static const maxCachedDocs = 30000;
@@ -584,7 +605,8 @@ class LocalEngine {
         final j = jsonDecode(await f.readAsString()) as List;
         for (final b in j) {
           final writes = [for (final w in (b as Map)['writes'] as List) PendingWrite.fromJson(w as Map)];
-          if (writes.isNotEmpty) pending.add(PendingBatch(_nextBatch++, writes));
+          final key = b['key'];
+          if (writes.isNotEmpty) pending.add(PendingBatch(_nextBatch++, writes, key: key is String && key.isNotEmpty ? key : null));
         }
       }
     } catch (e) {
@@ -635,13 +657,14 @@ class LocalEngine {
   }
 
   void _savePending() {
+    unsent.value = pending.length;
     if (storageDir == null || _pendingSaveQueued) return;
     _pendingSaveQueued = true;
     scheduleMicrotask(() async {
       _pendingSaveQueued = false;
       try {
         await _writeAtomic('pending.json', () => jsonEncode([
-              for (final b in pending) {'writes': [for (final w in b.writes) w.toWire()]}
+              for (final b in pending) {'key': b.key, 'writes': [for (final w in b.writes) w.toWire()]}
             ]));
       } catch (e) {
         debugPrint('local-db: очередь записей не сохранена: $e');
@@ -973,7 +996,7 @@ class LocalEngine {
       while (pending.isNotEmpty) {
         final b = pending.first;
         try {
-          final j = await post('/db/commit', {'writes': [for (final w in b.writes) w.toWire()]});
+          final j = await post('/db/commit', {'key': b.key, 'writes': [for (final w in b.writes) w.toWire()]});
           _applyAck(b.writes, j['results'] as List? ?? const []);
           pending.remove(b);
           _savePending();
@@ -1022,6 +1045,7 @@ class LocalEngine {
               } on FirebaseException catch (err) {
                 if (err.code != 'unavailable') {
                   debugPrint('local-db: транзакция после конфликта отклонена: $err');
+                  if (b.accepted.isCompleted) lastRejected.value = _rejectText(err);
                   if (!b.done.isCompleted) b.done.completeError(err);
                   continue;
                 }
@@ -1031,6 +1055,7 @@ class LocalEngine {
                 return;
               } catch (err) {
                 debugPrint('local-db: транзакция после конфликта отклонена: $err');
+                if (b.accepted.isCompleted) lastRejected.value = 'Сервер не принял изменение. Проверьте последний чек.';
                 if (!b.done.isCompleted) b.done.completeError(err);
               }
             } else {
@@ -1057,8 +1082,8 @@ class LocalEngine {
           if (e.code == 'payload-too-large' && b.writes.length > 1) {
             // Пачка больше, чем пропускает сервер, — отправим двумя половинами.
             final half = b.writes.length ~/ 2;
-            final b1 = PendingBatch(b.id, b.writes.sublist(0, half));
-            final b2 = PendingBatch(b.id, b.writes.sublist(half));
+            final b1 = PendingBatch(b.id, b.writes.sublist(0, half), key: '${b.key}.1');
+            final b2 = PendingBatch(b.id, b.writes.sublist(half), key: '${b.key}.2');
             pending.replaceRange(0, 1, [b1, b2]);
             Future.wait([b1.done.future, b2.done.future]).then((_) {
               if (!b.done.isCompleted) b.done.complete();
@@ -1070,6 +1095,8 @@ class LocalEngine {
           }
           // Отказ сервера (права, нет документа): запись снимается, как в Firestore.
           debugPrint('local-db: запись отклонена: ${e.code} ${e.message}');
+          // Касса уже показала «сохранено» (запись принята без связи) — сообщаем.
+          if (b.accepted.isCompleted) lastRejected.value = _rejectText(e);
           pending.remove(b);
           _savePending();
           for (final w in b.writes) {
@@ -1082,6 +1109,17 @@ class LocalEngine {
     } finally {
       _flushing = false;
     }
+  }
+
+  static String _rejectText(FirebaseException e) {
+    final why = switch (e.code) {
+      'permission-denied' => 'нет прав (возможно, смену закрыли или устройство отключили)',
+      'not-found' => 'документа уже нет — его удалили на другом устройстве',
+      'already-exists' => 'такая запись уже создана на другом устройстве',
+      'aborted' => 'данные изменились на другом устройстве',
+      _ => (e.message ?? e.code),
+    };
+    return 'Сервер не принял изменение: $why. Проверьте последний чек.';
   }
 
   /// Подтверждённая запись — в кэш (подписка позже пришлёт точные данные).

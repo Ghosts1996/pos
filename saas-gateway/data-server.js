@@ -122,6 +122,7 @@ const isColPath = (p) => okPath(p) && p.split("/").length % 2 === 1;
 const MAX_DOC_BYTES = 1048576; // предел документа Firestore — 1 МиБ
 const MAX_SUBS_PER_SESSION = 500;
 const MAX_SESSIONS = 20000;
+const COMMIT_KEY_TTL_MS = 7 * 24 * 3600 * 1000; // ключи пачек кассы — неделю
 
 class DataError extends Error {
   constructor(code, message, status) {
@@ -183,9 +184,22 @@ function createSecureDb({ store, rulesSource, admin, now = () => Date.now() }) {
    * data, merge, exists (предусловие), ver (предусловие транзакции) }];
    * op "check" — только сверка ver прочитанного в транзакции документа.
    */
-  function commit(auth, writes) {
+  /** Пачка с ключом уже применялась (повтор после потерянного ответа) — где
+   *  лежит её ответ. Коллекция служебная: правилами она закрыта для всех. */
+  const keyPath = (auth, key) => {
+    if (typeof key !== "string" || !/^[A-Za-z0-9._-]{8,80}$/.test(key)) return null;
+    const uid = (auth && (auth.uid || auth.sub)) || "anon";
+    return `_commitKeys/${crypto.createHash("sha256").update(`${uid}:${key}`).digest("hex").slice(0, 40)}`;
+  };
+
+  function commit(auth, writes, { key } = {}) {
     if (!Array.isArray(writes) || !writes.length) throw new DataError("invalid-argument", "Нет записей", 400);
     if (writes.length > 500) throw new DataError("invalid-argument", "Не больше 500 записей за раз", 400);
+    const kp = keyPath(auth, key);
+    if (kp) {
+      const done = store.raw(kp);
+      if (done && Array.isArray(done.results)) return done.results;
+    }
     const overlay = new Map(); // path → данные после (undefined — удалён)
     const cur = (p) => (overlay.has(p) ? overlay.get(p) : store.raw(p));
     const plan = [];
@@ -242,7 +256,10 @@ function createSecureDb({ store, rulesSource, admin, now = () => Date.now() }) {
       if (x.method === "delete") store.remove(x.p);
       else store.write(x.p, x.data, { merge: x.w.op === "set" && !!x.w.merge, update: x.w.op === "update" });
     }
-    return plan.map((x) => ({ path: x.p, ver: store.versionOf(x.p) }));
+    const results = plan.map((x) => ({ path: x.p, ver: store.versionOf(x.p) }));
+    // В том же синхронном шаге, что и сами записи: повтор их уже не применит.
+    if (kp) store.write(kp, { results, at: t }, {});
+    return results;
   }
 
   return { get, query, queryDocs, specFrom, commit, canRead, rules };
@@ -299,7 +316,7 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     const auth = await authOf(req);
     const body = await parseJsonBody(req);
     try {
-      sendJson(res, 200, { results: secure.commit(auth, body.writes) });
+      sendJson(res, 200, { results: secure.commit(auth, body.writes, { key: body.key }) });
     } catch (e) { fail(res, e); }
   }
 
@@ -480,8 +497,18 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
   });
 
   // Брошенные сессии (касса выключена) — через 10 минут без потока.
+  // Ключи пачек — неделю: дольше касса без связи не копит очередь.
+  let lastKeySweep = 0;
   const sweep = setInterval(() => {
     for (const [sid, s] of sessions) if (!s.res && now() - s.lastSeen > 10 * 60 * 1000) sessions.delete(sid);
+    if (now() - lastKeySweep > 60 * 60 * 1000) {
+      lastKeySweep = now();
+      const old = now() - COMMIT_KEY_TTL_MS;
+      for (const p of store.runSpec({ col: "_commitKeys", filters: [] })) {
+        const d = store.raw(p);
+        if (!d || !(Number(d.at) > old)) store.remove(p);
+      }
+    }
   }, 60 * 1000);
   if (sweep.unref) sweep.unref();
 

@@ -168,6 +168,35 @@ void main() {
     expect((await check.doc('tenants/tenantA/tables/later').get()).data()!['name'], 'После перезапуска');
   }, skip: skip);
 
+  test('ответ потерялся после записи: повтор пачки не удваивает увеличение', () async {
+    final a = open('ownerA');
+    final ref = a.doc('tenants/tenantA/tables/t1');
+    final before = ((await ref.get(const GetOptions(source: Source.server))).data()!['visits'] as num?) ?? 0;
+    await http.post(Uri.parse('$_url/__dropReply'), body: jsonEncode({'count': 1}));
+    unawaited(ref.update({'visits': FieldValue.increment(1)}).catchError((Object _) {}));
+    await a.engine.waitForPendingWrites().timeout(const Duration(seconds: 30));
+    final fresh = open('ownerA');
+    final after = (await fresh.doc('tenants/tenantA/tables/t1').get(const GetOptions(source: Source.server))).data()!['visits'] as num;
+    expect(after, before + 1, reason: 'пачка дошла дважды, применилась один раз');
+  }, skip: skip);
+
+  test('без связи сохранили, сервер потом отклонил — кассир видит предупреждение', () async {
+    final a = open('ownerA');
+    await a.doc('tenants/tenantA/tables/t2').get();
+    await _offline(true);
+    unawaited(a.doc('tenants/tenantB/tables/y').set({'name': 'чужое без связи'}).catchError((Object _) {}));
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(a.engine.unsent.value, greaterThan(0), reason: 'видно, что ждёт отправки');
+    expect(a.engine.lastRejected.value, isNull);
+    await _offline(false);
+    await a.engine.waitForPendingWrites().timeout(const Duration(seconds: 30)).catchError((Object _) {});
+    for (var i = 0; i < 50 && a.engine.lastRejected.value == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    expect(a.engine.lastRejected.value, contains('нет прав'));
+    expect(a.engine.unsent.value, 0);
+  }, skip: skip);
+
   test('отказ сервера снимает запись и возвращает ошибку', () async {
     final a = open('ownerA');
     await expectLater(a.doc('tenants/tenantB/tables/x').set({'name': 'чужое'}),

@@ -71,7 +71,17 @@ const fresh = (await post("/db/query", { query: { col, where: [["status", "==", 
 assert.deepStrictEqual([...view.keys()].sort(), fresh.map((d) => d.path).sort(), "выдача из событий = свежий запрос");
 assert.deepStrictEqual(viewOrder.filter((p) => view.has(p)).length, fresh.length, "порядок без лишних");
 for (const d of fresh) assert.deepStrictEqual(view.get(d.path), d.data, `данные ${d.path}`);
+// Связь моргнула: пачка прошла, ответ потерялся, касса шлёт её ещё раз —
+// второй раз она не применяется (бонусы и остатки не удваиваются).
+const inc = { op: "update", path: `${col}/a2`, data: { total: { __op: "increment", value: 5 } }, exists: true };
+const t1 = (await post("/db/query", { query: { col, where: [["status", "==", "active"]] } })).docs.find((d) => d.path.endsWith("/a2")).data.total;
+const r1 = await post("/db/commit", { key: "kassa-batch-0001", writes: [inc] });
+const r2 = await post("/db/commit", { key: "kassa-batch-0001", writes: [inc] });
+assert.deepStrictEqual(r2.results, r1.results, "повтор — прежний ответ");
+await post("/db/commit", { key: "kassa-batch-0002", writes: [inc] });
+const t2 = (await post("/db/query", { query: { col, where: [["status", "==", "active"]] } })).docs.find((d) => d.path.endsWith("/a2")).data.total;
+assert.strictEqual(t2, t1 + 10, "две разные пачки — два раза, повтор — ни разу");
 for (const es of streams) es.close();
 server.close();
-console.log("data-peak: 5 проверок");
+console.log("data-peak: 7 проверок");
 process.exit(0);

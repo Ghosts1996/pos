@@ -49,6 +49,9 @@ const seeded = (async () => {
 })();
 
 let offline = false;
+// Сколько следующих /db/commit применить, но ответ «потерять» (обрыв связи
+// после записи) — касса повторит пачку, сервер не должен применить её дважды.
+let dropReplies = 0;
 const sockets = new Set();
 const streams = new Set();
 const server = http.createServer(async (req, res) => {
@@ -59,7 +62,16 @@ const server = http.createServer(async (req, res) => {
       if (offline) { for (const s of streams) s.destroy(); streams.clear(); }
       return sendJson(res, 200, { offline });
     }
+    if (url === "/__dropReply") {
+      dropReplies = Number((await parseJsonBody(req)).count) || 0;
+      return sendJson(res, 200, { dropReplies });
+    }
     if (offline) return req.socket.destroy();
+    if (url === "/db/commit" && dropReplies > 0) {
+      dropReplies--;
+      const lost = { writeHead() {}, end() { req.socket.destroy(); } };
+      return await api.routes[url](req, lost);
+    }
     if (req.method === "GET" && url === "/db/status") return sendJson(res, 200, { backend: "local" });
     if (req.method === "GET" && url === "/db/listen") { streams.add(req.socket); return api.handleListen(req, res); }
     const h = api.routes[url];
