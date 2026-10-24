@@ -258,10 +258,78 @@ function randomDemoSuffix() {
   return crypto.randomBytes(4).toString("hex");
 }
 
+// ---- Свой вход (own-auth.js) вместо Firebase Authentication.
+// Включается меткой state/auth.own (кнопкой в панели платформы, когда
+// настроена почта) или AUTH_BACKEND=own; AUTH_BACKEND=firebase — как раньше.
+// Свои токены сервер принимает всегда, токены Firebase — пока жив перенос.
+const AUTH_DB_FILE = process.env.AUTH_DB_FILE || path.join(__dirname, "state", "auth-db.json");
+const AUTH_OWN_MARK = `${AUTH_DB_FILE}.own`;
+let authOwnCache = { at: 0, on: false };
+function authOwn() {
+  if (process.env.AUTH_BACKEND === "own") return true;
+  if (process.env.AUTH_BACKEND === "firebase") return false;
+  if (Date.now() - authOwnCache.at > 3000) authOwnCache = { at: Date.now(), on: fs.existsSync(AUTH_OWN_MARK) };
+  return authOwnCache.on;
+}
+function firebaseAuthOrNull() {
+  try {
+    if (!firebaseApp && !process.env.FIREBASE_SERVICE_ACCOUNT_B64 && !process.env.GOOGLE_APPLICATION_CREDENTIALS && !process.env.FIREBASE_AUTH_EMULATOR_HOST) return null;
+    return getFirebaseApp().auth();
+  } catch (_) {
+    return null;
+  }
+}
+/** Ключ Web API Firebase — только для одноразовой проверки старого пароля при переносе. */
+let firebaseWebApiKey = process.env.FIREBASE_WEB_API_KEY || "";
+async function firebasePasswordCheck(email, password) {
+  if (!firebaseWebApiKey) {
+    try {
+      const r = await fetch(`${CONSOLE_URL.replace(/\/?$/, "/")}__/firebase/init.json`, { signal: AbortSignal.timeout(8000) });
+      firebaseWebApiKey = (await r.json()).apiKey || "";
+    } catch (_) {}
+  }
+  if (!firebaseWebApiKey) return null;
+  const base = process.env.FIREBASE_AUTH_EMULATOR_HOST ? `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com` : "https://identitytoolkit.googleapis.com";
+  const r = await fetch(`${base}/v1/accounts:signInWithPassword?key=${encodeURIComponent(firebaseWebApiKey)}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, returnSecureToken: false }), signal: AbortSignal.timeout(10000),
+  });
+  if (!r.ok) return null;
+  const j = await r.json().catch(() => ({}));
+  return j.localId || null;
+}
+let ownAuthInst = null;
+function ownAuth() {
+  if (!ownAuthInst) {
+    fs.mkdirSync(path.dirname(AUTH_DB_FILE), { recursive: true, mode: 0o700 });
+    const { createOwnAuth } = require("./own-auth");
+    ownAuthInst = createOwnAuth({
+      store: createLocalDb({ admin, file: AUTH_DB_FILE }),
+      secretKey: () => tgSecretKey(),
+      firebaseAuth: firebaseAuthOrNull,
+      firebasePasswordCheck,
+    });
+    ownAuthInst.setSiteUrl(CONSOLE_URL);
+  }
+  return ownAuthInst;
+}
+/** Управление пользователями: свой вход или Firebase — тот же набор методов. */
+function authApi() {
+  return authOwn() ? ownAuth().adminAuth() : getFirebaseApp().auth();
+}
+
 async function verifyAuth(req) {
   const authHeader = req.headers["authorization"] || "";
   const idToken = authHeader.replace(/^Bearer\s+/i, "").trim();
   if (!idToken) throw new HttpError(401, "нет токена авторизации");
+  if (ownAuth().isOwnToken(idToken)) {
+    try {
+      return await ownAuth().verifyIdToken(idToken);
+    } catch (e) {
+      console.warn(`own verifyIdToken: ${e.code || ""} ${String(e.message || e).slice(0, 160)}`);
+      throw new HttpError(401, "Сеанс истёк или недействителен — войдите заново");
+    }
+  }
   try {
     return await getFirebaseApp().auth().verifyIdToken(idToken);
   } catch (e) {
@@ -1151,7 +1219,7 @@ async function handleInviteTenantMember(req, res) {
 
   let invitedUser;
   try {
-    invitedUser = await getFirebaseApp().auth().getUserByEmail(email);
+    invitedUser = await authApi().getUserByEmail(email);
   } catch (_) {
     throw new HttpError(
       404,
@@ -1346,7 +1414,7 @@ async function applyChainLocationPayment({ eventId, provider, chainId, amount, l
   const chain = (await firestore.collection("chains").doc(chainId).get()).data();
   if (!tenantId && chain && chain.status !== "deleted" && location?.name && requestedBy) {
     let email = null;
-    try { email = (await admin.auth().getUser(requestedBy)).email || null; } catch (_) {}
+    try { email = (await authApi().getUser(requestedBy)).email || null; } catch (_) {}
     const baseSlug = normalizeSlug(location.slug || location.name);
     // Код могли занять, пока шла оплата, — тогда с хвостом.
     for (let attempt = 0; attempt < 5 && !tenantId; attempt += 1) {
@@ -1761,7 +1829,7 @@ async function billingOwnerEmail(isChain, id) {
   const uid = doc.data()?.ownerUserId;
   if (!uid) return null;
   try {
-    return (await admin.auth().getUser(uid)).email || null;
+    return (await authApi().getUser(uid)).email || null;
   } catch (_) {
     return null;
   }
@@ -5662,7 +5730,7 @@ async function handleGrantSuperAdmin(req, res) {
 
   let user;
   try {
-    user = await getFirebaseApp().auth().getUserByEmail(email);
+    user = await authApi().getUserByEmail(email);
   } catch (e) {
     throw new HttpError(404, "Этот email ещё не зарегистрирован в консоли — попросите сотрудника сначала зарегистрироваться, затем попробуйте снова");
   }
@@ -5697,7 +5765,7 @@ async function handleRevokeSuperAdmin(req, res) {
   superAdminCache.delete(uid);
   superAdminDiskWrite(uid, null);
   try {
-    await getFirebaseApp().auth().revokeRefreshTokens(uid);
+    await authApi().revokeRefreshTokens(uid);
   } catch (e) {
     console.error(`revokeRefreshTokens(${uid}) не удался:`, e.message || e);
   }
@@ -5720,7 +5788,7 @@ async function handleRevokeAdminSessions(req, res) {
   const ref = db().collection("superAdmins").doc(uid);
   const snap = await ref.get();
   if (!snap.exists) throw new HttpError(404, "Этот пользователь не супер-админ");
-  await getFirebaseApp().auth().revokeRefreshTokens(uid);
+  await authApi().revokeRefreshTokens(uid);
   await ref.set({ sessionsValidAfter: Math.floor(Date.now() / 1000) }, { merge: true });
   superAdminCache.delete(uid);
   superAdminDiskWrite(uid, { sessionsValidAfter: Math.floor(Date.now() / 1000) });
@@ -6297,7 +6365,7 @@ async function handleSecurityDevices(req, res) {
   for (let i = 0; i < devices.length; i += 100) {
     const chunk = devices.slice(i, i + 100).map((x) => ({ uid: x.uid }));
     try {
-      const r = await getFirebaseApp().auth().getUsers(chunk);
+      const r = await authApi().getUsers(chunk);
       r.users.forEach((u) => authInfo.set(u.uid, u));
     } catch (e) {
       console.error("getUsers(devices):", e.message || e);
@@ -6362,10 +6430,10 @@ async function setDeviceEnabled(req, res, enabled) {
   // владелец отключает доступ к заведению, а вход остаётся — иначе
   // включённая обратно касса не смогла бы войти.
   if (superAdmin) {
-    await getFirebaseApp().auth().updateUser(uid, { disabled: !enabled });
-    if (!enabled) await getFirebaseApp().auth().revokeRefreshTokens(uid);
+    await authApi().updateUser(uid, { disabled: !enabled });
+    if (!enabled) await authApi().revokeRefreshTokens(uid);
   } else if (enabled) {
-    try { await getFirebaseApp().auth().updateUser(uid, { disabled: false }); } catch (_) {}
+    try { await authApi().updateUser(uid, { disabled: false }); } catch (_) {}
   }
   await writeSecurityEvent(req, decoded, enabled ? "deviceEnabled" : "deviceDisabled", {
     tenantId,
@@ -6462,7 +6530,7 @@ async function handleRestoreDevice(req, res) {
   const chainId = tenantDoc.exists ? tenantDoc.data().chainId : null;
   if (chainId) await syncChainMembership(chainId, uid, "employee", "active");
   // Устройства, удалённые прежней версией, остались с выключенным входом.
-  try { await getFirebaseApp().auth().updateUser(uid, { disabled: false }); } catch (_) {}
+  try { await authApi().updateUser(uid, { disabled: false }); } catch (_) {}
   await writeAuditLog({ tenantId, actorId: decoded.uid, action: "deviceRestored", metadata: { uid, deviceName: deviceSnap.data().deviceName || null } });
   tenantCache.forgetMember(tenantId, uid);
   sendJson(res, 200, { ok: true });
@@ -6774,7 +6842,7 @@ async function handleRegisterGuestRecovery(req, res) {
   const decoded = await verifyAuth(req);
   const { secret } = await parseJsonBody(req);
   if (typeof secret !== "string" || !RECOVERY_SECRET_RE.test(secret)) throw new HttpError(400, "Некорректный ключ");
-  const user = await getFirebaseApp().auth().getUser(decoded.uid);
+  const user = await authApi().getUser(decoded.uid);
   // Только гостевые аккаунты: у владельцев и сотрудников свой вход.
   if (user.email || user.phoneNumber) throw new HttpError(403, "Не гостевой аккаунт");
   await db().collection("guestRecovery").doc(decoded.uid).set({
@@ -6799,14 +6867,14 @@ async function handleRestoreGuestSession(req, res) {
     throw new HttpError(403, "Не удалось восстановить вход");
   }
   try {
-    const user = await getFirebaseApp().auth().getUser(uid);
+    const user = await authApi().getUser(uid);
     if (user.email || user.phoneNumber) throw new HttpError(403, "Не гостевой аккаунт");
   } catch (e) {
     // Аккаунта нет — custom token создаст его заново с тем же uid. Другие
     // ошибки (сеть, квоты) не превращаем в выдачу токена.
     if (e instanceof HttpError || e?.code !== "auth/user-not-found") throw e;
   }
-  const token = await getFirebaseApp().auth().createCustomToken(uid);
+  const token = await authApi().createCustomToken(uid);
   await ref.set({
     restoredAt: admin.firestore.FieldValue.serverTimestamp(),
     restoreCount: admin.firestore.FieldValue.increment(1),
@@ -6909,9 +6977,9 @@ async function anonymizeGuestData({ root, scope, rootId, clientUid, c, forgetInV
   // Анонимный аккаунт гостя (у владельцев/сотрудников с почтой не трогаем)
   let accountDeleted = false;
   try {
-    const u = await getFirebaseApp().auth().getUser(clientUid);
+    const u = await authApi().getUser(clientUid);
     if (!u.email && !u.phoneNumber && (u.providerData || []).length === 0) {
-      await getFirebaseApp().auth().deleteUser(clientUid);
+      await authApi().deleteUser(clientUid);
       accountDeleted = true;
     }
   } catch (_) {}
@@ -7307,7 +7375,7 @@ async function handleSendAuthEmail(req, res) {
   hitAuthEmailLimit(`to:${email}`, AUTH_EMAIL_ADDRESS_MAX);
 
   const url = authContinueUrl(body.continueUrl);
-  const auth = getFirebaseApp().auth();
+  const auth = authApi();
   let link;
   try {
     if (type === "signIn") link = await auth.generateSignInWithEmailLink(email, { url, handleCodeInApp: true });
@@ -7322,6 +7390,126 @@ async function handleSendAuthEmail(req, res) {
   const letter = authEmailLetter(type, link, { siteUrl: CONSOLE_URL });
   await authMailer.send({ to: email, ...letter });
   sendJson(res, 200, { ok: true });
+}
+
+// ------------------------------------------------------------- свой вход (/auth/*)
+
+const authHits = new Map(); // ключ → { n, reset }
+function authLimit(key, max, windowMs) {
+  const now = Date.now();
+  const e = authHits.get(key);
+  if (!e || e.reset <= now) {
+    if (authHits.size > 50000) authHits.clear();
+    authHits.set(key, { n: 1, reset: now + windowMs });
+    return;
+  }
+  if (++e.n > max) throw new HttpError(429, "Слишком много попыток — подождите несколько минут");
+}
+/** Ошибки входа — понятным текстом, код как у Firebase (auth/…): кабинет его различает. */
+function authFail(res, e) {
+  const code = String((e && e.code) || "");
+  if (!code.startsWith("auth/")) throw e;
+  const status = { "auth/invalid-credential": 400, "auth/email-already-in-use": 409, "auth/weak-password": 400, "auth/invalid-email": 400,
+    "auth/user-disabled": 403, "auth/user-token-expired": 401, "auth/user-not-found": 404, "auth/invalid-action-code": 400,
+    "auth/expired-action-code": 400, "auth/operation-not-allowed": 403 }[code] || 400;
+  sendJson(res, status, { error: e.message, code });
+}
+const deviceOf = (req) => String(req.headers["user-agent"] || "").slice(0, 120);
+
+async function handleAuthStatus(req, res) {
+  if (authMailer === undefined) authMailer = createMailer();
+  sendJson(res, 200, { backend: authOwn() ? "own" : "firebase", mail: !!authMailer });
+}
+async function handleAuth(req, res) {
+  const action = String((req.url || "").split("?")[0].split("/").pop());
+  const body = await parseJsonBody(req);
+  const ip = clientIp(req);
+  // Новые входы — только когда свой вход включён; выданные токены живут всегда.
+  if (!authOwn() && ["login", "signup", "anonymous", "exchange"].includes(action)) {
+    return sendJson(res, 403, { error: "Вход через сервер платформы ещё не включён", code: "auth/operation-not-allowed" });
+  }
+  try {
+    if (action === "login") {
+      authLimit(`ip:${ip}`, 30, 15 * 60 * 1000);
+      authLimit(`em:${String(body.email || "").toLowerCase()}`, 10, 15 * 60 * 1000);
+      return sendJson(res, 200, await ownAuth().signIn(body.email, body.password));
+    }
+    if (action === "signup") {
+      authLimit(`su:${ip}`, 10, 60 * 60 * 1000);
+      return sendJson(res, 200, await ownAuth().signUp(body.email, body.password));
+    }
+    if (action === "anonymous") {
+      authLimit(`an:${ip}`, 30, 60 * 60 * 1000);
+      return sendJson(res, 200, await ownAuth().anonymous({ device: deviceOf(req) }));
+    }
+    if (action === "refresh") return sendJson(res, 200, await ownAuth().refresh(String(body.refreshToken || "")));
+    if (action === "logout") { await ownAuth().logout(String(body.refreshToken || "")); return sendJson(res, 200, { ok: true }); }
+    if (action === "exchange") {
+      authLimit(`ex:${ip}`, 60, 60 * 60 * 1000);
+      return sendJson(res, 200, await ownAuth().exchange(String(body.idToken || ""), { device: deviceOf(req) }));
+    }
+    if (action === "custom") {
+      authLimit(`ct:${ip}`, 60, 60 * 60 * 1000);
+      return sendJson(res, 200, await ownAuth().signInWithCustomToken(String(body.token || "")));
+    }
+    if (action === "apply") {
+      authLimit(`ap:${ip}`, 30, 15 * 60 * 1000);
+      const mode = String(body.mode || "");
+      const r = await ownAuth().applyCode(mode, String(body.code || ""), { password: body.password });
+      return sendJson(res, 200, r);
+    }
+    if (action === "reauth") {
+      const decoded = await verifyAuth(req);
+      authLimit(`ra:${decoded.uid}`, 10, 15 * 60 * 1000);
+      return sendJson(res, 200, await ownAuth().reauth(decoded.uid, String(body.password || "")));
+    }
+    if (action === "password") {
+      const decoded = await verifyAuth(req);
+      // Как у Firebase: менять пароль можно только сразу после входа.
+      if (Math.floor(Date.now() / 1000) - (Number(decoded.auth_time) || 0) > 5 * 60) {
+        return sendJson(res, 401, { error: "Для смены пароля войдите заново", code: "auth/requires-recent-login" });
+      }
+      await ownAuth().changePassword(decoded.uid, String(body.password || ""));
+      return sendJson(res, 200, { ok: true });
+    }
+    if (action === "me") {
+      const decoded = await verifyAuth(req);
+      const u = await ownAuth().adminAuth().getUser(decoded.uid);
+      return sendJson(res, 200, { uid: u.uid, email: u.email || null, emailVerified: !!u.emailVerified });
+    }
+  } catch (e) {
+    return authFail(res, e);
+  }
+  sendJson(res, 404, { error: "Нет такого действия" });
+}
+
+/** Панель платформы: включить свой вход, перенести пользователей, убрать их из Firebase. */
+async function handleAuthBackend(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const body = await parseJsonBody(req);
+  const action = String(body.action || "status");
+  if (authMailer === undefined) authMailer = createMailer();
+  if (action === "enable") {
+    if (!authMailer) throw new HttpError(412, "Сначала настройте почту платформы (SMTP) — без неё не уйдут письма подтверждения и сброса пароля");
+    const imp = await ownAuth().importAllFromFirebase();
+    fs.writeFileSync(AUTH_OWN_MARK, new Date().toISOString(), { mode: 0o600 });
+    authOwnCache = { at: 0, on: true };
+    console.log(`own-auth: свой вход включён (${decoded.uid}); перенесено ${imp.imported} из ${imp.total}`);
+    return sendJson(res, 200, { ok: true, backend: "own", imported: imp, stats: await ownAuth().migrationStats() });
+  }
+  if (action === "disable") {
+    try { fs.unlinkSync(AUTH_OWN_MARK); } catch (_) {}
+    authOwnCache = { at: 0, on: false };
+    return sendJson(res, 200, { ok: true, backend: authOwn() ? "own" : "firebase" });
+  }
+  if (action === "purgeFirebase") {
+    if (!authOwn()) throw new HttpError(412, "Сначала включите свой вход");
+    const r = await ownAuth().purgeFirebase({ includePending: body.includePending === true });
+    console.log(`own-auth: удалено из Firebase ${r.deleted} (${decoded.uid})`);
+    return sendJson(res, 200, { ok: true, ...r, stats: await ownAuth().migrationStats() });
+  }
+  sendJson(res, 200, { backend: authOwn() ? "own" : "firebase", mail: !!authMailer, stats: await ownAuth().migrationStats() });
 }
 
 // ------------------------------------------------------------- оплата со стола
@@ -7847,7 +8035,7 @@ function dataApiOrNull() {
 
 /** GET /db/status — где сейчас данные (клиенты выбирают по нему). */
 function handleDataStatus(req, res) {
-  sendJson(res, 200, { backend: DATA_LOCAL ? "local" : "firestore", docs: DATA_LOCAL ? localDataStore().count() : null });
+  sendJson(res, 200, { backend: DATA_LOCAL ? "local" : "firestore", docs: DATA_LOCAL ? localDataStore().count() : null, auth: authOwn() ? "own" : "firebase" });
 }
 
 function dataRoute(name) {
@@ -7977,7 +8165,7 @@ const partners = createPartners({
   db,
   store: () => partnersDb,
   admin,
-  auth: () => getFirebaseApp().auth(),
+  auth: () => authApi(),
   verifyAuth,
   parseJsonBody,
   sendJson,
@@ -8285,6 +8473,18 @@ const ROUTES = {
   "/exportBackup": handleExportBackup,
   // Письма входа/смены пароля/подтверждения почты в оформлении ZalPOS.
   "/sendAuthEmail": handleSendAuthEmail,
+  "/auth/login": handleAuth,
+  "/auth/signup": handleAuth,
+  "/auth/anonymous": handleAuth,
+  "/auth/refresh": handleAuth,
+  "/auth/logout": handleAuth,
+  "/auth/exchange": handleAuth,
+  "/auth/custom": handleAuth,
+  "/auth/apply": handleAuth,
+  "/auth/reauth": handleAuth,
+  "/auth/password": handleAuth,
+  "/auth/me": handleAuth,
+  "/authBackend": handleAuthBackend,
   "/cancelSubscription": (req, res) => handleSetSubscriptionCancel(req, res, true),
   "/resumeSubscription": (req, res) => handleSetSubscriptionCancel(req, res, false),
   "/disableTenant": handleDisableTenant,
@@ -8401,6 +8601,7 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/publicMenu") return runHandler(handlePublicMenu, req, res);
   if (req.method === "GET" && urlPath === "/partnerOptOut") return runHandler(partners.handleOptOut, req, res);
   if (req.method === "GET" && urlPath === "/db/status") return handleDataStatus(req, res);
+  if (req.method === "GET" && urlPath === "/auth/status") return runHandler(handleAuthStatus, req, res);
   if (req.method === "GET" && urlPath === "/db/listen") {
     const api = dataApiOrNull();
     if (!api) return sendJson(res, 503, { error: "Сервер данных ещё не включён", code: "unavailable" });
