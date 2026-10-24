@@ -37,8 +37,8 @@ function harness({ existingEmails = [] } = {}) {
     createCustomToken: async (uid, claims) => `ct:${uid}:${JSON.stringify(claims || {})}`,
   };
   const deps = {
-    db: () => null, store: () => store, admin, auth: () => auth,
-    verifyAuth: async (req) => ({ uid: req.uid, email: req.email || "" }),
+    db: () => store, store: () => store, admin, auth: () => auth,
+    verifyAuth: async (req) => ({ uid: req.uid, email: req.email || "", ...(req.tgApp ? { tgApp: true } : {}) }),
     parseJsonBody: async (req) => req.body || {},
     sendJson: (res, code, obj) => { sent.code = code; sent.body = obj; },
     HttpError,
@@ -737,8 +737,14 @@ test("мини-приложение: вход по подписи Telegram — �
   await assert.rejects(h.partners.handleTgAuth({ body: { initData: sign({ auth_date: fresh(), user }) } }, {}), (e) => e.status === 404);
   const { url } = await h.call(h.partners.handleTgLink, anna);
   await h.partners._onMessage({ chat: { id: 777, type: "private" }, text: `/start pl_${url.match(/pl_([a-f0-9]+)/)[1]}` });
+  assert.ok(h.mails.some((m) => m.to === "anna@zalpos.ru" && /Telegram подключён/.test(m.subject)), "письмо о привязке Telegram");
   const r = await auth(sign({ auth_date: fresh(), query_id: "AAA", user }));
   assert.strictEqual(r.token, 'ct:u_anna@zalpos.ru:{"tgApp":true}');
+  // Вход из Telegram — реквизиты для выплат не поменять.
+  await assert.rejects(h.partners.handlePayoutDetails({ uid: "u_anna@zalpos.ru", tgApp: true, body: { phone: "9001234567", bank: "Сбер", fullName: "Петрова Анна", inn: "500100732259" } }, {}), /только после входа по паролю/);
+  // У аккаунта появилось заведение — без пароля не пускаем.
+  await h.store.collection("tenantMembers").doc("m1").set({ userId: "u_anna@zalpos.ru", tenantId: "t1", status: "active" });
+  await assert.rejects(h.partners.handleTgAuth({ body: { initData: sign({ auth_date: fresh(), user }) } }, {}), /есть заведение/);
   // Подделка, чужой токен бота, старая подпись — отказ.
   const good = sign({ auth_date: fresh(), user });
   await assert.rejects(h.partners.handleTgAuth({ body: { initData: good.replace("777", "778") } }, {}), (e) => e.status === 403);

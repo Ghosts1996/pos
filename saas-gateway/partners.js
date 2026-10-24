@@ -773,7 +773,10 @@ function createPartners(deps) {
 
   /** Реквизиты для перевода — хранятся зашифрованными, менеджеру видна маска. */
   async function handlePayoutDetails(req, res) {
-    const { partner } = await requirePartner(req);
+    const { decoded, partner } = await requirePartner(req);
+    // Вход из Telegram без пароля — реквизиты не меняем: иначе утечка ссылки
+    // на привязку Telegram позволила бы перенаправить выплаты.
+    if (decoded.tgApp) throw new HttpError(403, "Реквизиты меняются только после входа по паролю на zalpos.ru — откройте кабинет в браузере");
     const body = await parseJsonBody(req);
     let d;
     try { d = cleanDetails(body); } catch (e) { throw new HttpError(400, e.message); }
@@ -1214,6 +1217,13 @@ function createPartners(deps) {
     let isAdmin = false;
     try { await requireSuperAdmin({ uid: p.uid, email: p.email }); isAdmin = true; } catch (_) {}
     if (isAdmin) throw new HttpError(403, "Администратор платформы входит только по паролю");
+    // У аккаунта есть заведение — без пароля не пускаем: вход из Telegram
+    // открыл бы и кабинет заведения. Не проверить — тоже не пускаем.
+    let owns = true;
+    try {
+      owns = !(await db().collection("tenantMembers").where("userId", "==", p.uid).limit(1).get()).empty;
+    } catch (_) {}
+    if (owns) throw new HttpError(403, "У этого аккаунта есть заведение — войдите по почте и паролю");
     const token = await auth().createCustomToken(p.uid, { tgApp: true });
     await partnersCol().doc(p.id).set({ tgAppAt: ts(now()) }, { merge: true });
     sendJson(res, 200, { token });
@@ -1374,6 +1384,13 @@ function createPartners(deps) {
       const old = await partnerByChat(chatId);
       if (old && old.id !== d.id) await partnersCol().doc(old.id).set({ tgChatId: null }, { merge: true });
       await d.ref.set({ tgChatId: chatId, tgLinkCode: null, tgLinkedAt: ts(now()) }, { merge: true });
+      // Письмо на почту менеджера: если Telegram подключил не он — заметит сразу.
+      const pd = d.data();
+      if (mailer() && pd.email) {
+        const text = `К вашему кабинету менеджера ZalPOS подключён Telegram${msg.chat.username ? ` @${msg.chat.username}` : ""}. Теперь кабинет открывается из бота без пароля.\n\nЕсли это были не вы — войдите на ${site}#/partner по паролю, нажмите «Переподключить» и напишите в поддержку.`;
+        mailer().send({ to: pd.email, subject: "Telegram подключён к кабинету менеджера ZalPOS", text, html: text.split("\n").map((l) => `<p>${h(l)}</p>`).join("") })
+          .catch((e) => console.error(`partners: письмо о Telegram: ${e.message || e}`));
+      }
       return say(chatId, `✅ Готово, ${h(d.data().name || "менеджер")}! Telegram подключён.\n\n${HELP}\n\nКнопки — внизу чата.`, { reply_markup: MENU });
     }
     const p = await partnerByChat(chatId);

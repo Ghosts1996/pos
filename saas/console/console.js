@@ -7192,7 +7192,7 @@ function screenPartner() {
     const payPanel = () => `
       <div class="card">
         <div class="pt-kicker">Реквизиты для перевода</div>
-        ${p.payoutDetails && !editDetails ? `<p class="small" style="margin:8px 0">${esc(p.payoutDetails)}</p><button type="button" class="pt-link-renew" id="f-partner-details-edit">Изменить реквизиты</button>` : `
+        ${state.tgInit ? `${p.payoutDetails ? `<p class="small" style="margin:8px 0">${esc(p.payoutDetails)}</p>` : ''}<p class="small muted" style="margin:8px 0 0">Указать или изменить реквизиты можно только после входа по паролю — откройте zalpos.ru/#/partner в браузере. Так никто не перенаправит ваши выплаты, даже получив доступ к Telegram.</p>` : p.payoutDetails && !editDetails ? `<p class="small" style="margin:8px 0">${esc(p.payoutDetails)}</p><button type="button" class="pt-link-renew" id="f-partner-details-edit">Изменить реквизиты</button>` : `
           <p class="small muted" style="margin:6px 0 12px">Перевод по СБП на ваш номер. ФИО и ИНН — получателя (ваши): ${p.taxStatus === 'ip' ? 'ИНН вашего ИП.' : 'по ИНН проверяется статус самозанятого, на выплату вы оформляете чек в «Мой налог».'}</p>
           <label class="field"><span>Телефон для СБП</span><input id="f-pd-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 900 123-45-67"></label>
           <label class="field"><span>Банк</span><input id="f-pd-bank" maxlength="60" placeholder="Сбербанк"></label>
