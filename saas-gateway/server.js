@@ -263,21 +263,63 @@ function adminSessionValid(adminData, decoded) {
 }
 
 /** Возвращает данные superAdmins/{uid}. */
+// Кто супер-админ — из Firestore, с кешем в памяти на минуту и копией на
+// диске: если лимит Firebase исчерпан, панель платформы (менеджеры,
+// поддержка — их данные на сервере) работает по последнему известному
+// списку, а не падает. Снятие прав подхватывается при первом удачном чтении.
+const SUPER_ADMINS_FILE = process.env.SUPER_ADMINS_CACHE || path.join(__dirname, "state", "super-admins.json");
+const superAdminCache = new Map(); // uid → { data | null, at }
+let superAdminDisk = null;
+function superAdminDiskRead() {
+  if (superAdminDisk) return superAdminDisk;
+  try { superAdminDisk = JSON.parse(fs.readFileSync(SUPER_ADMINS_FILE, "utf8")); } catch (_) { superAdminDisk = {}; }
+  return superAdminDisk;
+}
+function superAdminDiskWrite(uid, data) {
+  const all = superAdminDiskRead();
+  const next = data ? { sessionsValidAfter: typeof data.sessionsValidAfter === "number" ? data.sessionsValidAfter : null } : null;
+  if (JSON.stringify(all[uid] ?? null) === JSON.stringify(next)) return;
+  if (next) all[uid] = next;
+  else delete all[uid];
+  try {
+    fs.mkdirSync(path.dirname(SUPER_ADMINS_FILE), { recursive: true });
+    fs.writeFileSync(SUPER_ADMINS_FILE, JSON.stringify(all), { mode: 0o600 });
+  } catch (e) {
+    console.error(`супер-админы: копия на диске: ${e.message || e}`);
+  }
+}
+async function superAdminData(uid) {
+  const c = superAdminCache.get(uid);
+  if (c && Date.now() - c.at < 60 * 1000) return c.data;
+  try {
+    const doc = await db().collection("superAdmins").doc(uid).get();
+    const data = doc.exists ? doc.data() : null;
+    superAdminCache.set(uid, { data, at: Date.now() });
+    superAdminDiskWrite(uid, data);
+    return data;
+  } catch (e) {
+    if (!isQuotaExhausted(e)) throw e;
+    const known = superAdminDiskRead()[uid];
+    if (known === undefined) throw e;
+    return known;
+  }
+}
+
 async function requireSuperAdmin(decoded) {
   if (!decoded || !decoded.uid) throw new HttpError(401, "Нужен вход");
-  const doc = await db().collection("superAdmins").doc(decoded.uid).get();
-  if (!doc.exists) throw new HttpError(403, "Только для супер-администратора платформы");
-  if (!adminSessionValid(doc.data(), decoded)) {
+  const data = await superAdminData(decoded.uid);
+  if (!data) throw new HttpError(403, "Только для супер-администратора платформы");
+  if (!adminSessionValid(data, decoded)) {
     throw new HttpError(401, "Сеанс панели завершён — войдите заново");
   }
-  return doc.data();
+  return data;
 }
 
 /** Для действий, которые кроме владельца может сделать и супер-админ. */
 async function isSuperAdmin(decoded) {
   if (!decoded || !decoded.uid) return false;
-  const doc = await db().collection("superAdmins").doc(decoded.uid).get();
-  return doc.exists && adminSessionValid(doc.data(), decoded);
+  const data = await superAdminData(decoded.uid);
+  return !!data && adminSessionValid(data, decoded);
 }
 
 // Самые опасные действия (например, назначить супер-админа) — только сразу
@@ -5635,6 +5677,8 @@ async function handleRevokeSuperAdmin(req, res) {
   const snap = await ref.get();
   if (!snap.exists) throw new HttpError(404, "Этот пользователь не супер-админ");
   await ref.delete();
+  superAdminCache.delete(uid);
+  superAdminDiskWrite(uid, null);
   try {
     await getFirebaseApp().auth().revokeRefreshTokens(uid);
   } catch (e) {
@@ -5661,6 +5705,8 @@ async function handleRevokeAdminSessions(req, res) {
   if (!snap.exists) throw new HttpError(404, "Этот пользователь не супер-админ");
   await getFirebaseApp().auth().revokeRefreshTokens(uid);
   await ref.set({ sessionsValidAfter: Math.floor(Date.now() / 1000) }, { merge: true });
+  superAdminCache.delete(uid);
+  superAdminDiskWrite(uid, { sessionsValidAfter: Math.floor(Date.now() / 1000) });
   await writeSecurityEvent(req, decoded, "adminSessionsRevoked", {
     targetUid: uid,
     targetEmail: snap.data().email || null,
@@ -7779,6 +7825,19 @@ const partners = createPartners({
   secretKey: tgSecretKey,
   encrypt: tgEncrypt,
   decrypt: tgDecrypt,
+  // Реквизиты для договора; лимит Firebase исчерпан — последняя копия на сервере.
+  platformLegal: async () => {
+    const cache = partnersDb.collection("partnerSettings").doc("legalCache");
+    try {
+      const legal = (await db().collection("platformConfig").doc("legal").get()).data() || {};
+      await cache.set(legal);
+      return legal;
+    } catch (e) {
+      const known = (await cache.get()).data();
+      if (known) return known;
+      throw e;
+    }
+  },
 });
 
 /** Первое заведение или сеть владельца — только тогда закрепляем за менеджером. */
@@ -7994,6 +8053,7 @@ const ROUTES = {
   "/partnerAdminPayout": partners.handleAdminPayout,
   "/partnerAdminReverse": partners.handleAdminReverse,
   "/partnerAdminBot": partners.handleAdminBot,
+  "/partnerAdminContract": partners.handleAdminContract,
   "/invalidateTenantCache": handleInvalidateTenantCache,
   "/recordImportConsent": handleRecordImportConsent,
   "/supportSiteMessages": supportBot.handleSiteMessages,

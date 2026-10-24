@@ -7202,6 +7202,7 @@ function watchAdminPartners() {
           <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:8px">
             <button class="btn-link f-pa-open" data-id="${esc(p.id)}">${openId === p.id ? 'Скрыть' : 'Подробнее'}</button>
             <button class="btn-link f-pa-edit" data-id="${esc(p.id)}">Изменить</button>
+            <button class="btn-link f-pa-contract" data-id="${esc(p.id)}" data-code="${esc(p.code)}">Договор (Word)</button>
             ${p.summary.unpaid > 0 ? `<button class="btn-link f-pa-pay" data-id="${esc(p.id)}" data-amount="${p.summary.unpaid}">Отметить выплату ${fmtMoney(p.summary.unpaid)}</button>` : ''}
             <button class="btn-link f-pa-status" data-id="${esc(p.id)}" data-status="${p.status === 'active' ? 'stopped' : 'active'}">${p.status === 'active' ? 'Приостановить' : 'Возобновить'}</button>
           </div>
@@ -7254,6 +7255,31 @@ function watchAdminPartners() {
         editId = null;
         toast('Сохранено');
       });
+    });
+    document.querySelectorAll('.f-pa-contract').forEach((el) => {
+      el.onclick = async () => {
+        try {
+          const idToken = await state.auth.currentUser.getIdToken();
+          const res = await fetch(`${SAAS_GATEWAY_URL}/partnerAdminContract`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+            body: JSON.stringify({ id: el.dataset.id }),
+          });
+          if (!res.ok) {
+            const json = await res.json().catch(() => null);
+            throw new Error(json?.error || `Сервис ответил ошибкой (${res.status})`);
+          }
+          const url = URL.createObjectURL(await res.blob());
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `Договор_${el.dataset.code}-${new Date().getFullYear()}.docx`;
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 5000);
+          toast('Договор скачан. Ваши реквизиты — из «Безопасность → Платформа → Реквизиты»; паспорт, ИНН и счёт менеджера впишите вручную');
+        } catch (e) {
+          toast(`Не удалось скачать договор: ${e?.message || e}`);
+        }
+      };
     });
     document.querySelectorAll('.f-pa-status').forEach((el) => { el.onclick = act(async (b) => { await save(partnerOf(b.dataset.id), { status: b.dataset.status }); }); });
     document.querySelectorAll('.f-pa-pay').forEach((el) => {

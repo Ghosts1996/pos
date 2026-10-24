@@ -76,6 +76,7 @@ function createPartners(deps) {
     apiBase = (process.env.TELEGRAM_API_BASE || "https://api.telegram.org").replace(/\/+$/, ""),
     hookBase = (process.env.TELEGRAM_HOOK_BASE || "").replace(/\/+$/, ""),
     letters = require("./auth-email"),
+    platformLegal = async () => ({}),
     auth = () => admin.auth(),
   } = deps;
   const ts = (ms) => admin.firestore.Timestamp.fromMillis(ms);
@@ -494,6 +495,30 @@ function createPartners(deps) {
     sendJson(res, 200, { ok: true });
   }
 
+  /** Договор с менеджером (.docx) — с реквизитами платформы и данными менеджера. */
+  async function handleAdminContract(req, res) {
+    await requireSuperAdmin(await verifyAuth(req));
+    const body = await parseJsonBody(req);
+    const id = String(body.id || "");
+    if (!/^[\w-]{1,64}$/.test(id)) throw new HttpError(400, "Не указан менеджер");
+    const p = (await partnersCol().doc(id).get()).data();
+    if (!p) throw new HttpError(404, "Менеджер не найден");
+    const year = new Date(now()).getUTCFullYear();
+    const number = `${p.code}-${year}`;
+    const file = require("./partner-contract").buildPartnerContract({
+      platform: (await platformLegal()) || {}, partner: p, settings: await settings(), number, now: new Date(now()),
+    });
+    const name = `Договор_${number}.docx`;
+    res.writeHead(200, {
+      "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "Content-Disposition": `attachment; filename="contract.docx"; filename*=UTF-8''${encodeURIComponent(name)}`,
+      "Content-Length": file.length,
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Expose-Headers": "Content-Disposition",
+    });
+    res.end(file);
+  }
+
   // ------------------------------------------------------------ Telegram-бот менеджеров
 
   const HOOK_ID = "_partners";
@@ -710,7 +735,7 @@ function createPartners(deps) {
   return {
     start, attachOwner, onPayment, invite, dashboardOf, computeAccrual, sweepInvites,
     handleMe, handleAcceptTerms, handleInvite, handleDashboard, handleInviteInfo, handleOptOut, handleTgLink,
-    handleAdminList, handleAdminPartner, handleAdminSave, handleAdminSettings, handleAdminPayout, handleAdminReverse, handleAdminBot,
+    handleAdminList, handleAdminPartner, handleAdminSave, handleAdminSettings, handleAdminPayout, handleAdminReverse, handleAdminBot, handleAdminContract,
     handleHook, HOOK_ID, TERMS_EDITION, _onMessage: onMessage, _onCallback: onCallback,
   };
 }

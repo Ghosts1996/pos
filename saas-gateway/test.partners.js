@@ -229,6 +229,33 @@ test("бот: подключение по ссылке из кабинета, /i
   assert.match(h.tg[h.tg.length - 1].body.text, /\?p=ANNAPETROVA/);
 });
 
+test("договор: услуги (не агентский), реквизиты платформы и менеджера, налоги по статусу, акт", async () => {
+  const { contractBlocks, buildPartnerContract, shortName } = require("./partner-contract");
+  const text = (st, extra = {}) => contractBlocks({
+    platform: { fullName: "Иванов Иван Иванович", ogrnip: "321000000000001", inn: "770000000001", address: "г. Москва", email: "info@zalpos.ru", taxRegime: "npd" },
+    partner: { name: "Петрова Анна Сергеевна", email: "anna@x.ru", percent: 20, months: 0, taxStatus: st, ...extra },
+    settings: { taxPct: 6, feePct: 3.9 }, number: "ANNA-2026",
+  }).map((b) => (typeof b === "string" ? b : b.h || b.c || b.b || b.r || b.l || JSON.stringify(b.table || ""))).join("\n");
+  const npd = text("npd");
+  assert.match(npd, /возмездного оказания услуг по привлечению клиентов/);
+  assert.ok(!/агентск/i.test(npd), "не агентский договор");
+  assert.match(npd, /^ДОГОВОР № ANNA-2026/);
+  assert.match(npd, /Индивидуальный предприниматель Иванов Иван Иванович, ОГРНИП 321000000000001, ИНН 770000000001, применяющий/);
+  assert.match(npd, /20 \(_+\) процентов от каждого платежа/);
+  assert.match(npd, /\(на дату заключения Договора — 6%\)/);
+  assert.match(npd, /чек в приложении «Мой налог»/);
+  assert.match(npd, /не подчиняется правилам внутреннего трудового распорядка/);
+  assert.match(npd, /ст\. 18 Федерального закона от 13\.03\.2006 № 38-ФЗ/);
+  assert.match(npd, /в течение всего срока действия Договора/);
+  assert.match(npd, /ФОРМА АКТА/);
+  assert.match(text("person"), /налоговым агентом Исполнителя/);
+  assert.match(text("ip"), /ИП Петрова Анна Сергеевна/);
+  assert.match(text("npd", { months: 12 }), /в течение 12 \(_+\) месяцев/);
+  assert.strictEqual(shortName("Иванов Иван Иванович"), "Иванов И. И.");
+  const file = buildPartnerContract({ platform: {}, partner: { name: "А", percent: 10 } });
+  assert.strictEqual(file.slice(0, 2).toString(), "PK", "docx — это zip");
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try {
