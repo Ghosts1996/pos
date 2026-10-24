@@ -27,11 +27,15 @@ added() { comm -13 <(printf '%s\n' "$1" | sed '/^$/d' | sort) <(printf '%s\n' "$
 
 if [[ -n "$(added "$before" "$after")" ]]; then
   echo "$(date '+%F %T') новые посты: $(added "$before" "$after")"
-  if ! command -v firebase >/dev/null; then
+  if [[ -d /opt/zalpos-site ]]; then
+    # Сайт на этом сервере (saas-gateway/move-site-to-server.sh).
+    bash "$SAAS/../saas-gateway/build-site.sh" /opt/zalpos-site
+  elif ! command -v firebase >/dev/null; then
     echo "firebase CLI на сервере нет — выложите сайт вручную: cd $SAAS && firebase deploy --only hosting"
     exit 1
+  else
+    (cd "$SAAS" && firebase deploy --only hosting --non-interactive)
   fi
-  (cd "$SAAS" && firebase deploy --only hosting --non-interactive)
 else
   echo "$(date '+%F %T') новых постов нет"
 fi

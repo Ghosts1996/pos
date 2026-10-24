@@ -316,6 +316,16 @@ chmod 755 /opt/saas-gateway /opt/saas-gateway/branding-uploads
 локальных тестов** с мок-провайдером на `http://127.0.0.1`. На боевом сервере
 её задавать нельзя.
 
+## Сайт zalpos.ru на этом сервере (вместо Firebase Hosting)
+
+Один раз, от root: `bash /root/pos-deploy/saas-gateway/move-site-to-server.sh`.
+Скрипт собирает сайт в `/opt/zalpos-site` (`build-site.sh`: блог, файлы
+заранее сжаты), пишет `/etc/nginx/conf.d/zalpos-site.conf` (сжатие, кэш,
+заголовки безопасности) и подсказывает, какую A-запись `@` поменять у
+регистратора. Второй запуск после смены DNS выпускает сертификат и
+включает https. Дальше `update-server.sh` и автопубликация блога собирают
+сайт сюда сами, nginx не трогают.
+
 ## Консоль (`saas/console/console.js`)
 
 Отредактируйте константу `SAAS_GATEWAY_URL` в начале файла на реальный

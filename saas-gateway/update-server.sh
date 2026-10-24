@@ -125,8 +125,20 @@ sleep 3
 systemctl is-active --quiet saas-gateway || die "saas-gateway не запустился — посмотрите: journalctl -u saas-gateway -n 50"
 echo "ok, версия $(cat /opt/saas-gateway/VERSION 2>/dev/null || echo '?')"
 
-say "Сайт zalpos.ru (Firebase Hosting), правила и индексы базы"
-if command -v firebase >/dev/null; then
+if [[ -d /opt/zalpos-site ]]; then
+  # Сайт уже на этом сервере (move-site-to-server.sh) — собираем сюда;
+  # настройки nginx не трогаем.
+  say "Сайт zalpos.ru (этот сервер)"
+  if bash "$REPO/saas-gateway/build-site.sh" /opt/zalpos-site; then
+    node "$REPO/saas/scripts/build-blog.mjs" --announce --state=/var/lib/zalpos-blog/sitemap-announced || true
+  else
+    echo "!! сайт не собран — работает прежняя версия; повторите: bash $REPO/saas-gateway/build-site.sh"
+  fi
+  if command -v firebase >/dev/null; then
+    (cd "$REPO/saas" && firebase deploy --only firestore --non-interactive) || echo "правила Firestore не выложены — не страшно, данные на этом сервере"
+  fi
+elif command -v firebase >/dev/null; then
+  say "Сайт zalpos.ru (Firebase Hosting), правила и индексы базы"
   if (cd "$REPO/saas" && firebase deploy --only hosting,firestore --non-interactive); then
     echo "ok"
     # Новые и изменённые страницы (инструкция, блог) — сразу Яндексу и IndexNow.
@@ -135,7 +147,9 @@ if command -v firebase >/dev/null; then
     echo "не вышло — выполните вручную: cd $REPO/saas && firebase login && firebase deploy --only hosting,firestore"
   fi
 else
+  say "Сайт zalpos.ru (Firebase Hosting), правила и индексы базы"
   echo "firebase CLI на сервере нет — сайт обновите вручную: cd $REPO/saas && firebase deploy --only hosting,firestore"
+  echo "или перенесите сайт на этот сервер: bash $REPO/saas-gateway/move-site-to-server.sh"
 fi
 
 # Блог выходит по расписанию (даты в saas/blog/posts): раз в день в 7:07 по
