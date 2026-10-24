@@ -179,7 +179,7 @@ void main() {
   test('транзакция без интернета: в очередь; другое устройство успело изменить — пересчёт по серверу', () async {
     final a = open('ownerA');
     final b = open('ownerA');
-    final ref = 'tenants/tenantA/tables/offcnt';
+    const ref = 'tenants/tenantA/tables/offcnt';
     await a.doc(ref).set({'n': 0});
     await a.doc(ref).get(); // в памяти устройства A
     await _offline(true);

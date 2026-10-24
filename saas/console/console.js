@@ -717,6 +717,7 @@ async function reauthenticate(actionLabel) {
 }
 
 function clearScreen() {
+  delete screenEl().dataset.screenKey;
   state.screenSubs.forEach((off) => { try { off(); } catch (_) {} });
   state.screenSubs = [];
   // Нижнюю навигацию и тему лендинга включают свои экраны, остальные
@@ -1313,7 +1314,8 @@ function route() {
   // догружаются заведения, проверка менеджера и флаг платформы. Ничего не
   // пересобираем и не переподписываем — иначе 13 разделов грузятся заново,
   // телефон «замирает» на секунды, а накопленные нажатия срабатывают не там.
-  if (keepAdminScreen()) {
+  const key = screenKey();
+  if (key && screenEl().dataset.screenKey === key) {
     const link = $('admin-console-link');
     if (link) link.outerHTML = adminConsoleLinkHtml();
     return;
@@ -3567,6 +3569,7 @@ const FAQ_ITEMS = [
 
 function screenDashboard() {
   screenEl().classList.add('has-tabbar');
+  markScreen();
   // Переключатель заведения — в боковом меню, доступен с любой вкладки.
   screenEl().innerHTML = `<div id="dash-body"><div class="spinner"></div></div>`;
   watchDashboardData(state.activeTenantId);
@@ -6993,6 +6996,7 @@ const PARTNER_INVITE_STATUS = {
 };
 
 function screenPartner() {
+  markScreen();
   screenEl().innerHTML = `<div class="brand">ZalPOS</div><div class="spinner"></div>`;
   let data = null;
   let error = '';
@@ -7763,12 +7767,27 @@ const ADMIN_NAV = [
   { id: 'security', icon: 'lock', color: '#DC2626', label: 'Безопасность' },
 ];
 
-function keepAdminScreen() {
-  if (!state.uid || !state.isSuperAdmin) return false;
-  if ($('admin-root')?.dataset.uid !== String(state.uid)) return false;
+/**
+ * Какой «большой» экран сейчас должен быть: панель платформы, кабинет
+ * менеджера или кабинет заведения — с тем, от чего он зависит. Совпал с уже
+ * открытым — route() его не пересобирает: при входе route() зовётся 2–3 раза
+ * подряд (заведения, флаг платформы, проверка менеджера), и пересборка
+ * сбрасывала вкладку и съедала нажатия.
+ */
+function screenKey() {
+  if (!state.uid) return '';
   const h = location.hash;
-  return h === '#/admin' || ((h === '' || h === '#/' || h === '#') && state.tenantsLoaded && !state.tenants.length);
+  const home = h === '' || h === '#' || h === '#/';
+  if (state.isSuperAdmin && (h === '#/admin' || (home && state.tenantsLoaded && !state.tenants.length))) return `admin:${state.uid}`;
+  // Пункты меню зависят от того, админ ли платформы и менеджер ли, — это тоже в ключе.
+  const who = `${state.isSuperAdmin ? 'A' : ''}${state.partner ? 'P' : ''}`;
+  if (state.partner && h === '#/partner') return `partner:${state.uid}:${who}:${state.tenantsLoaded ? state.tenants.length : '?'}`;
+  if (home && state.tenantsLoaded && state.tenants.length && state.activeTenantId) {
+    return `dash:${state.uid}:${who}:${state.activeTenantId}:${state.tenants.map((t) => `${t.id}/${t.role}/${t.name}/${t.chainId || ''}/${t.chainName || ''}`).join('|')}`;
+  }
+  return '';
 }
+function markScreen() { screenEl().dataset.screenKey = screenKey(); }
 
 function adminConsoleLinkHtml() {
   return state.tenants.length
@@ -7815,6 +7834,7 @@ function adminNavHtml(activeTab) {
 
 function screenSuperAdmin() {
   screenEl().classList.add('has-tabbar');
+  markScreen();
   // Панель уже открыта для этого же входа (route() зовётся несколько раз,
   // пока догружаются заведения и проверка менеджера) — не пересобираем её:
   // иначе само закрывается открытое меню и сбрасывается вкладка. Только
