@@ -58,7 +58,7 @@ void main() {
     final db = open('ownerA');
     final t1 = await db.doc('tenants/tenantA/tables/t1').get();
     expect(t1.exists, isTrue);
-    expect(t1.data()!['name'], 'Стол 1');
+    expect(t1.data()!['name'], startsWith('Стол 1'));
     expect(t1.metadata.isFromCache, isFalse);
     final all = await db.collection('tenants/tenantA/tables').get();
     expect(all.docs.map((d) => d.id).toSet(), containsAll(['t1', 't2']));
@@ -77,25 +77,28 @@ void main() {
     final first = await _until(events, (s) => !s.metadata.isFromCache);
     expect(first.docs.length, greaterThanOrEqualTo(2));
     final sw = Stopwatch()..start();
-    unawaited(b.doc('tenants/tenantA/tables/t3').set({'name': 'Стол 3', 'x': 0.9}));
-    final got = await _until(events, (s) => s.docs.any((d) => d.id == 't3'));
-    expect(got.docChanges.any((c) => c.type == DocumentChangeType.added && c.doc.id == 't3'), isTrue);
+    final newId = 't3_${DateTime.now().microsecondsSinceEpoch}';
+    unawaited(b.doc('tenants/tenantA/tables/$newId').set({'name': 'Стол 3', 'x': 0.9}));
+    final got = await _until(events, (s) => s.docs.any((d) => d.id == newId));
+    expect(got.docChanges.any((c) => c.type == DocumentChangeType.added && c.doc.id == newId), isTrue);
     // ignore: avoid_print
     print('запись другого устройства пришла за ${sw.elapsedMilliseconds} мс');
     // Своя запись — в снимке до ответа сервера.
-    final local = _until(events, (s) => s.docs.any((d) => d.id == 't1' && d.data()['name'] == 'Стол 1*'), timeout: const Duration(milliseconds: 300));
-    final write = a.doc('tenants/tenantA/tables/t1').update({'name': 'Стол 1*'});
+    final mark = 'Стол 1 ${DateTime.now().microsecondsSinceEpoch}';
+    final local = _until(events, (s) => s.docs.any((d) => d.id == 't1' && d.data()['name'] == mark), timeout: const Duration(milliseconds: 300));
+    final write = a.doc('tenants/tenantA/tables/t1').update({'name': mark});
     final snap = await local;
     expect(snap.docs.firstWhere((d) => d.id == 't1').metadata.hasPendingWrites, isTrue);
     await write;
     final fromB = await b.doc('tenants/tenantA/tables/t1').get();
-    expect(fromB.data()!['name'], 'Стол 1*');
+    expect(fromB.data()!['name'], mark);
   }, skip: skip);
 
   test('служебные значения: время сервера, увеличение, массивы, удаление поля', () async {
     final db = open('ownerA');
     final ref = db.doc('tenants/tenantA/tables/fv');
     final events = ref.snapshots().asBroadcastStream();
+    await ref.delete();
     await ref.set({'n': 1, 'tags': ['a'], 'tmp': true, 'at': FieldValue.serverTimestamp()});
     await ref.update({'n': FieldValue.increment(2), 'tags': FieldValue.arrayUnion(['b']), 'tmp': FieldValue.delete()});
     final s = await _until(events, (s) => s.exists && s.data()!['n'] == 3 && !s.metadata.hasPendingWrites);

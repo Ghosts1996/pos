@@ -33,6 +33,14 @@ class AppDb {
 
   static LocalEngine? get engine => _engine;
 
+  /// Тесты: база вместо выбранной сервером.
+  @visibleForTesting
+  static void debugUse(FirebaseFirestore? db, {LocalEngine? engine}) {
+    _local = db;
+    _engine = engine;
+    _inited = true;
+  }
+
   /// Сразу после Firebase.initializeApp и до первого обращения к данным.
   static Future<void> init() async {
     if (_inited) return;
