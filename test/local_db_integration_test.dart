@@ -134,7 +134,10 @@ void main() {
     final q = await a.collection('tenants/tenantA/tables').get();
     expect(q.metadata.isFromCache, isTrue);
     expect(q.docs.map((d) => d.id), containsAll(['t1', 'off']));
-    await expectLater(a.runTransaction((tx) async => tx.get(a.doc('tenants/tenantA/tables/t1'))),
+    // Транзакция без связи — по памяти устройства; документа нет в памяти — «нет связи».
+    final read = await a.runTransaction((tx) async => (await tx.get(a.doc('tenants/tenantA/tables/t1'))).exists);
+    expect(read, isTrue);
+    await expectLater(a.runTransaction((tx) async => tx.get(a.doc('tenants/tenantA/tables/nowhere'))),
         throwsA(isA<FirebaseException>().having((e) => e.code, 'code', 'unavailable')));
     await _offline(false);
     a.engine.reconnectNow();
@@ -171,5 +174,29 @@ void main() {
         throwsA(isA<FirebaseException>().having((e) => e.code, 'code', 'permission-denied')));
     expect(a.engine.pending, isEmpty);
     expect(a.engine.view('tenants/tenantB/tables/x').exists, isFalse);
+  }, skip: skip);
+
+  test('транзакция без интернета: в очередь; другое устройство успело изменить — пересчёт по серверу', () async {
+    final a = open('ownerA');
+    final b = open('ownerA');
+    final ref = 'tenants/tenantA/tables/offcnt';
+    await a.doc(ref).set({'n': 0});
+    await a.doc(ref).get(); // в памяти устройства A
+    await _offline(true);
+    Future<int> inc(LocalFirestore db) => db.runTransaction((tx) async {
+          final cur = await tx.get(db.doc(ref));
+          final n = (cur.data()!['n'] as num).toInt() + 1;
+          tx.update(db.doc(ref), {'n': n});
+          return n;
+        });
+    expect(await inc(a), 1, reason: 'без связи — по памяти устройства');
+    expect((await a.doc(ref).get(const GetOptions(source: Source.cache))).data()!['n'], 1);
+    await _offline(false);
+    // Пока A был без связи, B увеличил до 5.
+    await b.doc(ref).set({'n': 5});
+    a.engine.reconnectNow();
+    await a.engine.waitForPendingWrites().timeout(const Duration(seconds: 20));
+    expect((await b.doc(ref).get(const GetOptions(source: Source.server))).data()!['n'], 6,
+        reason: 'увеличение A пересчитано по свежим данным, а не затёрло 5');
   }, skip: skip);
 }

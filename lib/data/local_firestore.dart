@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_firestore_platform_interface/cloud_firestore_platform_interface.dart'
     show FieldValueFactoryPlatform, FieldValuePlatform;
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import 'local_engine.dart';
 
@@ -124,11 +125,29 @@ class LocalFirestore implements FirebaseFirestore {
   @override
   Future<T> runTransaction<T>(TransactionHandler<T> transactionHandler,
       {Duration timeout = const Duration(seconds: 30), int maxAttempts = 5}) async {
-    await engine.drainBeforeTransaction();
+    try {
+      await engine.drainBeforeTransaction();
+      return await _onlineAttempts(transactionHandler, timeout, maxAttempts);
+    } on TxOfflineSignal {
+      return _offline(transactionHandler, timeout, maxAttempts);
+    } on _TxOffline {
+      return _offline(transactionHandler, timeout, maxAttempts);
+    }
+  }
+
+  /// Транзакция на сервере: чтения с версиями, запись со сверкой; кто-то
+  /// успел изменить прочитанное — повтор. Связи нет ещё до записи — [_TxOffline].
+  Future<T> _onlineAttempts<T>(TransactionHandler<T> handler, Duration timeout, int maxAttempts) async {
     FirebaseException? last;
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
       final tx = LocalTransaction(this);
-      final result = await transactionHandler(tx).timeout(timeout);
+      final T result;
+      try {
+        result = await handler(tx).timeout(timeout);
+      } on FirebaseException catch (e) {
+        if (e.code == 'unavailable' && tx.offlineRead) throw const _TxOffline();
+        rethrow;
+      }
       final writes = tx.buildWrites();
       if (writes.isEmpty) return result;
       try {
@@ -141,6 +160,30 @@ class LocalFirestore implements FirebaseFirestore {
       }
     }
     throw last ?? dbError('aborted', 'Транзакция не удалась');
+  }
+
+  /// Без интернета: транзакция по данным на устройстве, записи — в очередь
+  /// со сверкой версий. Когда связь вернётся и окажется, что другое
+  /// устройство успело изменить прочитанное, транзакция выполнится заново
+  /// уже по данным сервера (пока приложение не перезапускали; после
+  /// перезапуска — побеждает последняя запись).
+  Future<T> _offline<T>(TransactionHandler<T> handler, Duration timeout, int maxAttempts) async {
+    final tx = LocalTransaction(this, offline: true);
+    final result = await handler(tx).timeout(timeout);
+    final writes = tx.buildWrites();
+    if (writes.isNotEmpty) {
+      Future<void> retry() async {
+        try {
+          await _onlineAttempts(handler, timeout, maxAttempts);
+        } on _TxOffline {
+          throw const TxOfflineSignal();
+        }
+      }
+      unawaited(engine.enqueue(writes, retry: retry).catchError((Object e) {
+        debugPrint('local-db: отложенная транзакция не прошла: $e');
+      }));
+    }
+    return result;
   }
 
   @override
@@ -426,6 +469,10 @@ class LocalQuery implements Query<Map<String, dynamic>> {
 
 const _unset = _Unset();
 
+class _TxOffline implements Exception {
+  const _TxOffline();
+}
+
 class _Unset {
   const _Unset();
 }
@@ -582,18 +629,32 @@ class LocalWriteBatch implements WriteBatch {
 }
 
 class LocalTransaction implements Transaction {
-  LocalTransaction(this.db);
+  LocalTransaction(this.db, {this.offline = false});
   final LocalFirestore db;
-  final Map<String, int> _readVers = {};
+  final bool offline;
+  final Map<String, int?> _readVers = {};
   final List<PendingWrite> _writes = [];
+
+  /// Чтение не прошло из-за связи (запись ещё не отправлялась).
+  bool offlineRead = false;
 
   @override
   Future<DocumentSnapshot<T>> get<T extends Object?>(DocumentReference<T> documentReference) async {
     if (_writes.isNotEmpty) throw StateError('В транзакции сначала чтения, потом записи');
     final path = documentReference.path;
-    final (v, ver) = await db.engine.txGet(path);
-    _readVers[path] = ver;
-    return LocalDocSnap(LocalDocRef(db, path), v, false) as DocumentSnapshot<T>;
+    if (offline) {
+      final (v, ver) = db.engine.txGetLocal(path);
+      _readVers[path] = ver;
+      return LocalDocSnap(LocalDocRef(db, path), v, true) as DocumentSnapshot<T>;
+    }
+    try {
+      final (v, ver) = await db.engine.txGet(path);
+      _readVers[path] = ver;
+      return LocalDocSnap(LocalDocRef(db, path), v, false) as DocumentSnapshot<T>;
+    } on FirebaseException catch (e) {
+      if (e.code == 'unavailable') offlineRead = true;
+      rethrow;
+    }
   }
 
   @override
@@ -624,7 +685,7 @@ class LocalTransaction implements Transaction {
       out.add(PendingWrite(w.op, w.path, data: w.data, merge: w.merge, ver: ver));
     }
     for (final e in _readVers.entries) {
-      if (!written.contains(e.key)) out.add(PendingWrite('check', e.key, ver: e.value));
+      if (!written.contains(e.key) && e.value != null) out.add(PendingWrite('check', e.key, ver: e.value));
     }
     return out;
   }

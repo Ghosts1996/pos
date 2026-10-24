@@ -135,12 +135,22 @@ void main() {
     expect(ok, isTrue);
     final local = await db.doc('tenants/$_tenant/sessions/$sessionId').get(const GetOptions(source: Source.cache));
     expect(local.data()!['status'], isNot('active'));
+    // Без интернета работают и пересадка, и разделение счёта (раньше — «когда вернётся интернет»).
+    final t3 = TableModel(id: 'flow3', name: 'Стол Т', x: 0.4, y: 0.4);
+    await fs.addTable(t3);
+    final s2 = await fs.openSession(table: table, employeeName: 'Тест Кассир');
+    await fs.addOrderItem(s2, MenuItem(id: 'm4', categoryId: 'c1', name: 'Чай', price: 90), qty: 2);
+    final open2 = await fs.sessionStream(s2).firstWhere((x) => x != null && x.orderItems.isNotEmpty).timeout(const Duration(seconds: 8));
+    final part = await fs.splitOffItems(sessionId: s2, tableId: 'flow2', moveQty: {FirestoreService.splitKey(open2!.orderItems.first): 1}, employeeName: 'Тест Кассир');
+    await fs.moveSessionToTable(sessionId: s2, fromTableId: 'flow2', toTableId: 'flow3');
 
     await http.post(Uri.parse('$_url/__offline'), body: jsonEncode({'on': false}));
     engine.reconnectNow();
     await engine.waitForPendingWrites().timeout(const Duration(seconds: 30));
     final server = await db.doc('tenants/$_tenant/sessions/$sessionId').get(const GetOptions(source: Source.server));
     expect(server.data()!['status'], isNot('active'));
+    expect((await db.doc('tenants/$_tenant/sessions/$s2').get(const GetOptions(source: Source.server))).data()!['tableId'], 'flow3');
+    expect((await db.doc('tenants/$_tenant/sessions/$part').get(const GetOptions(source: Source.server))).exists, isTrue);
     await fs.closeShift(shiftId, 'Тест Кассир');
   }, skip: harnessOnly, timeout: const Timeout(Duration(minutes: 2)));
 

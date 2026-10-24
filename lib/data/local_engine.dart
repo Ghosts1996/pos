@@ -308,10 +308,27 @@ class PendingBatch {
   final int id;
   final List<PendingWrite> writes;
   final Completer<void> done = Completer<void>();
+
+  /// Запись принята: подтвердил сервер, или связи нет и запись надёжно
+  /// лежит в очереди на устройстве (уйдёт сама). Этого ждёт код кассы —
+  /// без интернета экран не зависает в ожидании сервера.
+  final Completer<void> accepted = Completer<void>();
   int serverFailures = 0;
-  PendingBatch(this.id, this.writes) {
+
+  void accept() {
+    if (!accepted.isCompleted) accepted.complete();
+  }
+
+  /// Отложенная транзакция: при конфликте — выполнить заново по данным
+  /// сервера (живёт только в памяти, до перезапуска приложения).
+  final Future<void> Function()? retry;
+  PendingBatch(this.id, this.writes, {this.retry}) {
     // Ошибку записи без ожидающего (unawaited) не роняем в зону приложения.
     done.future.catchError((_) {});
+    accepted.future.catchError((_) {});
+    done.future.then((_) => accept(), onError: (Object e) {
+      if (!accepted.isCompleted) accepted.completeError(e);
+    });
   }
 }
 
@@ -334,6 +351,11 @@ class DocView {
 
 class _Offline implements Exception {
   const _Offline();
+}
+
+/// Транзакцию не начать на сервере: связи нет (выполняется по памяти устройства).
+class TxOfflineSignal implements Exception {
+  const TxOfflineSignal();
 }
 
 // ------------------------------------------------------------ подписки
@@ -662,7 +684,9 @@ class LocalEngine {
   }
 
   /// Недавно не было связи — не ждём таймаута (как Firestore без сети).
-  bool get knownOffline => !online.value && DateTime.now().difference(_lastFailure) < const Duration(seconds: 20);
+  bool get knownOffline =>
+      !online.value && _lastFailure.isAfter(_lastSuccess) && DateTime.now().difference(_lastFailure) < const Duration(seconds: 20);
+  DateTime _lastSuccess = DateTime.fromMillisecondsSinceEpoch(0);
 
   Future<Map<String, dynamic>> post(String route, Map<String, Object?> body, {Duration timeout = const Duration(seconds: 20)}) async {
     http.Response resp;
@@ -676,6 +700,7 @@ class LocalEngine {
       _lastFailure = DateTime.now();
       throw const _Offline();
     }
+    if (resp.statusCode < 500) _lastSuccess = DateTime.now();
     Map<String, dynamic> j;
     try {
       j = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
@@ -764,16 +789,17 @@ class LocalEngine {
   // ---------------------------------------------------------- запись
 
   /// Пачка записей: сразу видна на устройстве, на сервер уходит по очереди.
-  Future<void> enqueue(List<PendingWrite> writes) {
+  Future<void> enqueue(List<PendingWrite> writes, {Future<void> Function()? retry}) {
     if (writes.isEmpty) return Future.value();
-    final b = PendingBatch(_nextBatch++, writes);
+    final b = PendingBatch(_nextBatch++, writes, retry: retry);
     pending.add(b);
     _savePending();
     for (final w in writes) {
       _changed(w.path);
     }
     _kickFlush();
-    return b.done.future;
+    if (knownOffline) b.accept();
+    return b.accepted.future;
   }
 
   bool _flushing = false;
@@ -804,6 +830,10 @@ class LocalEngine {
           _retryDelay = 1;
           if (!b.done.isCompleted) b.done.complete();
         } on _Offline {
+          // Связи нет: всё, что в очереди, принято — уйдёт, когда она вернётся.
+          for (final p in pending) {
+            p.accept();
+          }
           _retryTimer = Timer(Duration(seconds: _retryDelay), _kickFlush);
           _retryDelay = min(_retryDelay * 2, 15);
           return;
@@ -816,6 +846,53 @@ class LocalEngine {
             _retryTimer = Timer(Duration(seconds: _retryDelay), _kickFlush);
             _retryDelay = min(_retryDelay * 2, 30);
             return;
+          }
+          if (e.code == 'aborted' && b.writes.any((w) => w.ver != null)) {
+            // Отложенная транзакция: прочитанное успело измениться на другом
+            // устройстве. Выполняем её заново по свежим данным сервера (она
+            // первая в очереди — порядок записей сохраняется).
+            pending.remove(b);
+            _savePending();
+            for (final w in b.writes) {
+              _changed(w.path);
+            }
+            final retry = b.retry;
+            if (retry != null) {
+              try {
+                await retry();
+                if (!b.done.isCompleted) b.done.complete();
+              } on TxOfflineSignal {
+                pending.insert(0, b);
+                _savePending();
+                _retryTimer = Timer(Duration(seconds: _retryDelay), _kickFlush);
+                return;
+              } on FirebaseException catch (err) {
+                if (err.code != 'unavailable') {
+                  debugPrint('local-db: транзакция после конфликта отклонена: $err');
+                  if (!b.done.isCompleted) b.done.completeError(err);
+                  continue;
+                }
+                pending.insert(0, b);
+                _savePending();
+                _retryTimer = Timer(Duration(seconds: _retryDelay), _kickFlush);
+                return;
+              } catch (err) {
+                debugPrint('local-db: транзакция после конфликта отклонена: $err');
+                if (!b.done.isCompleted) b.done.completeError(err);
+              }
+            } else {
+              // Приложение перезапускали — повтор недоступен: последняя запись побеждает.
+              final plain = [for (final w in b.writes) if (w.op != 'check') PendingWrite(w.op, w.path, data: w.data, merge: w.merge)];
+              final nb = PendingBatch(b.id, plain);
+              pending.insert(0, nb);
+              nb.done.future.then((_) {
+                if (!b.done.isCompleted) b.done.complete();
+              }, onError: (Object err) {
+                if (!b.done.isCompleted) b.done.completeError(err);
+              });
+              _savePending();
+            }
+            continue;
           }
           if (e.code == 'internal' && ++b.serverFailures < 5) {
             // Сбой на сервере — ещё попытка позже; после пятой запись снимается,
@@ -925,14 +1002,28 @@ class LocalEngine {
     }
   }
 
+  /// Чтение транзакции без связи — из памяти устройства. Версия для сверки —
+  /// серверная; если у документа есть свои неотправленные записи, сверять
+  /// нечего (они уйдут раньше этой транзакции).
+  (DocView, int?) txGetLocal(String path) {
+    final v = view(path);
+    if (!v.known) throw dbError('unavailable', 'Документа нет в памяти устройства, а связи с сервером нет');
+    if (v.pending) return (v, null);
+    final base = docs[path];
+    return (v, base == null || base.data == null ? 0 : base.ver);
+  }
+
   /// Перед транзакцией — отправить свои записи из очереди (иначе транзакция
   /// прочитает данные без них).
   Future<void> drainBeforeTransaction() async {
-    if (pending.isEmpty) return;
-    if (knownOffline) throw dbError('unavailable', 'Нет связи с сервером');
+    if (pending.isEmpty) {
+      if (knownOffline) throw const TxOfflineSignal();
+      return;
+    }
+    if (knownOffline) throw const TxOfflineSignal();
     _kickFlush();
     await waitForPendingWrites().timeout(const Duration(seconds: 10), onTimeout: () {
-      throw dbError('unavailable', 'Нет связи с сервером');
+      throw const TxOfflineSignal();
     });
   }
 
@@ -1102,6 +1193,9 @@ class LocalEngine {
     _closeStream();
     online.value = false;
     _lastFailure = DateTime.now();
+    for (final p in pending) {
+      p.accept();
+    }
     for (final s in _subs.values) {
       if (s.synced) {
         s.synced = false;
