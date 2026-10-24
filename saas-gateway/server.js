@@ -8210,6 +8210,7 @@ const ROUTES = {
   "/partnerDashboard": partners.handleDashboard,
   "/partnerInviteInfo": partners.handleInviteInfo,
   "/partnerTgLink": partners.handleTgLink,
+  "/partnerNewLink": partners.handleNewLink,
   "/partnerAdminList": partners.handleAdminList,
   "/partnerAdminPartner": partners.handleAdminPartner,
   "/partnerAdminSave": partners.handleAdminSave,

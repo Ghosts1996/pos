@@ -286,6 +286,33 @@ test("договор: услуги (не агентский), реквизиты
   assert.strictEqual(file.slice(0, 2).toString(), "PK", "docx — это zip");
 });
 
+test("новая ссылка: код меняется, старые ссылки закрепляют, чужой и остановленный менеджер — нет", async () => {
+  const h = harness();
+  const { id: pid, code: oldCode } = await h.addManager({});
+  const anna = { uid: "u_anna@zalpos.ru" };
+  await h.call(h.partners.handleAcceptTerms, { ...anna, body: { accept: true } });
+  const r = await h.call(h.partners.handleNewLink, anna);
+  assert.ok(r.ok && r.code !== oldCode && r.code.startsWith("ANNAPETROV"));
+  assert.strictEqual(r.link, `https://zalpos.ru/?p=${r.code}`);
+  // Повтор сразу — отказ; через минуту — ещё один код, все прежние работают.
+  await assert.rejects(h.partners.handleNewLink(anna, {}), (e) => e.status === 429);
+  h.tick(61 * 1000);
+  const r2 = await h.call(h.partners.handleNewLink, anna);
+  assert.ok(r2.code !== r.code);
+  for (const [i, c] of [oldCode, r.code, r2.code].entries()) {
+    const a = await h.partners.attachOwner({ uid: `o${i}`, email: `o${i}@cafe.ru`, code: c, venueName: `Кафе ${i}` });
+    assert.deepStrictEqual(a, { partnerId: pid, source: "link" }, c);
+  }
+  // Прежний код нельзя отдать другому менеджеру.
+  await assert.rejects(h.call(h.partners.handleAdminSave, { uid: "sa", body: { email: "ivan@zalpos.ru", name: "Иван", percent: 10 } })
+    .then(() => h.call(h.partners.handleAdminSave, { uid: "sa", body: { id: h.sent.body.id, name: "Иван", percent: 10, code: oldCode } })), (e) => e.status === 409);
+  // Остановленный менеджер не обновляет ссылку и не закрепляет клиентов.
+  await h.call(h.partners.handleAdminSave, { uid: "sa", body: { id: pid, name: "Анна Петрова", percent: 20, status: "stopped" } });
+  h.tick(61 * 1000);
+  await assert.rejects(h.partners.handleNewLink(anna, {}), (e) => e.status === 403);
+  assert.strictEqual(await h.partners.attachOwner({ uid: "o9", email: "o9@cafe.ru", code: oldCode, venueName: "Кафе 9" }), null);
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try {

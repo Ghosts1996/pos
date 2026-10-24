@@ -82,6 +82,7 @@ function createPartners(deps) {
   const ts = (ms) => admin.firestore.Timestamp.fromMillis(ms);
   const col = (n) => store().collection(n);
   const partnersCol = () => col("partners");
+  const aliasesCol = () => col("partnerCodeAliases");
   const settingsRef = () => col("partnerSettings").doc("main");
   const site = siteUrl.replace(/\/?$/, "/");
 
@@ -108,7 +109,17 @@ function createPartners(deps) {
     const c = cleanCode(code);
     if (!c) return null;
     const snap = await partnersCol().where("code", "==", c).limit(1).get();
-    return snap.empty ? null : { id: snap.docs[0].id, ...snap.docs[0].data() };
+    if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() };
+    // Прежний код после «Новая ссылка»: уже разосланные ссылки работают.
+    const alias = (await aliasesCol().doc(c).get()).data();
+    if (!alias || !alias.partnerId) return null;
+    const d = (await partnersCol().doc(alias.partnerId).get()).data();
+    return d ? { id: alias.partnerId, ...d } : null;
+  }
+
+  async function rememberOldCode(partnerId, code) {
+    const c = cleanCode(code);
+    if (c) await aliasesCol().doc(c).set({ partnerId, at: ts(now()) });
   }
 
   async function requirePartner(req) {
@@ -425,6 +436,7 @@ function createPartners(deps) {
         if (code.length < 4) throw new HttpError(400, "Код ссылки — от 4 латинских букв и цифр");
         const other = await partnerByCode(code);
         if (other && other.id !== body.id) throw new HttpError(409, "Такой код ссылки уже занят");
+        if (cur.code && cur.code !== code) await rememberOldCode(body.id, cur.code);
         upd.code = code;
       }
       await ref.set(upd, { merge: true });
@@ -626,6 +638,27 @@ function createPartners(deps) {
     sendJson(res, 200, { ok: true, bot: botInfo() });
   }
 
+  /**
+   * Кабинет: «Новая ссылка». Код меняется, прежний остаётся рабочим — уже
+   * разосланные ссылки по-прежнему закрепляют клиентов. 30 дней идут у
+   * каждого посетителя от его последнего перехода по любой из ссылок.
+   */
+  async function handleNewLink(req, res) {
+    const { partner } = await requirePartner(req);
+    if (partner.status !== "active") throw new HttpError(403, "Программа для вас приостановлена — обратитесь к администратору ZalPOS");
+    if (now() - toMs(partner.linkRenewedAt) < 60 * 1000) throw new HttpError(429, "Ссылку только что обновили — подождите минуту");
+    const base = (cleanCode(translit(partner.name || "")) || "ZAL").slice(0, 10);
+    let code = "";
+    for (let i = 0; i < 6 && !code; i++) {
+      const c = `${base}${crypto.randomBytes(3).toString("hex").toUpperCase()}`.slice(0, 20);
+      if (!(await partnerByCode(c))) code = c;
+    }
+    if (!code) throw new HttpError(503, "Не удалось подобрать код — попробуйте ещё раз");
+    await rememberOldCode(partner.id, partner.code);
+    await partnersCol().doc(partner.id).set({ code, linkRenewedAt: ts(now()) }, { merge: true });
+    sendJson(res, 200, { ok: true, code, link: linkOf({ code }) });
+  }
+
   /** Кабинет: «Подключить Telegram» — одноразовая ссылка на бота. */
   async function handleTgLink(req, res) {
     const { partner } = await requirePartner(req);
@@ -768,7 +801,7 @@ function createPartners(deps) {
 
   return {
     start, attachOwner, onPayment, invite, dashboardOf, computeAccrual, sweepInvites,
-    handleMe, handleAcceptTerms, handleInvite, handleDashboard, handleInviteInfo, handleOptOut, handleTgLink,
+    handleMe, handleAcceptTerms, handleInvite, handleDashboard, handleInviteInfo, handleOptOut, handleTgLink, handleNewLink,
     handleAdminList, handleAdminPartner, handleAdminSave, handleAdminSettings, handleAdminPayout, handleAdminReverse, handleAdminBot, handleAdminContract,
     handleHook, HOOK_ID, TERMS_EDITION, _onMessage: onMessage, _onCallback: onCallback,
   };
