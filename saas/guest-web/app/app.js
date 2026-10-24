@@ -8,13 +8,13 @@
 //
 // ИИ-помощника здесь нет: ключ провайдера в браузер не отдать.
 
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+// Вход — Firebase Authentication или свой вход платформы (zal-auth.js).
 import {
-  getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut,
-} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+  initAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut,
+} from './zal-auth.js';
 // Данные — Firestore или свой сервер платформы (zal-db.js решает по серверу).
 import {
-  openDb, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot,
+  dataBackend, openDb, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot,
   collection, query, where, orderBy, limit, addDoc, deleteDoc, Timestamp,
   disableNetwork, enableNetwork,
 } from './zal-db.js';
@@ -577,10 +577,8 @@ async function boot() {
   // Заведение и конфиг Firebase друг от друга не зависят — запрашиваем
   // параллельно.
   const tenantPromise = resolveTenant();
-  // Не zalpos.ru/__/firebase/init.json: для поддомена это чужой origin, и
-  // Firebase Hosting не отдаёт на него CORS.
-  const configPromise = fetch(`${GATEWAY}/firebaseConfig`)
-    .then((res) => res.json().then((json) => ({ ok: res.ok, json })));
+  // Где вход и данные (свой сервер или Firebase) — тоже параллельно.
+  const statusPromise = dataBackend(GATEWAY);
 
   let resolved;
   try {
@@ -616,22 +614,40 @@ async function boot() {
   state.tenantId = tenantId;
   state.chainId = chainId;
 
-  let config;
-  try {
-    const configResult = await configPromise;
-    if (!configResult.ok || !configResult.json || !configResult.json.projectId) {
-      throw new Error('пусто');
+  // Приложение Firebase — только если вход или данные ещё у Firebase.
+  // Не zalpos.ru/__/firebase/init.json: для поддомена это чужой origin, и
+  // Firebase Hosting не отдаёт на него CORS.
+  let appPromise = null;
+  const firebaseApp = () => {
+    if (!appPromise) {
+      appPromise = (async () => {
+        const res = await fetch(`${GATEWAY}/firebaseConfig`);
+        const config = await res.json();
+        if (!res.ok || !config || !config.projectId) throw new Error('нет настроек Firebase');
+        const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
+        return initializeApp(config);
+      })();
+      appPromise.catch(() => { appPromise = null; });
     }
-    config = configResult.json;
+    return appPromise;
+  };
+
+  let auth;
+  try {
+    const status = await statusPromise;
+    let authBackend = status.auth;
+    try {
+      if (authBackend) localStorage.setItem('zalAuthBackend', authBackend);
+      else authBackend = localStorage.getItem('zalAuthBackend') || 'firebase';
+    } catch (_) { authBackend = authBackend || 'firebase'; }
+    auth = await initAuth({ gateway: GATEWAY, backend: authBackend, firebaseApp });
+    state.db = await openDb(firebaseApp, { gateway: GATEWAY, auth, status });
   } catch (_) {
     screenEl().innerHTML = `
       <h1>Нет связи с сервером</h1>
       <p class="muted">Проверьте интернет и обновите страницу.</p>`;
     return;
   }
-
-  const app = initializeApp(config);
-  state.db = await openDb(app, { gateway: GATEWAY, auth: getAuth(app) });
   watchResume();
   state.root = doc(state.db, 'tenants', tenantId);
   state.loyaltyRoot = chainId ? doc(state.db, 'chains', chainId) : state.root;
@@ -651,8 +667,6 @@ async function boot() {
   } catch (_) {
     // Нет связи — дальше скажут экраны входа.
   }
-  const auth = getAuth(app);
-
   state.auth = auth;
   let routerReady = false;
 

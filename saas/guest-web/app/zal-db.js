@@ -5,10 +5,34 @@
 // импортирует их отсюда, а не с CDN Firebase.
 //
 // Файл одинаковый в saas/console/ и saas/guest-web/app/ (тест следит).
+//
+// Библиотека Firestore загружается, только если данные ещё в Firestore:
+// со своим сервером страница не обращается к Google вовсе.
 
-import * as F from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+const FIRESTORE_URL = 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+let F = null;
 
-export const Timestamp = F.Timestamp;
+/** Метка времени — как у Firestore (seconds, nanoseconds, toDate, toMillis…). */
+export class Timestamp {
+  constructor(seconds, nanoseconds = 0) {
+    this.seconds = Math.floor(seconds);
+    this.nanoseconds = Math.floor(nanoseconds);
+  }
+  static now() { return Timestamp.fromMillis(Date.now()); }
+  static fromDate(d) { return Timestamp.fromMillis(d.getTime()); }
+  static fromMillis(ms) {
+    const s = Math.floor(ms / 1000);
+    return new Timestamp(s, Math.round((ms - s * 1000) * 1e6));
+  }
+  toMillis() { return this.seconds * 1000 + Math.floor(this.nanoseconds / 1e6); }
+  toDate() { return new Date(this.toMillis()); }
+  isEqual(o) { return !!o && o.seconds === this.seconds && o.nanoseconds === this.nanoseconds; }
+  valueOf() { return `${String(this.seconds + 1e12).padStart(13, '0')}.${String(this.nanoseconds).padStart(9, '0')}`; }
+  toJSON() { return { seconds: this.seconds, nanoseconds: this.nanoseconds }; }
+  toString() { return `Timestamp(seconds=${this.seconds}, nanoseconds=${this.nanoseconds})`; }
+}
+/** Метка времени Firestore (из его снимков) или наша. */
+const isTs = (v) => v instanceof Timestamp || (!!F && v instanceof F.Timestamp);
 
 const LOCAL = Symbol('zalLocal');
 const OP = Symbol('zalOp');
@@ -25,6 +49,7 @@ const isOp = (v) => v && typeof v === 'object' && v[OP];
 /** Значение страницы → Firestore (наши служебные — в его служебные). */
 function toFs(v) {
   if (isOp(v)) return F.deleteField();
+  if (v instanceof Timestamp) return new F.Timestamp(v.seconds, v.nanoseconds);
   if (Array.isArray(v)) return v.map(toFs);
   if (v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
     const out = {};
@@ -39,7 +64,7 @@ function toWire(v) {
   if (v === undefined) return undefined;
   if (v === null || typeof v !== 'object') return v;
   if (isOp(v)) return { __op: v[OP] };
-  if (v instanceof F.Timestamp) return { __ts: v.toMillis() };
+  if (isTs(v)) return { __ts: v.toMillis() };
   if (v instanceof Date) return { __ts: v.getTime() };
   if (v instanceof DocRef) return v.path;
   if (Array.isArray(v)) return v.map(toWire);
@@ -53,7 +78,7 @@ function fromWire(v) {
   if (v === null || typeof v !== 'object') return v;
   if (Array.isArray(v)) return v.map(fromWire);
   const keys = Object.keys(v);
-  if (keys.length === 1 && keys[0] === '__ts' && typeof v.__ts === 'number') return F.Timestamp.fromMillis(v.__ts);
+  if (keys.length === 1 && keys[0] === '__ts' && typeof v.__ts === 'number') return Timestamp.fromMillis(v.__ts);
   const out = {};
   for (const [k, x] of Object.entries(v)) out[k] = fromWire(x);
   return out;
@@ -256,14 +281,36 @@ class ColRef extends Query {
 const isLocal = (x) => !!(x && x[LOCAL]);
 const dbOf = (x) => (x instanceof LocalDb ? x : x.db);
 
-/** Хранилище страницы: Firestore или свой сервер (по ответу сервера). */
-export async function openDb(app, { gateway, auth }) {
-  let backend = 'firestore';
-  try {
-    const r = await fetch(`${gateway.replace(/\/+$/, '')}/db/status`, { cache: 'no-store' });
-    if (r.ok) backend = (await r.json()).backend || backend;
-  } catch (_) { /* сервер недоступен — как раньше, Firestore */ }
-  if (backend !== 'local') return F.getFirestore(app);
+const BACKEND_KEY = 'zalDbBackend';
+const memo = {
+  get() { try { return localStorage.getItem(BACKEND_KEY); } catch (_) { return null; } },
+  set(v) { try { localStorage.setItem(BACKEND_KEY, v); } catch (_) {} },
+};
+
+/** Где данные: спрашиваем сервер (до трёх раз), не ответил — как в прошлый раз. */
+export async function dataBackend(gateway) {
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await fetch(`${gateway.replace(/\/+$/, '')}/db/status`, { cache: 'no-store', signal: AbortSignal.timeout(6000) });
+      if (r.ok) {
+        const j = await r.json();
+        if (j.backend) { memo.set(j.backend); return j; }
+      }
+    } catch (_) { /* повторим */ }
+    await new Promise((res) => setTimeout(res, 800 * (i + 1)));
+  }
+  // Данные уже были на своём сервере — к Google не возвращаемся.
+  return { backend: memo.get() || 'firestore', offline: true };
+}
+
+/** Хранилище страницы: Firestore или свой сервер (по ответу сервера).
+ *  app — приложение Firebase или функция, которая его создаёт (только для Firestore). */
+export async function openDb(app, { gateway, auth, status }) {
+  const backend = (status || (await dataBackend(gateway))).backend;
+  if (backend !== 'local') {
+    if (!F) F = await import(FIRESTORE_URL);
+    return F.getFirestore(typeof app === 'function' ? await app() : app);
+  }
   const db = new LocalDb(gateway, auth);
   // Другой вход — новая сессия с его правами.
   if (auth && auth.onAuthStateChanged) {

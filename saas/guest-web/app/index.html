@@ -26,13 +26,11 @@
 <link rel="preload" href="fonts/cormorant-cyrillic-4f4a82.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="app.css">
-<!-- SDK Firebase — параллельно с app.js, а не после его разбора (быстрее
-     первая отрисовка на мобильной сети). -->
-<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
-<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js">
-<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js">
-<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js">
+<!-- Модули — параллельно с app.js. Библиотеки Firebase отсюда не грузим:
+     со своим входом и сервером данных они не нужны. -->
 <link rel="modulepreload" href="app.js">
+<link rel="modulepreload" href="zal-auth.js">
+<link rel="modulepreload" href="zal-db.js">
 <script src="palette.js"></script>
 <script>
 // Бренд из кэша (applyBranding в app.js) — до сети, чтобы при повторном

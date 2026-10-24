@@ -55,14 +55,11 @@
 <link rel="preload" href="fonts/cormorant-cyrillic-4f4a82.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="console.css">
-<!-- SDK Firebase качаем параллельно с console.js, а не после его разбора:
-     иначе на мобильной сети первая отрисовка ждала лишний последовательный
-     шаг загрузки. -->
-<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
-<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js">
-<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js">
-<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js">
+<!-- Модули кабинета — параллельно с console.js, а не после его разбора.
+     Библиотеки Firebase отсюда не грузим: со своим входом они не нужны. -->
 <link rel="modulepreload" href="console.js">
+<link rel="modulepreload" href="zal-auth.js">
+<link rel="modulepreload" href="zal-db.js">
 </head>
 <body>
 

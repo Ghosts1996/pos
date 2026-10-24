@@ -1,18 +1,21 @@
 // Личный кабинет владельца заведения и панель платформы ZalPOS.
-// Без сборки: ES-модули Firebase прямо с CDN, конфиг Firebase берётся с
-// хостинга (/__/firebase/init.json).
+// Без сборки: ES-модули прямо в браузере. Вход и данные — на своём сервере
+// платформы или (пока не переключены) в Firebase: решает сервер (/db/status),
+// библиотеки Firebase тогда загружаются с CDN, конфиг — с хостинга
+// (/__/firebase/init.json).
 
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+// Вход — Firebase Authentication или свой вход платформы (zal-auth.js).
 import {
-  getAuth, onAuthStateChanged, signOut, sendEmailVerification,
+  initAuth, isOwnAuth, actionFromUrl, applyActionCode, confirmPasswordReset,
+  onAuthStateChanged, signOut, sendEmailVerification,
   signInWithEmailAndPassword, createUserWithEmailAndPassword,
   sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink,
   reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail,
   updatePassword, signInWithCustomToken,
-} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+} from './zal-auth.js';
 // Данные — Firestore или свой сервер платформы (zal-db.js решает по серверу).
 import {
-  openDb, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
+  dataBackend, openDb, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
   collection, query, where, orderBy, limit, Timestamp, deleteField, writeBatch,
 } from './zal-db.js';
 
@@ -1065,7 +1068,8 @@ function authErrorMessage(e) {
   const map = {
     'auth/email-already-in-use': 'Этот email уже зарегистрирован — попробуйте войти',
     'auth/invalid-email': 'Некорректный email',
-    'auth/weak-password': 'Пароль слишком простой — минимум 6 символов',
+    'auth/weak-password': 'Пароль слишком простой — минимум 8 символов',
+    'auth/requires-recent-login': 'Для этого действия войдите заново',
     'auth/missing-password': 'Введите пароль',
     'auth/user-not-found': 'Неверный email или пароль',
     'auth/wrong-password': 'Неверный email или пароль',
@@ -1078,32 +1082,51 @@ function authErrorMessage(e) {
 
 // ---------- ЗАПУСК ----------
 
+/** Приложение Firebase — создаётся, только если вход или данные ещё у Firebase. */
+let firebaseAppPromise = null;
+function firebaseApp() {
+  if (!firebaseAppPromise) {
+    firebaseAppPromise = (async () => {
+      // Настройки проекта отдаёт хостинг — ключи не вшиваем в код.
+      const res = await fetch('/__/firebase/init.json');
+      const config = await res.json();
+      if (!config || !config.projectId) throw new Error('нет настроек Firebase');
+      const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
+      return initializeApp(config);
+    })();
+    firebaseAppPromise.catch(() => { firebaseAppPromise = null; });
+  }
+  return firebaseAppPromise;
+}
+
 async function boot() {
-  let config;
+  const status = await dataBackend(SAAS_GATEWAY_URL);
+  let authBackend = status.auth;
   try {
-    // Настройки проекта отдаёт Firebase Hosting — ключи не вшиваем в код.
-    const res = await fetch('/__/firebase/init.json');
-    config = await res.json();
-    if (!config || !config.projectId) throw new Error('пусто');
+    if (authBackend) localStorage.setItem('zalAuthBackend', authBackend);
+    else authBackend = localStorage.getItem('zalAuthBackend') || 'firebase';
+  } catch (_) { authBackend = authBackend || 'firebase'; }
+  try {
+    state.auth = await initAuth({ gateway: SAAS_GATEWAY_URL, backend: authBackend, firebaseApp });
+    state.db = await openDb(firebaseApp, { gateway: SAAS_GATEWAY_URL, auth: state.auth, status });
   } catch (_) {
     screenEl().innerHTML = `
       <div class="brand">ZalPOS</div>
-      <h1>Почти готово</h1>
-      <p class="muted">Осталось один раз зарегистрировать веб-приложение в
-      Firebase: консоль → Project settings → Your apps → значок
-      &lt;/&gt; (Web) → любое имя → Register app. Больше ничего делать не нужно,
-      настройки подставятся сюда сами.</p>`;
+      <h1>Нет связи с сервером</h1>
+      <p class="muted">Проверьте интернет и обновите страницу.</p>`;
     return;
   }
 
-  const app = initializeApp(config);
-  state.auth = getAuth(app);
-  state.db = await openDb(app, { gateway: SAAS_GATEWAY_URL, auth: state.auth });
+  // Ссылки из писем своего входа: подтверждение почты и новый пароль.
+  const action = isOwnAuth(state.auth) ? actionFromUrl(window.location.href) : null;
+  if (action && action.mode !== 'signIn') await handleAuthAction(action);
 
   // Вход по ссылке из письма: пароль не нужен, клик по ссылке и так
   // доказывает владение почтой.
   if (isSignInWithEmailLink(state.auth, window.location.href)) {
     let email = window.localStorage.getItem('emailForSignIn');
+    // Свой вход знает почту по коду ссылки — спрашивать не нужно.
+    if (!email && isOwnAuth(state.auth)) email = '-';
     if (!email) {
       email = window.prompt('Введите email, на который приходило письмо со ссылкой для входа:');
     }
@@ -1120,7 +1143,7 @@ async function boot() {
         const existing = await getDoc(userRef);
         if (!existing.exists()) {
           await setDoc(userRef, {
-            email, createdAt: Timestamp.fromDate(new Date()),
+            email: cred.user.email || email, createdAt: Timestamp.fromDate(new Date()),
             offerAcceptedAt: Timestamp.fromDate(offerAcceptedAtIso ? new Date(offerAcceptedAtIso) : new Date()),
             // Согласие на обработку ПД — отдельной отметкой (с 01.09.2025
             // его нельзя совмещать с другими документами).
@@ -1143,6 +1166,71 @@ async function boot() {
   }
 
   onAuthStateChanged(state.auth, handleAuthChange);
+}
+
+/** Куда вернуться после ссылки из письма: только адрес этого сайта. */
+function continueHash(url) {
+  try {
+    const u = new URL(url, location.href);
+    if (u.origin === location.origin && u.hash) return u.hash;
+  } catch (_) {}
+  return '#/';
+}
+
+/** Ссылка своего входа: подтвердить почту или задать новый пароль. */
+async function handleAuthAction(action) {
+  const back = continueHash(action.continueUrl);
+  if (action.mode === 'verifyEmail') {
+    try {
+      await applyActionCode(state.auth, action.code);
+      toast('Почта подтверждена');
+    } catch (e) {
+      toast(e?.code === 'auth/too-many-requests' ? authErrorMessage(e) : 'Ссылка подтверждения устарела или уже использована — запросите новую в кабинете');
+    }
+    history.replaceState(null, '', location.pathname + back);
+    return;
+  }
+  if (action.mode !== 'resetPassword') {
+    history.replaceState(null, '', location.pathname + '#/');
+    return;
+  }
+  await new Promise((done) => {
+    screenEl().innerHTML = `
+      <div class="brand">ZalPOS</div>
+      <h1>Новый пароль</h1>
+      <p class="muted">Придумайте пароль для входа — не короче 8 символов.
+      После смены прежние входы на других устройствах завершатся.</p>
+      <input id="f-reset-pass" type="password" autocomplete="new-password" placeholder="Новый пароль">
+      <input id="f-reset-pass2" type="password" autocomplete="new-password" placeholder="Ещё раз">
+      <p class="error" id="f-reset-error"></p>
+      <button class="btn" id="f-reset-save">Сохранить и войти</button>
+      <p class="small" style="margin-top:14px"><a href="#/" id="f-reset-cancel">Отмена</a></p>`;
+    $('f-reset-cancel').onclick = (e) => {
+      e.preventDefault();
+      history.replaceState(null, '', location.pathname + '#/');
+      done();
+    };
+    $('f-reset-save').onclick = async () => {
+      const pass = $('f-reset-pass').value;
+      const errEl = $('f-reset-error');
+      errEl.textContent = '';
+      if (pass.length < 8) { errEl.textContent = 'Пароль — не короче 8 символов'; return; }
+      if (pass !== $('f-reset-pass2').value) { errEl.textContent = 'Пароли не совпадают'; return; }
+      $('f-reset-save').disabled = true;
+      try {
+        const email = await confirmPasswordReset(state.auth, action.code, pass);
+        if (email) await signInWithEmailAndPassword(state.auth, email, pass).catch(() => {});
+        toast('Пароль сохранён');
+        history.replaceState(null, '', location.pathname + back);
+        done();
+      } catch (e) {
+        $('f-reset-save').disabled = false;
+        errEl.textContent = e?.code === 'auth/invalid-action-code' || e?.code === 'auth/expired-action-code'
+          ? 'Ссылка устарела или уже использована — запросите новую на экране входа («Забыли пароль?»)'
+          : authErrorMessage(e);
+      }
+    };
+  });
 }
 
 function handleAuthChange(user) {
@@ -3142,7 +3230,7 @@ function screenAuth() {
       </label>
       ${authMode === 'login' ? `
         <label class="field"><span>Пароль</span>
-          <input id="f-pass" type="password" autocomplete="current-password" placeholder="Минимум 6 символов">
+          <input id="f-pass" type="password" autocomplete="current-password" placeholder="Минимум 8 символов">
         </label>
         <p class="small center muted" style="margin:-6px 0 14px"><a href="#" id="f-forgot">Забыли пароль?</a></p>
       ` : `
@@ -4895,7 +4983,7 @@ function watchDashboardData(tenantId) {
           <input id="f-pass-current" type="password" autocomplete="current-password">
         </label>
         <label class="field"><span>Новый пароль</span>
-          <input id="f-pass-new" type="password" autocomplete="new-password" placeholder="Минимум 6 символов">
+          <input id="f-pass-new" type="password" autocomplete="new-password" placeholder="Минимум 8 символов">
         </label>
         <button class="btn btn-ghost" id="f-pass-change">Сменить пароль</button>
         <div id="f-pass-change-msg" class="small" style="margin-top:8px"></div>
@@ -5957,8 +6045,8 @@ function watchDashboardData(tenantId) {
           msgEl.textContent = 'Заполните оба поля';
           return;
         }
-        if (newEl.value.length < 6) {
-          msgEl.textContent = 'Новый пароль — минимум 6 символов';
+        if (newEl.value.length < 8) {
+          msgEl.textContent = 'Новый пароль — минимум 8 символов';
           return;
         }
         const btn = $('f-pass-change');

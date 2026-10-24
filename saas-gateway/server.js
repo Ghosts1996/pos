@@ -7475,7 +7475,8 @@ async function handleAuth(req, res) {
     if (action === "me") {
       const decoded = await verifyAuth(req);
       const u = await ownAuth().adminAuth().getUser(decoded.uid);
-      return sendJson(res, 200, { uid: u.uid, email: u.email || null, emailVerified: !!u.emailVerified });
+      const createdAt = Date.parse((u.metadata && u.metadata.creationTime) || "") || null;
+      return sendJson(res, 200, { uid: u.uid, email: u.email || null, emailVerified: !!u.emailVerified, createdAt });
     }
   } catch (e) {
     return authFail(res, e);
