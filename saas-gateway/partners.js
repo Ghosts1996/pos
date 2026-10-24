@@ -124,6 +124,9 @@ function createPartners(deps) {
     letters = require("./auth-email"),
     platformLegal = async () => ({}),
     notifyAdmins = () => {},
+    // Поддержка менеджеров (support-bot.js): вопрос из бота менеджеров.
+    supportSend = async () => { throw new Error("поддержка не подключена"); },
+    supportHasTicket = async () => false,
     npdApi = (process.env.NPD_STATUS_API || "https://statusnpd.nalog.ru/api/v1/tracker/taxpayer_status").replace(/\/+$/, ""),
     auth = () => admin.auth(),
   } = deps;
@@ -1066,7 +1069,7 @@ function createPartners(deps) {
   }
 
   // Оформление бота: описание до /start, короткое в профиле, меню команд.
-  const BOT_PROFILE_VER = 3;
+  const BOT_PROFILE_VER = 4;
   const BOT_SHORT = "Бот партнёров ZalPOS: клиенты, доход, выплаты и приглашения — в одном чате.";
   const BOT_DESCRIPTION = [
     "💼 Бот для менеджеров партнёрской программы ZalPOS.",
@@ -1089,6 +1092,7 @@ function createPartners(deps) {
     { command: "link", description: "🔗 Моя ссылка для клиентов" },
     { command: "pitch", description: "✍️ Текст для клиента" },
     { command: "invites", description: "📋 Мои приглашения" },
+    { command: "support", description: "🆘 Поддержка" },
     { command: "help", description: "❓ Что умеет бот" },
   ];
   async function ensureBotProfile(token = bot && bot.token, { force = false } = {}) {
@@ -1215,6 +1219,22 @@ function createPartners(deps) {
     sendJson(res, 200, { token });
   }
 
+  /** Для темы поддержки: код, статус, цифры — без имени и почты (уходит в Telegram). */
+  async function partnerInfo(uid) {
+    const p = await partnerByUid(String(uid || ""));
+    if (!p || p.status === "removed") return null;
+    const sm = await summaryOf(p);
+    const r = await openRequestOf(p.id);
+    return {
+      id: p.id, tag: `#${p.code}`, percent: p.percent, taxLabel: TAX_STATUSES[p.taxStatus || "npd"] || LEGACY_PERSON,
+      clients: sm.clients, total: fmtRub(sm.total), available: fmtRub(sm.available), request: r ? `${fmtRub(r.net)} от ${fmtDate(toMs(r.requestedAt))}` : "",
+    };
+  }
+  async function notifyUid(uid, html) {
+    const p = await partnerByUid(String(uid || ""));
+    if (p) await notify(p.id, html, { reply_markup: { inline_keyboard: [[{ text: "✍️ Ответить", callback_data: "psup_ask" }, cabinetBtn("🖥 Кабинет")]] } });
+  }
+
   /** Кабинет: «Подключить Telegram» — одноразовая ссылка на бота. */
   async function handleTgLink(req, res) {
     const { partner } = await requirePartner(req);
@@ -1232,7 +1252,7 @@ function createPartners(deps) {
   // Кнопки внизу чата — всегда под рукой, команды набирать не нужно.
   const BTN = {
     income: "💼 Мой доход", clients: "👥 Клиенты", invite: "📨 Пригласить заведение", link: "🔗 Моя ссылка", pitch: "✍️ Текст для клиента",
-    invites: "📋 Приглашения", payouts: "💸 Выплаты", help: "❓ Помощь",
+    invites: "📋 Приглашения", payouts: "💸 Выплаты", support: "🆘 Поддержка", help: "❓ Помощь",
   };
   const MENU = {
     keyboard: [
@@ -1241,7 +1261,7 @@ function createPartners(deps) {
       [{ text: BTN.invite }],
       [{ text: BTN.link }, { text: BTN.pitch }],
       [{ text: BTN.invites }, { text: BTN.payouts }],
-      [{ text: BTN.help }],
+      [{ text: BTN.support }, { text: BTN.help }],
     ],
     resize_keyboard: true, is_persistent: true, input_field_placeholder: "Выберите действие",
   };
@@ -1263,10 +1283,21 @@ function createPartners(deps) {
     `${BTN.link} — ссылка, которую можно переслать`,
     `${BTN.pitch} — готовое сообщение со ссылкой`,
     "",
+    `${BTN.support} — вопрос специалисту ZalPOS: выплаты, договор, клиенты`,
+    "",
     "<i>Бот сам пишет о новых клиентах, оплатах и выплатах и за 3 дня до конца подписки клиента напомнит предложить продление.</i>",
   ].join("\n");
   const ASK_EMAIL = "📨 <b>Пригласить заведение</b>\n\nНапишите почту владельца и, через пробел, название заведения:\n<code>owner@cafe.ru Кафе Лето</code>";
   const askingEmail = new Map(); // chatId → когда спросили почту
+  const askingSupport = new Map(); // chatId → когда попросили вопрос в поддержку
+  const SUPPORT_CONSENT = "🆘 <b>Поддержка менеджеров ZalPOS</b>\n\nОтвечает специалист — обычно в течение рабочего дня, ответ придёт сюда и в кабинет.\n\nОбращение хранится на сервере в России; в рабочий чат поддержки оно уходит без вашего имени и почты, телефоны, почты, ИНН и номера карт в тексте скрываются автоматически. Не пишите пароли и коды из СМС. Политика конфиденциальности: zalpos.ru/#/legal/privacy";
+  async function askSupport(chatId, p) {
+    if (!(await supportHasTicket(p.uid).catch(() => false))) {
+      return say(chatId, SUPPORT_CONSENT, { reply_markup: { inline_keyboard: [[{ text: "✅ Согласен на обработку данных обращения", callback_data: "psup_ok" }], [{ text: "✖️ Отмена", callback_data: "psup_no" }]] } });
+    }
+    askingSupport.set(chatId, { at: now(), consent: false });
+    return say(chatId, "🆘 Напишите вопрос одним сообщением — передам специалисту поддержки.", { reply_markup: { inline_keyboard: [[{ text: "✖️ Отмена", callback_data: "psup_no" }]] } });
+  }
 
   const linkText = (p) => `🔗 <b>Ваша ссылка для клиентов</b>\n\n${h(linkOf(p))}\n\nКто зарегистрируется по ней в течение 30 дней после перехода, закрепится за вами. 30 дней считаются от последнего перехода — перешлите ссылку ещё раз, и отсчёт начнётся заново.`;
   const linkButtons = (p) => ({
@@ -1353,7 +1384,8 @@ function createPartners(deps) {
     }
     const byButton = Object.keys(BTN).find((k) => BTN[k] === text);
     const cmd = byButton || (text.match(/^\/(\w+)/) || [])[1] || "";
-    if (cmd) askingEmail.delete(chatId);
+    if (cmd) { askingEmail.delete(chatId); askingSupport.delete(chatId); }
+    if (cmd === "support") return askSupport(chatId, p);
     if (cmd === "start" || cmd === "help") return say(chatId, HELP, { reply_markup: MENU });
     if (cmd === "cabinet") return say(chatId, "🖥 <b>Личный кабинет менеджера</b> — откроется прямо в Telegram, вход без пароля.", { reply_markup: { inline_keyboard: [[cabinetBtn("🖥 Открыть кабинет")]] } });
     if (cmd === "link") return say(chatId, linkText(p), { reply_markup: linkButtons(p) });
@@ -1432,6 +1464,17 @@ function createPartners(deps) {
         return say(chatId, h(e.message || e));
       }
     }
+    // Вопрос в поддержку после «🆘 Поддержка».
+    const sup = askingSupport.get(chatId);
+    if (!cmd && sup && now() - sup.at < 30 * 60 * 1000 && text) {
+      askingSupport.delete(chatId);
+      try {
+        const r = await supportSend(p.uid, text, { consent: sup.consent, consentEdition: TERMS_EDITION, via: "telegram" });
+        return say(chatId, `📨 Передал специалисту поддержки${r && r.masked ? " (личные данные в тексте скрыты)" : ""}. Ответ придёт сюда и в кабинет.`, { reply_markup: MENU });
+      } catch (e) {
+        return say(chatId, `Не отправилось: ${h(e.message || e)}`, { reply_markup: MENU });
+      }
+    }
     // Ответ на «Напишите почту владельца».
     if (!cmd && askingEmail.has(chatId) && now() - askingEmail.get(chatId) < 30 * 60 * 1000) {
       const m = text.match(/^(\S+@\S+)(?:\s+(.+))?$/);
@@ -1483,6 +1526,17 @@ function createPartners(deps) {
       } catch (e) {
         return say(chatId, `Не получилось: ${h(e.message || e)}`);
       }
+    }
+    if (q.data === "psup_ask" || q.data === "psup_ok" || q.data === "psup_no") {
+      const p = await partnerByChat(chatId);
+      if (!p || p.status === "removed") return;
+      if (q.data === "psup_no") { askingSupport.delete(chatId); await dropButtons(); return say(chatId, "Хорошо.", { reply_markup: MENU }); }
+      if (q.data === "psup_ok") {
+        await dropButtons();
+        askingSupport.set(chatId, { at: now(), consent: true });
+        return say(chatId, "🆘 Напишите вопрос одним сообщением — передам специалисту поддержки.");
+      }
+      return askSupport(chatId, p);
     }
     const pitch = String(q.data || "").match(/^ppitch_(\d)$/);
     if (pitch) {
@@ -1650,7 +1704,7 @@ function createPartners(deps) {
     start, attachOwner, onPayment, invite, dashboardOf, computeAccrual, sweepInvites, remindRenewals, remindReceipts, remindRequests,
     handleMe, handleAcceptTerms, handleInvite, handleDashboard, handleInviteInfo, handleOptOut, handleTgLink, handleNewLink,
     handlePayoutDetails, handlePayoutRequest, handlePayoutReceipt, handleAdminPayoutReject,
-    handlePayoutConfirm, handleAct, handleAdminAct, handleAdminPayoutsCsv, handleTgAuth,
+    handlePayoutConfirm, handleAct, handleAdminAct, handleAdminPayoutsCsv, handleTgAuth, partnerInfo, notifyUid,
     handleAdminList, handleAdminPartner, handleAdminSave, handleAdminSettings, handleAdminPayout, handleAdminReverse, handleAdminBot, handleAdminContract,
     handleHook, HOOK_ID, TERMS_EDITION, _onMessage: onMessage, _onCallback: onCallback,
   };

@@ -1227,6 +1227,50 @@ test("только Россия: обращение из кабинета обе
   await assert.rejects(h.bot.handleCabinetSend({ uid: "owner1", body: { tenantId: "t1", subject: "x", text: "y" } }, {}), /согласие/);
 });
 
+test("менеджеры: своя тема 🤝 другим цветом, без имени, без ИИ — сразу человек; ответ из темы и из панели — менеджеру в бот", async () => {
+  const notes = [];
+  const h = harness({
+    partnerOf: async (uid) => (uid === "mgr1" ? { id: "p1", tag: "#ANNA", percent: 15, taxLabel: "самозанятый", clients: 2, total: "5 000 ₽", available: "2 000 ₽", request: "" } : null),
+    partnerNotify: async (uid, html) => { notes.push({ uid, html }); },
+  });
+  await setup(h, { ruOnly: true });
+  // Не менеджер — нельзя; без согласия в первый раз — нельзя.
+  await assert.rejects(h.bot.handlePartnerSend({ uid: "owner1", body: { text: "вопрос", consent: true } }, {}), /для участников партнёрской программы/);
+  await assert.rejects(h.bot.handlePartnerSend({ uid: "mgr1", body: { text: "вопрос" } }, {}), /согласие/);
+  await h.bot.handlePartnerSend({ uid: "mgr1", body: { text: "Меня зовут Анна, телефон +7 999 123-45-67, когда выплата?", consent: true } }, {});
+  const id = h.sent.body.ticketId;
+  await h.bot.idle();
+  const t = h.store.get(`supportTickets/${id}`);
+  assert.strictEqual(t.channel, "partner");
+  assert.strictEqual(t.escalated, true, "сразу к человеку");
+  assert.strictEqual(h.aiCalls.length, 0, "ИИ не отвечает менеджерам");
+  const topic = h.calls.find((c) => c.method === "createForumTopic");
+  assert.match(topic.body.name, /🤝 Менеджер #ANNA/);
+  assert.strictEqual(topic.body.icon_color, 0xCB86DB);
+  const all = JSON.stringify(h.calls);
+  assert.ok(!all.includes("123-45-67") && !all.includes("Анна"), "личные данные ушли в Telegram");
+  assert.ok(sends(h.calls, GROUP).some((c) => /Менеджер #ANNA/.test(c.body.text) && /доступно к выплате 2 000 ₽/.test(c.body.text)));
+  // Ответ сотрудника в теме — менеджеру в бот и в кабинет.
+  const who = h.store.get(`supportTickets/${id}`).assigneeId;
+  await h.bot.handleUpdate(inTopic("Выплата завтра", t.topicId, who ? { id: Number(who), first_name: "Мария" } : undefined));
+  await h.bot.idle();
+  assert.ok(notes.some((n) => n.uid === "mgr1" && /Выплата завтра/.test(n.html)));
+  await h.bot.handlePartnerMessages({ uid: "mgr1", body: {} }, {});
+  assert.deepStrictEqual(h.sent.body.messages.map((m) => m.role), ["you", "staff"]);
+  // Второй вопрос — в тот же диалог, согласие уже есть.
+  await new Promise((r) => setTimeout(r, 5));
+  await h.bot.handlePartnerSend({ uid: "mgr1", body: { text: "Спасибо, а договор?" } }, {});
+  assert.strictEqual(h.sent.body.ticketId, id);
+  await h.bot.idle();
+  // Ответ из панели — тоже в бот.
+  await new Promise((r) => setTimeout(r, 5)); // новая отметка времени, как в жизни
+  await h.bot.handleAdminSend({ uid: "sa", body: { ticketId: id, text: "Договор пришлю почтой" } }, {});
+  await h.bot.idle();
+  assert.ok(notes.some((n) => /Договор пришлю почтой/.test(n.html)));
+  // Чужой менеджер не видит диалог.
+  await assert.rejects(h.bot.handlePartnerMessages({ uid: "owner1", body: {} }, {}));
+});
+
 test("только Россия: скриншот — текст распознаётся на сервере, ИИ получает обезличенный текст, картинку — нет", async () => {
   const h = harness();
   await setup(h, { ruOnly: true });

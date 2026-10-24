@@ -7791,6 +7791,9 @@ for (const sig of ["SIGTERM", "SIGINT"]) {
 
 const supportBot = createSupportBot({
   db: () => supportRouter,
+  // Поддержка менеджеров: карточка в теме и ответ в их Telegram-бот (partners — ниже, зовём по требованию).
+  partnerOf: (uid) => partners.partnerInfo(uid),
+  partnerNotify: (uid, html) => partners.notifyUid(uid, html),
   admin,
   verifyAuth,
   parseJsonBody,
@@ -7991,6 +7994,8 @@ const partners = createPartners({
   decrypt: tgDecrypt,
   // Запросы выплат и чеки — администраторам платформы в Telegram поддержки.
   notifyAdmins: (html) => supportBot.notifyAdmins(html),
+  supportSend: (uid, text, opts) => supportBot.partnerSend(uid, text, opts),
+  supportHasTicket: (uid) => supportBot.partnerHasTicket(uid),
   // Реквизиты для договора; лимит Firebase исчерпан — последняя копия на сервере.
   platformLegal: async () => {
     const cache = partnersDb.collection("partnerSettings").doc("legalCache");
@@ -8205,6 +8210,8 @@ const ROUTES = {
   "/supportAdminTickets": supportBot.handleAdminTickets,
   "/supportAdminSend": supportBot.handleAdminSend,
   "/supportKnowledge": supportBot.handleKnowledgeList,
+  "/supportPartnerSend": supportBot.handlePartnerSend,
+  "/supportPartnerMessages": supportBot.handlePartnerMessages,
   // Партнёрская программа: кабинет менеджера и панель платформы.
   "/partnerMe": partners.handleMe,
   "/partnerAcceptTerms": partners.handleAcceptTerms,

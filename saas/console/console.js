@@ -7004,6 +7004,28 @@ function screenPartner() {
 
   let tab = 'invite';
   let editDetails = false;
+  // Поддержка менеджеров: один диалог со специалистом (saas-gateway/support-bot.js).
+  const sup = { loaded: false, started: false, messages: [], waiting: false, closed: false, error: '' };
+  let supTimer = null;
+  const loadSupport = async () => {
+    try {
+      const r = (await callSaasGateway('supportPartnerMessages', {})).data;
+      Object.assign(sup, { loaded: true, started: !!r.started, messages: r.messages || [], waiting: !!r.waitingHuman, closed: !!r.closed, error: '' });
+    } catch (e) {
+      Object.assign(sup, { loaded: true, error: e?.message || String(e) });
+    }
+    if (tab === 'support' && location.hash === '#/partner') draw();
+  };
+  const openSupport = () => {
+    tab = 'support';
+    draw();
+    loadSupport();
+    if (!supTimer) {
+      supTimer = setInterval(() => { if (tab === 'support' && document.visibilityState === 'visible') loadSupport(); }, 10000);
+      sub(() => { clearInterval(supTimer); supTimer = null; });
+    }
+    setTimeout(() => document.querySelector('.pt-tabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  };
 
   const greeting = () => {
     const h = new Date().getHours();
@@ -7015,6 +7037,7 @@ function screenPartner() {
       <div class="pt-brand"><span class="pt-mark">◆</span> ZalPOS <span class="pt-brand-sub">для партнёров</span></div>
       <div class="pt-top-right">
         ${state.tenants.length ? '<a href="#/" class="pt-top-link">Кабинет заведения</a>' : ''}
+        ${p ? `<button type="button" class="btn btn-ghost pt-out pt-help" id="f-partner-help">${navIconHtml('chat')}<span>Поддержка</span></button>` : ''}
         <button type="button" class="btn btn-ghost pt-out" id="f-partner-signout">${navIconHtml('logout')}<span>Выйти</span></button>
       </div>
     </header>
@@ -7136,6 +7159,7 @@ function screenPartner() {
       ['money', 'Начисления'],
       ['pay', `Выплаты${data.payouts.some((x) => x.needReceipt) ? ' · нужен чек' : ''}`],
       ['invites', `Приглашения${data.invites.length ? ` · ${data.invites.length}` : ''}`],
+      ['support', `Поддержка${sup.waiting ? ' · ждём ответ' : ''}`],
     ];
     const empty = (t) => `<p class="small muted pt-empty-text">${t}</p>`;
     const accrualBadge = (a) => {
@@ -7183,6 +7207,21 @@ function screenPartner() {
           ${x.needReceipt ? `<div class="pt-receipt"><span class="small" style="color:var(--warning)">Нужен чек в «Мой налог» на ${fmtMoney(x.amount)} — до ${fmtDay(x.receiptDue)}. В приложении: чек → «Поделиться» → скопируйте ссылку.</span>
             <div class="row" style="gap:8px;margin-top:6px"><input class="grow f-pr-url" data-id="${esc(x.id)}" placeholder="https://lknpd.nalog.ru/api/v1/receipt/…" style="margin:0;min-width:0"><button class="btn btn-ghost f-pr-save" data-id="${esc(x.id)}" style="width:auto">Прикрепить</button></div></div>` : ''}
         </div>`).join('') : empty('Выплат пока не было. Когда сумма к выплате достигнет минимальной, нажмите «Запросить» вверху страницы или в Telegram-боте.')}</div>`;
+    const supportPanel = () => `
+      <div class="card pt-sup">
+        <div class="pt-kicker">Поддержка менеджеров</div>
+        <p class="small muted" style="margin:6px 0 12px">Выплаты, договор, чеки, клиенты — отвечает специалист ZalPOS, обычно в течение рабочего дня. Ответ придёт сюда и в Telegram-бот.</p>
+        ${!sup.loaded ? '<div class="spinner"></div>' : sup.error ? `<p class="small" style="color:var(--danger)">${esc(sup.error)}</p>` : `
+          <div class="pt-sup-list" id="pt-sup-list">${sup.messages.length ? sup.messages.map((m) => `
+            <div class="pt-sup-msg ${m.role === 'you' ? 'you' : 'staff'}"><div class="pt-sup-who">${m.role === 'you' ? 'Вы' : `Поддержка ZalPOS${m.name ? ` · ${esc(m.name)}` : ''}`} · ${m.at ? new Date(m.at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</div><div class="pt-sup-text">${esc(m.text)}</div></div>`).join('')
+            : '<p class="small muted" style="margin:0">Сообщений пока нет — задайте вопрос ниже.</p>'}</div>
+          ${sup.waiting ? '<p class="small muted" style="margin:8px 0 0">⏳ Вопрос у специалиста — ответ придёт сюда и в Telegram.</p>' : ''}`}
+        <label class="field" style="margin-top:12px"><span>Ваш вопрос</span><textarea id="f-pt-sup-text" rows="3" maxlength="4000" placeholder="Например: когда придёт выплата по запросу от 24.10?"></textarea></label>
+        ${sup.loaded && !sup.started ? `<label class="consent-row"><input type="checkbox" id="f-pt-sup-consent">
+          <span class="consent-text"><span>Согласен на обработку данных обращения</span>
+          <span class="small muted">Обращение хранится на сервере в России; в рабочий чат поддержки уходит без вашего имени и почты, телефоны, почты, ИНН и номера карт в тексте скрываются автоматически. Не пишите пароли и коды из СМС. <a href="#/legal/privacy" target="_blank" rel="noopener" class="nowrap">Политика конфиденциальности</a></span></span></label>` : ''}
+        <button class="btn btn-primary" id="f-pt-sup-send" style="width:auto">Отправить</button>
+      </div>`;
     const panels = {
       invite: `
         <div class="card">
@@ -7205,6 +7244,7 @@ function screenPartner() {
             <div class="pt-row-side"><b>${fmtMoney(a.amount)}</b>${accrualBadge(a)}</div>
           </div>`).join('') : empty('Начислений пока нет: они появятся после первой оплаты подписки вашим клиентом.')}</div>`,
       pay: payPanel(),
+      support: supportPanel(),
       invites: `<div class="card pt-rows">${data.invites.length ? data.invites.slice(0, 50).map((x) => {
           const [label, tone] = { sent: ['ждёт регистрации', 'wait'], registered: ['зарегистрировано', 'ok'], expired: ['срок истёк', 'off'], optedOut: ['отказ от писем', 'bad'] }[x.status] || [x.status, 'off'];
           return `<div class="pt-row"><div class="pt-row-main"><b>${esc(x.venueName || x.email)}</b>
@@ -7237,8 +7277,30 @@ function screenPartner() {
     if ($('f-partner-signout')) $('f-partner-signout').onclick = (e) => { e.preventDefault(); signOut(state.auth); };
     if ($('f-partner-retry')) $('f-partner-retry').onclick = () => { error = ''; load(); };
     screenEl().querySelectorAll('[data-ptab]').forEach((b) => {
-      b.onclick = () => { tab = b.dataset.ptab; draw(); };
+      b.onclick = () => { if (b.dataset.ptab === 'support') return openSupport(); tab = b.dataset.ptab; draw(); };
     });
+    if ($('f-partner-help')) $('f-partner-help').onclick = openSupport;
+    const supList = $('pt-sup-list');
+    if (supList) supList.scrollTop = supList.scrollHeight;
+    if ($('f-pt-sup-send')) {
+      $('f-pt-sup-send').onclick = async () => {
+        const text = $('f-pt-sup-text').value.trim();
+        if (!text) { toast('Напишите вопрос'); return; }
+        const consent = sup.started || !!$('f-pt-sup-consent')?.checked;
+        if (!consent) { toast('Отметьте согласие на обработку данных обращения'); return; }
+        const btn = $('f-pt-sup-send');
+        btn.disabled = true;
+        try {
+          const r = (await callSaasGateway('supportPartnerSend', { text, consent: true, consentEdition: LEGAL_EDITION })).data;
+          $('f-pt-sup-text').value = '';
+          toast(r.masked ? 'Отправлено. Личные данные в тексте скрыты' : 'Отправлено специалисту');
+          await loadSupport();
+        } catch (e) {
+          btn.disabled = false;
+          toast(`Не отправилось: ${e?.message || e}`);
+        }
+      };
+    }
     if ($('f-partner-accept')) {
       $('f-partner-accept').onclick = async () => {
         if (!$('f-partner-terms').checked) { toast('Отметьте, что принимаете правила'); return; }
@@ -8430,12 +8492,13 @@ function watchAdminSupportTickets() {
   const FOLDERS = [
     ['platform', '🏪 Вопросы с платформы'],
     ['site', '🌐 Вопросы с лендинга'],
+    ['partner', '🤝 Менеджеры'],
     ['telegram', '✈️ Telegram'],
   ];
-  const folderOf = (t) => (t.channel === 'site' ? 'site' : t.tenantId || t.channel !== 'telegram' ? 'platform' : 'telegram');
+  const folderOf = (t) => (t.channel === 'site' ? 'site' : t.channel === 'partner' ? 'partner' : t.tenantId || t.channel !== 'telegram' ? 'platform' : 'telegram');
   let folder = 'platform';
   // «Гость 4821» — постоянный номер браузера посетителя (не имя).
-  const ticketWho = (t) => (t.channel === 'site'
+  const ticketWho = (t) => (t.channel === 'partner' ? `Менеджер ${t.partnerTag || ''}`.trim() : t.channel === 'site'
     ? `Сайт · ${t.visitorTag ? `Гость ${t.visitorTag}` : 'посетитель'}${t.siteUid ? ' · вошёл в аккаунт' : ''}`
     : t.tenantId ? (tenantNames.get(t.tenantId) || t.tenantId)
       : t.channel === 'telegram' ? `Telegram${t.tgName ? ` · ${t.tgName}` : ''}` : 'Заведение не указано');
@@ -8504,7 +8567,7 @@ function watchAdminSupportTickets() {
           <div style="margin-top:10px">
             ${messages === null ? '<div class="spinner"></div>' : (messages.length ? messages.map((m) => `
               <div style="margin:6px 0;padding:8px 10px;border-radius:10px;background:${m.authorRole === 'super_admin' || m.authorRole === 'ai' ? 'var(--surface-2)' : 'transparent'};border:1px solid var(--border)">
-                <div class="small muted">${esc(m.authorRole === 'ai' ? '🤖 ИИ-ассистент' : m.authorRole === 'super_admin' ? (m.authorName ? `${m.authorName} · платформа` : 'Платформа') : (m.authorName ? `${m.authorName} · клиент` : t.channel === 'site' ? 'Посетитель сайта' : 'Владелец'))} · ${fmtDateTime(m.createdAt)}</div>
+                <div class="small muted">${esc(m.authorRole === 'ai' ? '🤖 ИИ-ассистент' : m.authorRole === 'super_admin' ? (m.authorName ? `${m.authorName} · платформа` : 'Платформа') : (m.authorName ? `${m.authorName} · клиент` : t.channel === 'site' ? 'Посетитель сайта' : t.channel === 'partner' ? 'Менеджер' : 'Владелец'))} · ${fmtDateTime(m.createdAt)}</div>
                 ${m.text ? `<div class="small rich-text" style="margin-top:2px">${richText(m.text, { bold: m.authorRole !== 'owner' })}</div>` : ''}
                 ${attachmentsHtml(t.id, m.attachments)}
               </div>

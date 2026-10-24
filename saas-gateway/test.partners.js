@@ -348,7 +348,7 @@ test("бот: кнопки меню, приглашение в два шага, 
   assert.strictEqual(last().reply_markup.inline_keyboard[0][0].web_app.url, "https://zalpos.ru/?tgapp=1");
   await msg(`/start pl_${url.match(/pl_([a-f0-9]+)/)[1]}`);
   const kb = last().reply_markup.keyboard.flat().map((b) => b.text);
-  assert.deepStrictEqual(kb, ["🖥 Личный кабинет", "💼 Мой доход", "👥 Клиенты", "📨 Пригласить заведение", "🔗 Моя ссылка", "✍️ Текст для клиента", "📋 Приглашения", "💸 Выплаты", "❓ Помощь"]);
+  assert.deepStrictEqual(kb, ["🖥 Личный кабинет", "💼 Мой доход", "👥 Клиенты", "📨 Пригласить заведение", "🔗 Моя ссылка", "✍️ Текст для клиента", "📋 Приглашения", "💸 Выплаты", "🆘 Поддержка", "❓ Помощь"]);
   assert.ok(last().reply_markup.is_persistent);
   await msg("💼 Мой доход");
   assert.match(last().text, /Ваш доход/);
@@ -753,6 +753,45 @@ test("мини-приложение: вход по подписи Telegram — �
   const { url: u2 } = await h2.call(h2.partners.handleTgLink, { uid: "u_boss@zalpos.ru" });
   await h2.partners._onMessage({ chat: { id: 900, type: "private" }, text: `/start pl_${u2.match(/pl_([a-f0-9]+)/)[1]}` });
   await assert.rejects(h2.partners.handleTgAuth({ body: { initData: sign({ auth_date: String(Math.floor(h2.now() / 1000)), user: JSON.stringify({ id: 900 }) }) } }, {}), /только по паролю/);
+});
+
+test("бот: «🆘 Поддержка» — согласие в первый раз, вопрос уходит в поддержку; ответ специалиста — в бот; сведения для темы без имени", async () => {
+  const sentToSupport = [];
+  let has = false;
+  const h = harness();
+  h.partners = createPartners({ ...h.deps,
+    supportSend: async (uid, text, opts) => { sentToSupport.push({ uid, text, ...opts }); has = true; return { ticketId: "t1", masked: false }; },
+    supportHasTicket: async () => has });
+  await h.addManager({});
+  const anna = { uid: "u_anna@zalpos.ru" };
+  await h.call(h.partners.handleAcceptTerms, { ...anna, body: { accept: true } });
+  await h.call(h.partners.handleAdminBot, { uid: "sa", body: { token: "123456789:AAAbbbCCCdddEEEfffGGGhhhIIIjjjKKKlll" } });
+  const { url } = await h.call(h.partners.handleTgLink, anna);
+  const chat = { id: 782, type: "private" };
+  const msg = (text) => h.partners._onMessage({ chat, text });
+  const last = () => h.tg[h.tg.length - 1].body;
+  await msg(`/start pl_${url.match(/pl_([a-f0-9]+)/)[1]}`);
+  await msg("🆘 Поддержка");
+  assert.match(last().text, /Обращение хранится на сервере в России/);
+  assert.strictEqual(last().reply_markup.inline_keyboard[0][0].callback_data, "psup_ok");
+  await h.partners._onCallback({ id: "q", data: "psup_ok", message: { chat, message_id: 2 } });
+  await msg("Когда придёт выплата?");
+  assert.deepStrictEqual(sentToSupport[0], { uid: "u_anna@zalpos.ru", text: "Когда придёт выплата?", consent: true, consentEdition: sentToSupport[0].consentEdition, via: "telegram" });
+  assert.match(last().text, /Передал специалисту поддержки/);
+  // Второй раз — без согласия, сразу вопрос.
+  await msg("/support");
+  assert.match(last().text, /Напишите вопрос одним сообщением/);
+  await msg("И ещё вопрос");
+  assert.strictEqual(sentToSupport[1].consent, false);
+  // Ответ специалиста — в бот, с кнопками.
+  await h.partners.notifyUid("u_anna@zalpos.ru", "👨‍💼 <b>Поддержка ZalPOS</b>:\nВыплата будет завтра");
+  assert.match(last().text, /Выплата будет завтра/);
+  assert.strictEqual(last().reply_markup.inline_keyboard[0][0].callback_data, "psup_ask");
+  // Сведения для темы в Telegram — без имени и почты.
+  const info = await h.partners.partnerInfo("u_anna@zalpos.ru");
+  assert.strictEqual(info.tag, "#ANNAPETROVA");
+  assert.ok(!JSON.stringify(info).includes("Анна") && !JSON.stringify(info).includes("@"));
+  assert.strictEqual(await h.partners.partnerInfo("nobody"), null);
 });
 
 (async () => {

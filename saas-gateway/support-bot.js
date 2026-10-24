@@ -177,6 +177,8 @@ function topicKeyboard(t) {
 }
 // Цвет значка темы (допустимые значения Bot API).
 const TOPIC_COLOR = 0x6FB9F0;
+// Темы менеджеров партнёрской программы — своим цветом, видно в списке сразу.
+const PARTNER_TOPIC_COLOR = 0xCB86DB;
 
 // ------------------------------------------------------------ текст
 
@@ -1002,6 +1004,7 @@ function topicTitle(t, venueName = "") {
   const icon = ICON[topicState(t)];
   // Откуда пишут — видно сразу: 🌐 лендинг, 🏪 кабинет заведения, ✈️ Telegram.
   const who = t.channel === "site" ? `🌐 Сайт · ${siteWho(t)}`
+    : t.channel === "partner" ? `🤝 Менеджер ${t.partnerTag || ""}`.trim()
     : t.channel === "telegram" ? `✈️ ${venueName || t.tgName || "Telegram"}`
       : `🏪 ${venueName || "Кабинет"}`;
   return clip(`${icon}${t.priority ? "⭐" : ""} #${t.no || "?"} · ${who} · ${t.subject || "обращение"}`, 120);
@@ -1144,6 +1147,8 @@ function createSupportBot(deps) {
     publicUrl, secretKey, encrypt, decrypt, aiVendors = {}, assertPublicAiUrl = async () => {},
     venueStatus = async () => "", platformStatus = async () => "", recentErrors = () => [],
     docData = async () => ({}),
+    // Менеджеры партнёрской программы (partners.js): кто это и как ему ответить.
+    partnerOf = async () => null, partnerNotify = async () => {},
   } = deps;
   const doFetch = deps.fetchImpl || fetch;
   const clientIpOf = deps.clientIp || ((req) => String((req.headers && (req.headers["x-real-ip"] || req.headers["x-forwarded-for"])) || (req.socket && req.socket.remoteAddress) || "?").split(",").pop().trim());
@@ -1767,7 +1772,7 @@ function createSupportBot(deps) {
   /** Тема в группе поддержки под обращение; карточка — что за клиент и что у него. */
   /** Ключ клиента для общей темы: заведение, иначе человек в Telegram или кабинете. */
   /** Посетитель сайта — по постоянному ключу браузера: все его диалоги в одной теме. */
-  const clientKey = (t) => (t.tenantId ? `t_${t.tenantId}` : t.tgUserId ? `u_${t.tgUserId}`
+  const clientKey = (t) => (t.partnerUid ? `p_${t.partnerUid}` : t.tenantId ? `t_${t.tenantId}` : t.tgUserId ? `u_${t.tgUserId}`
     : t.visitorHash ? `v_${String(t.visitorHash).slice(0, 24)}` : t.siteKeyHash ? `s_${String(t.siteKeyHash).slice(0, 24)}`
       : t.createdBy && t.createdBy !== "site" ? `o_${t.createdBy}` : "");
 
@@ -1777,7 +1782,7 @@ function createSupportBot(deps) {
     if (!key) return null;
     const saved = (await topicsCol().doc(key).get()).data();
     if (saved && saved.topicId) return { key, topicId: saved.topicId };
-    const field = t.tenantId ? ["tenantId", t.tenantId] : t.tgUserId ? ["tgUserId", t.tgUserId] : t.visitorHash ? ["visitorHash", t.visitorHash]
+    const field = t.partnerUid ? ["partnerUid", t.partnerUid] : t.tenantId ? ["tenantId", t.tenantId] : t.tgUserId ? ["tgUserId", t.tgUserId] : t.visitorHash ? ["visitorHash", t.visitorHash]
       : t.siteKeyHash ? ["siteKeyHash", t.siteKeyHash] : ["createdBy", t.createdBy];
     const snap = await ticketsCol().where(field[0], "==", field[1]).limit(100).get();
     const prev = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((x) => x.id !== t.id && x.topicId)
@@ -1822,7 +1827,7 @@ function createSupportBot(deps) {
       let topic;
       try {
         const icon = await topicIconId(topicState(t)).catch(() => "");
-        topic = await tg("createForumTopic", { chat_id: state.cfg.groupChatId, name: topicTitle(t, vname), icon_color: TOPIC_COLOR, ...(icon ? { icon_custom_emoji_id: icon } : {}) });
+        topic = await tg("createForumTopic", { chat_id: state.cfg.groupChatId, name: topicTitle(t, vname), icon_color: t.channel === "partner" ? PARTNER_TOPIC_COLOR : TOPIC_COLOR, ...(icon ? { icon_custom_emoji_id: icon } : {}) });
       } catch (e) {
         state.lastError = `не создать тему: ${e.message}`;
         console.error(`support-bot: ${state.lastError}`);
@@ -1837,11 +1842,18 @@ function createSupportBot(deps) {
     await patch(t, { topicId: t.topicId, ...(reused ? {} : { topicName: t.topicName, topicIcon: t.topicIcon }) });
     if (known && known.key) await quiet(topicsCol().doc(known.key).set({ topicId: t.topicId, ticketId: t.id, updatedAt: ts(now()), ...(t.channel === "site" ? { site: true } : {}) }, { merge: true }), "тема клиента");
     if (reused) await renameTopic(t);
-    const lines = [`${reused ? "📋" : "🆕"} <b>Обращение #${t.no}</b> · ${t.channel === "telegram" ? "Telegram" : t.channel === "site" ? "чат на сайте" : "из кабинета"}`];
+    const lines = [`${reused ? "📋" : "🆕"} <b>Обращение #${t.no}</b> · ${t.channel === "telegram" ? "Telegram" : t.channel === "site" ? "чат на сайте" : t.channel === "partner" ? "менеджер партнёрской программы" : "из кабинета"}`];
     if (t.channel === "telegram") lines.push(`👤 ${h(t.tgName || "Клиент")}${t.tgUsername ? ` (@${h(t.tgUsername)})` : ""} · ID <code>${h(t.tgUserId)}</code>`);
     lines.push(`💬 Тема: <i>${h(t.subject || "—")}</i>`, "");
     if (t.priority) lines.push("⭐ <b>Приоритетная поддержка</b> по тарифу — человек отвечает в первую очередь, до 5 минут.", "");
-    if (t.tenantId) {
+    if (t.channel === "partner") {
+      // В Telegram — без имени и почты (данные остаются в России): код ссылки и цифры.
+      const p = await Promise.resolve(partnerOf(t.partnerUid)).catch(() => null);
+      lines.push(p
+        ? `🤝 <b>Менеджер ${h(t.partnerTag || p.tag || "")}</b> · ${h(p.taxLabel || "")} · ставка ${h(String(p.percent))}%\n👥 Клиентов: ${h(String(p.clients))} · начислено ${h(p.total)} · доступно к выплате ${h(p.available)}${p.request ? `\n💸 Открыт запрос выплаты: ${h(p.request)}` : ""}`
+        : `🤝 Менеджер ${h(t.partnerTag || "")}`);
+      lines.push("👤 Имя и почта менеджера — в панели платформы → «Менеджеры». ИИ здесь не отвечает: вопросы о выплатах и договоре ведёт человек.");
+    } else if (t.tenantId) {
       const info = await venueStatus(t.tenantId).catch(() => null);
       lines.push(info ? venueCard(info, { staff: true, now: now() }) : `🏪 ${h(vname || t.tenantId)}`);
     } else if (t.channel === "site") {
@@ -1884,6 +1896,9 @@ function createSupportBot(deps) {
     if (t.channel === "telegram") {
       const prefix = bare ? "" : role === "super_admin" ? `👨‍💼 <b>${h(authorName || "Поддержка")}</b>, ZalPOS:\n` : role === "ai" ? "🤖 " : "";
       await send(t.tgChatId, `${prefix}${html || h(text)}`, { ...HTML, ...(markup ? { reply_markup: markup } : {}) });
+    }
+    if (t.channel === "partner" && role === "super_admin" && text) {
+      await Promise.resolve(partnerNotify(t.partnerUid, `👨‍💼 <b>Поддержка ZalPOS</b>${authorName ? ` · ${h(authorName)}` : ""}:\n${h(text)}`)).catch(() => {});
     }
     // В кабинете — с **жирным** (кабинет его показывает), без заголовков и `кода`.
     const stored = t.channel !== "telegram" && md ? md.replace(/^#{1,6}\s*/gm, "").replace(/`{1,3}/g, "").trim() : text;
@@ -3930,11 +3945,12 @@ function createSupportBot(deps) {
         await toTopicHtml(t, `👨‍💼 <b>Ответ из панели ZalPOS</b>${m.authorName ? ` · ${h(m.authorName)}` : ""}\n<blockquote>${h(m.text || "📎 файл")}</blockquote>`);
         await filesToTopic(t, m, "👨‍💼 Из панели");
         if (t.channel === "telegram" && t.tgChatId) await quiet(send(t.tgChatId, `👨‍💼 Поддержка ZalPOS:\n${m.text}`), "клиенту");
+        if (t.channel === "partner" && m.text) await Promise.resolve(partnerNotify(t.partnerUid, `👨‍💼 <b>Поддержка ZalPOS</b>:\n${h(m.text)}`)).catch(() => {});
         await patch(t, { escalated: false, aiPausedUntil: now() + pauseMs(), humanAt: ts(now()), ...(t.firstResponseAt ? {} : { firstResponseAt: ts(now()) }) });
       } else {
         if (t.topicId) state.topicToTicket.set(t.topicId, t.id);
         await patch(t, { clientAt: m.createdAt || ts(now()) });
-        const from = t.channel === "site" ? `${siteWho(t)} · сайт` : "Клиент · кабинет";
+        const from = t.channel === "site" ? `${siteWho(t)} · сайт` : t.channel === "partner" ? `🤝 Менеджер ${t.partnerTag || ""}`.trim() : "Клиент · кабинет";
         if (m.text) await toTopicHtml(t, `💬 <b>${from}</b>\n<blockquote>${h(m.text)}</blockquote>`);
         await filesToTopic(t, m, `💬 ${from}`);
       }
@@ -3951,6 +3967,10 @@ function createSupportBot(deps) {
     }
     await renameTopic(t);
     const last = history[history.length - 1];
+    if (t.channel === "partner") {
+      if (fresh.length && last && last.authorRole === "owner" && t.status !== "closed" && !t.escalated) await escalate(t, "вопрос менеджера партнёрской программы", { tellClient: false });
+      return;
+    }
     if (fresh.length && last && last.authorRole === "owner" && t.status !== "closed") await respond(t);
   }
 
@@ -4453,6 +4473,72 @@ function createSupportBot(deps) {
     sendJson(res, 200, { ticketId: id, masked: text !== rawText });
   }
 
+  // ---- менеджеры партнёрской программы: один диалог на менеджера
+
+  async function partnerTicket(uid) {
+    const snap = await ticketsCol().where("partnerUid", "==", uid).limit(50).get();
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => toMs(b.updatedAt) - toMs(a.updatedAt))[0] || null;
+  }
+
+  /** Вопрос менеджера — из кабинета или из его Telegram-бота. */
+  async function partnerSend(uid, rawInput, { consent = false, consentEdition = "", via = "cabinet" } = {}) {
+    const p = await Promise.resolve(partnerOf(uid)).catch(() => null);
+    if (!p) throw new HttpError(403, "Поддержка менеджеров — для участников партнёрской программы");
+    const r = cabinetRate.get(`p:${uid}`);
+    if (!r || r.reset < now()) {
+      if (cabinetRate.size > 5000) cabinetRate.clear();
+      cabinetRate.set(`p:${uid}`, { n: 1, reset: now() + 10 * 60 * 1000 });
+    } else if (++r.n > 40) {
+      throw new HttpError(429, "Слишком много сообщений подряд — подождите несколько минут");
+    }
+    const rawText = String(rawInput || "").trim();
+    if (!rawText) throw new HttpError(400, "Напишите вопрос");
+    if (rawText.length > CABINET_TEXT_MAX) throw new HttpError(400, `Сообщение длиннее ${CABINET_TEXT_MAX} символов — разделите его на части`);
+    const text = maskSecrets(scrubPii(rawText));
+    const at = ts(now());
+    let t = await partnerTicket(uid);
+    if (!t) {
+      if (consent !== true) throw new HttpError(412, "Нужно согласие на обработку данных обращения");
+      const ref = ticketsCol().doc();
+      t = {
+        id: ref.id, channel: "partner", partnerUid: uid, partnerId: p.id, partnerTag: p.tag, subject: clip(text, 120), status: "open",
+        createdBy: uid, createdAt: at, updatedAt: at, lastAuthorRole: "owner",
+        pdConsent: true, pdConsentAt: at, pdConsentEdition: clip(String(consentEdition || ""), 80),
+      };
+      const { id: _drop, ...doc } = t;
+      await ref.set(doc);
+    } else if (t.status === "closed") {
+      // Новый вопрос после закрытого — та же тема, новая тема разговора.
+      await ticketRef(t.id).set({ subject: clip(text, 120), escalated: false }, { merge: true });
+      t.escalated = false;
+    }
+    await ticketRef(t.id).collection("messages").add({ text, authorUid: uid, authorRole: "owner", createdAt: at, ...(via === "telegram" ? { via: "telegram" } : {}) });
+    await ticketRef(t.id).set({ updatedAt: at, lastAuthorRole: "owner", ...(t.status === "closed" ? { status: "open" } : {}) }, { merge: true });
+    onTicketDoc(t.id, { updatedAt: at, syncedAt: t.syncedAt || 0 });
+    return { ticketId: t.id, masked: text !== rawText };
+  }
+
+  async function handlePartnerSend(req, res) {
+    const decoded = await verifyAuth(req);
+    const body = await parseJsonBody(req);
+    sendJson(res, 200, await partnerSend(decoded.uid, body.text, { consent: body.consent === true, consentEdition: body.consentEdition }));
+  }
+
+  async function handlePartnerMessages(req, res) {
+    const decoded = await verifyAuth(req);
+    const p = await Promise.resolve(partnerOf(decoded.uid)).catch(() => null);
+    if (!p) throw new HttpError(403, "Поддержка менеджеров — для участников партнёрской программы");
+    const t = await partnerTicket(decoded.uid);
+    if (!t) return sendJson(res, 200, { enabled: true, started: false, messages: [] });
+    const list = (await messagesOf(t))
+      .filter((m) => ["owner", "super_admin"].includes(m.authorRole))
+      .slice(-80)
+      .map((m) => ({ role: m.authorRole === "owner" ? "you" : "staff", text: String(m.text || ""), at: toMs(m.createdAt), name: m.authorRole === "owner" ? "" : m.authorName || "" }));
+    sendJson(res, 200, { enabled: true, started: true, messages: list, waitingHuman: t.escalated === true && t.status !== "closed", closed: t.status === "closed" });
+  }
+
+  const partnerHasTicket = async (uid) => !!(await partnerTicket(uid));
+
   // ---- чат на сайте (посетитель без входа)
 
   const siteRate = new Map();
@@ -4827,7 +4913,7 @@ function createSupportBot(deps) {
   return {
     start, reload, rewatch, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handleCabinetMessages, handleSiteSend,
     handleTicketList, handleTicketMessages, handleTicketStatus, handleAdminTickets, handleAdminSend, handleKnowledgeList, handleSiteMessages, handlePurgeForeign, sweepSite, sweepSiteTopics, checkHook, ensureProfile, handleAiCheck, handleDocDownload, router,
-    notifyAdmins, onTicketDoc, syncTicket, loadGuide, loadKnowledge, loadNoise, learnedJunk, loadNews, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
+    notifyAdmins, onTicketDoc, syncTicket, partnerSend, partnerHasTicket, handlePartnerSend, handlePartnerMessages, loadGuide, loadKnowledge, loadNoise, learnedJunk, loadNews, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
     // Тесты: подменить файлы знаний (карта кода с шаблонами, «что нового»).
     __setKbPaths: (p) => Object.assign(deps, p),
     isQuotaError,
