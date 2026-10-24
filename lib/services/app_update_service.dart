@@ -591,11 +591,17 @@ Start-Process -FilePath \$exe -WorkingDirectory \$dest
     try {
       final dir = await _dirProvider();
       if (!await dir.exists()) return;
+      // Оставляем только самый свежий скачанный файл новой версии: старые
+      // скачанные (уже вышла ещё более новая) только занимали место.
+      final files = <(int, FileSystemEntity, bool)>[];
       await for (final f in dir.list()) {
         final m = RegExp(r'update-(\d+)\.(apk|zip|exe)(\.part)?$').firstMatch(f.path);
         if (m == null) continue;
-        final n = int.parse(m.group(1)!);
-        if (n <= currentBuild || m.group(3) != null) await _deleteQuietly(f);
+        files.add((int.parse(m.group(1)!), f, m.group(3) != null));
+      }
+      final newest = files.where((x) => !x.$3 && x.$1 > currentBuild).fold<int>(0, (a, x) => x.$1 > a ? x.$1 : a);
+      for (final (n, f, part) in files) {
+        if (n <= currentBuild || part || n < newest) await _deleteQuietly(f);
       }
     } catch (_) {}
   }
@@ -610,7 +616,15 @@ Start-Process -FilePath \$exe -WorkingDirectory \$dest
     if (e is _UpdateError) return e.message;
     if (e is TimeoutException) return 'связь пропала — проверьте интернет';
     if (e is SocketException || e is http.ClientException) return 'нет связи с сервером — проверьте интернет';
-    if (e is FileSystemException) return 'не хватает места на устройстве';
+    if (e is FileSystemException) {
+      // ENOSPC (28) / ERROR_DISK_FULL (112) — действительно нет места; иначе — настоящая причина.
+      final code = e.osError?.errorCode;
+      final text = '${e.message} ${e.osError?.message ?? ''}'.toLowerCase();
+      if (code == 28 || code == 112 || text.contains('no space') || text.contains('disk full')) {
+        return 'не хватает места на устройстве — освободите 100–200 МБ (фото, видео, ненужные приложения)';
+      }
+      return 'не удалось сохранить файл обновления: ${e.osError?.message ?? e.message}';
+    }
     return e.toString();
   }
 
