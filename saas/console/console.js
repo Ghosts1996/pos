@@ -2251,19 +2251,7 @@ function screenLanding() {
 
     <footer class="landing-section landing-footer">
       <div class="landing-inner">
-        <div class="l-footer-top">
-          <span class="landing-logo"><img class="landing-logo-icon" src="/icon-192.png" alt="" width="30" height="30" loading="lazy">Zal<span>POS</span></span>
-          <p class="small muted">Уже есть аккаунт? <a href="#/login">Войти по паролю</a></p>
-        </div>
-        <nav class="l-footer-cols" aria-label="Разделы сайта">
-          <div><div class="l-footer-h">Продукт</div>
-            <a href="/guide/">Инструкция</a><a href="/blog/">Блог</a><a href="/faq/">Частые вопросы</a><a href="#/status">Статус сервиса</a></div>
-          <div><div class="l-footer-h">Документы</div>
-            <a href="#/legal/offer">Оферта</a><a href="#/legal/payment">Оплата и возврат</a><a href="#/legal/privacy">Конфиденциальность</a></div>
-          <div><div class="l-footer-h">Доверие</div>
-            <span>Персональные данные первично записываются на сервер в России (152-ФЗ)</span><span>Реквизиты исполнителя — в оферте, раздел 14</span></div>
-        </nav>
-        <p class="small muted l-footer-pay">${PAYMENT_METHODS_TEXT}</p>
+        ${siteFooterHtml()}
       </div>
     </footer>
 
@@ -2491,22 +2479,30 @@ function screenLanding() {
 // ---------- ПУБЛИЧНЫЕ СТРАНИЦЫ (оферта, конфиденциальность, статус, FAQ) ----------
 // Доступны по прямой ссылке и без входа — см. PUBLIC_ROUTES выше.
 
-function publicFooterLinksHtml() {
-  // Реквизиты Исполнителя (ИП, ИНН, ОГРНИП, email) — в оферте (раздел 14)
-  // и политике конфиденциальности, ссылки на них здесь же; отдельной
-  // строкой в подвале их не дублируем.
+// Подвал сайта — один и тот же на главной, в документах, статусе и FAQ:
+// колонки «Продукт / Документы / Доверие» без подчёркнутых ссылок.
+// Реквизиты Исполнителя (ИП, ИНН, ОГРНИП, email) — в оферте (раздел 14)
+// и политике конфиденциальности; отдельной строкой их не дублируем.
+function siteFooterHtml({ home = false, top: topHtml = '', extraDocs = '' } = {}) {
+  const loggedIn = !!state.auth?.currentUser;
+  const top = topHtml || (home
+    ? `<a class="l-footer-back" href="#/">← На главную</a>`
+    : loggedIn ? `<a class="l-footer-back" href="#/">В личный кабинет →</a>`
+      : `<p class="small muted">Уже есть аккаунт? <a class="l-footer-back" href="#/login">Войти по паролю</a></p>`);
   return `
-    <p class="small center muted" style="margin-top:14px">
-      <a href="#/legal/offer">Оферта</a> ·
-      <a href="#/legal/payment">Оплата и возврат</a> ·
-      <a href="#/legal/privacy">Конфиденциальность</a> ·
-      <a href="#/status">Статус</a> ·
-      <a href="/guide/">Инструкция</a> ·
-      <a href="/faq/">FAQ</a> ·
-      <a href="/blog/">Блог</a>
-    </p>
-    <p class="small center muted" style="margin-top:4px">${PAYMENT_METHODS_TEXT}</p>
-  `;
+        <div class="l-footer-top">
+          <a class="landing-logo" href="#/"><img class="landing-logo-icon" src="/icon-192.png" alt="" width="30" height="30" loading="lazy">Zal<span>POS</span></a>
+          ${top}
+        </div>
+        <nav class="l-footer-cols" aria-label="Разделы сайта">
+          <div><div class="l-footer-h">Продукт</div>
+            <a href="/guide/">Инструкция</a><a href="/blog/">Блог</a><a href="/faq/">Частые вопросы</a><a href="#/status">Статус сервиса</a></div>
+          <div><div class="l-footer-h">Документы</div>
+            <a href="#/legal/offer">Оферта</a><a href="#/legal/payment">Оплата и возврат</a><a href="#/legal/privacy">Конфиденциальность</a>${extraDocs}</div>
+          <div><div class="l-footer-h">Доверие</div>
+            <span>Персональные данные первично записываются на сервер в России (152-ФЗ)</span><span>Реквизиты исполнителя — в оферте, раздел 14</span></div>
+        </nav>
+        <p class="small muted l-footer-pay">${PAYMENT_METHODS_TEXT}</p>`;
 }
 
 // Платёжный сервис и способы оплаты — для оферты, подвала и страницы
@@ -2598,8 +2594,7 @@ function publicPageWrapHtml(title, bodyHtml) {
     <div class="brand">ZalPOS</div>
     <h1>${esc(title)}</h1>
     ${bodyHtml}
-    <p class="small center muted" style="margin-top:24px"><a href="#/">← На главную</a></p>
-    ${publicFooterLinksHtml()}
+    <footer class="site-footer">${siteFooterHtml({ home: true })}</footer>
   `;
 }
 
@@ -6954,7 +6949,10 @@ function screenPartner() {
       </div>
     </header>
     ${inner}
-    <footer class="pt-foot"><a href="#/partner-terms" target="_blank" rel="noopener">Правила партнёрской программы</a>${p ? ` · ${esc(p.termsEdition)}` : ''}</footer>`;
+    <footer class="site-footer pt-site-foot">${siteFooterHtml({
+      top: `<span class="small muted">${p ? esc(p.termsEdition) : ''}</span>`,
+      extraDocs: '<a href="#/partner-terms" target="_blank" rel="noopener">Правила партнёрской программы</a>',
+    })}</footer>`;
 
   const draw = () => {
     if (location.hash !== '#/partner' && state.tenants.length) return;
@@ -7028,13 +7026,14 @@ function screenPartner() {
     const linkCard = `
       <div class="card pt-link">
         <div class="pt-link-head">
-          <div><div class="pt-kicker">Ваша ссылка</div><div class="small muted">Кто зарегистрируется по ней в течение 30 дней после перехода — ваш клиент.</div></div>
+          <div><div class="pt-kicker">Ваша ссылка</div><div class="small muted">Кто зарегистрируется по ней в течение 30 дней после перехода — ваш клиент. 30 дней считаются от последнего перехода: перешлите ссылку ещё раз — и отсчёт начнётся заново.</div></div>
         </div>
         <div class="pt-link-row">
           <input id="f-partner-link" readonly value="${esc(p.link)}" aria-label="Ваша ссылка">
           <button class="btn btn-primary" id="f-partner-copy">Скопировать</button>
           ${navigator.share ? '<button class="btn btn-ghost" id="f-partner-share">Поделиться</button>' : ''}
         </div>
+        <button type="button" class="pt-link-renew" id="f-partner-renew">↻ Создать новую ссылку</button>
       </div>`;
     const steps = !s.clients ? `
       <div class="pt-steps">
@@ -7119,6 +7118,23 @@ function screenPartner() {
       };
     }
     if ($('f-partner-copy')) $('f-partner-copy').onclick = () => copyToClipboard($('f-partner-link').value);
+    if ($('f-partner-renew')) {
+      $('f-partner-renew').onclick = async () => {
+        if (!confirm('Создать новую ссылку? Старые ссылки, которые вы уже отправили, продолжат работать — клиенты по ним тоже закрепятся за вами.')) return;
+        const btn = $('f-partner-renew');
+        btn.disabled = true;
+        try {
+          const r = await callSaasGateway('partnerNewLink', {});
+          data.partner.code = r.data.code;
+          data.partner.link = r.data.link;
+          draw();
+          toast('Новая ссылка готова — отправьте её клиенту, 30 дней пойдут с его перехода');
+        } catch (e) {
+          btn.disabled = false;
+          toast(`Не получилось: ${e?.message || e}`);
+        }
+      };
+    }
     if ($('f-partner-share')) $('f-partner-share').onclick = () => navigator.share({ title: 'ZalPOS', text: 'Касса и управление заведением — попробуйте бесплатно', url: $('f-partner-link').value }).catch(() => {});
     if ($('f-partner-tg')) {
       $('f-partner-tg').onclick = async () => {

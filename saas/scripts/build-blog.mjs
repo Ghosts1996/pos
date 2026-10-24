@@ -268,9 +268,17 @@ ${extraHead}</head>
 ${body}
 </main>
 <footer class="foot"><div class="wrap">
-  <p><a href="/">${BRAND}</a> — касса, зал, склад и гости для кафе, ресторанов, баров и лаунжей.</p>
-  <p class="foot-links"><a href="/blog/">Блог</a> · <a href="/guide/">Инструкция</a> · <a href="/faq/">Частые вопросы</a> · <a href="/#/legal/offer">Оферта</a> · <a href="/#/legal/privacy">Конфиденциальность</a></p>
-  <p class="muted">Материалы блога носят справочный характер. Законы и цены меняются — сверяйтесь с первоисточниками и консультируйтесь с бухгалтером или юристом.</p>
+  <div class="foot-top">
+    <a class="foot-logo" href="/"><img src="/icon-192.png" alt="" width="28" height="28" loading="lazy">Zal<span>POS</span></a>
+    <a class="foot-home" href="/">← На главную</a>
+  </div>
+  <nav class="foot-cols" aria-label="Разделы сайта">
+    <div><div class="foot-h">Продукт</div><a href="/guide/">Инструкция</a><a href="/blog/">Блог</a><a href="/faq/">Частые вопросы</a><a href="/#/status">Статус сервиса</a></div>
+    <div><div class="foot-h">Документы</div><a href="/#/legal/offer">Оферта</a><a href="/#/legal/payment">Оплата и возврат</a><a href="/#/legal/privacy">Конфиденциальность</a></div>
+    <div><div class="foot-h">Доверие</div><span>Персональные данные первично записываются на сервер в России (152-ФЗ)</span><span>Реквизиты исполнителя — в оферте, раздел 14</span></div>
+  </nav>
+  <p class="muted foot-note">Материалы блога носят справочный характер. Законы и цены меняются — сверяйтесь с первоисточниками и консультируйтесь с бухгалтером или юристом.</p>
+  <p class="muted foot-note">Оплата банковскими картами «Мир», Visa, Mastercard и через СБП — платёжный сервис Robokassa</p>
 </div></footer>
 </body>
 </html>

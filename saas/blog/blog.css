@@ -149,8 +149,27 @@ tr:last-child td { border-bottom: 0; }
 .card .meta { margin: 0; font-size: 14px; }
 .pager { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 28px 0 0; font-size: 15px; color: var(--muted); }
 
-.foot { border-top: 1px solid var(--border); padding: 24px 0 40px; font-size: 14px; }
+.foot { border-top: 1px solid var(--border); padding: 28px 0 48px; font-size: 14px; margin-top: 36px; }
 .foot p { margin: 0 0 8px; }
+.foot-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.foot-logo { font: 600 24px/1 var(--serif); color: var(--text); text-decoration: none; white-space: nowrap; }
+.foot-logo span { font-style: italic; color: var(--primary); }
+.foot-logo img { width: 28px; height: 28px; border-radius: 8px; margin-right: 8px; vertical-align: -6px; }
+.foot-home { color: var(--primary); font-weight: 500; text-decoration: none; white-space: nowrap; }
+.foot-home:hover { text-decoration: underline; }
+.foot-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 16px; margin: 22px 0 18px; }
+.foot-cols > div { display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: 14px; }
+.foot-cols > div:last-child { grid-column: 1 / -1; }
+.foot-h { font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
+.foot-cols a { color: var(--text); text-decoration: none; width: fit-content; }
+.foot-cols a:hover { color: var(--primary); text-decoration: underline; }
+.foot-cols span { color: var(--muted); line-height: 1.45; }
+.foot-note { font-size: 13px; padding-top: 14px; border-top: 1px solid var(--border); }
+.foot-note + .foot-note { border-top: 0; padding-top: 0; }
+@media (min-width: 720px) {
+  .foot-cols { grid-template-columns: 1fr 1fr 1.4fr; }
+  .foot-cols > div:last-child { grid-column: auto; }
+}
 
 /* Инструкция и частые вопросы (build-blog.mjs → /guide/, /faq/) */
 .guide-sec { margin: 28px 0 8px; }
@@ -159,4 +178,3 @@ tr:last-child td { border-bottom: 0; }
 .guide-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
 .guide-list a { display: block; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; text-decoration: none; }
 .guide-list a:hover { border-color: var(--accent, currentColor); }
-.foot-links a { margin: 0 2px; }

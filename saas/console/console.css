@@ -1155,6 +1155,12 @@ a:hover { color: var(--primary-2); }
 .l-footer-cols a:hover { color: var(--primary); text-decoration: underline; }
 .l-footer-cols span { color: var(--muted); line-height: 1.45; }
 .l-footer-pay { margin: 0; padding-top: 16px; border-top: 1px solid var(--border); }
+.l-footer-back { color: var(--primary); font-weight: 500; text-decoration: none; white-space: nowrap; }
+.l-footer-back:hover { text-decoration: underline; }
+/* Тот же подвал под документами, статусом и FAQ. */
+.site-footer { margin-top: 36px; padding-top: 24px; border-top: 1px solid var(--border); text-align: left; }
+.site-footer .l-footer-pay { padding-bottom: 8px; }
+.pt-site-foot { margin-top: 40px; }
 @media (min-width: 720px) {
   .l-footer-cols { grid-template-columns: 1fr 1fr 1.4fr; }
   .l-footer-cols > div:last-child { grid-column: auto; }
@@ -1460,6 +1466,9 @@ body:has(.landing-nav) .theme-fab, body:has(.dash-topbar) .theme-fab { display: 
 .pt-link-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .pt-link-row input { flex: 1 1 220px; min-width: 0; margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
 .pt-link-row .btn { width: auto; flex: none; }
+.pt-link-renew { display: inline-flex; width: auto; margin-top: 12px; padding: 4px 0; background: none; border: 0; color: var(--primary); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; }
+.pt-link-renew:hover:not(:disabled) { text-decoration: underline; }
+.pt-link-renew:disabled { opacity: .5; cursor: default; }
 @media (max-width: 480px) { .pt-link-row .btn { flex: 1 1 0; } }
 
 .pt-steps { display: grid; gap: 10px; margin: 0 0 14px; }
@@ -1493,7 +1502,6 @@ body:has(.landing-nav) .theme-fab, body:has(.dash-topbar) .theme-fab { display: 
 .pt-tg { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 14px; }
 .pt-tg-text { display: flex; flex-direction: column; gap: 3px; }
 .pt-tg .btn { width: auto; flex: none; }
-.pt-foot { text-align: center; font-size: 12.5px; color: var(--muted); margin: 30px 0 0; }
 @media (max-width: 480px) {
   .pt-brand-sub { display: none; }
   .pt-hero-sum { font-size: 38px; }
