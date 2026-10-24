@@ -631,6 +631,9 @@ function createPartners(deps) {
       { command: "clients", description: "👥 Мои клиенты" },
       { command: "invite", description: "📨 Пригласить заведение" },
       { command: "link", description: "🔗 Моя ссылка для клиентов" },
+      { command: "pitch", description: "✍️ Текст для клиента" },
+      { command: "invites", description: "📋 Мои приглашения" },
+      { command: "payouts", description: "💸 Мои выплаты" },
       { command: "help", description: "❓ Что умеет бот" },
     ] }, token).catch(() => {});
     await ref.set({ tokenEnc: encrypt(secretKey(), token), username: me.username || "", hookSecret, connectedAt: ts(now()) }, { merge: true });
@@ -678,9 +681,18 @@ function createPartners(deps) {
   }
 
   // Кнопки внизу чата — всегда под рукой, команды набирать не нужно.
-  const BTN = { income: "💼 Мой доход", clients: "👥 Клиенты", invite: "📨 Пригласить заведение", link: "🔗 Моя ссылка", help: "❓ Помощь" };
+  const BTN = {
+    income: "💼 Мой доход", clients: "👥 Клиенты", invite: "📨 Пригласить заведение", link: "🔗 Моя ссылка", pitch: "✍️ Текст для клиента",
+    invites: "📋 Приглашения", payouts: "💸 Выплаты", help: "❓ Помощь",
+  };
   const MENU = {
-    keyboard: [[{ text: BTN.income }, { text: BTN.clients }], [{ text: BTN.invite }], [{ text: BTN.link }, { text: BTN.help }]],
+    keyboard: [
+      [{ text: BTN.income }, { text: BTN.clients }],
+      [{ text: BTN.invite }],
+      [{ text: BTN.link }, { text: BTN.pitch }],
+      [{ text: BTN.invites }, { text: BTN.payouts }],
+      [{ text: BTN.help }],
+    ],
     resize_keyboard: true, is_persistent: true, input_field_placeholder: "Выберите действие",
   };
   const cabinetUrl = () => `${site}#/partner`;
@@ -692,8 +704,11 @@ function createPartners(deps) {
     `${BTN.clients} — ваши заведения и их оплаты`,
     `${BTN.invite} — письмо владельцу заведения`,
     `${BTN.link} — ссылка для клиентов, её можно переслать`,
+    `${BTN.pitch} — готовое сообщение владельцу со ссылкой`,
+    `${BTN.invites} — кому отправлены письма и кто зарегистрировался`,
+    `${BTN.payouts} — история выплат`,
     "",
-    "Об оплатах ваших клиентов бот пишет сам.",
+    "Бот сам сообщит о новых клиентах, оплатах и выплатах, а за 3 дня до конца подписки клиента — напомнит предложить продление.",
   ].join("\n");
   const ASK_EMAIL = "📨 <b>Пригласить заведение</b>\n\nНапишите почту владельца и, через пробел, название заведения:\n<code>owner@cafe.ru Кафе Лето</code>";
   const askingEmail = new Map(); // chatId → когда спросили почту
@@ -705,6 +720,27 @@ function createPartners(deps) {
       [{ text: "🔄 Новая ссылка", callback_data: "plink_new" }],
     ],
   });
+
+  const MSK = "Europe/Moscow";
+  const fmtDate = (ms) => new Date(ms).toLocaleDateString("ru-RU", { timeZone: MSK });
+  const monthKey = (ms) => new Date(ms).toLocaleDateString("ru-RU", { timeZone: MSK, month: "2-digit", year: "numeric" });
+  const MONTHS = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+  const monthName = (key) => { const [m, y] = key.split("."); return `${MONTHS[Number(m) - 1]} ${y}`; };
+
+  // Готовые сообщения владельцу: только факты о продукте, без сравнений.
+  const PITCHES = [
+    (link) => `Здравствуйте! Посмотрите ZalPOS — программу для кафе, баров и кальянных: касса, столы и зал, кухня, склад и техкарты, отчёты и меню по QR для гостей. Работает на планшете, телефоне и компьютере, касса продолжает работать без интернета. Попробовать можно бесплатно: ${link}`,
+    (link) => `Добрый день! Если ищете кассу для заведения — попробуйте ZalPOS. Счета по столам, бегунки на кухню, склад со списанием по техкартам, смены и Z-отчёты, сотрудники с правами. Начать можно бесплатно, установка — за несколько минут: ${link}`,
+  ];
+  const pitchButtons = (link, i) => ({
+    inline_keyboard: [
+      [{ text: "↗️ Отправить клиенту", url: `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(PITCHES[i](link).replace(link, "").replace(/:\s*$/, ""))}` }],
+      [{ text: "🔁 Другой вариант", callback_data: `ppitch_${(i + 1) % PITCHES.length}` }],
+    ],
+  });
+  const sayPitch = (chatId, p, i) => say(chatId, `✍️ <b>Текст для клиента</b> — скопируйте или нажмите «Отправить клиенту»:\n\n${h(PITCHES[i](linkOf(p)))}`, { reply_markup: pitchButtons(linkOf(p), i) });
+
+  const INVITE_STATUS = { sent: "⏳ ждёт регистрации", registered: "✅ зарегистрировался", expired: "⌛ срок истёк", optedOut: "🚫 отказался от писем" };
 
   async function askInvite(chatId, email, venueName) {
     if (!EMAIL_RE.test(email)) return say(chatId, "Проверьте адрес почты — например, <code>owner@cafe.ru Кафе Лето</code>");
@@ -746,16 +782,25 @@ function createPartners(deps) {
     if (cmd === "income") {
       const s = await summaryOf(p);
       const st = await settings();
+      const accruals = (await accrualsOf(p.id)).filter((a) => a.status !== "reversed");
+      const byMonth = new Map();
+      for (const a of accruals) { const k = monthKey(toMs(a.paidAt)); byMonth.set(k, (byMonth.get(k) || 0) + a.amount); }
+      const cur = monthKey(now());
+      const prevD = new Date(now()); prevD.setUTCDate(1); prevD.setUTCHours(12); prevD.setUTCMonth(prevD.getUTCMonth() - 1);
+      const prev = monthKey(prevD.getTime());
       return say(chatId, [
         "💼 <b>Ваш доход</b>",
         "",
         `Клиентов: <b>${s.clients}</b>`,
+        `За ${monthName(cur)}: <b>${fmtRub(byMonth.get(cur) || 0)}</b>`,
+        `За ${monthName(prev)}: ${fmtRub(byMonth.get(prev) || 0)}`,
+        "",
         `Начислено всего: <b>${fmtRub(s.total)}</b>`,
         `К выплате: <b>${fmtRub(s.unpaid)}</b>`,
         `Выплачено: ${fmtRub(s.paid)}`,
         "",
         `<i>${p.percent}% от оплат после налога ${st.taxPct}% и комиссии платёжной системы.</i>`,
-      ].join("\n"), { reply_markup: { inline_keyboard: [[{ text: "👥 Клиенты", callback_data: "pmenu_clients" }, cabinetBtn("🖥 Кабинет")]] } });
+      ].join("\n"), { reply_markup: { inline_keyboard: [[{ text: "👥 Клиенты", callback_data: "pmenu_clients" }, { text: "💸 Выплаты", callback_data: "pmenu_payouts" }], [cabinetBtn()]] } });
     }
     if (cmd === "clients") {
       const dsh = await dashboardOf(p);
@@ -764,9 +809,47 @@ function createPartners(deps) {
           reply_markup: { inline_keyboard: [[{ text: "📨 Пригласить", callback_data: "pmenu_invite" }, { text: "🔗 Моя ссылка", callback_data: "pmenu_link" }]] },
         });
       }
-      const lines = dsh.clients.slice(0, 30).map((c) => `• <b>${h(c.venueName)}</b>${c.planName ? ` · ${h(c.planName)}` : ""}\n   оплачено ${fmtRub(c.paid)}, ваш доход ${fmtRub(c.income)}`);
+      const until = (c) => {
+        if (!c.paidUntil) return "";
+        const days = Math.ceil((c.paidUntil - now()) / 86400000);
+        return days < 0 ? `\n   ⚠️ подписка закончилась ${fmtDate(c.paidUntil)}` : days <= 3 ? `\n   ⏰ подписка до ${fmtDate(c.paidUntil)}` : `\n   оплачено до ${fmtDate(c.paidUntil)}`;
+      };
+      const lines = dsh.clients.slice(0, 30).map((c) => `• <b>${h(c.venueName)}</b>${c.planName ? ` · ${h(c.planName)}` : ""}\n   оплачено ${fmtRub(c.paid)}, ваш доход ${fmtRub(c.income)}${until(c)}`);
       const more = dsh.clients.length > 30 ? `\n\n…и ещё ${dsh.clients.length - 30} — все в кабинете.` : "";
       return say(chatId, `👥 <b>Ваши клиенты</b> (${dsh.clients.length})\n\n${lines.join("\n")}${more}`, { reply_markup: { inline_keyboard: [[cabinetBtn()]] } });
+    }
+    if (cmd === "pitch") return sayPitch(chatId, p, 0);
+    if (cmd === "invites") {
+      const { invites } = await dashboardOf(p);
+      if (!invites.length) {
+        return say(chatId, "📋 Вы ещё не отправляли приглашений.", { reply_markup: { inline_keyboard: [[{ text: "📨 Пригласить заведение", callback_data: "pmenu_invite" }]] } });
+      }
+      const count = (st) => invites.filter((x) => x.status === st).length;
+      const lines = invites.slice(0, 20).map((x) => {
+        const left = x.status === "sent" ? `, осталось ${Math.max(1, Math.ceil((x.expiresAt - now()) / 86400000))} дн.` : "";
+        return `• ${h(x.email)}${x.venueName ? ` — ${h(x.venueName)}` : ""}\n   ${INVITE_STATUS[x.status] || h(x.status)}${left}`;
+      });
+      return say(chatId, [
+        `📋 <b>Приглашения</b> (${invites.length})`,
+        `ждут: ${count("sent")} · зарегистрировались: ${count("registered")} · истекли: ${count("expired")}`,
+        "",
+        lines.join("\n"),
+        ...(invites.length > 20 ? ["", "Все приглашения — в кабинете."] : []),
+      ].join("\n"), { reply_markup: { inline_keyboard: [[{ text: "📨 Пригласить ещё", callback_data: "pmenu_invite" }, cabinetBtn("🖥 Кабинет")]] } });
+    }
+    if (cmd === "payouts") {
+      const { payouts, summary } = await dashboardOf(p);
+      const lines = payouts.slice(0, 15).map((x) => `• ${fmtDate(x.paidAt)} — <b>${fmtRub(x.amount)}</b>${x.note ? ` (${h(x.note)})` : ""}`);
+      return say(chatId, [
+        "💸 <b>Выплаты</b>",
+        "",
+        `К выплате сейчас: <b>${fmtRub(summary.unpaid)}</b>`,
+        `Выплачено всего: ${fmtRub(summary.paid)}`,
+        "",
+        payouts.length ? lines.join("\n") : "Выплат пока не было.",
+        "",
+        "<i>Выплату отмечает администратор ZalPOS — бот сразу сообщит о ней.</i>",
+      ].join("\n"), { reply_markup: { inline_keyboard: [[cabinetBtn()]] } });
     }
     if (cmd === "invite") {
       const m = text.match(/^\/invite(?:@\w+)?\s+(\S+@\S+)(?:\s+(.+))?$/);
@@ -792,6 +875,12 @@ function createPartners(deps) {
     // Кнопки под ответом убираем — второй раз не нажмутся.
     const dropButtons = () => q.message.message_id
       && tg("editMessageReplyMarkup", { chat_id: chatId, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
+    const pitch = String(q.data || "").match(/^ppitch_(\d)$/);
+    if (pitch) {
+      const p = await partnerByChat(chatId);
+      if (!p || p.status === "removed") return;
+      return sayPitch(chatId, p, Number(pitch[1]) % PITCHES.length);
+    }
     const menu = String(q.data || "").match(/^pmenu_(\w+)$/);
     if (menu && BTN[menu[1]]) return onMessage({ chat: { id: chatId, type: "private" }, text: BTN[menu[1]] });
     if (q.data === "plink_new") {
@@ -872,15 +961,45 @@ function createPartners(deps) {
     return n;
   }
 
+  /**
+   * За 3 дня до конца оплаченного периода клиента (и если он уже закончился,
+   * в пределах недели) — напомнить менеджеру. Один раз на каждый срок.
+   */
+  async function remindRenewals() {
+    let n = 0;
+    const partners = new Map();
+    for (const d of (await col("partnerClients").get()).docs) {
+      const c = d.data();
+      const until = toMs(c.paidUntil);
+      if (!until || !c.partnerId || c.renewRemindedFor === until) continue;
+      const left = until - now();
+      if (left > 3 * 86400000 || left < -7 * 86400000) continue;
+      if (!partners.has(c.partnerId)) partners.set(c.partnerId, (await partnersCol().doc(c.partnerId).get()).data() || null);
+      const p = partners.get(c.partnerId);
+      if (!p || p.status !== "active") continue;
+      await d.ref.set({ renewRemindedFor: until }, { merge: true });
+      const name = h(c.venueName || "клиента");
+      await notify(c.partnerId, left > 0
+        ? `⏰ У «${name}» подписка до ${fmtDate(until)}. Напомните владельцу продлить — с продления вы тоже получаете процент.`
+        : `⚠️ У «${name}» подписка закончилась ${fmtDate(until)}. Свяжитесь с владельцем: возможно, нужна помощь с оплатой.`);
+      n++;
+    }
+    return n;
+  }
+
   async function start() {
     await loadBot().catch((e) => console.error(`partners: бот: ${e.message || e}`));
     sweepInvites().catch(() => {});
-    const t = setInterval(() => sweepInvites().catch((e) => console.error(`partners: приглашения: ${e.message || e}`)), 6 * 3600 * 1000);
+    remindRenewals().catch(() => {});
+    const t = setInterval(() => {
+      sweepInvites().catch((e) => console.error(`partners: приглашения: ${e.message || e}`));
+      remindRenewals().catch((e) => console.error(`partners: напоминания о продлении: ${e.message || e}`));
+    }, 6 * 3600 * 1000);
     if (t.unref) t.unref();
   }
 
   return {
-    start, attachOwner, onPayment, invite, dashboardOf, computeAccrual, sweepInvites,
+    start, attachOwner, onPayment, invite, dashboardOf, computeAccrual, sweepInvites, remindRenewals,
     handleMe, handleAcceptTerms, handleInvite, handleDashboard, handleInviteInfo, handleOptOut, handleTgLink, handleNewLink,
     handleAdminList, handleAdminPartner, handleAdminSave, handleAdminSettings, handleAdminPayout, handleAdminReverse, handleAdminBot, handleAdminContract,
     handleHook, HOOK_ID, TERMS_EDITION, _onMessage: onMessage, _onCallback: onCallback,

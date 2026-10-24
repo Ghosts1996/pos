@@ -328,7 +328,7 @@ test("бот: кнопки меню, приглашение в два шага, 
   assert.strictEqual(last().reply_markup.inline_keyboard[0][0].url, "https://zalpos.ru/#/partner");
   await msg(`/start pl_${url.match(/pl_([a-f0-9]+)/)[1]}`);
   const kb = last().reply_markup.keyboard.flat().map((b) => b.text);
-  assert.deepStrictEqual(kb, ["💼 Мой доход", "👥 Клиенты", "📨 Пригласить заведение", "🔗 Моя ссылка", "❓ Помощь"]);
+  assert.deepStrictEqual(kb, ["💼 Мой доход", "👥 Клиенты", "📨 Пригласить заведение", "🔗 Моя ссылка", "✍️ Текст для клиента", "📋 Приглашения", "💸 Выплаты", "❓ Помощь"]);
   assert.ok(last().reply_markup.is_persistent);
   await msg("💼 Мой доход");
   assert.match(last().text, /Ваш доход/);
@@ -359,6 +359,59 @@ test("бот: кнопки меню, приглашение в два шага, 
   assert.doesNotMatch(last().text, new RegExp(`p=${oldCode}\\b`));
   await h.partners._onCallback({ id: "q", data: "pmenu_income", message: { chat } });
   assert.match(last().text, /Ваш доход/);
+  // Приглашения: статус и сколько дней осталось.
+  await msg("📋 Приглашения");
+  assert.match(last().text, /Приглашения<\/b> \(1\)/);
+  assert.match(last().text, /ждёт регистрации, осталось 30 дн\./);
+  // Текст для клиента: со ссылкой, без сравнений; другой вариант.
+  await msg("✍️ Текст для клиента");
+  assert.match(last().text, /zalpos\.ru\/\?p=ANNAPETROV/);
+  assert.doesNotMatch(last().text, /лучш|самый|№\s?1|дешевле|чем у/i);
+  assert.match(last().reply_markup.inline_keyboard[0][0].url, /^https:\/\/t\.me\/share\/url\?url=.*&text=/);
+  const first = last().text;
+  await h.partners._onCallback({ id: "q", data: "ppitch_1", message: { chat } });
+  assert.notStrictEqual(last().text, first);
+  // Выплаты.
+  await msg("💸 Выплаты");
+  assert.match(last().text, /К выплате сейчас: <b>0 ₽<\/b>/);
+  assert.match(last().text, /Выплат пока не было/);
+});
+
+test("бот: доход по месяцам, выплаты списком, напоминание о продлении один раз", async () => {
+  const h = harness();
+  const { id: pid } = await h.addManager({});
+  const anna = { uid: "u_anna@zalpos.ru" };
+  await h.call(h.partners.handleAcceptTerms, { ...anna, body: { accept: true } });
+  await h.call(h.partners.handleAdminBot, { uid: "sa", body: { token: "123456789:AAAbbbCCCdddEEEfffGGGhhhIIIjjjKKKlll" } });
+  const { url } = await h.call(h.partners.handleTgLink, anna);
+  const chat = { id: 779, type: "private" };
+  const msg = (text) => h.partners._onMessage({ chat, text });
+  const last = () => h.tg[h.tg.length - 1].body;
+  await msg(`/start pl_${url.match(/pl_([a-f0-9]+)/)[1]}`);
+  await h.call(h.partners.handleInvite, { ...anna, body: { email: "new@cafe.ru", consent: true } });
+  await h.partners.attachOwner({ uid: "owner1", email: "new@cafe.ru", venueName: "Кафе Лето" });
+  const day = 86400000;
+  await h.partners.onPayment({ invId: 1, ownerUid: "owner1", amount: 14900, venueName: "Кафе Лето", paidUntil: h.now() + 10 * day });
+  await new Promise((r) => setImmediate(r));
+  await msg("💼 Мой доход");
+  assert.match(last().text, /За октябрь 2026: <b>2\s684,98 ₽<\/b>/);
+  assert.match(last().text, /За сентябрь 2026: 0 ₽/);
+  await h.call(h.partners.handleAdminPayout, { uid: "sa", body: { partnerId: pid, amount: 2684.98, note: "СБП" } });
+  await msg("💸 Выплаты");
+  assert.match(last().text, /— <b>2\s684,98 ₽<\/b> \(СБП\)/);
+  await msg("👥 Клиенты");
+  assert.match(last().text, /оплачено до /);
+  // Далеко до конца — не напоминаем; за 3 дня — один раз; после окончания — ещё раз нет.
+  assert.strictEqual(await h.partners.remindRenewals(), 0);
+  h.tick(8 * day);
+  const before = h.tg.length;
+  assert.strictEqual(await h.partners.remindRenewals(), 1);
+  assert.match(h.tg[h.tg.length - 1].body.text, /У «Кафе Лето» подписка до/);
+  assert.strictEqual(h.tg[h.tg.length - 1].body.chat_id, 779);
+  assert.strictEqual(await h.partners.remindRenewals(), 0);
+  assert.strictEqual(h.tg.length, before + 1);
+  await msg("👥 Клиенты");
+  assert.match(last().text, /⏰ подписка до/);
 });
 
 (async () => {
