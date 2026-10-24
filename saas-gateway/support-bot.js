@@ -4570,6 +4570,150 @@ function createSupportBot(deps) {
     });
   }
 
+  // ---- кабинет и панель платформы: обращения через сервер
+  //
+  // Обращения и переписка лежат в хранилище на сервере (local-db.js), а не в
+  // Firestore: кабинет и панель читают их здесь, опросом, — это не тратит
+  // лимит Firebase. Права те же, что были в правилах базы: владелец и
+  // администратор заведения видят его обращения, супер-админ — все.
+
+  /** Метки времени — { __ts: мс }: кабинет превращает их обратно. */
+  function toWire(v) {
+    if (v === null || v === undefined || typeof v !== "object") return v;
+    if (typeof v.toMillis === "function") return { __ts: v.toMillis() };
+    if (v instanceof Date) return { __ts: v.getTime() };
+    if (Array.isArray(v)) return v.map(toWire);
+    const out = {};
+    for (const [k, x] of Object.entries(v)) if (x !== undefined && typeof x !== "function") out[k] = toWire(x);
+    return out;
+  }
+
+  async function isSuper(decoded) {
+    try {
+      await requireSuperAdmin(decoded);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /** Обращение, если у пользователя к нему есть доступ. */
+  async function ticketFor(decoded, id) {
+    if (!/^[\w-]{1,64}$/.test(String(id || ""))) throw new HttpError(400, "Не указано обращение");
+    const t = await loadTicket(id);
+    if (!t) throw new HttpError(404, "Обращение не найдено");
+    if (t.tenantId) {
+      try {
+        await requireTenantRole(t.tenantId, decoded.uid, ["owner", "admin"]);
+        return { t, superAdmin: false };
+      } catch (e) {
+        if (!(await isSuper(decoded))) throw e;
+        return { t, superAdmin: true };
+      }
+    }
+    await requireSuperAdmin(decoded);
+    return { t, superAdmin: true };
+  }
+
+  /** Кабинет: обращения заведения (новые сверху). */
+  async function handleTicketList(req, res) {
+    const decoded = await verifyAuth(req);
+    const body = await parseJsonBody(req);
+    const tenantId = String(body.tenantId || "");
+    if (!/^[\w-]{1,128}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
+    try {
+      await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+    } catch (e) {
+      if (!(await isSuper(decoded))) throw e;
+    }
+    const list = (await ticketsCol().where("tenantId", "==", tenantId).limit(200).get()).docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => lastMove(b) - lastMove(a));
+    sendJson(res, 200, { tickets: toWire(list) });
+  }
+
+  /** Обращение и вся переписка — кабинету (своё заведение) и панели платформы. */
+  async function handleTicketMessages(req, res) {
+    const decoded = await verifyAuth(req);
+    const body = await parseJsonBody(req);
+    const { t } = await ticketFor(decoded, body.ticketId);
+    const messages = (await messagesOf(t)).map(({ id, ...m }) => ({ id, ...m }));
+    sendJson(res, 200, { ticket: toWire(t), messages: toWire(messages) });
+  }
+
+  /** «Отметить решённым» / «Переоткрыть». */
+  async function handleTicketStatus(req, res) {
+    const decoded = await verifyAuth(req);
+    const body = await parseJsonBody(req);
+    const status = body.status === "closed" ? "closed" : body.status === "open" ? "open" : "";
+    if (!status) throw new HttpError(400, "Статус — open или closed");
+    const { t } = await ticketFor(decoded, body.ticketId);
+    const at = ts(now());
+    const upd = { status, updatedAt: at, ...(status === "closed" ? { closedAt: at } : {}) };
+    await ticketRef(t.id).set(upd, { merge: true });
+    onTicketDoc(t.id, { ...t, ...upd });
+    sendJson(res, 200, { ok: true });
+  }
+
+  /** Панель платформы: последние обращения всех заведений, сайта и Telegram. */
+  async function handleAdminTickets(req, res) {
+    const decoded = await verifyAuth(req);
+    await requireSuperAdmin(decoded);
+    const col = ticketsCol();
+    const q = typeof col.orderBy === "function" ? col.orderBy("updatedAt", "desc").limit(100) : col.limit(1000);
+    const list = (await q.get()).docs.map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => toMs(b.updatedAt) - toMs(a.updatedAt)).slice(0, 100);
+    sendJson(res, 200, { tickets: toWire(list) });
+  }
+
+  /** Панель платформы: ответ специалиста (бот перешлёт его клиенту). */
+  async function handleAdminSend(req, res) {
+    const decoded = await verifyAuth(req);
+    await requireSuperAdmin(decoded);
+    const body = await parseJsonBody(req);
+    const { t } = await ticketFor(decoded, body.ticketId);
+    const text = String(body.text || "").trim();
+    if (text.length > CABINET_TEXT_MAX) throw new HttpError(400, `Сообщение длиннее ${CABINET_TEXT_MAX} символов — разделите его на части`);
+    const attachments = supportFiles.listOf({ attachments: Array.isArray(body.attachments) ? body.attachments.slice(0, 5) : [] })
+      .map(({ desc, ...a }) => a);
+    if (!text && !attachments.length) throw new HttpError(400, "Пустое сообщение");
+    const at = ts(now());
+    await ticketRef(t.id).collection("messages").add({
+      text, authorUid: decoded.uid, authorRole: "super_admin", createdAt: at, ...(attachments.length ? { attachments } : {}),
+    });
+    await ticketRef(t.id).set({ updatedAt: at, lastAuthorRole: "super_admin" }, { merge: true });
+    onTicketDoc(t.id, { ...t, updatedAt: at, lastAuthorRole: "super_admin" });
+    sendJson(res, 200, { ok: true });
+  }
+
+  /** Панель платформы: база знаний бота (посмотреть и удалить неудачное). */
+  async function handleKnowledgeList(req, res) {
+    const decoded = await verifyAuth(req);
+    await requireSuperAdmin(decoded);
+    const body = await parseJsonBody(req);
+    if (body.deleteId) {
+      if (!/^[\w-]{1,128}$/.test(String(body.deleteId))) throw new HttpError(400, "Не указана запись");
+      await knowledgeCol().doc(String(body.deleteId)).delete();
+      loadKnowledge().catch(() => {});
+      return sendJson(res, 200, { ok: true });
+    }
+    const list = (await knowledgeCol().limit(200).get()).docs.map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+    sendJson(res, 200, { knowledge: toWire(list) });
+  }
+
+  /** Хранилище сменилось (данные перенесены на сервер) — следим заново. */
+  function rewatch() {
+    if (unsubTickets) {
+      try { unsubTickets(); } catch (_) { /* уже отписан */ }
+      unsubTickets = null;
+    }
+    if (active()) watchTickets();
+    loadKnowledge().catch(() => {});
+    loadTemplates().catch(() => {});
+    loadNoise().catch(() => {});
+  }
+
   /** Диалоги чата на сайте старше 30 дней удаляем целиком (152-ФЗ: храним
    *  не дольше, чем нужно). Темы в Telegram остаются — там текст обезличен. */
   async function sweepSite() {
@@ -4677,7 +4821,8 @@ function createSupportBot(deps) {
   }
 
   return {
-    start, reload, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handleCabinetMessages, handleSiteSend, handleSiteMessages, handlePurgeForeign, sweepSite, sweepSiteTopics, checkHook, ensureProfile, handleAiCheck, handleDocDownload, router,
+    start, reload, rewatch, handleHook, handleUpdate, handleSetup, handleStatus, handleGroupCode, handleClientLink, handleCabinetSend, handleCabinetMessages, handleSiteSend,
+    handleTicketList, handleTicketMessages, handleTicketStatus, handleAdminTickets, handleAdminSend, handleKnowledgeList, handleSiteMessages, handlePurgeForeign, sweepSite, sweepSiteTopics, checkHook, ensureProfile, handleAiCheck, handleDocDownload, router,
     onTicketDoc, syncTicket, loadGuide, loadKnowledge, loadNoise, learnedJunk, loadNews, idle, statusOf, autoLearn, sweepLearn, sweepSla, HOOK_ID, _state: state,
     // Тесты: подменить файлы знаний (карта кода с шаблонами, «что нового»).
     __setKbPaths: (p) => Object.assign(deps, p),

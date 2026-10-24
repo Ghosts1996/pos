@@ -700,6 +700,17 @@ function clearScreen() {
 function sub(off) { state.screenSubs.push(off); }
 
 function pad(n) { return String(n).padStart(2, '0'); }
+/** Ответ сервера → как из Firestore: { __ts: мс } — снова Timestamp
+ *  (обращения поддержки хранятся на сервере, см. saas-gateway/local-db.js). */
+function fromWire(v) {
+  if (v === null || typeof v !== 'object') return v;
+  if (Array.isArray(v)) return v.map(fromWire);
+  const keys = Object.keys(v);
+  if (keys.length === 1 && keys[0] === '__ts' && typeof v.__ts === 'number') return Timestamp.fromMillis(v.__ts);
+  const out = {};
+  for (const [k, x] of Object.entries(v)) out[k] = fromWire(x);
+  return out;
+}
 /** Время последнего движения по обращению — для сортировки «новые сверху». */
 function ticketTime(t) {
   const ts = t.updatedAt || t.createdAt;
@@ -3909,48 +3920,54 @@ function watchDashboardData(tenantId) {
   let supportTickets = null;
   // Ошибку загрузки показываем как ошибку, а не как «обращений нет».
   let supportTicketsError = '';
+  let loadSupportTickets = async () => {};
   let selectedTicketId = null;
   let ticketMessages = null;
-  let unsubTicketMessages = null;
   // Файлы, выбранные, но ещё не отправленные: в новое обращение и в ответ.
   const ticketDraftFiles = [];
   const replyDraftFiles = [];
   // Пока сообщение уходит — надпись на кнопке «Отправить» (и защита от повторов).
   let replySending = '';
-  // Подписка на переписку меняется при выборе тикета (selectTicket), поэтому
-  // не через sub(onSnapshot). Здесь только закрываем её при уходе с экрана.
-  sub(() => { if (unsubTicketMessages) unsubTicketMessages(); clearTimeout(ticketPollTimer); ticketPollTimer = null; });
-  // Страховка живой переписки: у части клиентов (VPN, прокси провайдера)
-  // поток Firestore не доходит, и ответ виден только после перезагрузки.
-  // Раз в 15 с (после своего сообщения — каждые 4 с) читаем один документ
-  // обращения; изменился — перечитываем сообщения.
+  sub(() => { clearTimeout(ticketPollTimer); ticketPollTimer = null; });
+  // Обращения и переписка — на сервере поддержки, а не в Firestore: читаем
+  // их опросом (это не тратит лимит базы). Открытое обращение — раз в 15 с,
+  // после своего сообщения — каждые 4 с (ответ ассистента приходит за
+  // 5–30 с); перерисовываем, только если что-то изменилось.
   let ticketPollTimer = null;
   let ticketPollFastUntil = 0;
   let ticketSeenAt = 0;
-  const ticketPoll = () => {
+  const loadTicketMessages = async (id) => {
+    const r = fromWire((await callSaasGateway('supportTicketMessages', { ticketId: id })).data);
+    if (selectedTicketId !== id) return;
+    const t = r.ticket || {};
+    const at = Math.max(t.updatedAt?.toMillis?.() || 0, t.aiTypingAt?.toMillis?.() || 0);
+    const ticket = (supportTickets || []).find((x) => x.id === id);
+    if (ticketMessages && at <= ticketSeenAt && (r.messages || []).length === ticketMessages.length) return;
+    ticketSeenAt = at;
+    if (ticket) Object.assign(ticket, t);
+    ticketMessages = r.messages || [];
+    draw();
+  };
+  const ticketPoll = (delay = null) => {
     clearTimeout(ticketPollTimer);
     ticketPollTimer = null;
     if (!selectedTicketId) return;
     const id = selectedTicketId;
     ticketPollTimer = setTimeout(async () => {
       if (selectedTicketId !== id) return;
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' || ticketMessages === null) {
         try {
-          const t = await getDoc(doc(state.db, 'supportTickets', id));
-          const at = Math.max(t.data()?.updatedAt?.toMillis?.() || 0, t.data()?.aiTypingAt?.toMillis?.() || 0);
-          if (selectedTicketId === id && at > ticketSeenAt) {
-            const snap = await getDocs(query(collection(state.db, 'supportTickets', id, 'messages'), orderBy('createdAt', 'asc')));
-            if (selectedTicketId !== id) return;
-            ticketSeenAt = at;
-            const list = snap.docs.map((d) => d.data());
-            const ticket = (supportTickets || []).find((x) => x.id === id);
-            if (ticket && t.exists()) Object.assign(ticket, t.data());
-            if (!ticketMessages || list.length !== ticketMessages.length || ticket) { ticketMessages = list; draw(); }
+          await loadTicketMessages(id);
+        } catch (e) {
+          if (ticketMessages === null && selectedTicketId === id) {
+            ticketMessages = [];
+            toast(`Не удалось загрузить переписку: ${e?.message || e}`);
+            draw();
           }
-        } catch (_) { /* сеть — попробуем позже */ }
+        }
       }
       ticketPoll();
-    }, Date.now() < ticketPollFastUntil ? 4000 : 15000);
+    }, delay ?? (Date.now() < ticketPollFastUntil ? 4000 : 15000));
   };
   // null — первый снапшот ещё не пришёл, не путать с нулём.
   let liveOpenSessions = null;
@@ -3975,27 +3992,12 @@ function watchDashboardData(tenantId) {
   let logoUploading = false;
 
   const selectTicket = (ticketId) => {
-    if (unsubTicketMessages) { unsubTicketMessages(); unsubTicketMessages = null; }
     selectedTicketId = ticketId;
     ticketMessages = null;
-    // Время сервера, а не часы компьютера: они могут спешить.
-    ticketSeenAt = (supportTickets || []).find((x) => x.id === ticketId)?.updatedAt?.toMillis?.() || 0;
+    ticketSeenAt = 0;
     replyDraftFiles.splice(0);
-    ticketPoll();
-    if (ticketId) {
-      unsubTicketMessages = onSnapshot(
-        query(collection(state.db, 'supportTickets', ticketId, 'messages'), orderBy('createdAt', 'asc')),
-        (snap) => {
-          ticketMessages = snap.docs.map((d) => d.data());
-          draw();
-        },
-        (e) => {
-          ticketMessages = [];
-          toast(`Не удалось загрузить переписку: ${e?.message || e}`);
-          draw();
-        }
-      );
-    }
+    // Переписку — сразу, дальше опросом.
+    ticketPoll(0);
     draw();
   };
 
@@ -5755,6 +5757,7 @@ function watchDashboardData(tenantId) {
           if ($('f-ticket-message')) $('f-ticket-message').value = '';
           toast(uploadError ? `Обращение создано, но файл не загрузился: ${uploadError}`
             : masked ? 'Обращение создано. Личные данные в тексте скрыты — они не нужны поддержке' : 'Обращение создано');
+          await loadSupportTickets();
           selectTicket(ticketId);
         } catch (e) {
           toast(`Не удалось создать обращение: ${e?.message || e}`);
@@ -5800,10 +5803,10 @@ function watchDashboardData(tenantId) {
       $('f-ticket-toggle-status').onclick = async () => {
         if (!selectedTicket) return;
         try {
-          await setDoc(doc(state.db, 'supportTickets', selectedTicket.id), {
-            status: selectedTicket.status === 'closed' ? 'open' : 'closed',
-            updatedAt: Timestamp.fromDate(new Date()),
-          }, { merge: true });
+          await callSaasGateway('supportTicketStatus', { ticketId: selectedTicket.id, status: selectedTicket.status === 'closed' ? 'open' : 'closed' });
+          await loadSupportTickets();
+          ticketSeenAt = 0;
+          ticketPoll(0);
         } catch (e) {
           toast(`Не удалось изменить статус: ${e?.message || e}`);
         }
@@ -6408,18 +6411,25 @@ function watchDashboardData(tenantId) {
     broadcasts = [];
     draw();
   }));
-  // Без orderBy — он требует составного индекса. Обращений у заведения
-  // единицы, сортируем на месте.
-  sub(onSnapshot(query(collection(state.db, 'supportTickets'), where('tenantId', '==', tenantId), limit(200)), (snap) => {
-    supportTickets = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => ticketTime(b) - ticketTime(a));
-    supportTicketsError = '';
+  // Обращения заведения — с сервера поддержки, опросом раз в 30 с, пока
+  // вкладка открыта (лимит Firebase это не тратит).
+  let ticketsAlive = true;
+  sub(() => { ticketsAlive = false; });
+  loadSupportTickets = async () => {
+    try {
+      const list = fromWire((await callSaasGateway('supportTicketList', { tenantId })).data.tickets || []);
+      if (!ticketsAlive) return;
+      supportTickets = list.sort((a, b) => ticketTime(b) - ticketTime(a));
+      supportTicketsError = '';
+    } catch (e) {
+      if (supportTickets === null) supportTickets = [];
+      supportTicketsError = e?.message || String(e);
+    }
     draw();
-  }, (e) => {
-    supportTickets = [];
-    supportTicketsError = e?.message || String(e);
-    draw();
-  }));
+  };
+  loadSupportTickets();
+  const ticketsTimer = setInterval(() => { if (document.visibilityState === 'visible') loadSupportTickets(); }, 30000);
+  sub(() => clearInterval(ticketsTimer));
   sub(onSnapshot(query(collection(state.db, 'tenantMembers'), where('tenantId', '==', tenantId)), (snap) => {
     members = snap.docs.map((d) => d.data());
     draw();
@@ -7141,9 +7151,7 @@ function watchSupportBotAdmin() {
   };
   const loadKnowledge = async () => {
     try {
-      const snap = await getDocs(query(collection(state.db, 'supportKnowledge'), limit(200)));
-      knowledge = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+      knowledge = fromWire((await callSaasGateway('supportKnowledge', {})).data.knowledge || []);
     } catch (e) {
       knowledge = [];
     }
@@ -7455,7 +7463,7 @@ function watchSupportBotAdmin() {
       el.onclick = async () => {
         if (!confirm('Удалить запись из базы знаний бота?')) return;
         try {
-          await deleteDoc(doc(state.db, 'supportKnowledge', el.dataset.id));
+          await callSaasGateway('supportKnowledge', { deleteId: el.dataset.id });
           knowledge = (knowledge || []).filter((k) => k.id !== el.dataset.id);
           draw();
         } catch (e) {
@@ -7482,7 +7490,7 @@ function watchAdminSupportTickets() {
   const isPriority = (t) => planPriority.get(tenantPlan.get(t.tenantId)) === true;
   let expandedId = null;
   let messages = null;
-  let unsubMessages = null;
+  let messagesTimer = null;
   const adminDraftFiles = [];
   // Папки: вопросы клиентов из кабинета, посетителей лендинга и из Telegram.
   const FOLDERS = [
@@ -7498,21 +7506,35 @@ function watchAdminSupportTickets() {
     : t.tenantId ? (tenantNames.get(t.tenantId) || t.tenantId)
       : t.channel === 'telegram' ? `Telegram${t.tgName ? ` · ${t.tgName}` : ''}` : 'Заведение не указано');
 
+  // Переписка открытого обращения — с сервера поддержки, раз в 10 с.
+  const loadMessages = async (id) => {
+    try {
+      const r = fromWire((await callSaasGateway('supportTicketMessages', { ticketId: id })).data);
+      if (expandedId !== id) return;
+      const list = r.messages || [];
+      if (messages && list.length === messages.length) return;
+      messages = list;
+    } catch (e) {
+      if (expandedId !== id || messages) return;
+      messages = [];
+      toast(`Не удалось загрузить переписку: ${e?.message || e}`);
+    }
+    draw();
+  };
   const selectTicket = (ticketId) => {
-    if (unsubMessages) { unsubMessages(); unsubMessages = null; }
+    clearInterval(messagesTimer);
+    messagesTimer = null;
     expandedId = expandedId === ticketId ? null : ticketId;
     messages = null;
     adminDraftFiles.splice(0);
     if (expandedId) {
-      unsubMessages = onSnapshot(
-        query(collection(state.db, 'supportTickets', expandedId, 'messages'), orderBy('createdAt', 'asc')),
-        (snap) => { messages = snap.docs.map((d) => d.data()); draw(); },
-        (e) => { messages = []; toast(`Не удалось загрузить переписку: ${e?.message || e}`); draw(); }
-      );
+      const id = expandedId;
+      loadMessages(id);
+      messagesTimer = setInterval(() => { if (document.visibilityState === 'visible') loadMessages(id); }, 10000);
     }
     draw();
   };
-  sub(() => { if (unsubMessages) unsubMessages(); });
+  sub(() => clearInterval(messagesTimer));
 
   const draw = () => {
     if (!tickets.length) {
@@ -7592,12 +7614,10 @@ function watchAdminSupportTickets() {
         textEl.value = '';
         try {
           const attachments = files.length ? await uploadSupportFiles(ticketId, files) : [];
-          const now = Timestamp.fromDate(new Date());
-          await addDoc(collection(state.db, 'supportTickets', ticketId, 'messages'), {
-            text, authorUid: state.uid, authorRole: 'super_admin', createdAt: now, ...(attachments.length ? { attachments } : {}),
-          });
+          await callSaasGateway('supportAdminSend', { ticketId, text, attachments });
           dropPreviews(files);
-          await setDoc(doc(state.db, 'supportTickets', ticketId), { updatedAt: now, lastAuthorRole: 'super_admin' }, { merge: true });
+          loadMessages(ticketId);
+          loadTickets();
         } catch (e) {
           adminDraftFiles.unshift(...files);
           const back = document.getElementById(`f-admin-reply-${ticketId}`);
@@ -7612,10 +7632,8 @@ function watchAdminSupportTickets() {
     document.querySelectorAll('.f-admin-ticket-toggle').forEach((el) => {
       el.onclick = async () => {
         try {
-          await setDoc(doc(state.db, 'supportTickets', el.dataset.id), {
-            status: el.dataset.status === 'closed' ? 'open' : 'closed',
-            updatedAt: Timestamp.fromDate(new Date()),
-          }, { merge: true });
+          await callSaasGateway('supportTicketStatus', { ticketId: el.dataset.id, status: el.dataset.status === 'closed' ? 'open' : 'closed' });
+          loadTickets();
         } catch (e) {
           toast(`Не удалось изменить статус: ${e?.message || e}`);
         }
@@ -7623,8 +7641,21 @@ function watchAdminSupportTickets() {
     });
   };
 
-  sub(onSnapshot(query(collection(state.db, 'supportTickets'), orderBy('updatedAt', 'desc'), limit(100)), async (snap) => {
-    tickets = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  // Обращения — с сервера поддержки (не из Firestore), раз в 20 с.
+  let plansLoaded = false;
+  let ticketsShown = false;
+  let ticketsAlive = true;
+  const loadTickets = async () => {
+    let list;
+    try {
+      list = fromWire((await callSaasGateway('supportAdminTickets', {})).data.tickets || []);
+    } catch (_) {
+      if (!ticketsShown) body.innerHTML = '<p class="small muted">Обращения недоступны.</p>';
+      return;
+    }
+    if (!ticketsAlive) return;
+    ticketsShown = true;
+    tickets = list;
     await Promise.all([...new Set(tickets.map((t) => t.tenantId))].filter((id) => id && !tenantNames.has(id)).map(async (id) => {
       try {
         const tSnap = await getDoc(doc(state.db, 'tenants', id));
@@ -7643,14 +7674,20 @@ function watchAdminSupportTickets() {
         tenantNames.set(id, id);
       }
     }));
-    try {
-      const plansSnap = await getDocs(collection(state.db, 'plans'));
-      planPriority = new Map(plansSnap.docs.map((d) => [d.id, d.data().prioritySupport === true]));
-    } catch (_) {}
-    draw();
-  }, () => {
-    body.innerHTML = '<p class="small muted">Обращения недоступны.</p>';
-  }));
+    if (!plansLoaded) {
+      try {
+        const plansSnap = await getDocs(collection(state.db, 'plans'));
+        planPriority = new Map(plansSnap.docs.map((d) => [d.id, d.data().prioritySupport === true]));
+        plansLoaded = true;
+      } catch (_) {}
+    }
+    // Поле ответа набирают — не перерисовываем под рукой.
+    const typing = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('f-admin-ticket-reply');
+    if (!typing) draw();
+  };
+  loadTickets();
+  const ticketsTimer = setInterval(() => { if (document.visibilityState === 'visible') loadTickets(); }, 20000);
+  sub(() => { ticketsAlive = false; clearInterval(ticketsTimer); });
 }
 
 // Объявления пишутся прямо в Firestore: проверять сверх правил

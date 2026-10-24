@@ -41,6 +41,7 @@ const requisites = require("./requisites");
 const { createGuestDelivery } = require("./guest-delivery");
 const { createTelegram, encrypt: tgEncrypt, decrypt: tgDecrypt, secretKey: tgSecretKey } = require("./telegram");
 const { createSupportBot } = require("./support-bot");
+const { createLocalDb } = require("./local-db");
 const { createPiiInternal } = require("./pii-internal");
 const { createPiiMigrate } = require("./pii-migrate");
 
@@ -3407,7 +3408,7 @@ const supportUploadLimiter = new Map(); // uid -> { count, resetAt }
  *  заведения (как в правилах базы) либо супер-админ. */
 async function supportTicketFor(decoded, ticketId) {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(ticketId || ""))) throw new HttpError(400, "Не указано обращение");
-  const snap = await db().collection("supportTickets").doc(ticketId).get();
+  const snap = await supportRouter.collection("supportTickets").doc(ticketId).get();
   if (!snap.exists) throw new HttpError(404, "Обращение не найдено");
   const t = snap.data();
   if (await isSuperAdmin(decoded)) return t;
@@ -7572,8 +7573,114 @@ async function supportTenantPriority(tenantId) {
   return !!(plan && plan.prioritySupport === true);
 }
 
+// ---------------------------------------------- хранилище бота поддержки
+//
+// Обращения, переписка, темы, шаблоны и знания бота — на диске этого
+// сервера (local-db.js), а не в Firestore: бот читает их постоянно, и в
+// Firestore это съедало суточный лимит бесплатного тарифа. Объявления
+// (broadcasts) остаются в Firestore — их читают кабинеты.
+//
+// Данные, накопленные в Firestore, переносятся сюда один раз
+// (migrateSupportToLocal); пока перенос не прошёл (например, исчерпан
+// лимит), бот работает с Firestore, как раньше, и повторяет перенос.
+const SUPPORT_LOCAL_COLLECTIONS = new Set([
+  "supportBot", "supportTickets", "supportClients", "supportMemory", "supportKnowledge", "supportTopics", "supportTemplates", "supportLinks",
+]);
+const SUPPORT_MIGRATED = "supportBot/_localStore";
+const supportDb = createLocalDb({
+  admin,
+  file: process.env.SUPPORT_DB_FILE || path.join(__dirname, "state", "support-db.json"),
+});
+let supportUseLocal = supportDb.store.has(SUPPORT_MIGRATED);
+const supportRouter = {
+  collection: (name) => (supportUseLocal && SUPPORT_LOCAL_COLLECTIONS.has(name) ? supportDb : db()).collection(name),
+  runTransaction: (fn) => (supportUseLocal ? supportDb : db()).runTransaction(fn),
+  batch: () => (supportUseLocal ? supportDb : db()).batch(),
+};
+
+const tsMillis = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : 0);
+
+/** Документы коллекции Firestore страницами — в хранилище сервера. */
+async function copySupportDocs(col, { onDoc } = {}) {
+  let last = null;
+  let n = 0;
+  for (;;) {
+    let page = col.orderBy(admin.firestore.FieldPath.documentId()).limit(300);
+    if (last) page = page.startAfter(last);
+    const snap = await page.get();
+    for (const d of snap.docs) {
+      if (onDoc) n += await onDoc(d);
+      else {
+        await supportDb.doc(d.ref.path).set(d.data());
+        n++;
+      }
+    }
+    if (snap.size < 300) return n;
+    last = snap.docs[snap.docs.length - 1];
+  }
+}
+
+async function copySupportTicket(d) {
+  // Документ уже менялся на сервере позже — не затираем его старой копией.
+  const local = await supportDb.doc(d.ref.path).get();
+  if (!local.exists || tsMillis(local.data().updatedAt) <= tsMillis(d.data().updatedAt)) await supportDb.doc(d.ref.path).set(d.data());
+  return 1 + await copySupportDocs(d.ref.collection("messages"));
+}
+
+let supportMigrating = null;
+function migrateSupportToLocal() {
+  if (supportUseLocal) return Promise.resolve(true);
+  if (supportMigrating) return supportMigrating;
+  supportMigrating = (async () => {
+    const firestore = db();
+    const startedAt = Date.now();
+    let n = 0;
+    for (const name of SUPPORT_LOCAL_COLLECTIONS) {
+      n += name === "supportTickets"
+        ? await copySupportDocs(firestore.collection(name), { onDoc: copySupportTicket })
+        : await copySupportDocs(firestore.collection(name));
+    }
+    await supportDb.doc(SUPPORT_MIGRATED).set({ migratedAt: admin.firestore.Timestamp.now(), docs: n });
+    await supportDb.flush();
+    supportUseLocal = true;
+    console.log(`support-bot: данные перенесены на сервер (${n} документов) — лимит Firebase бот больше не тратит`);
+    // Пока шёл перенос, бот писал в Firestore — догоняем эти обращения.
+    const since = admin.firestore.Timestamp.fromMillis(startedAt - 60 * 1000);
+    const fresh = await firestore.collection("supportTickets").where("updatedAt", ">=", since).get().catch(() => null);
+    for (const d of (fresh ? fresh.docs : [])) await copySupportTicket(d).catch(() => 0);
+    return true;
+  })().finally(() => { supportMigrating = null; });
+  return supportMigrating;
+}
+
+async function startSupportBot() {
+  if (!supportUseLocal) {
+    try {
+      await migrateSupportToLocal();
+    } catch (e) {
+      console.error(`support-bot: перенос данных на сервер не удался (${e.message || e}) — пока работаю с Firestore, повторю через 15 минут`);
+      const timer = setInterval(() => {
+        migrateSupportToLocal().then(() => {
+          clearInterval(timer);
+          supportBot.rewatch();
+        }).catch((err) => console.error(`support-bot: перенос данных на сервер: ${err.message || err}`));
+      }, 15 * 60 * 1000);
+      if (timer.unref) timer.unref();
+    }
+  }
+  await supportBot.start();
+}
+
+// Остановка сервиса — дописать последние изменения хранилища на диск.
+for (const sig of ["SIGTERM", "SIGINT"]) {
+  process.once(sig, () => {
+    try { supportDb.flushSync(); } catch (e) { console.error(`support-bot: запись хранилища: ${e.message || e}`); }
+    process.exit(0);
+  });
+}
+
 const supportBot = createSupportBot({
-  db,
+  db: () => supportRouter,
   admin,
   verifyAuth,
   parseJsonBody,
@@ -7731,6 +7838,12 @@ const ROUTES = {
   "/supportSend": supportBot.handleCabinetSend,
   "/supportSiteSend": supportBot.handleSiteSend,
   "/supportCabinetMessages": supportBot.handleCabinetMessages,
+  "/supportTicketList": supportBot.handleTicketList,
+  "/supportTicketMessages": supportBot.handleTicketMessages,
+  "/supportTicketStatus": supportBot.handleTicketStatus,
+  "/supportAdminTickets": supportBot.handleAdminTickets,
+  "/supportAdminSend": supportBot.handleAdminSend,
+  "/supportKnowledge": supportBot.handleKnowledgeList,
   "/invalidateTenantCache": handleInvalidateTenantCache,
   "/recordImportConsent": handleRecordImportConsent,
   "/supportSiteMessages": supportBot.handleSiteMessages,
@@ -7921,7 +8034,7 @@ scheduleDailyJob("deliveryPiiRetention", 24 * 3600 * 1000, runDeliveryPiiRetenti
 if (process.env.PORT !== "8099") {
   telegram.start();
   guestPay.startSweeper();
-  supportBot.start().catch((e) => console.error("support-bot: запуск:", e.message || e));
+  startSupportBot().catch((e) => console.error("support-bot: запуск:", e.message || e));
 }
 
 const port = Number(process.env.PORT || 8081);

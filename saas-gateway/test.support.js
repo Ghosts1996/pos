@@ -257,8 +257,15 @@ test("карта кода: описания и надписи экранов б�
 
 // ---------------------------------------------------------------- весь путь
 
+// SUPPORT_TEST_DB=local — те же проверки на хранилище сервера (local-db.js).
+function testDb() {
+  if (process.env.SUPPORT_TEST_DB !== "local") return fakeDb();
+  const ldb = require("./local-db").createLocalDb({ admin: require("firebase-admin") });
+  return { db: ldb, store: ldb.store };
+}
+
 function harness(extra = {}) {
-  const { db, store } = fakeDb();
+  const { db, store } = testDb();
   const calls = [];
   const aiCalls = [];
   const aiReplies = [];
@@ -1820,6 +1827,43 @@ test("исчерпан лимит базы: бот отвечает объясн
   const replies = sends(h2.calls, 4242);
   assert.strictEqual(replies.length, 1, "не чаще раза в 10 минут");
   assert.match(replies[0].body.text, /перегружен/);
+});
+
+test("кабинет и панель читают обращения через сервер: свои — владельцу, все — супер-админу", async () => {
+  const h = harness({ requireSuperAdmin: async (d) => { if (!d || d.uid !== "sa") throw new HttpError(403, "только супер-админ"); } });
+  await setup(h);
+  await h.bot.handleCabinetSend({ uid: "owner1", body: { tenantId: "t1", subject: "Не печатает", consent: true, text: "Не печатает чек" } }, {});
+  const id = h.sent.body.ticketId;
+  await h.bot.idle();
+  await h.bot.handleTicketList({ uid: "owner1", body: { tenantId: "t1" } }, {});
+  assert.ok(h.sent.body.tickets.some((t) => t.id === id && t.subject === "Не печатает"));
+  assert.ok(typeof h.sent.body.tickets[0].updatedAt.__ts === "number", "метка времени — { __ts }");
+  await assert.rejects(h.bot.handleTicketList({ uid: "stranger", body: { tenantId: "t1" } }, {}), /нет/);
+  await h.bot.handleTicketMessages({ uid: "owner1", body: { ticketId: id } }, {});
+  assert.ok(h.sent.body.messages.some((m) => m.text === "Не печатает чек"));
+  await assert.rejects(h.bot.handleTicketMessages({ uid: "stranger", body: { ticketId: id } }, {}), /нет/);
+  // Супер-админ отвечает из панели — сообщение в переписке, бот пересылает в тему.
+  await h.bot.handleAdminSend({ uid: "sa", body: { ticketId: id, text: "Проверьте бумагу в принтере" } }, {});
+  await h.bot.idle();
+  await h.bot.handleTicketMessages({ uid: "sa", body: { ticketId: id } }, {});
+  assert.ok(h.sent.body.messages.some((m) => m.authorRole === "super_admin" && m.text === "Проверьте бумагу в принтере"));
+  assert.strictEqual(h.sent.body.ticket.lastAuthorRole, "super_admin");
+  await assert.rejects(h.bot.handleAdminSend({ uid: "owner1", body: { ticketId: id, text: "x" } }, {}), /супер-админ/);
+  await h.bot.handleAdminTickets({ uid: "sa", body: {} }, {});
+  assert.ok(h.sent.body.tickets.some((t) => t.id === id));
+  // Владелец закрывает и снова открывает.
+  await h.bot.handleTicketStatus({ uid: "owner1", body: { ticketId: id, status: "closed" } }, {});
+  assert.strictEqual(tickets(h.store).find((t) => t.id === id).status, "closed");
+  await h.bot.handleTicketStatus({ uid: "owner1", body: { ticketId: id, status: "open" } }, {});
+  assert.strictEqual(tickets(h.store).find((t) => t.id === id).status, "open");
+  await assert.rejects(h.bot.handleTicketStatus({ uid: "owner1", body: { ticketId: id, status: "удалено" } }, {}), /open или closed/);
+  // База знаний: список и удаление — только супер-админ.
+  h.store.set("supportKnowledge/k1", { title: "Бегунки", text: "Интеграции → Бегунки", createdAt: { toMillis: () => Date.now() } });
+  await h.bot.handleKnowledgeList({ uid: "sa", body: {} }, {});
+  assert.ok(h.sent.body.knowledge.some((k) => k.id === "k1"));
+  await assert.rejects(h.bot.handleKnowledgeList({ uid: "owner1", body: {} }, {}), /супер-админ/);
+  await h.bot.handleKnowledgeList({ uid: "sa", body: { deleteId: "k1" } }, {});
+  assert.ok(!h.store.has("supportKnowledge/k1"));
 });
 
 test("группа поддержки закрыта: чужие заявки отклоняются, вошедший по ссылке удаляется, своих принимаем", async () => {
