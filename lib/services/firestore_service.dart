@@ -1327,8 +1327,23 @@ class FirestoreService {
     } catch (_) {
       return 0; // Нет связи с базой — оплату не блокируем.
     }
+    final draws = saleDraws(orderItems, menu, stock).values.toList();
+    if (draws.isEmpty) return 0;
+    // Все продукты чека — одной транзакцией: кассир не ждёт по запросу на
+    // каждый продукт. Не вышло (продукт удалили и т. п.) — по одному, как раньше.
+    if (kSaasMode) {
+      try {
+        await adjustInventoryMany([
+          for (final d in draws)
+            (item: stock[d.inventoryItemId]!, delta: sign * d.qty, reason: '$reason: ${d.sourceText}'),
+        ], type: type, employeeName: employeeName);
+        return draws.length;
+      } on FirebaseException catch (e) {
+        if (e.code == 'unavailable') return 0;
+      } catch (_) {}
+    }
     var n = 0;
-    for (final draw in saleDraws(orderItems, menu, stock).values) {
+    for (final draw in draws) {
       final inv = stock[draw.inventoryItemId]!;
       try {
         await adjustInventoryQuantity(
@@ -2813,27 +2828,109 @@ class FirestoreService {
     }
   }
 
+  /// Несколько движений склада одной транзакцией (продажа, возврат чека):
+  /// остатки, строки истории и стоп-лист — за один раз.
+  Future<void> adjustInventoryMany(
+    List<({InventoryItem item, double delta, String reason})> moves, {
+    required String type,
+    required String employeeName,
+  }) async {
+    if (moves.isEmpty) return;
+    final now = DateTime.now();
+    InventoryMovement move(({InventoryItem item, double delta, String reason}) m, String id, double after) => InventoryMovement(
+          id: id,
+          itemId: m.item.id,
+          itemName: m.item.name,
+          unit: m.item.unit,
+          type: type,
+          delta: m.delta,
+          resultingQty: after,
+          reason: m.reason,
+          employeeName: employeeName,
+          createdAt: now,
+        );
+    if (!NetStatus.online.value) {
+      // Без связи: атомарные приращения одной пачкой, остаток для журнала — по памяти.
+      final batch = _db.batch();
+      for (final m in moves) {
+        final itemRef = AppScope.col('inventoryItems').doc(m.item.id);
+        final moveRef = AppScope.col('inventoryMovements').doc();
+        final cached = await itemRef.get(const GetOptions(source: Source.cache)).catchError((Object _) => itemRef.get());
+        final after = ((cached.data()?['quantity'] as num?)?.toDouble() ?? 0) + m.delta;
+        batch
+          ..update(itemRef, {'quantity': FieldValue.increment(m.delta), 'updatedAt': Timestamp.fromDate(now)})
+          ..set(moveRef, move(m, moveRef.id, after).toMap());
+      }
+      unawaited(batch.commit().catchError((Object _) {}));
+      return;
+    }
+    final levels = <String, (double, InventoryUnit)>{};
+    await _db.runTransaction((tx) async {
+      levels.clear();
+      final current = <String, double>{};
+      for (final m in moves) {
+        if (current.containsKey(m.item.id)) continue;
+        final snap = await tx.get(AppScope.col('inventoryItems').doc(m.item.id));
+        if (!snap.exists) throw FirebaseException(plugin: 'cloud_firestore', code: 'not-found', message: 'Нет позиции склада ${m.item.name}');
+        current[m.item.id] = (snap.data()?['quantity'] as num?)?.toDouble() ?? 0;
+      }
+      for (final m in moves) {
+        final after = current[m.item.id]! + m.delta;
+        current[m.item.id] = after;
+        levels[m.item.id] = (after, m.item.unit);
+        final moveRef = AppScope.col('inventoryMovements').doc();
+        tx.set(moveRef, move(m, moveRef.id, after).toMap());
+      }
+      for (final e in current.entries) {
+        tx.update(AppScope.col('inventoryItems').doc(e.key), {'quantity': e.value, 'updatedAt': Timestamp.fromDate(now)});
+      }
+    });
+    try {
+      await syncStopLists(levels);
+    } catch (_) {
+      // Стоп-лист — удобство; движения склада уже записаны.
+    }
+  }
+
   /// Автостоп-лист: продукта на складе меньше, чем на одну порцию, —
   /// блюдо пропадает из меню кассы и гостя (available = false, помечено
   /// autoStoppedBy). Пришёл приход — снятые так блюда возвращаются. Блюда,
   /// выключенные вручную, не трогаем.
-  Future<void> syncStopList(String inventoryItemId, double stock, InventoryUnit unit) async {
+  Future<void> syncStopList(String inventoryItemId, double stock, InventoryUnit unit) =>
+      syncStopLists({inventoryItemId: (stock, unit)});
+
+  /// Стоп-лист сразу по нескольким продуктам — меню читается один раз.
+  Future<void> syncStopLists(Map<String, (double, InventoryUnit)> levels) async {
+    if (levels.isEmpty) return;
     final menu = await AppScope.col('menuItems').get();
     final batch = _db.batch();
     var changed = false;
     for (final doc in menu.docs) {
       final item = MenuItem.fromDoc(doc);
       // На порцию — с отходом и делением на число порций рецепта.
-      double? need;
-      for (final c in item.perPortion) {
-        if (c.inventoryItemId == inventoryItemId) need = (need ?? 0) + c.weightUnit.convertTo(c.weight, unit);
+      String? short;
+      var uses = false;
+      for (final e in levels.entries) {
+        double? need;
+        for (final c in item.perPortion) {
+          if (c.inventoryItemId == e.key) need = (need ?? 0) + c.weightUnit.convertTo(c.weight, e.value.$2);
+        }
+        if (need == null) continue;
+        uses = true;
+        if (e.value.$1 < need) {
+          short = e.key;
+          break;
+        }
       }
-      if (need == null) continue;
+      if (!uses) continue;
       final stoppedBy = (doc.data()['autoStoppedBy'] ?? '').toString();
-      if (stock < need && item.available) {
-        batch.update(doc.reference, {'available': false, 'autoStoppedBy': inventoryItemId});
+      if (short != null && item.available) {
+        batch.update(doc.reference, {'available': false, 'autoStoppedBy': short});
         changed = true;
-      } else if (stock >= need && !item.available && stoppedBy == inventoryItemId) {
+      } else if (short != null && !item.available && levels.containsKey(stoppedBy) && stoppedBy != short) {
+        batch.update(doc.reference, {'autoStoppedBy': short}); // теперь не хватает другого продукта
+        changed = true;
+      } else if (short == null && !item.available && levels.containsKey(stoppedBy)) {
         batch.update(doc.reference, {'available': true, 'autoStoppedBy': FieldValue.delete()});
         changed = true;
       }
