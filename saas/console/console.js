@@ -7692,13 +7692,17 @@ const ADMIN_NAV = [
   { id: 'security', icon: 'lock', color: '#DC2626', label: 'Безопасность' },
 ];
 
+function adminConsoleLinkHtml() {
+  return state.tenants.length
+    ? `<a href="#/" id="admin-console-link" class="nav-item" style="text-decoration:none">${navIconHtml('back', '#64748B')}<span>В консоль</span></a>`
+    : `<a href="#/onboarding" id="admin-console-link" class="nav-item" style="text-decoration:none">${navIconHtml('plus', '#22C55E')}<span>Своё заведение</span></a>`;
+}
+
 function adminNavHtml(activeTab) {
   const activeMeta = ADMIN_NAV.find((t) => t.id === activeTab);
   // Без своего заведения «В консоль» вернуло бы сюда же — вместо неё
   // предлагаем завести заведение.
-  const consoleLink = state.tenants.length
-    ? `<a href="#/" class="nav-item" style="text-decoration:none">${navIconHtml('back', '#64748B')}<span>В консоль</span></a>`
-    : `<a href="#/onboarding" class="nav-item" style="text-decoration:none">${navIconHtml('plus', '#22C55E')}<span>Своё заведение</span></a>`;
+  const consoleLink = adminConsoleLinkHtml();
   return `
     <div class="dash-topbar">
       <button class="hamburger-btn" id="f-admin-nav-open" aria-label="Меню">
@@ -7733,8 +7737,17 @@ function adminNavHtml(activeTab) {
 
 function screenSuperAdmin() {
   screenEl().classList.add('has-tabbar');
+  // Панель уже открыта для этого же входа (route() зовётся несколько раз,
+  // пока догружаются заведения и проверка менеджера) — не пересобираем её:
+  // иначе само закрывается открытое меню и сбрасывается вкладка. Только
+  // обновляем ссылку «В консоль» и заново подписываемся на данные.
+  if ($('admin-root')?.dataset.uid === String(state.uid)) {
+    const link = $('admin-console-link');
+    if (link) link.outerHTML = adminConsoleLinkHtml();
+    return watchAdminData();
+  }
   screenEl().innerHTML = `
-    <div id="admin-root">
+    <div id="admin-root" data-uid="${esc(String(state.uid))}">
       ${adminNavHtml('overview')}
 
       <div class="admin-tab-panel active" data-panel="overview">
@@ -8000,6 +8013,13 @@ function screenSuperAdmin() {
   if (adminNavBackdrop) adminNavBackdrop.onclick = closeAdminNav;
   if ($('f-admin-signout')) $('f-admin-signout').onclick = () => signOut(state.auth);
 
+  watchAdminData();
+  // Отметка входа в панель (IP, браузер) — см. handleRecordAdminLogin в
+  // saas-gateway. Сбой не мешает работе панели.
+  callSaasGateway('recordAdminLogin', {}).catch(() => {});
+}
+
+function watchAdminData() {
   watchAllTenants();
   watchAuditLog();
   watchPlans();
@@ -8013,9 +8033,6 @@ function screenSuperAdmin() {
   watchSupportBotAdmin();
   watchAdminPartners();
   watchSecurity();
-  // Отметка входа в панель (IP, браузер) — см. handleRecordAdminLogin в
-  // saas-gateway. Сбой не мешает работе панели.
-  callSaasGateway('recordAdminLogin', {}).catch(() => {});
 }
 
 // ИИ-бот поддержки в Telegram (saas-gateway/support-bot.js): токен, рабочая
@@ -9222,8 +9239,10 @@ function watchAllTenants() {
     });
   };
 
-  $('f-tenant-search').addEventListener('input', draw);
-  $('f-tenant-status-filter').addEventListener('change', draw);
+  // oninput, а не addEventListener: при повторной подписке панели старый
+  // обработчик заменяется, а не копится.
+  $('f-tenant-search').oninput = draw;
+  $('f-tenant-status-filter').onchange = draw;
 
   getDocs(collection(state.db, 'plans')).then((snap) => {
     plans = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
