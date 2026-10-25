@@ -461,6 +461,8 @@ function createOwnAuth({
       imported: all.filter((u) => u.importedAt).length,
       signedInHere: all.filter((u) => u.lastSignInAt).length,
       firebaseDeleted: all.filter((u) => u.firebaseDeletedAt).length,
+      // Перенесённые из Firebase и ещё не удалённые оттуда.
+      firebaseLeft: all.filter((u) => u.importedAt && !u.firebaseDeletedAt).length,
       // Ещё входят токеном Firebase (старая версия кассы или приложения).
       firebaseRecent: all.filter((u) => u.fbTokenAt && now() - u.fbTokenAt < FIREBASE_RECENT_MS && !u.firebaseDeletedAt).length,
     };

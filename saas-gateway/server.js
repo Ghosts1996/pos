@@ -8258,11 +8258,33 @@ function dataApiOrNull() {
 }
 
 /** GET /db/status — где сейчас данные (клиенты выбирают по нему). */
+// Остались ли в Google копии с прежних версий: данные в Cloud Firestore
+// (задание удаления не завершено) или учётные записи в Firebase
+// Authentication. По этому сайт пишет в политике «удаляются» или «удалены».
+// Считается не чаще раза в 10 минут: /db/status спрашивают все устройства.
+let legacyGoogleCache = { at: 0, value: true, busy: false };
+function legacyGoogle() {
+  const c = legacyGoogleCache;
+  if (!c.busy && Date.now() - c.at > 10 * 60 * 1000) {
+    c.busy = true;
+    (async () => {
+      const purged = (firestorePurgeState() || {}).phase === "done";
+      let left = 1;
+      if (authOwn()) left = Number((await ownAuth().migrationStats()).firebaseLeft) || 0;
+      return !(purged && left === 0);
+    })().then((v) => { c.value = v; }, () => {}).finally(() => { c.at = Date.now(); c.busy = false; });
+  }
+  return c.value;
+}
+
 function handleDataStatus(req, res) {
   // authSince — с какого дня свой вход (по ней кабинет показывает редакцию политики).
   let authSince = null;
   if (authOwn()) { try { authSince = fs.readFileSync(AUTH_OWN_MARK, "utf8").trim().slice(0, 30) || null; } catch (_) {} }
-  sendJson(res, 200, { backend: DATA_LOCAL ? "local" : "firestore", docs: DATA_LOCAL ? localDataStore().count() : null, auth: authOwn() ? "own" : "firebase", authSince });
+  sendJson(res, 200, {
+    backend: DATA_LOCAL ? "local" : "firestore", docs: DATA_LOCAL ? localDataStore().count() : null,
+    auth: authOwn() ? "own" : "firebase", authSince, legacyGoogle: legacyGoogle(),
+  });
 }
 
 function dataRoute(name) {
