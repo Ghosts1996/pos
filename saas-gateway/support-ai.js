@@ -171,7 +171,12 @@ function anthropicContent(content) {
 }
 
 function toAnthropic(messages) {
-  const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
+  const sys = messages.filter((m) => m.role === "system").map((m) => m.content);
+  // Длинные постоянные правила — первым блоком с пометкой кэша: повторные
+  // вопросы читают их из кэша провайдера в разы дешевле.
+  const system = sys.length && String(sys[0]).length >= 4000
+    ? [{ type: "text", text: sys[0], cache_control: { type: "ephemeral" } }, ...(sys.length > 1 ? [{ type: "text", text: sys.slice(1).join("\n\n") }] : [])]
+    : sys.join("\n\n");
   const rest = messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: anthropicContent(m.content) }));
   if (!rest.length || rest[0].role !== "user") rest.unshift({ role: "user", content: "(начало переписки)" });
   return { system, messages: rest };
