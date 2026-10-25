@@ -6531,6 +6531,71 @@ async function handleRemoveDevice(req, res) {
   sendJson(res, 200, { ok: true });
 }
 
+/** Что перенести в документ новой установки из прежних установок того же
+ *  устройства: раннюю дату подключения (место в очереди тарифа), название,
+ *  назначение и блокировку владельцем. */
+function deviceMergeUpdate(own, twins) {
+  const update = {};
+  if (!twins.length) return update;
+  const ms = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : Number.POSITIVE_INFINITY);
+  const earliest = [own, ...twins].reduce((a, b) => (ms(b.createdAt) < ms(a.createdAt) ? b : a));
+  if (earliest !== own && earliest.createdAt) update.createdAt = earliest.createdAt;
+  const named = twins.find((d) => String(d.deviceName || "").trim());
+  if (!String(own.deviceName || "").trim() && named) update.deviceName = named.deviceName;
+  const used = twins.find((d) => String(d.usage || "").trim());
+  if (!String(own.usage || "").trim() && used) update.usage = used.usage;
+  // Удалённое или отключённое владельцем остаётся таким и после переустановки.
+  const blocked = twins.map((d) => d.status).find((st) => st === "removed" || st === "disabled");
+  if (blocked && own.status !== "removed" && own.status !== "disabled") update.status = blocked;
+  return update;
+}
+
+/**
+ * Касса сообщает постоянный номер устройства (хеш ANDROID_ID или MachineGuid
+ * Windows — не меняется при обновлении и переустановке). Переустановили
+ * кассу — у неё новый вход и новый документ устройства; прежний документ
+ * того же устройства в этом заведении сливается с новым: место по тарифу,
+ * очередь подключения (createdAt), название и статус переходят к новому,
+ * прежний убирается. Так телефон остаётся одним устройством, а удалённое
+ * владельцем устройство не возвращается переустановкой.
+ */
+async function handleDeviceIdentify(req, res) {
+  const decoded = await verifyAuth(req);
+  const { tenantId, hardwareId } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)
+      || typeof hardwareId !== "string" || !/^[a-f0-9]{64}$/.test(hardwareId)) throw new HttpError(400, "Не указано устройство");
+  const firestore = db();
+  const tenantRef = firestore.collection("tenants").doc(tenantId);
+  const ownRef = tenantRef.collection("devices").doc(decoded.uid);
+  const own = (await ownRef.get()).data();
+  if (!own) throw new HttpError(404, "Устройство не подключено к заведению");
+  const all = await tenantRef.collection("devices").get();
+  const twins = all.docs.filter((d) => d.id !== decoded.uid && d.data().hardwareId === hardwareId);
+  const update = { hardwareId, ...deviceMergeUpdate(own, twins.map((d) => d.data())) };
+  update.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+  await ownRef.set(update, { merge: true });
+  if (update.status) {
+    const memberRef = firestore.collection("tenantMembers").doc(`${tenantId}_${decoded.uid}`);
+    if ((await memberRef.get()).exists) await memberRef.set({ status: "disabled" }, { merge: true });
+  }
+  const tenantDoc = twins.length ? await tenantRef.get() : null;
+  const chainId = tenantDoc && tenantDoc.exists ? tenantDoc.data().chainId : null;
+  for (const twin of twins) {
+    await twin.ref.delete();
+    await firestore.collection("tenantMembers").doc(`${tenantId}_${twin.id}`).delete().catch(() => {});
+    if (chainId) {
+      const others = await firestore.collection("tenantMembers").where("userId", "==", twin.id).where("status", "==", "active").limit(1).get();
+      if (others.empty) await syncChainMembership(chainId, twin.id, "employee", "disabled");
+    }
+    tenantCache.forgetMember(tenantId, twin.id);
+  }
+  if (twins.length) {
+    await writeAuditLog({ tenantId, actorId: decoded.uid, action: "deviceMerged", metadata: { replaced: twins.map((d) => d.id), deviceName: update.deviceName || own.deviceName || null } });
+  }
+  if (update.status) tenantCache.forgetMember(tenantId, decoded.uid);
+  sendJson(res, 200, { ok: true, merged: twins.length, status: update.status || own.status || "active" });
+}
+
 /** Вернуть удалённое (или отключённое) устройство — если по тарифу есть место. */
 async function handleRestoreDevice(req, res) {
   const decoded = await verifyAuth(req);
@@ -8937,6 +9002,7 @@ const ROUTES = {
   "/enableDevice": (req, res) => setDeviceEnabled(req, res, true),
   "/removeDevice": handleRemoveDevice,
   "/restoreDevice": handleRestoreDevice,
+  "/deviceIdentify": handleDeviceIdentify,
   "/createDataRequest": handleCreateDataRequest,
   "/requestGuestDataDeletion": handleRequestGuestDataDeletion,
   "/resolveDataRequest": handleResolveDataRequest,
@@ -9131,4 +9197,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { runFirestorePurge, firestorePurgeState, saveFirestorePurge, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor });
+Object.assign(module.exports, { deviceMergeUpdate, runFirestorePurge, firestorePurgeState, saveFirestorePurge, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor });

@@ -222,7 +222,7 @@ async function main() {
     const r = await request("POST", "/createDemoTenant", { body: {}, headers: { "X-Forwarded-For": "203.0.113.77, 127.0.0.1" } });
     check("POST /createDemoTenant: поддельный X-Forwarded-For не обходит лимит -> 429", r.status === 429);
   }
-  for (const path of ["/grantSuperAdmin", "/revokeSuperAdmin", "/revokeAdminSessions", "/recordAdminLogin", "/overrideSubscription", "/savePlan", "/deletePlan", "/securityStatus", "/runCertificateCheck", "/runBackup", "/downloadBackup", "/reprovisionDomain", "/blockEntry", "/unblockEntry", "/securityDevices", "/disableDevice", "/enableDevice", "/removeDevice", "/restoreDevice", "/aiProxy", "/createDataRequest", "/requestGuestDataDeletion", "/resolveDataRequest", "/findGuest", "/anonymizeGuest", "/deleteGuestData", "/registerGuestRecovery", "/uploadMenuImage?tenantId=x&folder=items&entityId=y", "/savePlatformLegal", "/supportUpload?ticketId=x", "/supportSend", "/supportBotPurgeForeign", "/supportCabinetMessages", "/supportTicketList", "/supportTicketMessages", "/supportTicketStatus", "/supportAdminTickets", "/supportAdminSend", "/supportKnowledge", "/partnerMe", "/partnerAcceptTerms", "/partnerInvite", "/partnerDashboard", "/partnerTgLink", "/partnerAdminList", "/partnerAdminPartner", "/partnerAdminSave", "/partnerAdminSettings", "/partnerAdminPayout", "/partnerAdminReverse", "/partnerAdminBot", "/partnerAdminContract", "/invalidateTenantCache", "/recordImportConsent", "/convertChainToSingle"]) {
+  for (const path of ["/grantSuperAdmin", "/revokeSuperAdmin", "/revokeAdminSessions", "/recordAdminLogin", "/overrideSubscription", "/savePlan", "/deletePlan", "/securityStatus", "/runCertificateCheck", "/runBackup", "/downloadBackup", "/reprovisionDomain", "/blockEntry", "/unblockEntry", "/securityDevices", "/disableDevice", "/enableDevice", "/removeDevice", "/restoreDevice", "/deviceIdentify", "/aiProxy", "/createDataRequest", "/requestGuestDataDeletion", "/resolveDataRequest", "/findGuest", "/anonymizeGuest", "/deleteGuestData", "/registerGuestRecovery", "/uploadMenuImage?tenantId=x&folder=items&entityId=y", "/savePlatformLegal", "/supportUpload?ticketId=x", "/supportSend", "/supportBotPurgeForeign", "/supportCabinetMessages", "/supportTicketList", "/supportTicketMessages", "/supportTicketStatus", "/supportAdminTickets", "/supportAdminSend", "/supportKnowledge", "/partnerMe", "/partnerAcceptTerms", "/partnerInvite", "/partnerDashboard", "/partnerTgLink", "/partnerAdminList", "/partnerAdminPartner", "/partnerAdminSave", "/partnerAdminSettings", "/partnerAdminPayout", "/partnerAdminReverse", "/partnerAdminBot", "/partnerAdminContract", "/invalidateTenantCache", "/recordImportConsent", "/convertChainToSingle"]) {
     const r = await request("POST", path, { body: {} });
     check(`POST ${path} без токена -> 401`, r.status === 401);
   }
@@ -331,6 +331,19 @@ async function main() {
         && server.resolveAiVendor(settings, secrets, "extra:k3") === null
         && server.resolveAiVendor(settings, secrets, "extra:zz") === null
         && x4.vendorId === "custom" && x4.baseUrl === "https://gw.example/v1");
+    }
+    {
+      const at = (ms) => ({ toMillis: () => ms });
+      const m = server.deviceMergeUpdate;
+      const own = { createdAt: at(5000), deviceName: "", status: "active" };
+      const old = { createdAt: at(1000), deviceName: "Касса бара", usage: "Бармен", status: "active" };
+      const up = m(own, [old]);
+      check("переустановка на том же устройстве: прежнее место в очереди, название и назначение — новой установке",
+        up.createdAt === old.createdAt && up.deviceName === "Касса бара" && up.usage === "Бармен" && !("status" in up));
+      check("переустановка: своё название не затирается, удалённое владельцем остаётся удалённым",
+        !("deviceName" in m({ ...own, deviceName: "Телефон Ани" }, [old]))
+        && m(own, [{ ...old, status: "removed" }]).status === "removed"
+        && Object.keys(m(own, [])).length === 0);
     }
     check("PIN-хэш сервера совпадает с кассой (эталон из test/pin_hash_test.dart)",
       server.pinHashFor("1234", "t1") === require("crypto").pbkdf2Sync("1234", "zalpos-pin:t1", 20000, 32, "sha256").toString("hex"));

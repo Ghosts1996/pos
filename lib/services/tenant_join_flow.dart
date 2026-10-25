@@ -27,7 +27,20 @@ Future<void> joinAndEnterTenant({
   final service = SaasDeviceJoinService();
   StartupLog.step('присоединение: запись устройства');
   await service.joinAsDevice(tenantId: tenantId, inviteCode: inviteCode, uid: uid, deviceName: deviceName);
+  await _identifyDevice(service, tenantId);
   await enterJoinedTenant(tenantId: tenantId, uid: uid);
+}
+
+/// Касса переустановлена на том же устройстве — сервер сливает прежнюю
+/// установку с новой (одно устройство в кабинете, то же место по тарифу).
+/// Удалённое владельцем устройство переустановкой не возвращается.
+Future<void> _identifyDevice(SaasDeviceJoinService service, String tenantId) async {
+  StartupLog.step('присоединение: это же устройство');
+  final status = await service.identifyDevice(tenantId);
+  if (status == 'removed' || status == 'disabled') {
+    throw StateError('Это устройство удалил владелец заведения. Попросите его восстановить устройство в кабинете: '
+        '«Устройства» → «Удалённые устройства» → «Восстановить».');
+  }
 }
 
 /// Касса точки сети переходит в кассу другой точки той же сети: сервер
@@ -37,7 +50,9 @@ Future<void> switchChainPoint(String tenantId) async {
   final uid = AppAuth.instance.currentUser?.uid;
   if (uid == null) throw StateError('Нет входа — перезапустите приложение');
   if (tenantId == AppScope.tenantId) return;
-  await SaasDeviceJoinService().joinChainPoint(tenantId);
+  final service = SaasDeviceJoinService();
+  await service.joinChainPoint(tenantId);
+  await _identifyDevice(service, tenantId);
   await enterJoinedTenant(tenantId: tenantId, uid: uid);
 }
 

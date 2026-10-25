@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'app_scope.dart';
 import '../build_info.dart';
 import 'app_auth.dart';
+import 'saas_device_join_service.dart';
 
 /// Регистрация планшета кассы как рабочего устройства.
 ///
@@ -71,6 +74,9 @@ class StaffDeviceService {
         'seenAt': FieldValue.serverTimestamp(),
       });
     } catch (_) {}
+    // Номер устройства — и у касс, подключённых до этой версии: следующая
+    // переустановка на этом устройстве не добавит новое.
+    unawaited(SaasDeviceJoinService().identifyDevice(AppScope.tenantId!));
   }
 
   /// Для чего используют это устройство: «Экран кухни», «Официант»,

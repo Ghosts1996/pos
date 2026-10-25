@@ -10,6 +10,7 @@ import '../build_info.dart';
 import '../models/tenant_models.dart';
 import '../data/app_db.dart';
 import 'app_auth.dart';
+import 'device_fingerprint.dart';
 
 /// Присоединение планшета кассы к заведению по коду приглашения (вместо
 /// общего staffSecret сборки одного заведения).
@@ -104,6 +105,23 @@ class SaasDeviceJoinService {
   /// приглашения — см. handleChainPointJoin на сервере).
   Future<void> joinChainPoint(String tenantId) =>
       _callGateway('chainPointJoin', {'tenantId': tenantId}, requireAuth: true);
+
+  /// Сообщить серверу постоянный номер этого устройства ([DeviceFingerprint]):
+  /// прежняя установка кассы на этом же устройстве сливается с текущей — в
+  /// кабинете остаётся одно устройство. Возвращает статус устройства после
+  /// слияния ('active', 'removed', 'disabled'); null — номер не узнать или
+  /// сервер недоступен (попробуем при следующем запуске).
+  Future<String?> identifyDevice(String tenantId) async {
+    final hardwareId = await DeviceFingerprint.get();
+    if (hardwareId == null) return null;
+    try {
+      final json = await _callGateway('deviceIdentify', {'tenantId': tenantId, 'hardwareId': hardwareId}, requireAuth: true)
+          .timeout(const Duration(seconds: 12));
+      return json['status'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
 
   Future<Map<String, dynamic>> _callGateway(
     String path,
