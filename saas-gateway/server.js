@@ -8253,7 +8253,7 @@ function checkOffsiteBackup() {
   const notRunning = !ranAt || Date.now() - ranAt > 2 * 3600 * 1000;
   const cmd = "bash /root/pos-deploy/saas-gateway/offsite-backup.sh";
   const why = notRunning
-    ? `\nСкрипт копии по расписанию не запускался${ranAt ? ` с ${supportFmt(ranAt)}` : ""}. На сервере:\n<code>systemctl status cron</code>\n<code>cat /etc/cron.d/zalpos-offsite</code>\nЗапустить сейчас: <code>${cmd}</code>`
+    ? `\nСкрипт копии по расписанию не запускался${ranAt ? ` с ${supportFmt(ranAt)}` : ""}. На сервере:\n<code>systemctl status zalpos-offsite.timer</code>\n<code>journalctl -u zalpos-offsite -n 30</code>\nЗапустить сейчас: <code>${cmd}</code>`
     : `${st.state === "error" && st.message ? `\nОшибка: ${String(st.message).replace(/[&<>]/g, "").slice(0, 200)}` : `\nСкрипт запускался ${supportFmt(ranAt)}, но копия не загружена.`}\nНа сервере: <code>tail -30 /var/log/zalpos-offsite.log</code>`;
   supportBot.notifyAdmins(`⚠️ <b>Копия данных в другом городе не уходит</b>\nПоследняя удачная: ${when}.${why}`);
 }

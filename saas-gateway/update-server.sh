@@ -155,23 +155,53 @@ fi
 # Блог выходит по расписанию (даты в saas/blog/posts): раз в день в 7:07 по
 # Москве сервер собирает его на сегодня и, если вышли новые посты,
 # выкладывает сайт и сообщает поисковикам (saas/scripts/blog-publish.sh).
+#
+# Расписание — таймеры systemd, а не cron: в минимальной Ubuntu на
+# сервере cron не установлен, и задачи из /etc/cron.d не запускались.
+# timer ИМЯ "OnCalendar" "команда" "описание" [предел времени]
+timer() {
+  local name="$1" cal="$2" cmd="$3" desc="$4" limit="${5:-1h}"
+  cat > "/etc/systemd/system/$name.service" <<UNIT
+[Unit]
+Description=$desc (создано update-server.sh)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=$limit
+ExecStart=/bin/bash -c '$cmd'
+UNIT
+  cat > "/etc/systemd/system/$name.timer" <<UNIT
+[Unit]
+Description=$desc — расписание (создано update-server.sh)
+
+[Timer]
+OnCalendar=$cal
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+  # Прежняя запись cron — убрать: если cron когда-нибудь поставят, задача не пойдёт дважды.
+  rm -f "/etc/cron.d/$name"
+  if systemctl daemon-reload && systemctl enable --now "$name.timer" >/dev/null 2>&1; then
+    echo "ok: таймер $name.timer ($cal), следующий запуск: $(systemctl show -p NextElapseUSecRealtime --value "$name.timer" 2>/dev/null || echo '?')"
+  else
+    echo "!! таймер $name.timer не включился — посмотрите: systemctl status $name.timer"
+  fi
+}
+
 say "Автопубликация блога"
-cat > /etc/cron.d/zalpos-blog <<CRON
-# Блог zalpos.ru: новые посты по расписанию (создано update-server.sh)
-7 4 * * * root /bin/bash $REPO/saas/scripts/blog-publish.sh >> /var/log/zalpos-blog.log 2>&1
-CRON
-chmod 644 /etc/cron.d/zalpos-blog
-echo "ok, журнал: /var/log/zalpos-blog.log"
+timer zalpos-blog "*-*-* 07:07:00 Europe/Moscow" "/bin/bash $REPO/saas/scripts/blog-publish.sh >> /var/log/zalpos-blog.log 2>&1" "Блог zalpos.ru: новые посты по расписанию"
+echo "журнал: /var/log/zalpos-blog.log"
 
 # Зашифрованная копия всех данных в хранилище S3 в другом городе — каждый
 # час (offsite-backup.sh). Пока нет /etc/zalpos-offsite.env, скрипт ничего
 # не делает, а панель и бот подсказывают, что копия не настроена.
 say "Копия данных в другом городе"
-cat > /etc/cron.d/zalpos-offsite <<CRON
-# Копия данных ZalPOS в хранилище S3 (создано update-server.sh)
-17 * * * * root /bin/bash $REPO/saas-gateway/offsite-backup.sh >> /var/log/zalpos-offsite.log 2>&1
-CRON
-chmod 644 /etc/cron.d/zalpos-offsite
+# Предел 100 минут: зависший запуск systemd остановит сам, и следующий пойдёт.
+timer zalpos-offsite "*-*-* *:17:00" "/bin/bash $REPO/saas-gateway/offsite-backup.sh >> /var/log/zalpos-offsite.log 2>&1" "Копия данных ZalPOS в хранилище S3" 100min
 if [[ -f /etc/zalpos-offsite.env ]]; then
   chmod 600 /etc/zalpos-offsite.env
   echo "ok: каждый час в :17, журнал: /var/log/zalpos-offsite.log"

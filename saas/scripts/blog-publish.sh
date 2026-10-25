@@ -1,5 +1,5 @@
 #!/bin/bash
-# Автопубликация блога zalpos.ru (от root, раз в день — cron из
+# Автопубликация блога zalpos.ru (от root, раз в день — таймер systemd из
 # saas-gateway/update-server.sh).
 #
 # Посты лежат в saas/blog/posts с датами выхода. Скрипт собирает блог на

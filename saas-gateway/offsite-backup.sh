@@ -1,6 +1,6 @@
 #!/bin/bash
 # Зашифрованная копия всех данных платформы в хранилище S3 в другом городе.
-# Запуск от root: каждый час из cron (ставит update-server.sh), вручную —
+# Запуск от root: каждый час таймером systemd zalpos-offsite.timer (ставит update-server.sh), вручную —
 #
 #   bash offsite-backup.sh            копия сейчас
 #   bash offsite-backup.sh verify [ключ]  скачать копию (по умолчанию последнюю) и проверить, что она читается
