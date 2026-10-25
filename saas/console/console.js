@@ -848,7 +848,9 @@ function planLimitWarnings(t, plans) {
   PLAN_LIMIT_CHECKS.forEach(([usageKey, limitKey, label]) => {
     const limitValue = Number(plan[limitKey]) || 0;
     const used = Number(t.usage[usageKey]) || 0;
-    if (limitValue > 0 && used > limitValue) warnings.push(`${label} ${used} из ${limitValue}`);
+    // У сети лимит устройств — на каждую точку (usage считается по точке).
+    const what = plan.isChainPlan && usageKey === 'devices' ? `${label} на точке` : label;
+    if (limitValue > 0 && used > limitValue) warnings.push(`${what} ${used} из ${limitValue}`);
   });
   return warnings;
 }
@@ -9539,7 +9541,7 @@ function watchAllTenants() {
             ` : ''}
             ${t.usage ? `
               <div class="small muted">
-                сотрудников: ${t.usage.employees ?? '—'} · устройств: ${t.usage.devices ?? '—'} ·
+                сотрудников: ${t.usage.employees ?? '—'} · устройств${t.chainId ? ' на точке' : ''}: ${t.usage.devices ?? '—'} ·
                 столов: ${t.usage.tables ?? '—'} · гостей: ${t.usage.guests ?? '—'}
               </div>
             ` : ''}
@@ -9852,8 +9854,8 @@ function watchPlans() {
             <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxDevices" value="${Number(p.maxDevices) || 0}">
           </label>
         </div>
-        <p class="small muted" style="margin:-4px 0 10px">Касса сверх лимита не откроется, пока владелец не отключит лишнее
-        устройство в кабинете («Устройства») или не сменит тариф. Сотрудников тариф не ограничивает.</p>
+        <p class="small muted" style="margin:-4px 0 10px">${p.isChainPlan ? 'Лимит — на каждую точку сети: при 8 точках и лимите 5 у каждой точки до 5 своих устройств. ' : ''}Касса сверх лимита не откроется, пока владелец не удалит лишнее
+        устройство в кабинете («Устройства») или не сменит тариф. Удалённые устройства в лимит не входят. Сотрудников тариф не ограничивает.</p>
         <div class="row">
           <label class="field grow"><span>Столов (0 = без лимита)</span>
             <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxTables" value="${Number(p.maxTables) || 0}">

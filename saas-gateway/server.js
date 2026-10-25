@@ -2818,7 +2818,9 @@ async function runCalculateUsage() {
     const ref = tenantDoc.ref;
     const [employees, devices, tables, clients, takeaway] = await Promise.all([
       ref.collection("employees").count().get(),
-      ref.collection("devices").count().get(),
+      // Лимит тарифа — по работающим устройствам точки: удалённые и
+      // отключённые не считаются (как deviceSlots и касса).
+      ref.collection("devices").get(),
       ref.collection("tables").count().get(),
       ref.collection("clients").count().get(),
       // Служебный стол «С собой и доставка» в лимит тарифа не входит.
@@ -2826,7 +2828,7 @@ async function runCalculateUsage() {
     ]);
     await ref.collection("usage").doc("current").set({
       employees: employees.data().count,
-      devices: devices.data().count,
+      devices: devices.docs.filter((d) => !["disabled", "removed"].includes(d.data().status)).length,
       tables: Math.max(0, tables.data().count - (takeaway.exists ? 1 : 0)),
       guests: clients.data().count,
       calculatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -6477,6 +6479,7 @@ async function setDeviceEnabled(req, res, enabled) {
     },
   });
   tenantCache.forgetMember(tenantId, uid);
+  await refreshDeviceUsage(firestore.collection("tenants").doc(tenantId));
   sendJson(res, 200, { ok: true });
 }
 
@@ -6495,6 +6498,18 @@ async function deviceSlots(tenantRef, tenantDoc) {
   const all = await tenantRef.collection("devices").get();
   const active = all.docs.filter((d) => !["disabled", "removed"].includes(d.data().status)).length;
   return { max: planCapabilities(plan).maxDevices, active };
+}
+
+/** Пересчитать работающие устройства точки в usage/current сразу после
+ *  удаления, восстановления или слияния — панель не ждёт суточного пересчёта. */
+async function refreshDeviceUsage(tenantRef) {
+  try {
+    const all = await tenantRef.collection("devices").get();
+    const devices = all.docs.filter((d) => !["disabled", "removed"].includes(d.data().status)).length;
+    await tenantRef.collection("usage").doc("current").set({ devices }, { merge: true });
+  } catch (e) {
+    console.error("usage устройств:", e.message || e);
+  }
 }
 
 /**
@@ -6528,6 +6543,7 @@ async function handleRemoveDevice(req, res) {
   }
   await writeAuditLog({ tenantId, actorId: decoded.uid, action: "deviceRemoved", metadata: { uid, deviceName: deviceSnap.data().deviceName || null } });
   tenantCache.forgetMember(tenantId, uid);
+  await refreshDeviceUsage(tenantRef);
   sendJson(res, 200, { ok: true });
 }
 
@@ -6593,6 +6609,7 @@ async function handleDeviceIdentify(req, res) {
     await writeAuditLog({ tenantId, actorId: decoded.uid, action: "deviceMerged", metadata: { replaced: twins.map((d) => d.id), deviceName: update.deviceName || own.deviceName || null } });
   }
   if (update.status) tenantCache.forgetMember(tenantId, decoded.uid);
+  await refreshDeviceUsage(tenantRef);
   sendJson(res, 200, { ok: true, merged: twins.length, status: update.status || own.status || "active" });
 }
 
@@ -6635,6 +6652,7 @@ async function handlePurgeDevice(req, res) {
   const chainId = tenantDoc.exists ? tenantDoc.data().chainId : null;
   for (const d of off) await purgeDevice(tenantRef, tenantId, d.id, chainId);
   await writeAuditLog({ tenantId, actorId: decoded.uid, action: "devicePurged", metadata: { count: off.length, names: off.map((d) => d.data().deviceName || null).slice(0, 20) } });
+  await refreshDeviceUsage(tenantRef);
   sendJson(res, 200, { ok: true, purged: off.length });
 }
 
@@ -6693,6 +6711,7 @@ async function handleRestoreDevice(req, res) {
   try { await authApi().updateUser(uid, { disabled: false }); } catch (_) {}
   await writeAuditLog({ tenantId, actorId: decoded.uid, action: "deviceRestored", metadata: { uid, deviceName: deviceSnap.data().deviceName || null } });
   tenantCache.forgetMember(tenantId, uid);
+  await refreshDeviceUsage(tenantRef);
   sendJson(res, 200, { ok: true });
 }
 
