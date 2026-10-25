@@ -8009,6 +8009,12 @@ async function supportAdminDigest(kind) {
       const m = b.name.match(/(\d{4}-\d{2}-\d{2})/);
       lines.push(`Резервная копия: ${esc(m ? m[1] : b.name)} · ${mb(b.bytes)}`);
     } else lines.push("⚠️ Резервных копий базы на сервере нет");
+    const off = offsiteStatus();
+    if (!off || off.state === "off") lines.push("⚠️ Копия в другом городе не настроена (offsite-backup.sh)");
+    else {
+      const age = off.lastOkAt ? Math.round((nowMs - Date.parse(off.lastOkAt)) / 60000) : null;
+      lines.push(`${off.state === "ok" && age !== null && age < 120 ? "" : "⚠️ "}Копия в другом городе: ${age === null ? "ещё не было" : `${age < 60 ? `${age} мин` : `${Math.round(age / 60)} ч`} назад`}${off.verifiedAt ? ` · проверена ${esc(supportFmt(Date.parse(off.verifiedAt)))}` : ""}${off.state === "error" ? ` · ошибка: ${esc(String(off.message || "").slice(0, 120))}` : ""}`);
+    }
     lines.push(`Данные: ${DATA_LOCAL ? "свой сервер в РФ" : "Firestore (Google)"} · вход: ${authOwn() ? "свой" : "Firebase"}`);
     return lines.join("\n");
   }
@@ -8076,6 +8082,27 @@ async function supportAdminDigest(kind) {
   }
   return lines.join("\n");
 }
+
+// Копия в другом городе (offsite-backup.sh, cron от root): итог последнего
+// запуска. Не уходит больше 2 часов или ошибка — тревога админам в бот
+// поддержки (не чаще раза в 6 часов).
+const OFFSITE_STATUS_FILE = process.env.OFFSITE_STATUS_FILE || "/var/lib/zalpos-offsite/status.json";
+function offsiteStatus() {
+  try { return JSON.parse(fs.readFileSync(OFFSITE_STATUS_FILE, "utf8")); } catch (_) { return null; }
+}
+let offsiteAlertAt = 0;
+function checkOffsiteBackup() {
+  const st = offsiteStatus();
+  if (!st || st.state === "off") return; // не настроено — напоминает «🖥 Сервер»
+  const last = st.lastOkAt ? Date.parse(st.lastOkAt) : 0;
+  const stale = !last || Date.now() - last > 2 * 3600 * 1000;
+  if (!stale && st.state !== "error") return;
+  if (Date.now() - offsiteAlertAt < 6 * 3600 * 1000) return;
+  offsiteAlertAt = Date.now();
+  const when = last ? supportFmt(last) : "ни разу";
+  supportBot.notifyAdmins(`⚠️ <b>Копия данных в другом городе не уходит</b>\nПоследняя удачная: ${when}.${st.message ? `\n${String(st.message).replace(/[&<>]/g, "").slice(0, 200)}` : ""}\nПроверьте на сервере: tail /var/log/zalpos-offsite.log`);
+}
+setInterval(() => { try { checkOffsiteBackup(); } catch (_) {} }, 30 * 60 * 1000).unref();
 
 function supportRecentErrors(tenantId) {
   if (!tenantId) return [];

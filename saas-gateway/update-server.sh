@@ -163,6 +163,22 @@ CRON
 chmod 644 /etc/cron.d/zalpos-blog
 echo "ok, журнал: /var/log/zalpos-blog.log"
 
+# Зашифрованная копия всех данных в хранилище S3 в другом городе — каждый
+# час (offsite-backup.sh). Пока нет /etc/zalpos-offsite.env, скрипт ничего
+# не делает, а панель и бот подсказывают, что копия не настроена.
+say "Копия данных в другом городе"
+cat > /etc/cron.d/zalpos-offsite <<CRON
+# Копия данных ZalPOS в хранилище S3 (создано update-server.sh)
+17 * * * * root /bin/bash $REPO/saas-gateway/offsite-backup.sh >> /var/log/zalpos-offsite.log 2>&1
+CRON
+chmod 644 /etc/cron.d/zalpos-offsite
+if [[ -f /etc/zalpos-offsite.env ]]; then
+  chmod 600 /etc/zalpos-offsite.env
+  echo "ok: каждый час в :17, журнал: /var/log/zalpos-offsite.log"
+else
+  echo "не настроено: нет /etc/zalpos-offsite.env (см. начало saas-gateway/offsite-backup.sh)"
+fi
+
 if [[ -d /opt/pii-gateway ]]; then
   say "pii-gateway (данные в РФ)"
   rsync -a --exclude node_modules "$REPO/pii-gateway/" /opt/pii-gateway/
