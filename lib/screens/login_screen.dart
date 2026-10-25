@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../build_info.dart';
 import '../models/employee.dart';
 import '../services/app_lock.dart';
@@ -64,11 +65,29 @@ class _LoginScreenState extends State<LoginScreen> {
   /// Неверный PIN — точки вздрагивают (см. PinDots).
   int _errorTick = 0;
 
-  /// Касса точки сети: при запуске приложения она спрашивает, в кассу
-  /// какой точки войти, — у каждой точки свои сотрудники и PIN-коды. Один
-  /// раз за запуск; дальше точку меняют кнопкой «Другая точка сети» над
-  /// клавиатурой.
+  /// Касса точки сети: в первый раз на устройстве она спрашивает, в кассу
+  /// какой точки войти, — у каждой точки свои сотрудники и PIN-коды. Выбор
+  /// запоминается: дальше касса сразу открывает эту точку, а сменить её
+  /// можно кнопкой «Другая точка сети» над клавиатурой.
   static bool _pointAskedThisRun = false;
+  static String _pointChosenKey(String chainId) => 'chain_point_chosen_v1_$chainId';
+
+  static Future<bool> _pointChosenBefore(String chainId) async {
+    try {
+      return (await SharedPreferences.getInstance()).getBool(_pointChosenKey(chainId)) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _rememberPointChosen() {
+    _pointAskedThisRun = true;
+    final chainId = AppScope.chainId;
+    if (chainId == null) return;
+    unawaited(SharedPreferences.getInstance()
+        .then((p) => p.setBool(_pointChosenKey(chainId), true))
+        .catchError((_) => false));
+  }
   List<ChainPoint>? _points;
   bool _choosingPoint = false;
   String? _switchingTo;
@@ -134,11 +153,13 @@ class _LoginScreenState extends State<LoginScreen> {
     });
     try {
       final points = await SaasDeviceJoinService().chainPoints(chainId).timeout(const Duration(seconds: 12));
+      // Точку на этом устройстве уже выбирали — не спрашиваем снова.
+      final askNow = open || (!_pointAskedThisRun && !await _pointChosenBefore(chainId));
       if (!mounted) return;
       setState(() {
         _loadingPoints = false;
         _points = points;
-        if (points.length >= 2 && (open || !_pointAskedThisRun)) _choosingPoint = true;
+        if (points.length >= 2 && askNow) _choosingPoint = true;
       });
     } catch (e) {
       if (!mounted) return;
@@ -163,7 +184,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _choosePoint(ChainPoint point) async {
     if (_switchingTo != null) return;
     if (point.tenantId == AppScope.tenantId) {
-      _pointAskedThisRun = true;
+      _rememberPointChosen();
       setState(() {
         _choosingPoint = false;
         _pointError = null;
@@ -176,8 +197,8 @@ class _LoginScreenState extends State<LoginScreen> {
     });
     try {
       await switchChainPoint(point.tenantId);
+      _rememberPointChosen();
       if (!mounted) return;
-      _pointAskedThisRun = true;
       setState(() {
         _switchingTo = null;
         _choosingPoint = false;
