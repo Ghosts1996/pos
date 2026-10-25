@@ -222,7 +222,7 @@ async function main() {
     const r = await request("POST", "/createDemoTenant", { body: {}, headers: { "X-Forwarded-For": "203.0.113.77, 127.0.0.1" } });
     check("POST /createDemoTenant: поддельный X-Forwarded-For не обходит лимит -> 429", r.status === 429);
   }
-  for (const path of ["/grantSuperAdmin", "/revokeSuperAdmin", "/revokeAdminSessions", "/recordAdminLogin", "/overrideSubscription", "/savePlan", "/deletePlan", "/securityStatus", "/runCertificateCheck", "/runBackup", "/downloadBackup", "/reprovisionDomain", "/blockEntry", "/unblockEntry", "/securityDevices", "/disableDevice", "/enableDevice", "/removeDevice", "/restoreDevice", "/deviceIdentify", "/aiProxy", "/createDataRequest", "/requestGuestDataDeletion", "/resolveDataRequest", "/findGuest", "/anonymizeGuest", "/deleteGuestData", "/registerGuestRecovery", "/uploadMenuImage?tenantId=x&folder=items&entityId=y", "/savePlatformLegal", "/supportUpload?ticketId=x", "/supportSend", "/supportBotPurgeForeign", "/supportCabinetMessages", "/supportTicketList", "/supportTicketMessages", "/supportTicketStatus", "/supportAdminTickets", "/supportAdminSend", "/supportKnowledge", "/partnerMe", "/partnerAcceptTerms", "/partnerInvite", "/partnerDashboard", "/partnerTgLink", "/partnerAdminList", "/partnerAdminPartner", "/partnerAdminSave", "/partnerAdminSettings", "/partnerAdminPayout", "/partnerAdminReverse", "/partnerAdminBot", "/partnerAdminContract", "/invalidateTenantCache", "/recordImportConsent", "/convertChainToSingle"]) {
+  for (const path of ["/grantSuperAdmin", "/revokeSuperAdmin", "/revokeAdminSessions", "/recordAdminLogin", "/overrideSubscription", "/savePlan", "/deletePlan", "/securityStatus", "/runCertificateCheck", "/runBackup", "/downloadBackup", "/reprovisionDomain", "/blockEntry", "/unblockEntry", "/securityDevices", "/disableDevice", "/enableDevice", "/removeDevice", "/restoreDevice", "/deviceIdentify", "/purgeDevice", "/aiProxy", "/createDataRequest", "/requestGuestDataDeletion", "/resolveDataRequest", "/findGuest", "/anonymizeGuest", "/deleteGuestData", "/registerGuestRecovery", "/uploadMenuImage?tenantId=x&folder=items&entityId=y", "/savePlatformLegal", "/supportUpload?ticketId=x", "/supportSend", "/supportBotPurgeForeign", "/supportCabinetMessages", "/supportTicketList", "/supportTicketMessages", "/supportTicketStatus", "/supportAdminTickets", "/supportAdminSend", "/supportKnowledge", "/partnerMe", "/partnerAcceptTerms", "/partnerInvite", "/partnerDashboard", "/partnerTgLink", "/partnerAdminList", "/partnerAdminPartner", "/partnerAdminSave", "/partnerAdminSettings", "/partnerAdminPayout", "/partnerAdminReverse", "/partnerAdminBot", "/partnerAdminContract", "/invalidateTenantCache", "/recordImportConsent", "/convertChainToSingle"]) {
     const r = await request("POST", path, { body: {} });
     check(`POST ${path} без токена -> 401`, r.status === 401);
   }
@@ -340,6 +340,14 @@ async function main() {
       const up = m(own, [old]);
       check("переустановка на том же устройстве: прежнее место в очереди, название и назначение — новой установке",
         up.createdAt === old.createdAt && up.deviceName === "Касса бара" && up.usage === "Бармен" && !("status" in up));
+      const day = 864e5;
+      check("удалённое устройство стирается через 30 дней, рабочее — никогда",
+        server.DEVICE_RESTORE_DAYS === 30
+        && server.deviceExpired({ status: "removed", removedAt: at(Date.now() - 31 * day) })
+        && !server.deviceExpired({ status: "removed", removedAt: at(Date.now() - 29 * day) })
+        && server.deviceExpired({ status: "disabled", updatedAt: at(Date.now() - 40 * day) })
+        && !server.deviceExpired({ status: "active", createdAt: at(Date.now() - 400 * day) })
+        && !server.deviceExpired({ status: "removed" }));
       check("переустановка: своё название не затирается, удалённое владельцем остаётся удалённым",
         !("deviceName" in m({ ...own, deviceName: "Телефон Ани" }, [old]))
         && m(own, [{ ...old, status: "removed" }]).status === "removed"

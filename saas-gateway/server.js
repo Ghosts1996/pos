@@ -6596,6 +6596,69 @@ async function handleDeviceIdentify(req, res) {
   sendJson(res, 200, { ok: true, merged: twins.length, status: update.status || own.status || "active" });
 }
 
+/** Сколько дней удалённое устройство можно восстановить; потом оно
+ *  стирается само и не загромождает кабинет. */
+const DEVICE_RESTORE_DAYS = 30;
+const ms0 = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : 0);
+/** Удалённое (или отключённое) устройство, у которого вышел срок восстановления. */
+function deviceExpired(d, now = Date.now()) {
+  if (!d || (d.status !== "removed" && d.status !== "disabled")) return false;
+  const since = ms0(d.removedAt) || ms0(d.updatedAt) || ms0(d.createdAt);
+  return since > 0 && now - since >= DEVICE_RESTORE_DAYS * 24 * 3600 * 1000;
+}
+
+/** Стереть устройство заведения насовсем: документ, членство, членство в сети. */
+async function purgeDevice(tenantRef, tenantId, uid, chainId) {
+  const firestore = db();
+  await tenantRef.collection("devices").doc(uid).delete();
+  await firestore.collection("tenantMembers").doc(`${tenantId}_${uid}`).delete().catch(() => {});
+  if (chainId) {
+    const others = await firestore.collection("tenantMembers").where("userId", "==", uid).where("status", "==", "active").limit(1).get();
+    if (others.empty) await syncChainMembership(chainId, uid, "employee", "disabled");
+  }
+  tenantCache.forgetMember(tenantId, uid);
+}
+
+/** «Удалить навсегда» (одно удалённое устройство) или «Очистить все» —
+ *  только владелец и только уже удалённые устройства. */
+async function handlePurgeDevice(req, res) {
+  const decoded = await verifyAuth(req);
+  const { tenantId, uid, all } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)
+      || (!all && (typeof uid !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)))) throw new HttpError(400, "Не указано устройство");
+  await requireDeviceOwner(decoded, tenantId);
+  const tenantRef = db().collection("tenants").doc(tenantId);
+  const docs = all ? (await tenantRef.collection("devices").get()).docs : [await tenantRef.collection("devices").doc(uid).get()];
+  const off = docs.filter((d) => d.exists && ["removed", "disabled"].includes(d.data().status) && d.id !== decoded.uid);
+  if (!all && !off.length) throw new HttpError(409, "Сначала удалите устройство — навсегда стираются только удалённые");
+  const tenantDoc = await tenantRef.get();
+  const chainId = tenantDoc.exists ? tenantDoc.data().chainId : null;
+  for (const d of off) await purgeDevice(tenantRef, tenantId, d.id, chainId);
+  await writeAuditLog({ tenantId, actorId: decoded.uid, action: "devicePurged", metadata: { count: off.length, names: off.map((d) => d.data().deviceName || null).slice(0, 20) } });
+  sendJson(res, 200, { ok: true, purged: off.length });
+}
+
+/** Раз в сутки: удалённые устройства старше DEVICE_RESTORE_DAYS стираются. */
+async function sweepRemovedDevices() {
+  const firestore = db();
+  const snap = await firestore.collectionGroup("devices").get();
+  const now = Date.now();
+  const chains = new Map();
+  let n = 0;
+  for (const d of snap.docs) {
+    const tenantRef = d.ref.parent.parent;
+    if (!tenantRef || tenantRef.parent.id !== "tenants" || !deviceExpired(d.data(), now)) continue;
+    if (!chains.has(tenantRef.id)) chains.set(tenantRef.id, (await tenantRef.get()).data()?.chainId || null);
+    await purgeDevice(tenantRef, tenantRef.id, d.id, chains.get(tenantRef.id));
+    n++;
+  }
+  if (n) console.log(`saas-gateway: стёрто удалённых устройств старше ${DEVICE_RESTORE_DAYS} дней: ${n}`);
+}
+
+function scheduleRemovedDevicesSweep() {
+  scheduleDailyJob("removedDevicesSweep", 24 * 3600 * 1000, sweepRemovedDevices, 35 * 60 * 1000);
+}
+
 /** Вернуть удалённое (или отключённое) устройство — если по тарифу есть место. */
 async function handleRestoreDevice(req, res) {
   const decoded = await verifyAuth(req);
@@ -9002,6 +9065,7 @@ const ROUTES = {
   "/enableDevice": (req, res) => setDeviceEnabled(req, res, true),
   "/removeDevice": handleRemoveDevice,
   "/restoreDevice": handleRestoreDevice,
+  "/purgeDevice": handlePurgeDevice,
   "/deviceIdentify": handleDeviceIdentify,
   "/createDataRequest": handleCreateDataRequest,
   "/requestGuestDataDeletion": handleRequestGuestDataDeletion,
@@ -9135,6 +9199,7 @@ scheduleFirestorePurge();
 scheduleFirebaseAuthPurge();
 scheduleAiSecretsMigration();
 scheduleBuildsSweep();
+scheduleRemovedDevicesSweep();
 scheduleAppRollout();
 scheduleMenuPopularity();
 scheduleDailyJob("deliveryPiiRetention", 24 * 3600 * 1000, runDeliveryPiiRetention, 40 * 60 * 1000);
@@ -9197,4 +9262,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { deviceMergeUpdate, runFirestorePurge, firestorePurgeState, saveFirestorePurge, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor });
+Object.assign(module.exports, { deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor });

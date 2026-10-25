@@ -448,6 +448,8 @@ function esc(s) {
 // ---- Вложения обращений в поддержку: скриншоты и файлы. Лежат на сервере
 // платформы (не в открытом доступе) — показываем, скачивая по входу.
 const SUPPORT_MAX_FILES = 5;
+// Сколько дней удалённое устройство можно восстановить (как DEVICE_RESTORE_DAYS в saas-gateway).
+const DEVICE_RESTORE_DAYS = 30;
 const SUPPORT_MAX_BYTES = 15 * 1024 * 1024;
 const SUPPORT_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,video/mp4,application/zip,.zip,.docx,.xlsx,.txt,.pdf';
 const SUPPORT_EXT_TYPES = {
@@ -4624,7 +4626,18 @@ function watchDashboardData(tenantId) {
       const off = (d) => d.status === 'disabled' || d.status === 'removed';
       const active = list.filter((d) => !off(d));
       const working = new Set(active.slice(0, max || active.length).map((d) => d.id));
-      return { max, list, active, removed: list.filter(off), working, over: max > 0 && active.length > max };
+      // Удалённое можно восстановить DEVICE_RESTORE_DAYS дней, потом сервер стирает его сам.
+      const expired = (d) => {
+        const since = [ms(d.removedAt), ms(d.updatedAt)].find((t) => t < Infinity);
+        return since !== undefined && Date.now() - since >= DEVICE_RESTORE_DAYS * 864e5;
+      };
+      return { max, list, active, removed: list.filter((d) => off(d) && !expired(d)), working, over: max > 0 && active.length > max };
+    };
+    const restoreLeft = (d) => {
+      const t = d.removedAt?.toMillis?.() ?? d.updatedAt?.toMillis?.();
+      if (!t) return `Восстановить можно ${DEVICE_RESTORE_DAYS} дней с удаления.`;
+      const left = Math.max(1, Math.ceil((t + DEVICE_RESTORE_DAYS * 864e5 - Date.now()) / 864e5));
+      return `Восстановить можно до ${fmtDate({ toDate: () => new Date(t + DEVICE_RESTORE_DAYS * 864e5) })} (ещё ${left} ${left % 10 === 1 && left % 100 !== 11 ? 'день' : [2, 3, 4].includes(left % 10) && ![12, 13, 14].includes(left % 100) ? 'дня' : 'дней'}), потом оно сотрётся само.`;
     };
     const devWord = (n) => (n % 10 === 1 && n % 100 !== 11 ? 'устройство' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'устройства' : 'устройств');
     // На главной: устройств больше, чем по тарифу, — сразу два выхода.
@@ -4660,12 +4673,13 @@ function watchDashboardData(tenantId) {
             ${d.usage ? `<div class="small">${esc(d.usage)}</div>` : ''}
             ${!d.deviceName && !off ? '<div class="small" style="color:var(--warning)">Без названия — касса спросит его при следующем входе, или нажмите «Переименовать»</div>' : ''}
             <div class="small muted">Подключено ${fmtDate(d.createdAt)}${seen ? ` · на связи ${fmtDateTime(seen)}` : ''}</div>
-            ${off ? `<div class="small" style="color:var(--muted)">${d.removedAt ? `Удалено ${fmtDate(d.removedAt)}` : 'Удалено'} — касса на нём не работает, пока его не восстановить</div>` : ''}
+            ${off ? `<div class="small" style="color:var(--muted)">${d.removedAt ? `Удалено ${fmtDate(d.removedAt)}` : 'Удалено'} — касса на нём не работает. ${restoreLeft(d)}</div>` : ''}
             ${over ? '<div class="small" style="color:var(--warning)">Сверх лимита тарифа — касса на нём не работает</div>' : ''}
           </div>
           ${canManage ? `<div class="row" style="gap:14px;flex:none;margin-left:auto">
             ${off ? '' : `<button class="btn-link" data-device-rename="${esc(d.id)}" data-name="${esc(d.deviceName || '')}">Переименовать</button>`}
-            ${isOwner && off ? `<button class="btn-link" data-device-restore="${esc(d.id)}" data-name="${esc(title(d))}">Восстановить</button>` : ''}
+            ${isOwner && off ? `<button class="btn-link" data-device-restore="${esc(d.id)}" data-name="${esc(title(d))}">Восстановить</button>
+            <button class="btn-link" data-device-purge="${esc(d.id)}" data-name="${esc(title(d))}" style="color:var(--danger)">Удалить навсегда</button>` : ''}
             ${isOwner && !off ? `<button class="btn-link" data-device-remove="${esc(d.id)}" data-name="${esc(title(d))}" style="color:var(--danger)">Удалить</button>` : ''}
           </div>` : ''}
         </div>`;
@@ -4678,10 +4692,14 @@ function watchDashboardData(tenantId) {
           ? `По тарифу — до ${max} ${max % 10 === 1 && max % 100 !== 11 ? 'устройства' : 'устройств'}${tenant?.chainId ? ' на этой точке' : ''}, сейчас подключено ${active.length}.`
           : `По тарифу число устройств не ограничено, сейчас подключено ${active.length}.`}
         ${role === 'owner'
-          ? 'Устройство больше не нужно — удалите его: касса на нём перестанет работать, а место освободится. Передумали — восстановите его ниже.'
+          ? `Устройство больше не нужно — удалите его: касса на нём перестанет работать, а место освободится. Передумали — восстановите его ниже в течение ${DEVICE_RESTORE_DAYS} дней.`
           : 'Удалять и восстанавливать устройства может только владелец заведения.'}</p>
         ${active.length ? active.map(row).join('') : '<p class="small muted">Пока ни одного устройства. Скачайте кассу ниже — она подключится сама.</p>'}
-        ${removed.length ? `<div style="margin-top:16px;font-weight:600">Удалённые устройства</div>${removed.map(row).join('')}` : ''}
+        ${removed.length ? `<details style="margin-top:16px"${removed.length <= 3 ? ' open' : ''}>
+          <summary style="cursor:pointer;font-weight:600">Удалённые устройства (${removed.length}) <span class="small muted" style="font-weight:400">— восстановить можно ${DEVICE_RESTORE_DAYS} дней, потом они стираются сами</span></summary>
+          ${removed.map(row).join('')}
+          ${isOwner && removed.length > 1 ? `<div style="padding-top:10px;border-top:1px solid var(--border)"><button class="btn-link" id="f-device-purge-all" style="color:var(--danger)">Удалить навсегда все удалённые (${removed.length})</button></div>` : ''}
+        </details>` : ''}
         ${max && active.length >= max ? `<p class="small" style="margin:12px 0 0">Нужно больше устройств — <a href="#" class="f-dash-tab" data-tab="plans">выберите тариф больше</a>, оплаченные дни пересчитаются.</p>` : ''}
       </div>`;
     };
@@ -6279,7 +6297,7 @@ function watchDashboardData(tenantId) {
     if ($('f-rotate-code')) $('f-rotate-code').onclick = () => rotateInviteCode(tenantId);
     document.querySelectorAll('[data-device-remove]').forEach((btn) => {
       btn.onclick = async () => {
-        if (!confirm(`Удалить «${btn.dataset.name}»? Касса на этом устройстве перестанет работать, место по тарифу освободится. Вернуть его можно кнопкой «Восстановить».`)) return;
+        if (!confirm(`Удалить «${btn.dataset.name}»? Касса на этом устройстве перестанет работать, место по тарифу освободится. Вернуть его можно кнопкой «Восстановить» в течение ${DEVICE_RESTORE_DAYS} дней.`)) return;
         btn.disabled = true;
         try {
           await callSaasGateway('removeDevice', { tenantId, uid: btn.dataset.deviceRemove });
@@ -6290,6 +6308,28 @@ function watchDashboardData(tenantId) {
         }
       };
     });
+    const purgeDevices = async (btn, body, question, done) => {
+      if (!confirm(question)) return;
+      btn.disabled = true;
+      try {
+        const r = await callSaasGateway('purgeDevice', { tenantId, ...body });
+        toast(done(r?.purged || 0));
+      } catch (e) {
+        toast(e?.message || String(e));
+        btn.disabled = false;
+      }
+    };
+    document.querySelectorAll('[data-device-purge]').forEach((btn) => {
+      btn.onclick = () => purgeDevices(btn, { uid: btn.dataset.devicePurge },
+        `Удалить «${btn.dataset.name}» навсегда? Восстановить его будет нельзя — только подключить заново кодом приглашения.`,
+        () => 'Устройство удалено навсегда');
+    });
+    if ($('f-device-purge-all')) {
+      const btn = $('f-device-purge-all');
+      btn.onclick = () => purgeDevices(btn, { all: true },
+        'Удалить навсегда все удалённые устройства? Восстановить их будет нельзя.',
+        (n) => `Удалено навсегда: ${n}`);
+    }
     document.querySelectorAll('[data-device-restore]').forEach((btn) => {
       btn.onclick = async () => {
         btn.disabled = true;
