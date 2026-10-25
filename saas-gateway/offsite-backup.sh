@@ -20,7 +20,9 @@
 # Что в копии: база заведений (SQLite), вход, поддержка, партнёры и прочее
 # из state/, ключи /var/lib/zalpos, файлы окружения сервисов, справочник
 # персональных данных (pg_dump). Раз в сутки — ещё логотипы, фото меню и
-# вложения поддержки. Хранится: ежечасные — 2 суток, суточные — 30 дней.
+# вложения поддержки. Хранится, чтобы не захламлять хранилище: ежечасные —
+# за сегодня и вчера, суточные — 14 дней, недельные (по понедельникам) —
+# 8 недель; общий объём — не больше OFFSITE_MAX_MB (800 МБ).
 # Итог последнего запуска — /var/lib/zalpos-offsite/status.json (его видит
 # сервер и сообщает в бот поддержки, если копия не уходит).
 set -uo pipefail
@@ -30,8 +32,12 @@ CONF="${OFFSITE_CONF:-/etc/zalpos-offsite.env}"
 APP="${OFFSITE_APP_DIR:-/opt/saas-gateway}"
 STATUS_DIR="${OFFSITE_STATUS_DIR:-/var/lib/zalpos-offsite}"
 STATUS="$STATUS_DIR/status.json"
-KEEP_HOURLY_DAYS="${OFFSITE_KEEP_HOURLY_DAYS:-2}"
-KEEP_DAILY_DAYS="${OFFSITE_KEEP_DAILY_DAYS:-30}"
+KEEP_HOURLY_DAYS="${OFFSITE_KEEP_HOURLY_DAYS:-1}"
+KEEP_DAILY_DAYS="${OFFSITE_KEEP_DAILY_DAYS:-14}"
+KEEP_WEEKLY_DAYS="${OFFSITE_KEEP_WEEKLY_DAYS:-56}"
+# Потолок объёма в хранилище: выше — удаляются самые старые копии (кроме
+# трёх последних). Тариф 1 ГБ — держимся ниже.
+MAX_MB="${OFFSITE_MAX_MB:-800}"
 DAILY_HOUR="${OFFSITE_DAILY_HOUR:-03}"
 MODE="${1:-backup}"
 
@@ -112,6 +118,7 @@ case "$MODE" in
   list)
     echo "== ежечасные"; s3_keys "hourly/"
     echo "== суточные"; s3_keys "daily/"
+    echo "== недельные"; s3_keys "weekly/"
     exit 0 ;;
   verify)
     key="${2:-$(latest_key)}"
@@ -198,9 +205,15 @@ if ! s3 PUT "$key" -T "$work/copy.enc" -o /dev/null 2>"$work/err"; then
   exit 1
 fi
 
+# Недельная копия — по понедельникам (тот же суточный архив).
+if (( daily )) && [[ "$(date +%u)" == "1" ]]; then
+  s3 PUT "weekly/$day.tar.gz.enc" -T "$work/copy.enc" -o /dev/null || echo "недельная копия не загрузилась" >&2
+fi
+
 # Старые копии — прочь (по дате в имени).
 cut_h="$(date -d "-$KEEP_HOURLY_DAYS days" +%Y-%m-%d)"
 cut_d="$(date -d "-$KEEP_DAILY_DAYS days" +%Y-%m-%d)"
+cut_w="$(date -d "-$KEEP_WEEKLY_DAYS days" +%Y-%m-%d)"
 while read -r k; do
   d="$(echo "$k" | cut -d/ -f2)"
   [[ -n "$d" && "$d" < "$cut_h" ]] && s3 DELETE "$k" -o /dev/null
@@ -209,6 +222,26 @@ while read -r k; do
   d="$(basename "$k" .tar.gz.enc)"
   [[ -n "$d" && "$d" < "$cut_d" ]] && s3 DELETE "$k" -o /dev/null
 done < <(s3_keys "daily/" 2>/dev/null)
+while read -r k; do
+  d="$(basename "$k" .tar.gz.enc)"
+  [[ -n "$d" && "$d" < "$cut_w" ]] && s3 DELETE "$k" -o /dev/null
+done < <(s3_keys "weekly/" 2>/dev/null)
+# Потолок объёма: самые старые копии (по времени записи), кроме трёх последних.
+listing="$work/listing.xml"
+: > "$listing"
+for pfx in hourly/ daily/ weekly/; do s3 GET "?list-type=2&prefix=$pfx" >> "$listing" 2>/dev/null; done
+"$NODE" -e '
+  const xml = require("fs").readFileSync(process.argv[1], "utf8");
+  const max = Number(process.argv[2]) * 1048576;
+  const items = [...xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)].map((m) => ({
+    key: (m[1].match(/<Key>([^<]*)<\/Key>/) || [])[1],
+    at: Date.parse((m[1].match(/<LastModified>([^<]*)<\/LastModified>/) || [])[1] || 0),
+    size: Number((m[1].match(/<Size>(\d+)<\/Size>/) || [])[1] || 0),
+  })).filter((x) => x.key).sort((a, b) => a.at - b.at);
+  let total = items.reduce((s, x) => s + x.size, 0);
+  const removable = items.slice(0, Math.max(0, items.length - 3));
+  for (const x of removable) { if (total <= max) break; console.log(x.key); total -= x.size; }
+' "$listing" "$MAX_MB" | while read -r k; do s3 DELETE "$k" -o /dev/null && echo "объём выше ${MAX_MB} МБ — удалена старая копия $k"; done
 
 status ok "загружено: $key" "$key" "$bytes"
 echo "$(date '+%F %T') ok: $key ($bytes байт)"
