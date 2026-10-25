@@ -92,7 +92,8 @@ s3() { # s3 МЕТОД ключ-или-запрос [-T файл] [-o файл]
       *) shift ;;
     esac
   done
-  "$NODE" "$SCRIPT_DIR/s3-mini.js" "$method" "$path" "${args[@]}"
+  # Предел времени — чтобы обрыв связи не держал блокировку часами.
+  timeout 1900 "$NODE" "$SCRIPT_DIR/s3-mini.js" "$method" "$path" "${args[@]}"
 }
 s3_keys() { # ключи с префиксом
   s3 GET "?list-type=2&prefix=$1" | grep -o '<Key>[^<]*</Key>' | sed -e 's/<Key>//' -e 's#</Key>##'
@@ -147,9 +148,32 @@ case "$MODE" in
   *) echo "неизвестная команда: $MODE" >&2; exit 2 ;;
 esac
 
-# Не два запуска сразу (cron и ручной).
-exec 8>/var/lock/zalpos-offsite.lock
-flock -n 8 || { echo "копия уже делается"; exit 0; }
+# Запуск отмечаем сразу: сервер отличит «cron не запускает скрипт» от
+# «скрипт запускается, но копия не уходит».
+date -u +%Y-%m-%dT%H:%M:%SZ > "$STATUS_DIR/last-run"
+chmod 644 "$STATUS_DIR/last-run"
+
+# Не два запуска сразу (cron и ручной). Прошлый запуск завис дольше 1,5 ч
+# (сеть, хранилище) — останавливаем его, иначе копии больше не пойдут.
+LOCK=/var/lock/zalpos-offsite.lock
+PIDF=/var/lock/zalpos-offsite.pid
+exec 8>"$LOCK"
+if ! flock -n 8; then
+  pid="$(cat "$PIDF" 2>/dev/null || true)"
+  started="$(stat -c %Y "$PIDF" 2>/dev/null || echo 0)"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && (( $(date +%s) - started > 5400 )); then
+    echo "$(date '+%F %T') прошлый запуск (PID $pid) идёт дольше 1,5 ч — останавливаю"
+    pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')"
+    if [[ -n "$pgid" && "$pgid" != "$(ps -o pgid= -p $$ | tr -d ' ')" ]]; then kill -TERM -- "-$pgid" 2>/dev/null; else kill -TERM "$pid" 2>/dev/null; fi
+    sleep 5
+    kill -KILL "$pid" 2>/dev/null
+    flock -w 60 8 || { status error "прошлый запуск завис и не остановился (PID $pid)"; exit 1; }
+  else
+    echo "$(date '+%F %T') копия уже делается (PID ${pid:-?})"
+    exit 0
+  fi
+fi
+echo $$ > "$PIDF"
 
 hour="$(date +%H)"
 day="$(date +%Y-%m-%d)"
@@ -183,8 +207,8 @@ find "$APP/state" -maxdepth 1 -type f \( -name '*.json' -o -name '*.active' -o -
 [[ -d /var/lib/zalpos ]] && cp -a /var/lib/zalpos "$work/c/lib-zalpos"
 for f in /etc/saas-gateway.env /etc/pii-gateway.env; do [[ -f "$f" ]] && cp -p "$f" "$work/c/env/"; done
 # Справочник персональных данных (pii-gateway, Postgres).
-if command -v pg_dump >/dev/null && sudo -u postgres psql -lqt 2>/dev/null | cut -d'|' -f1 | grep -qw pii_gateway; then
-  if ! sudo -u postgres pg_dump -Fc pii_gateway > "$work/c/pii.dump" 2>"$work/err"; then
+if command -v pg_dump >/dev/null && timeout 30 sudo -n -u postgres psql -lqt 2>/dev/null | cut -d'|' -f1 | grep -qw pii_gateway; then
+  if ! timeout 1200 sudo -n -u postgres pg_dump -Fc pii_gateway > "$work/c/pii.dump" 2>"$work/err"; then
     status error "pg_dump не прошёл: $(head -c 200 "$work/err")"; exit 1
   fi
 fi
@@ -195,6 +219,7 @@ fi
 
 key="hourly/$day/$hour.tar.gz.enc"
 (( daily )) && key="daily/$day.tar.gz.enc"
+echo "$(date '+%F %T') начало: $key"
 if ! tar -C "$work/c" -czf - . | encrypt > "$work/copy.enc"; then
   status error "архив не собран"; exit 1
 fi

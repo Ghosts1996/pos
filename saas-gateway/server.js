@@ -8247,7 +8247,15 @@ function checkOffsiteBackup() {
   if (Date.now() - offsiteAlertAt < 6 * 3600 * 1000) return;
   offsiteAlertAt = Date.now();
   const when = last ? supportFmt(last) : "ни разу";
-  supportBot.notifyAdmins(`⚠️ <b>Копия данных в другом городе не уходит</b>\nПоследняя удачная: ${when}.${st.message ? `\n${String(st.message).replace(/[&<>]/g, "").slice(0, 200)}` : ""}\nПроверьте на сервере: tail /var/log/zalpos-offsite.log`);
+  // Когда скрипт запускался в последний раз (пишет сам скрипт при старте).
+  let ranAt = 0;
+  try { ranAt = Date.parse(fs.readFileSync(path.join(path.dirname(OFFSITE_STATUS_FILE), "last-run"), "utf8").trim()) || 0; } catch (_) {}
+  const notRunning = !ranAt || Date.now() - ranAt > 2 * 3600 * 1000;
+  const cmd = "bash /root/pos-deploy/saas-gateway/offsite-backup.sh";
+  const why = notRunning
+    ? `\nСкрипт копии по расписанию не запускался${ranAt ? ` с ${supportFmt(ranAt)}` : ""}. На сервере:\n<code>systemctl status cron</code>\n<code>cat /etc/cron.d/zalpos-offsite</code>\nЗапустить сейчас: <code>${cmd}</code>`
+    : `${st.state === "error" && st.message ? `\nОшибка: ${String(st.message).replace(/[&<>]/g, "").slice(0, 200)}` : `\nСкрипт запускался ${supportFmt(ranAt)}, но копия не загружена.`}\nНа сервере: <code>tail -30 /var/log/zalpos-offsite.log</code>`;
+  supportBot.notifyAdmins(`⚠️ <b>Копия данных в другом городе не уходит</b>\nПоследняя удачная: ${when}.${why}`);
 }
 setInterval(() => { try { checkOffsiteBackup(); } catch (_) {} }, 30 * 60 * 1000).unref();
 
