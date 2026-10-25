@@ -69,38 +69,24 @@ done
 REGION="${OFFSITE_S3_REGION:-ru-1}"
 BASE="${OFFSITE_S3_ENDPOINT%/}/$OFFSITE_S3_BUCKET"
 
-# S3 через curl с подписью AWS Signature V4 (curl ≥ 7.75): без лишних программ на сервере.
-# Хеш тела — настоящий (SHA-256 файла, у пустого запроса — хеш пустой строки):
-# так подпись принимают все S3-хранилища. Отказ хранилища — понятной строкой
-# из его ответа (Code и Message, без ключей).
-EMPTY_SHA="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-s3() { # s3 МЕТОД ключ-или-запрос [-T файл] [доп. параметры curl]
+# S3 — через s3-mini.js (подпись AWS Signature V4 на Node, тот же Node, что
+# у сервиса): curl из Ubuntu 22.04 неверно подписывает загрузку файла.
+# Отказ хранилища — понятной строкой из его ответа (Code и Message, без ключей).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NODE="${OFFSITE_NODE:-/usr/bin/node}"
+[[ -x "$NODE" ]] || NODE="$(command -v node || true)"
+[[ -n "$NODE" ]] || { status error "нет node"; echo "нет node" >&2; exit 1; }
+s3() { # s3 МЕТОД ключ-или-запрос [-T файл] [-o файл]
   local method="$1" path="$2"; shift 2
-  local sha="$EMPTY_SHA" args=("$@") pass=() out="" i
-  for ((i = 0; i < ${#args[@]}; i++)); do
-    case "${args[$i]}" in
-      -T) sha="$(sha256sum "${args[$((i + 1))]}" | cut -d' ' -f1)"; pass+=(-T "${args[$((i + 1))]}"); i=$((i + 1)) ;;
-      -o) out="${args[$((i + 1))]}"; i=$((i + 1)) ;;
-      *) pass+=("${args[$i]}") ;;
+  local args=()
+  while (($#)); do
+    case "$1" in
+      -T) args+=(--upload "$2"); shift 2 ;;
+      -o) args+=(--out "$2"); shift 2 ;;
+      *) shift ;;
     esac
   done
-  local body; body="$(mktemp)"
-  local code
-  code="$(curl -sS --retry 3 --retry-delay 5 --max-time 600 \
-    --aws-sigv4 "aws:amz:$REGION:s3" --user "$OFFSITE_S3_ACCESS_KEY:$OFFSITE_S3_SECRET_KEY" \
-    -H "x-amz-content-sha256: $sha" -X "$method" -w '%{http_code}' -o "$body" "${pass[@]}" "$BASE/$path")" || { rm -f "$body"; return 1; }
-  if [[ "$code" != 2* ]]; then
-    local c m
-    c="$(grep -o '<Code>[^<]*</Code>' "$body" | head -1 | sed -e 's/<[^>]*>//g')"
-    m="$(grep -o '<Message>[^<]*</Message>' "$body" | head -1 | sed -e 's/<[^>]*>//g')"
-    echo "S3 ответил $code ${c:-} ${m:-}" >&2
-    rm -f "$body"
-    return 1
-  fi
-  # Ответ (список ключей, скачанный файл) — туда, куда просили (-o), иначе в stdout.
-  if [[ -z "$out" ]]; then cat "$body"; elif [[ "$out" != "/dev/null" ]]; then mv "$body" "$out"; body=""; fi
-  [[ -n "$body" ]] && rm -f "$body"
-  return 0
+  "$NODE" "$SCRIPT_DIR/s3-mini.js" "$method" "$path" "${args[@]}"
 }
 s3_keys() { # ключи с префиксом
   s3 GET "?list-type=2&prefix=$1" | grep -o '<Key>[^<]*</Key>' | sed -e 's/<Key>//' -e 's#</Key>##'
@@ -171,9 +157,7 @@ mkdir -p "$work/c/state" "$work/c/env"
 # База заведений: согласованный снимок SQLite на ходу (VACUUM INTO), без остановки сервиса.
 db="$(grep -E '^DATA_DB_FILE=' /etc/saas-gateway.env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"')"
 db="${db:-$APP/state/data.sqlite}"
-# Тот же Node, что у сервиса (в нём есть node:sqlite); нет — sqlite3 или копия файла.
-NODE="${OFFSITE_NODE:-/usr/bin/node}"
-[[ -x "$NODE" ]] || NODE="$(command -v node || true)"
+# Снимок — тем же Node (в нём есть node:sqlite); нет — sqlite3 или копия файла.
 if [[ -f "$db" ]]; then
   snap="$work/c/state/data.sqlite"
   if [[ -n "$NODE" ]] && "$NODE" -e 'const {DatabaseSync}=require("node:sqlite");new DatabaseSync(process.argv[1]).exec(`VACUUM INTO '"'"'${process.argv[2]}'"'"'`)' "$db" "$snap" 2>"$work/err"; then
