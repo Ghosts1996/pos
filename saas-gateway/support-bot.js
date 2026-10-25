@@ -796,17 +796,33 @@ function guideTemplates(guide, faqItems = []) {
 }
 
 /** Статьи инструкции кабинета (saas/console/guide.js) → документы поиска. */
+// Адрес статьи инструкции на сайте — как в saas/scripts/build-blog.mjs
+// (guideArticles): транслит заголовка, повтор — с id раздела.
+const GUIDE_TRANSLIT = {
+  а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y", к: "k",
+  л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "ts",
+  ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya",
+};
+const guideSlugify = (t) => String(t).toLowerCase().split("").map((c) => (c in GUIDE_TRANSLIT ? GUIDE_TRANSLIT[c] : c)).join("")
+  .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
 function guideDocs(guide) {
   const out = [];
+  const used = new Set();
+  let n = 0;
   for (const sec of Array.isArray(guide) ? guide : []) {
     (sec.items || []).forEach((it, i) => {
+      n += 1;
+      let slug = guideSlugify(it.title) || `${sec.id}-${n}`;
+      if (used.has(slug)) slug = `${slug}-${sec.id}`;
+      used.add(slug);
       const parts = [];
       if (it.where) parts.push(`Где: ${it.where}`);
       if (it.intro) parts.push(it.intro);
       (it.steps || []).forEach((s, j) => parts.push(`${j + 1}. ${s}`));
       (it.tips || []).forEach((s) => parts.push(`Полезно: ${s}`));
       (it.faq || []).forEach(([q, a]) => parts.push(`В: ${q} О: ${a}`));
-      out.push(indexDoc({ id: `guide:${sec.id}.${i}`, kind: "guide", title: `${sec.title} → ${it.title}`, text: stripTags(parts.join("\n")) }));
+      out.push(indexDoc({ id: `guide:${sec.id}.${i}`, kind: "guide", title: `${sec.title} → ${it.title}`, text: stripTags(parts.join("\n")), url: `https://zalpos.ru/guide/${slug}/` }));
     });
   }
   return out;
@@ -829,6 +845,7 @@ const SYSTEM_PROMPT = [
   "- Чего нет в источниках — не придумывай и не достраивай по аналогии: ни кнопок, ни путей, ни интеграций, ни цифр. Не пиши «возможно», «скорее всего», «попробуйте поискать в настройках». Скажи, что именно знаешь точно, и дай это; чего нет — честно назови и предложи, как проверить (уточняющий вопрос, инструкция, демо). Специалиста — по правилам раздела 6.",
   "- Если в контексте есть пометка «нет проверенных знаний по вопросу» — не отвечай по памяти: уточни вопрос одним вопросом; понятен, но ответа нет — по разделу 6.",
   "- Не знаешь причину ошибки — не перечисляй догадки. Попроси точный текст ошибки или снимок экрана либо позови специалиста.",
+  "- У статьи в «Знаниях» есть строка «Ссылка: https://zalpos.ru/guide/…» и ответ взят из неё — последней строкой дай эту ссылку: «Подробно с картинками: <ссылка>». Только одну, только из «Знаний», ссылок не сочиняй.",
   "",
   "## 3. Веди к результату",
   "- Смотри всю переписку: не повторяй шаги, которые человек уже сделал, продолжай с того места, где он сейчас. Ответ специалиста поддержки в переписке важнее твоего — следуй ему.",
@@ -950,7 +967,7 @@ function buildMessages({ venue = "", platform = "", news = [], errors = [], guid
     ctx.push(`# Действующие объявления и акции ZalPOS\nОфициальные: их опубликовал администратор платформы, клиенты видят их в кабинете. На вопросы об акциях, бонусах и новостях отвечай по ним: суть, условия, как получить, ссылка из объявления (её можно дать). Условий сверх текста не придумывай — чего в тексте нет, уточни у специалиста. Акции, которой здесь нет, сейчас нет: решения о прошлых акциях в базе могли устареть.\n\n${news.map((d) => `## ${d.title}\n${clip(d.text, 1400)}`).join("\n\n")}`);
   }
   if (errors.length) ctx.push(`# Последние ошибки сервера по заведению\n${errors.map((e) => `- ${clip(e, 220)}`).join("\n")}`);
-  if (guide.length) ctx.push(`# Знания (инструкция, шаблоны настройки, база поддержки, частые вопросы)\n${guide.map((d, i) => `## ${d.title}\n${clip(d.text, i === 0 ? 1600 : 900)}`).join("\n\n")}`);
+  if (guide.length) ctx.push(`# Знания (инструкция, шаблоны настройки, база поддержки, частые вопросы)\n${guide.map((d, i) => `## ${d.title}${d.url ? `\nСсылка: ${d.url}` : ""}\n${clip(d.text, i === 0 ? 1600 : 900)}`).join("\n\n")}`);
   if (learned.length) ctx.push(`# База решений (проверено поддержкой)\n${learned.map((d) => `## ${d.title}\n${clip(d.text, 800)}`).join("\n\n")}`);
   if (web && (web.pages.length || web.results.length)) {
     const pages = web.pages.map((p) => `## ${p.title} (${domainOf(p.url)})\n${p.url}\n${clip(p.text, 1600)}`);

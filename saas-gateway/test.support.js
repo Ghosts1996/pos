@@ -2185,3 +2185,13 @@ test("без ИИ: подбор тарифа по числу устройств 
   console.log(`support-bot: ${passed} из ${tests.length} проверок`);
   process.exit(process.exitCode || 0);
 })();
+
+test("ссылки на статьи инструкции: адрес как на сайте, повтор заголовка — с id раздела", () => {
+  const docs = sb.guideDocs([
+    { id: "hall", title: "Зал", items: [{ title: "Тайм-кафе: оплата за время", steps: ["Включите"] }] },
+    { id: "kassa", title: "Касса", items: [{ title: "Тайм-кафе: оплата за время" }] },
+  ]);
+  assert.strictEqual(docs[0].url, "https://zalpos.ru/guide/taym-kafe-oplata-za-vremya/");
+  assert.strictEqual(docs[1].url, "https://zalpos.ru/guide/taym-kafe-oplata-za-vremya-kassa/");
+  assert.ok(/Подробно с картинками/.test(sb.SYSTEM_PROMPT));
+});
