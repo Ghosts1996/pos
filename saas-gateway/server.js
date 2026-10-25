@@ -4,6 +4,7 @@ const http = require("http");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 
 // Короткий хеш коммита: его пишет migrate-domain.sh, а /health отдаёт,
 // чтобы было видно, обновился ли сервер.
@@ -7969,6 +7970,113 @@ async function supportPlatformStatus() {
   return lines.join("\n");
 }
 
+/**
+ * Сводки для администраторов в личке бота поддержки (HTML).
+ * platform — заведения, пробные периоды, оплаты; server — память, диск,
+ * ошибки, резервные копии. Демо и тестовые оплаты не считаются.
+ */
+async function supportAdminDigest(kind) {
+  const esc = (v) => String(v ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const ms = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : v instanceof Date ? v.getTime() : typeof v === "number" ? v : 0);
+  const rub = (n) => `${Math.round(n).toLocaleString("ru-RU")} ₽`;
+  const nowMs = Date.now();
+  // Начало суток и месяца по Москве.
+  const msk = new Date(nowMs + 3 * 3600 * 1000);
+  const dayStart = Date.UTC(msk.getUTCFullYear(), msk.getUTCMonth(), msk.getUTCDate()) - 3 * 3600 * 1000;
+  const monthStart = Date.UTC(msk.getUTCFullYear(), msk.getUTCMonth(), 1) - 3 * 3600 * 1000;
+  if (kind === "server") {
+    const mb = (b) => `${Math.round(b / 1048576).toLocaleString("ru-RU")} МБ`;
+    const lines = ["🖥 <b>Сервер</b>", ""];
+    lines.push(`Версия: ${esc(SERVER_VERSION || "?")} · без перезапуска ${Math.round((nowMs - SUPPORT_STARTED_AT) / 3600000)} ч`);
+    const total = os.totalmem();
+    const free = os.freemem();
+    lines.push(`${free / total < 0.1 ? "⚠️ " : ""}Память: занято ${mb(total - free)} из ${mb(total)} · сервис ${mb(process.memoryUsage().rss)}`);
+    lines.push(`Нагрузка (1/5/15 мин): ${os.loadavg().map((x) => x.toFixed(2)).join(" / ")} · ядер ${os.cpus().length}`);
+    try {
+      const st = fs.statfsSync(__dirname);
+      const freeB = st.bavail * st.bsize;
+      const totalB = st.blocks * st.bsize;
+      const pct = totalB ? Math.round((freeB / totalB) * 100) : 0;
+      lines.push(`${pct < 10 ? "⚠️ " : ""}Диск: свободно ${mb(freeB)} из ${mb(totalB)} (${pct}%)`);
+    } catch (_) {}
+    const hour = ERROR_RING.filter((e) => e.at > nowMs - 3600 * 1000).length;
+    const day = ERROR_RING.filter((e) => e.at > nowMs - 24 * 3600 * 1000).length;
+    lines.push(`${hour ? "⚠️ " : ""}Ошибок в журнале: за час ${hour}, за сутки ${day}`);
+    const last = ERROR_RING[ERROR_RING.length - 1];
+    if (last && last.at > nowMs - 24 * 3600 * 1000) lines.push(`Последняя: ${esc(supportFmt(last.at))} — ${esc(String(last.text).slice(0, 160))}`);
+    const b = listBackups()[0];
+    if (b) {
+      const m = b.name.match(/(\d{4}-\d{2}-\d{2})/);
+      lines.push(`Резервная копия: ${esc(m ? m[1] : b.name)} · ${mb(b.bytes)}`);
+    } else lines.push("⚠️ Резервных копий базы на сервере нет");
+    lines.push(`Данные: ${DATA_LOCAL ? "свой сервер в РФ" : "Firestore (Google)"} · вход: ${authOwn() ? "свой" : "Firebase"}`);
+    return lines.join("\n");
+  }
+  const firestore = db();
+  const since = admin.firestore.Timestamp.fromMillis(monthStart);
+  const [tenantsSnap, subsSnap, eventsSnap, metrics] = await Promise.all([
+    firestore.collection("tenants").get(),
+    firestore.collection("subscriptions").get(),
+    firestore.collection("billingEvents").where("receivedAt", ">=", since).get().catch(() => ({ docs: [] })),
+    firestore.collection("platformMetrics").orderBy("date", "desc").limit(1).get().catch(() => null),
+  ]);
+  const tenants = new Map();
+  let total = 0;
+  let newToday = 0;
+  const fresh = [];
+  for (const d of tenantsSnap.docs) {
+    const t = d.data();
+    tenants.set(d.id, t);
+    if (t.demo === true || t.status === "deleted") continue;
+    total += 1;
+    const at = ms(t.createdAt);
+    if (at >= dayStart) newToday += 1;
+    if (at >= nowMs - 7 * 86400000) fresh.push({ name: t.name || d.id, at });
+  }
+  let trial = 0;
+  let paying = 0;
+  let pastDue = 0;
+  const ending = [];
+  for (const d of subsSnap.docs) {
+    const sub = d.data();
+    const t = tenants.get(d.id);
+    if (t && (t.demo === true || t.status === "deleted")) continue;
+    if (sub.status === "trial") {
+      trial += 1;
+      const end = ms(sub.trialEndsAt);
+      if (end > nowMs && end - nowMs < 3 * 86400000) ending.push({ name: (t && t.name) || d.id, end });
+    } else if (sub.status === "active" && !(t && t.testPayment === true)) paying += 1;
+    else if (sub.status === "past_due") pastDue += 1;
+  }
+  let payToday = 0;
+  let payMonth = 0;
+  let nToday = 0;
+  let nMonth = 0;
+  for (const d of eventsSnap.docs) {
+    const e = d.data();
+    if (e.test === true || (e.status && e.status !== "succeeded")) continue;
+    const at = ms(e.receivedAt);
+    const amount = Number(e.amount) || 0;
+    if (at >= monthStart) { payMonth += amount; nMonth += 1; }
+    if (at >= dayStart) { payToday += amount; nToday += 1; }
+  }
+  const mrr = metrics && metrics.docs[0] ? Number(metrics.docs[0].data().mrr) || 0 : null;
+  const lines = ["📈 <b>Клиенты и оплаты</b>", ""];
+  lines.push(`🏪 Заведений: ${total} · новых сегодня: ${newToday}, за 7 дней: ${fresh.length}`);
+  lines.push(`💳 Платят: ${paying} · пробный период: ${trial}${pastDue ? ` · ⚠️ просрочена оплата: ${pastDue}` : ""}`);
+  lines.push(`💰 Оплаты сегодня: ${rub(payToday)} (${nToday}) · за месяц: ${rub(payMonth)} (${nMonth})`);
+  if (mrr !== null) lines.push(`📊 Ежемесячная выручка по подпискам (MRR): ${rub(mrr)}`);
+  if (ending.length) {
+    lines.push("", `⏳ <b>Пробный период заканчивается в ближайшие 3 дня: ${ending.length}</b>`);
+    for (const x of ending.sort((a, b) => a.end - b.end).slice(0, 10)) lines.push(`• ${esc(String(x.name).slice(0, 60))} — ${esc(supportFmt(x.end))}`);
+  }
+  if (fresh.length) {
+    lines.push("", "🆕 <b>Новые за неделю</b>");
+    for (const x of fresh.sort((a, b) => b.at - a.at).slice(0, 10)) lines.push(`• ${esc(String(x.name).slice(0, 60))} — ${esc(supportFmt(x.at))}`);
+  }
+  return lines.join("\n");
+}
+
 function supportRecentErrors(tenantId) {
   if (!tenantId) return [];
   const dayAgo = Date.now() - 24 * 3600 * 1000;
@@ -8113,6 +8221,7 @@ const supportBot = createSupportBot({
   assertPublicAiUrl,
   venueStatus: supportVenueStatus,
   platformStatus: supportPlatformStatus,
+  adminDigest: supportAdminDigest,
   recentErrors: supportRecentErrors,
   docData: supportDocData,
   tenantPriority: supportTenantPriority,

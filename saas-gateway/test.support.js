@@ -338,6 +338,7 @@ function harness(extra = {}) {
     aiVendors: { tooken: { baseUrl: "https://ai.example/v1", model: "gpt-4o-mini" } },
     venueStatus: async (tid) => `Заведение ${tid}: подписка оплачена; сборка кассы — ошибка: нет места`,
     platformStatus: async () => "Сервер работает",
+    adminDigest: async (kind) => (kind === "server" ? "🖥 <b>Сервер</b>\nДиск: свободно 10 ГБ" : "📈 <b>Клиенты и оплаты</b>\n🏪 Заведений: 3"),
     recentErrors: () => ["12:00: build failed for t1"],
     docData: async (tid) => ({ venue: tid ? { name: "Колибри", sellerName: "ООО «Колибри»", sellerInn: "7701234567" } : {}, platform: {} }),
     tenantPriority: async (tid) => tid === "tprio",
@@ -1948,6 +1949,38 @@ test("технический бот: описание, кнопки команд
   assert.strictEqual(await h.bot.checkHook({ force: true }), "fixed");
   assert.strictEqual(h.calls.filter((c) => c.method === "setWebhook").length, n + 1);
   assert.ok(h.calls.filter((c) => c.method === "setWebhook").pop().body.url.endsWith("/tgHook/_support"));
+});
+
+test("пульт команды в личке: приветствие команды, текст не становится обращением, сводки — админам", async () => {
+  const h = harness();
+  await setup(h, { ruOnly: true });
+  await h.bot.handleSetup({ body: { admins: "777000111 Константин" } }, {});
+  const ADMIN = 777000111;
+  const ticketsBefore = [...h.store.keys()].filter((k) => /^supportTickets\/[^/]+$/.test(k)).length;
+  await h.bot.handleUpdate(pm("/start", ADMIN));
+  const hello = sends(h.calls, ADMIN).pop().body;
+  assert.ok(/Пульт поддержки/.test(hello.text) && !/Опишите вопрос/.test(hello.text), hello.text);
+  const labels = hello.reply_markup.keyboard.flat().map((b) => b.text);
+  for (const l of ["📂 Открытые", "📈 Клиенты и оплаты", "🖥 Сервер", "🔴 Ждут ответа"]) assert.ok(labels.includes(l), labels.join());
+  // Случайная буква или текст — подсказка, а не обращение и не ИИ.
+  await h.bot.handleUpdate(pm("Т", ADMIN));
+  assert.ok(/пульт поддержки/i.test(sends(h.calls, ADMIN).pop().body.text));
+  assert.strictEqual([...h.store.keys()].filter((k) => /^supportTickets\/[^/]+$/.test(k)).length, ticketsBefore, "обращение не создано");
+  await h.bot.handleUpdate(pm("🖥 Сервер", ADMIN));
+  assert.ok(/Диск/.test(sends(h.calls, ADMIN).pop().body.text));
+  await h.bot.handleUpdate(pm("📈 Клиенты и оплаты", ADMIN));
+  assert.ok(/Заведений/.test(sends(h.calls, ADMIN).pop().body.text));
+  // Сотрудник (не админ): сводок платформы нет ни в кнопках, ни по тексту кнопки.
+  await h.bot.handleUpdate(pm("/start", 555000111));
+  const staffLabels = sends(h.calls, 555000111).pop().body.reply_markup.keyboard.flat().map((b) => b.text);
+  assert.ok(!staffLabels.includes("📈 Клиенты и оплаты") && staffLabels.includes("📂 Открытые"), staffLabels.join());
+  await h.bot.handleUpdate(pm("📈 Клиенты и оплаты", 555000111));
+  assert.ok(/только для администраторов/.test(sends(h.calls, 555000111).pop().body.text));
+  // Открытые обращения — списком.
+  const at = { toMillis: () => Date.now() };
+  h.store.set("supportTickets/o1", { tenantId: "t1", channel: "cabinet", subject: "Не печатает чек", status: "open", escalated: true, no: 7, createdAt: at, updatedAt: at });
+  await h.bot.handleUpdate(pm("📂 Открытые", ADMIN));
+  assert.ok(/Открытые обращения: 1/.test(sends(h.calls, ADMIN).pop().body.text) && /#7/.test(sends(h.calls, ADMIN).pop().body.text));
 });
 
 test("приоритетная поддержка по тарифу: ⭐ в теме и карточке, человек — за 5 минут, а не 15", async () => {

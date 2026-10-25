@@ -116,7 +116,7 @@ const CLIENT_KB = {
 // У админов бота (ID — в панели супер-админа) сверху кнопка админки.
 const ADMIN_BTN = "⚙️ Админка";
 const ADMIN_KB = { ...CLIENT_KB, keyboard: [[{ text: ADMIN_BTN }], ...CLIENT_KB.keyboard] };
-const STAFF_BTN = { stats: "📊 Сводка", waiting: "🔴 Ждут ответа", client: "↩️ Меню клиента" };
+const STAFF_BTN = { stats: "📊 Сводка", waiting: "🔴 Ждут ответа", client: "↩️ Меню клиента", open: "📂 Открытые", platform: "📈 Клиенты и оплаты", server: "🖥 Сервер" };
 const STAFF_KB = {
   keyboard: [[{ text: STAFF_BTN.stats }, { text: STAFF_BTN.waiting }], [{ text: STAFF_BTN.client }]],
   resize_keyboard: true, is_persistent: true,
@@ -125,7 +125,12 @@ const STAFF_KB = {
 // бота только команда поддержки, и кнопки — для работы, а не клиентские.
 const STAFF_HEALTH = "🩺 Состояние бота";
 const TEAM_KB = (admin) => ({
-  keyboard: [...(admin ? [[{ text: ADMIN_BTN }]] : []), [{ text: STAFF_BTN.stats }, { text: STAFF_BTN.waiting }], [{ text: STAFF_HEALTH }]],
+  keyboard: [
+    ...(admin ? [[{ text: ADMIN_BTN }]] : []),
+    [{ text: STAFF_BTN.waiting }, { text: STAFF_BTN.open }],
+    [{ text: STAFF_BTN.stats }, { text: STAFF_HEALTH }],
+    ...(admin ? [[{ text: STAFF_BTN.platform }, { text: STAFF_BTN.server }]] : []),
+  ],
   resize_keyboard: true, is_persistent: true, input_field_placeholder: "Команда поддержки ZalPOS",
 });
 // Описание бота в Telegram: что это и куда писать клиентам.
@@ -1146,6 +1151,8 @@ function createSupportBot(deps) {
     db, admin, verifyAuth, parseJsonBody, readBody, sendJson, HttpError, requireSuperAdmin, requireTenantRole,
     publicUrl, secretKey, encrypt, decrypt, aiVendors = {}, assertPublicAiUrl = async () => {},
     venueStatus = async () => "", platformStatus = async () => "", recentErrors = () => [],
+    // Сводки для администраторов в личке бота: клиенты и оплаты, сервер (HTML).
+    adminDigest = async () => "",
     docData = async () => ({}),
     // Менеджеры партнёрской программы (partners.js): кто это и как ему ответить.
     partnerOf = async () => null, partnerNotify = async () => {},
@@ -2604,6 +2611,7 @@ function createSupportBot(deps) {
     const arg = cmd ? cmd[2].trim() : "";
     switch (action) {
       case "start":
+        if (ruOnly() && isTeamId(userId)) return send(chatId, teamHello(userId), kb);
         if (firstContact) await send(chatId, NOTICE(policy), kb);
         if (/^sup_[a-f0-9]{16}$/.test(arg)) await bindClient(userId, chatId, arg.slice(4), client);
         else if (!firstContact) await send(chatId, "Слушаю! Опишите вопрос — отвечу сразу или позову специалиста.", kb);
@@ -2659,7 +2667,17 @@ function createSupportBot(deps) {
         return send(chatId, await healthText(), { ...HTML, reply_markup: staffKb(userId) });
       case "staff_client":
         return send(chatId, "Меню клиента — так бот выглядит для владельцев заведений.", kb);
+      case "staff_open":
+        return sendOpen(chatId);
+      case "staff_platform":
+      case "staff_server":
+        if (!isAdminId(userId)) return send(chatId, "Это только для администраторов бота.", kb);
+        return send(chatId, (await adminDigest(action.slice(6)).catch((e) => `Не удалось собрать сводку: ${h(e.message || e)}`)) || "Нет данных.", { ...HTML, reply_markup: staffKb(userId) });
       default:
+        if (ruOnly() && isTeamId(userId)) {
+          // Личка бота — пульт команды: обращения здесь не принимаются, ИИ не зовём.
+          return send(chatId, cmd ? "Такой команды нет — пользуйтесь кнопками внизу." : teamHint(), kb);
+        }
         if (cmd) return send(chatId, "Такой команды нет — пользуйтесь кнопками внизу или просто напишите вопрос.", kb);
         break;
     }
@@ -3149,6 +3167,46 @@ function createSupportBot(deps) {
       return adminOpen(chatId, "staff");
     }
     return adminOpen(chatId);
+  }
+
+  /** Приветствие команды в личке бота (режим «данные только в России»). */
+  function teamHello(userId) {
+    const admin = isAdminId(userId);
+    return [
+      "🛠 <b>Пульт поддержки ZalPOS</b>", "",
+      "Клиенты пишут в кабинете и в чате на сайте, отвечаете вы — в темах рабочей группы. Здесь — сводки и быстрые переходы:", "",
+      `${STAFF_BTN.waiting} — кому нужен человек, со ссылками на темы`,
+      `${STAFF_BTN.open} — все открытые обращения`,
+      `${STAFF_BTN.stats} — обращения, ИИ, база знаний`,
+      `${STAFF_HEALTH} — связь, группа, ИИ`,
+      ...(admin ? [
+        `${STAFF_BTN.platform} — новые заведения, пробные периоды, оплаты`,
+        `${STAFF_BTN.server} — память, диск, ошибки, резервные копии`,
+        `${ADMIN_BTN} — настройки бота`,
+      ] : []),
+    ].join("\n");
+  }
+  const teamHint = () => "Это пульт поддержки: обращения клиентов приходят в темы рабочей группы. Выберите действие кнопкой внизу.";
+
+  /** Все открытые обращения — со ссылками на темы. */
+  async function sendOpen(chatId) {
+    const snap = await ticketsCol().where("status", "==", "open").limit(300).get();
+    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.escalated === true) - (a.escalated === true) || toMs(b.updatedAt) - toMs(a.updatedAt));
+    if (!list.length) return send(chatId, "📂 Открытых обращений нет.", { reply_markup: staffKb(chatId) });
+    const mark = (t) => `${t.escalated ? "🔴" : t.lastAuthorRole === "owner" ? "⏳" : "✅"}${t.priority ? "⭐" : ""}`;
+    const top = list.slice(0, 15);
+    const rows = top.map((t) => {
+      const link = topicLink(state.cfg.groupChatId, t.topicId);
+      return link ? [{ text: `${mark(t)} #${t.no || "?"} · ${clip(t.subject || "", 40)}`, url: link }] : null;
+    }).filter(Boolean);
+    const text = [
+      `📂 <b>Открытые обращения: ${list.length}</b>`,
+      "🔴 ждут человека · ⏳ ждут ответа · ✅ ответили, ждём клиента", "",
+      ...top.map((t) => `${mark(t)} #${t.no || "?"} · ${h(clip(t.subject || "", 60))}`),
+      ...(list.length > top.length ? ["", `…и ещё ${list.length - top.length}`] : []),
+    ].join("\n");
+    return send(chatId, text, { ...HTML, ...(rows.length ? { reply_markup: { inline_keyboard: rows } } : {}) });
   }
 
   async function sendWaiting(chatId) {
