@@ -165,16 +165,27 @@ function db() {
 }
 
 function sendJson(res, statusCode, obj) {
-  const body = JSON.stringify(obj);
-  res.writeHead(statusCode, {
+  let body = Buffer.from(JSON.stringify(obj), "utf8");
+  const req = res.req;
+  const headers = {
     "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(body),
     // Консоль живёт на другом origin. GET нужен для downloadBuild: preflight
     // с Authorization приходит и на GET.
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, x-callback-secret",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  });
+  };
+  // Через VPN каждый запрос — это ещё и время туда-обратно: разрешение на
+  // запросы с сайта браузер запоминает на сутки и не спрашивает перед
+  // каждым вызовом, а большие ответы (меню, заказы, отчёты) идут сжатыми.
+  if (req && req.method === "OPTIONS") headers["Access-Control-Max-Age"] = "86400";
+  if (body.length > 1400 && req && /\bgzip\b/.test(String(req.headers["accept-encoding"] || ""))) {
+    body = zlib.gzipSync(body, { level: 5 });
+    headers["Content-Encoding"] = "gzip";
+    headers.Vary = "Accept-Encoding";
+  }
+  headers["Content-Length"] = body.length;
+  res.writeHead(statusCode, headers);
   res.end(body);
 }
 

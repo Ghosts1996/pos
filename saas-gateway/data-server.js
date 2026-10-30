@@ -28,6 +28,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
 const { createLocalDb } = require("./local-db");
 const { compile } = require("./rules-engine");
 
@@ -445,22 +446,30 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
       return res.end(JSON.stringify({ error: "Сессия не найдена", code: "not-found" }));
     }
     if (s.res) { try { s.res.end(); } catch (_) {} }
+    // Поток сжимаем: первая выдача подписок — это всё меню и заказы, через
+    // VPN и мобильную сеть несжатые сотни килобайт идут секундами. Каждое
+    // событие выталкивается сразу (Z_SYNC_FLUSH), задержки не добавляется.
+    const gz = /\bgzip\b/.test(String(req.headers["accept-encoding"] || "")) ? zlib.createGzip({ level: 5 }) : null;
     res.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
       "Access-Control-Allow-Origin": "*",
+      ...(gz ? { "Content-Encoding": "gzip", Vary: "Accept-Encoding" } : {}),
     });
-    res.write(`: ok\n\n`);
-    s.res = res;
+    if (gz) { gz.on("error", () => {}); gz.pipe(res); }
+    const out = gz ? { write: (t) => { gz.write(t); gz.flush(zlib.constants.Z_SYNC_FLUSH); }, end: () => gz.end() } : res;
+    out.write(`: ok\n\n`);
+    s.res = out;
     s.lastSeen = now();
     // Переподключение: подписки на месте — отправим всё заново (клиент сверит).
     for (const sub of s.subs.values()) { sub.seen = new Map(); sub.order = null; sub.exists = undefined; pump(s, sub, true); }
-    const ping = setInterval(() => { try { res.write(`: ping\n\n`); } catch (_) {} }, 20000);
+    const ping = setInterval(() => { try { out.write(`: ping\n\n`); } catch (_) {} }, 20000);
     req.on("close", () => {
       clearInterval(ping);
-      if (s.res === res) { s.res = null; s.lastSeen = now(); }
+      if (gz) gz.destroy();
+      if (s.res === out) { s.res = null; s.lastSeen = now(); }
     });
   }
 
