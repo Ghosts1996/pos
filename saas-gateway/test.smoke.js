@@ -353,6 +353,13 @@ async function main() {
         && m(own, [{ ...old, status: "removed" }]).status === "removed"
         && Object.keys(m(own, [])).length === 0);
     }
+    {
+      const lines = server.supportPlanLines(Object.values(server.PLAN_CATALOG));
+      check("бот поддержки: сетка тарифов по умолчанию — с ценами, устройствами и без лимита сотрудников",
+        lines.length === 5 && lines.every((l) => /₽\/мес/.test(l) && l.includes("сотрудников без ограничений"))
+        && lines.some((l) => l.startsWith("Сеть (сеть)") && l.includes("на точке до 5"))
+        && server.supportPlanLines([{ name: "x", priceRub: 100, archived: true }]).length === 0);
+    }
     check("PIN-хэш сервера совпадает с кассой (эталон из test/pin_hash_test.dart)",
       server.pinHashFor("1234", "t1") === require("crypto").pbkdf2Sync("1234", "zalpos-pin:t1", 20000, 32, "sha256").toString("hex"));
     {

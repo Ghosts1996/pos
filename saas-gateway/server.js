@@ -8057,19 +8057,10 @@ async function supportVenueStatus(tenantId) {
 
 // Тарифы для ответов ИИ — из базы, как на сайте; перечитываем раз в 10 минут.
 let supportPlansCache = { at: 0, text: "" };
-async function supportPlansText() {
-  if (supportPlansCache.text && Date.now() - supportPlansCache.at < 10 * 60 * 1000) return supportPlansCache.text;
+/** Строки «Тарифы сейчас» для бота: продаваемые тарифы по возрастанию цены. */
+function supportPlanLines(plans) {
   const rub = (v) => `${Math.round(Number(v) || 0).toLocaleString("ru-RU")} ₽`;
-  let snap;
-  try {
-    snap = await db().collection("plans").get();
-  } catch (e) {
-    // Без тарифов бот отвечал «цен у меня нет» — пишем причину в журнал и
-    // отдаём последние известные.
-    console.error("saas-gateway: тарифы для бота поддержки не прочитаны:", e.message || e);
-    return supportPlansCache.text;
-  }
-  const lines = snap.docs.map((d) => d.data()).filter((p) => p.archived !== true && Number(p.priceRub) > 0)
+  return plans.filter((p) => p && p.archived !== true && Number(p.priceRub) > 0)
     .sort((a, b) => Number(a.priceRub) - Number(b.priceRub))
     .map((p) => `${p.name}${p.isChainPlan ? " (сеть)" : ""}: ${rub(p.priceRub)}/мес, ${rub(p.priceRubSemiannual)}/6 мес, ${rub(p.priceRubYearly)}/год`
       + `${p.isChainPlan && Number(p.priceRubAdditional) > 0 ? `; каждая следующая точка ${rub(p.priceRubAdditional)}/мес` : ""}`
@@ -8078,7 +8069,20 @@ async function supportPlansText() {
       + `; приложение гостя и меню по QR ${!p.features || p.features.guestApp !== false ? "есть" : "нет"}`
       + `; ИИ-помощник ${p.aiEnabled !== false ? "есть" : "нет"}`
       + `${p.prioritySupport ? "; приоритетная поддержка" : ""}; пробный период ${Number(p.trialDays) || 0} дн.`);
-  if (!lines.length) console.error("saas-gateway: в базе нет продаваемых тарифов (все в архиве или без цены) — бот не назовёт цены");
+}
+
+async function supportPlansText() {
+  if (supportPlansCache.text && Date.now() - supportPlansCache.at < 10 * 60 * 1000) return supportPlansCache.text;
+  let lines = [];
+  try {
+    lines = supportPlanLines((await db().collection("plans").get()).docs.map((d) => d.data()));
+    if (!lines.length) console.error("saas-gateway: в базе нет продаваемых тарифов (все в архиве или без цены) — бот берёт сетку тарифов по умолчанию");
+  } catch (e) {
+    console.error("saas-gateway: тарифы для бота поддержки не прочитаны:", e.message || e);
+    if (supportPlansCache.text) return supportPlansCache.text;
+  }
+  // Без «Тарифов сейчас» бот гадал о ценах и лимитах — лучше сетка по умолчанию.
+  if (!lines.length) lines = supportPlanLines(Object.values(PLAN_CATALOG));
   supportPlansCache = { at: Date.now(), text: lines.join("\n") };
   return supportPlansCache.text;
 }
@@ -9289,4 +9293,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor });
+Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor });

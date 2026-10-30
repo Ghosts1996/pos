@@ -1792,7 +1792,7 @@ test("чат сайта: у каждого посетителя постоянн
   assert.strictEqual(sb.siteWho({}), "Посетитель");
 });
 
-test("сайт: один посетитель — одна тема; 30 минут без диалога — тема удаляется, новый вопрос — новая тема; кабинет не трогаем", async () => {
+test("сайт: один посетитель — одна тема; 12 часов без диалога — тема удаляется, новый вопрос — новая тема; кабинет не трогаем", async () => {
   const h = harness();
   await setup(h);
   const req = (body, ip) => ({ body, headers: { "x-real-ip": ip } });
@@ -1819,7 +1819,7 @@ test("сайт: один посетитель — одна тема; 30 мину
 
   // Пока диалог свежий — тема живёт.
   assert.strictEqual(await h.bot.sweepSiteTopics(), 0);
-  const old = { toMillis: () => Date.now() - 31 * 60 * 1000 };
+  const old = { toMillis: () => Date.now() - (12 * 3600 + 60) * 1000 };
   for (const id of [first, second]) {
     const k = `supportTickets/${id}`;
     const x = h.store.get(k);
