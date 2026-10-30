@@ -137,6 +137,28 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
     }
   }
 
+  /// Проверка сохранённого подключения (платформа: через сервер ZalPOS).
+  Future<void> _pingSaved() async {
+    setState(() {
+      _pingResult = 'Проверяю…';
+      _pingOk = false;
+    });
+    try {
+      final res = await TookenClient.instance.ping(endpoint: _settings.primary);
+      if (!mounted) return;
+      setState(() {
+        _pingOk = true;
+        _pingResult = 'Связь есть. Ответ модели: «$res»';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _pingOk = false;
+        _pingResult = 'Ошибка: ${humanError(e, lower: true)}';
+      });
+    }
+  }
+
   Future<void> _loadModels() async {
     _commitFields();
     try {
@@ -193,6 +215,48 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
               subtitle: const Text('Выключено — приложение работает без единого запроса к ИИ'),
             ),
             const Divider(),
+            // Платформа: ключи подключаются в кабинете одним полем, провайдер
+            // и модели подбирает сервер, касса ходит к ИИ через него (без VPN).
+            if (AppScope.isSaasMode) ...[
+              _section('Подключение'),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _hasKey(_settings.vendor)
+                            ? 'Подключено: ${_settings.primary.model.isEmpty ? AiVendors.byId(_settings.vendor).title : _settings.primary.model}'
+                                '${_settings.extras.isEmpty ? '' : ' · запасных ключей: ${_settings.extras.length}'}'
+                            : 'Ключ ИИ ещё не подключён',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Ключи подключаются в кабинете zalpos.ru → ИИ: вставьте ключ любого провайдера — '
+                        'чей он и какие модели брать, система определит сама. Касса обращается к ИИ через '
+                        'сервер ZalPOS, VPN не нужен.',
+                        style: TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+                      ),
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        onPressed: _saving ? null : _pingSaved,
+                        icon: const Icon(Icons.wifi_tethering),
+                        label: const Text('Проверить связь'),
+                      ),
+                      if (_pingResult != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10),
+                          child: Text(_pingResult!,
+                              style: TextStyle(color: _pingResult!.startsWith('Ошибка') ? AppColors.danger : AppColors.success)),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            if (!AppScope.isSaasMode) ...[
             _section('Провайдер'),
             Wrap(
               spacing: 8,
@@ -382,6 +446,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
                         'идут после резервного. Меняются в кабинете zalpos.ru → ИИ.',
                 style: TextStyle(fontSize: 12, color: AppColors.textMuted),
               ),
+            ],
             ],
             const Divider(height: 32),
             _section('Параметры генерации'),

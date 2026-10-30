@@ -11,6 +11,7 @@ import 'firebase_options.dart';
 import 'models/employee.dart';
 import 'models/tenant_models.dart';
 import 'services/window_mode.dart';
+import 'services/ai/tooken_client.dart';
 import 'services/app_bootstrap.dart';
 import 'services/app_lock.dart';
 import 'services/app_scope.dart';
@@ -119,6 +120,10 @@ void main() async {
       StartupLog.step('вход выполнен');
 
       if (kSaasMode) {
+        // ИИ кассы — через сервер платформы, как у гостя: заведению не нужен
+        // VPN (провайдеры вроде Gemini не пускают планшеты из России), а
+        // сервер сам заменит модель, которую провайдер убрал.
+        if (kSaasGatewayUrl.isNotEmpty) TookenClient.instance.useGatewayProxy(kSaasGatewayUrl);
         // SaaS: доступ — членство в заведении, а не общий секрет. После
         // перезапуска оно уже есть, при первом запуске надо присоединиться.
         final tenantConfigService = TenantConfigService();

@@ -42,6 +42,7 @@ const {
 } = require("./auth-email");
 const { createGuestPay, onlinePaySettings, credsPrint, sellerReady } = require("./guest-pay");
 const requisites = require("./requisites");
+const aiKeys = require("./ai-keys");
 const { createGuestDelivery } = require("./guest-delivery");
 const { createTelegram, encrypt: tgEncrypt, decrypt: tgDecrypt, secretKey: tgSecretKey } = require("./telegram");
 const { createSupportBot } = require("./support-bot");
@@ -7194,6 +7195,10 @@ const AI_EXTRA_VENDOR_DEFAULTS = {
 const AI_EXTRA_SLOT = /^extra:([A-Za-z0-9_-]{1,24})$/;
 const AI_PROXY_PATHS = new Set(["chat/completions", "messages", "v1/messages"]);
 const AI_PROXY_LIMIT = 30; // запросов гостя
+const AI_PROXY_STAFF_LIMIT = 400; // запросов кассы (сотрудник, агенты)
+// Модели ключа (для замены пропавшей модели): ключ+адрес → { at, ids }.
+const aiModelsCache = new Map();
+const aiModelFix = new Map(); // ключ+адрес+модель → замена
 const AI_PROXY_WINDOW_MS = 10 * 60 * 1000; // за 10 минут
 const aiProxyLimiter = new Map(); // uid -> { count, resetAt }
 
@@ -7314,8 +7319,8 @@ async function handleAiProxy(req, res) {
   if (!lim || lim.resetAt <= now) {
     if (aiProxyLimiter.size > 20000) aiProxyLimiter.clear();
     aiProxyLimiter.set(decoded.uid, { count: 1, resetAt: now + AI_PROXY_WINDOW_MS });
-  } else if (lim.count >= AI_PROXY_LIMIT) {
-    throw new HttpError(429, "Слишком много вопросов подряд — попробуйте через несколько минут");
+  } else if (lim.count >= AI_PROXY_STAFF_LIMIT) {
+    throw new HttpError(429, "Слишком много запросов к ИИ подряд — попробуйте через несколько минут");
   } else {
     lim.count += 1;
   }
@@ -7354,6 +7359,10 @@ async function handleAiProxy(req, res) {
   ]);
   const isMember = member.exists && member.data().status === "active";
   if (!isMember && !client.exists) throw new HttpError(403, "Нет доступа к ИИ этого заведения");
+  // Гостю — свой лимит (кассе нужно больше: агенты делают по нескольку запросов).
+  if (!isMember && (aiProxyLimiter.get(decoded.uid) || {}).count > AI_PROXY_LIMIT) {
+    throw new HttpError(429, "Слишком много вопросов подряд — попробуйте через несколько минут");
+  }
   if (!isMember) {
     // Те же условия, что проверяет приложение гостя (consumeAiQuota), но на
     // сервере: анонимный аккаунт с профилем заводится бесплатно, и без этой
@@ -7393,30 +7402,98 @@ async function handleAiProxy(req, res) {
   const headers = fmt === "anthropic"
     ? { "Content-Type": "application/json", "x-api-key": vendor.apiKey, "anthropic-version": "2023-06-01", Authorization: `Bearer ${vendor.apiKey}` }
     : { "Content-Type": "application/json", Authorization: `Bearer ${vendor.apiKey}` };
+  // Путь — по формату и настоящему адресу (гость адреса не видит и не
+  // знает, есть ли в нём уже /v1).
+  const upstreamPath = fmt === "anthropic"
+    ? (vendor.baseUrl.endsWith("/v1") ? "messages" : "v1/messages")
+    : "chat/completions";
+  const cacheKey = `${vendor.baseUrl}|${crypto.createHash("sha256").update(vendor.apiKey).digest("hex").slice(0, 16)}`;
+  const fixed = aiModelFix.get(`${cacheKey}|${payload.model}`);
+  if (fixed) payload.model = fixed;
+  // Через aiKeys.aiFetch: переадресации не выполняются (адрес проверен
+  // выше), при AI_UPSTREAM_PROXY — через прокси платформы за рубежом.
+  const send = () => aiKeys.aiFetch(`${vendor.baseUrl}/${upstreamPath}`, {
+    method: "POST", headers, body: JSON.stringify(payload), timeoutMs: 60000,
+  });
   let upstream;
   try {
-    // Путь — по формату и настоящему адресу (гость адреса не видит и не
-    // знает, есть ли в нём уже /v1).
-    const upstreamPath = fmt === "anthropic"
-      ? (vendor.baseUrl.endsWith("/v1") ? "messages" : "v1/messages")
-      : "chat/completions";
-    // redirect: "error" — иначе внешний адрес мог бы переадресовать запрос
-    // во внутреннюю сеть уже после проверки выше.
-    upstream = await fetch(`${vendor.baseUrl}/${upstreamPath}`, {
-      method: "POST", headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(60000),
-      redirect: "error",
-    });
+    upstream = await send();
+    // Провайдер убрал модель — берём ближайшую из списка ключа и повторяем
+    // (и запоминаем замену): владельцу не нужно ничего менять в настройках.
+    if ((upstream.status === 400 || upstream.status === 404) && /model/i.test(upstream.text)
+        && /(not.?found|does not exist|no such|invalid|not available|unknown|unsupported|not supported)/i.test(upstream.text)) {
+      let ids = (aiModelsCache.get(cacheKey) || {}).ids;
+      if (!ids || Date.now() - aiModelsCache.get(cacheKey).at > 6 * 3600 * 1000) {
+        ids = (await aiKeys.listModels({ baseUrl: vendor.baseUrl, format: fmt }, vendor.apiKey).catch(() => ({ ids: [] }))).ids;
+        if (ids.length) aiModelsCache.set(cacheKey, { at: Date.now(), ids });
+      }
+      const tier = payload.model === vendor.models[1] && vendor.models[1] !== vendor.models[0] ? "heavy" : "light";
+      const repl = ids && ids.length ? aiKeys.replacementModel(payload.model, ids, tier) : "";
+      if (repl && repl !== payload.model) {
+        console.log(`saas-gateway: ИИ ${tenantId}: модели «${payload.model}» у провайдера нет — беру «${repl}»`);
+        aiModelFix.set(`${cacheKey}|${payload.model}`, repl);
+        payload.model = repl;
+        upstream = await send();
+      }
+    }
   } catch (e) {
     throw new HttpError(502, `Провайдер ИИ не ответил: ${e.message || e}`);
   }
-  const text = await upstream.text();
+  const text = upstream.text;
   res.writeHead(upstream.status, {
-    "Content-Type": upstream.headers.get("content-type") || "application/json; charset=utf-8",
+    "Content-Type": upstream.contentType || "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, x-callback-secret",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   });
   res.end(text);
+}
+
+/**
+ * Подключение ключа ИИ одним полем (кабинет → «ИИ»): сервер узнаёт
+ * провайдера, берёт модели ключа, выбирает быструю и умную и проверяет
+ * ответ. Ключ не сохраняется здесь — кабинет сам пишет его в meta/aiSecrets.
+ * Без apiKey, со slot — перепроверка уже сохранённого ключа.
+ */
+const aiProbeLimiter = new Map();
+async function handleAiKeyProbe(req, res) {
+  const decoded = await verifyAuth(req);
+  const { tenantId, apiKey, baseUrl, slot } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
+  const firestore = db();
+  const tenantDoc = await firestore.collection("tenants").doc(tenantId).get();
+  if (!tenantDoc.exists) throw new HttpError(404, "Заведение не найдено");
+  const chainId = tenantDoc.data().chainId || null;
+  if (!(await isSuperAdmin(decoded))) {
+    try {
+      await requireTenantRole(tenantId, decoded.uid, ["owner", "manager", "admin"]);
+    } catch (e) {
+      if (!chainId) throw e;
+      await requireChainRole(chainId, decoded.uid, ["owner", "admin", "manager"]);
+    }
+  }
+  const now = Date.now();
+  const lim = aiProbeLimiter.get(decoded.uid);
+  if (!lim || lim.resetAt <= now) aiProbeLimiter.set(decoded.uid, { count: 1, resetAt: now + 10 * 60 * 1000 });
+  else if (lim.count >= 30) throw new HttpError(429, "Слишком много проверок подряд — подождите несколько минут");
+  else lim.count += 1;
+
+  let key = typeof apiKey === "string" ? apiKey.trim() : "";
+  let url = typeof baseUrl === "string" ? baseUrl.trim() : "";
+  if (!key && typeof slot === "string" && slot) {
+    // Перепроверка сохранённого ключа: берём его из секретов (сети или точки).
+    const root = chainId ? firestore.collection("chains").doc(chainId) : firestore.collection("tenants").doc(tenantId);
+    const [st, sec] = await Promise.all([root.collection("meta").doc("aiSettings").get(), root.collection("meta").doc("aiSecrets").get()]);
+    const v = resolveAiVendor(st.data() || {}, sec.data() || {}, slot);
+    if (!v || !v.apiKey) throw new HttpError(400, "Ключ не сохранён");
+    key = v.apiKey;
+    url = url || (v.vendorId === "custom" ? v.baseUrl : "");
+  }
+  if (key.length > 400) throw new HttpError(400, "Ключ слишком длинный — вставьте только сам ключ");
+  if (url) await assertPublicAiUrl(url);
+  const result = await aiKeys.probeKey({ apiKey: key, baseUrl: url });
+  if (result.baseUrl) await assertPublicAiUrl(result.baseUrl);
+  sendJson(res, 200, result);
 }
 
 /**
@@ -9108,6 +9185,7 @@ const ROUTES = {
   "/registerGuestRecovery": handleRegisterGuestRecovery,
   "/restoreGuestSession": handleRestoreGuestSession,
   "/aiProxy": handleAiProxy,
+  "/aiKeyProbe": handleAiKeyProbe,
   "/grantSuperAdmin": handleGrantSuperAdmin,
   "/revokeSuperAdmin": handleRevokeSuperAdmin,
   "/revokeAdminSessions": handleRevokeAdminSessions,

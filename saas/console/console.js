@@ -5324,137 +5324,78 @@ function watchDashboardData(tenantId) {
 
     const supportHtml = () => selectedTicket ? ticketThreadHtml() : ticketListHtml();
 
+    // ИИ: владелец только вставляет ключи. Чей ключ, какие у него модели и
+    // какую брать для быстрых и сложных задач — решает сервер (/aiKeyProbe).
+    // Хранение прежнее: первый ключ — основной провайдер, остальные —
+    // дополнительные (касса и сервер их уже понимают).
     const aiState = () => {
       if (aiDraft) return aiDraft;
       const pub = aiPub || aiLegacy?.pub || {};
       const sec = (aiPub ? aiSec : aiLegacy?.sec) || {};
-      const vendors = {};
-      AI_VENDORS.forEach((v) => {
-        const p = (pub.vendors || {})[v.id] || {};
-        const k = (sec.vendors || {})[v.id] || {};
-        vendors[v.id] = {
-          hasKey: !!(p.hasKey || k.apiKey), apiKey: '', model: p.model || '', baseUrl: k.baseUrl || '',
-          format: p.format || '', analyticsModel: p.analyticsModel || '',
-          // Ключ прежних настроек точки — при первом сохранении переносится
-          // в общие настройки сети (в форме не показывается).
-          carryKey: aiPub ? '' : (k.apiKey || ''),
-        };
-      });
-      // Старый формат (один шлюз прямо в aiSettings) — показываем как есть.
       const legacyVendor = pub.vendor || (pub.baseUrl ? (String(pub.baseUrl).includes('darkapi') ? 'darkapi'
         : String(pub.baseUrl).includes('generativelanguage') ? 'gemini'
           : String(pub.baseUrl).includes('tooken') ? 'tooken' : 'custom') : 'tooken');
+      const fromVendor = (id) => {
+        if (!id || !AI_VENDORS.some((v) => v.id === id)) return null;
+        const p = (pub.vendors || {})[id] || {};
+        const k = (sec.vendors || {})[id] || {};
+        let key = k.apiKey || '';
+        let base = k.baseUrl || '';
+        if (!key && id === legacyVendor && pub.apiKey) { key = pub.apiKey; base = base || pub.baseUrl || ''; }
+        if (!key && !p.hasKey) return null;
+        return {
+          id: `v-${id}`, vendor: id, savedKey: key, apiKey: '', baseUrl: base, baseUrl0: base,
+          model: p.model || (id === legacyVendor ? pub.model || '' : ''), analyticsModel: p.analyticsModel || '',
+          format: p.format || '', enabled: true, hasKey: true,
+        };
+      };
+      const keys = [fromVendor(legacyVendor)];
+      if (pub.fallbackVendor && pub.fallbackVendor !== legacyVendor) keys.push(fromVendor(pub.fallbackVendor));
       const secExtra = sec.extraKeys || {};
-      const extras = (Array.isArray(pub.extraKeys) ? pub.extraKeys : []).filter((k) => k && k.id).slice(0, AI_EXTRA_MAX).map((k) => ({
-        id: String(k.id), vendor: k.vendor || 'custom', model: k.model || '', analyticsModel: k.analyticsModel || '',
-        format: k.format || '', enabled: k.enabled !== false, hasKey: !!(k.hasKey || (secExtra[k.id] || {}).apiKey),
-        apiKey: '', baseUrl: (secExtra[k.id] || {}).baseUrl || '',
-      }));
-      return {
-        enabled: pub.enabled === true, vendor: legacyVendor, fallbackVendor: pub.fallbackVendor || '',
-        vendors, extras, removedExtras: [], migrated: !aiPub && !!aiLegacy,
-      };
+      (Array.isArray(pub.extraKeys) ? pub.extraKeys : []).filter((k) => k && k.id).slice(0, AI_EXTRA_MAX).forEach((k) => {
+        const s = secExtra[k.id] || {};
+        keys.push({
+          id: String(k.id), vendor: k.vendor || 'custom', savedKey: s.apiKey || '', apiKey: '', baseUrl: s.baseUrl || '', baseUrl0: s.baseUrl || '',
+          model: k.model || '', analyticsModel: k.analyticsModel || '', format: k.format || '',
+          enabled: k.enabled !== false, hasKey: !!(k.hasKey || s.apiKey),
+        });
+      });
+      return { enabled: pub.enabled === true, keys: keys.filter(Boolean), removed: [], migrated: !aiPub && !!aiLegacy };
     };
 
-    const aiVendorCardHtml = (st, id, slotLabel) => {
-      const v = aiVendor(id);
-      const c = st.vendors[id];
-      return `
-        <div class="card">
-          <div class="row" style="justify-content:space-between;align-items:center">
-            <b>${esc(v.title)}</b>
-            <span class="small muted">${esc(slotLabel)}${c.hasKey ? ' · ✓ ключ сохранён' : ''}</span>
-          </div>
-          <label class="field"><span>API-ключ</span>
-            <input type="password" autocomplete="off" class="f-ai-input" id="f-ai-${esc(id)}-key" data-vendor="${esc(id)}" data-field="apiKey"
-              value="${esc(c.apiKey)}" placeholder="${esc(c.hasKey ? 'сохранён — оставьте пустым, чтобы не менять' : v.hint)}" ${canManage ? '' : 'disabled'}>
-          </label>
-          <label class="field"><span>Модель</span>
-            <input class="f-ai-input" id="f-ai-${esc(id)}-model" data-vendor="${esc(id)}" data-field="model" list="ai-models-${esc(id)}"
-              value="${esc(c.model)}" placeholder="${esc(v.model || 'имя модели')}" ${canManage ? '' : 'disabled'}>
-            <datalist id="ai-models-${esc(id)}">${v.models.map((m) => `<option value="${esc(m)}">`).join('')}</datalist>
-          </label>
-          <label class="field"><span>Адрес API${id === 'custom' ? '' : ' (необязательно)'}</span>
-            <input class="f-ai-input" id="f-ai-${esc(id)}-url" data-vendor="${esc(id)}" data-field="baseUrl" value="${esc(c.baseUrl)}"
-              placeholder="${esc(v.baseUrl || 'https://ваш-шлюз/v1')}" ${canManage ? '' : 'disabled'}>
-          </label>
-          ${id === 'custom' ? `
-            <label class="field"><span>Формат API</span>
-              <select class="f-ai-input" data-vendor="custom" data-field="format" ${canManage ? '' : 'disabled'}>
-                ${[['', 'Определить автоматически'], ['openai', 'OpenAI-совместимый'], ['anthropic', 'Anthropic (Claude)']]
-                  .map(([val, label]) => `<option value="${val}" ${c.format === val ? 'selected' : ''}>${label}</option>`).join('')}
-              </select>
-            </label>` : ''}
-          ${v.note ? `<p class="small muted" style="margin-top:6px">${esc(v.note)}</p>` : ''}
-        </div>`;
-    };
-
-    // Номер в очереди первого дополнительного ключа: после основного и резервного.
-    const aiExtraBase = (st) => (st.fallbackVendor && st.fallbackVendor !== st.vendor ? 2 : 1);
-
-    const aiExtrasHtml = (st) => {
+    const aiKeyCardHtml = (k, i, total) => {
       const dis = canManage ? '' : 'disabled';
-      const base = aiExtraBase(st);
-      const card = (k, i) => {
-        const v = aiExtraVendor(k.vendor);
-        const fid = `f-ai-x-${esc(k.id)}`;
-        const attrs = (field) => `class="f-ai-x" data-i="${i}" data-field="${field}" ${dis}`;
-        return `
-          <div class="card ai-extra${k.enabled ? '' : ' ai-extra-off'}">
-            <div class="row" style="justify-content:space-between;align-items:center;gap:8px">
-              <b>Ключ ${base + i + 1} · ${esc(v.title)}</b>
-              <span class="small muted">${k.enabled ? '' : 'выключен · '}${k.hasKey ? '✓ ключ сохранён' : 'ключ не указан'}</span>
-            </div>
-            <label class="field"><span>Шлюз</span>
-              <select id="${fid}-vendor" ${attrs('vendor')}>
-                ${AI_EXTRA_VENDORS.map((o) => `<option value="${o.id}" ${o.id === v.id ? 'selected' : ''}>${esc(o.title)}</option>`).join('')}
-              </select>
-            </label>
-            <label class="field"><span>API-ключ</span>
-              <input type="password" autocomplete="off" id="${fid}-key" ${attrs('apiKey')} value="${esc(k.apiKey)}"
-                placeholder="${esc(k.hasKey ? 'сохранён — оставьте пустым, чтобы не менять' : v.hint)}">
-            </label>
-            <label class="field"><span>Модель</span>
-              <input id="${fid}-model" ${attrs('model')} list="${fid}-models" value="${esc(k.model)}" placeholder="${esc(v.model || 'имя модели')}">
-              <datalist id="${fid}-models">${v.models.map((m) => `<option value="${esc(m)}">`).join('')}</datalist>
-            </label>
-            <label class="field"><span>Адрес API${v.id === 'custom' ? '' : ' (необязательно)'}</span>
-              <input id="${fid}-url" ${attrs('baseUrl')} value="${esc(k.baseUrl)}" placeholder="${esc(v.baseUrl || 'https://ваш-шлюз/v1')}">
-            </label>
-            ${v.id === 'custom' ? `
-              <label class="field"><span>Формат API</span>
-                <select id="${fid}-format" ${attrs('format')}>
-                  ${[['', 'Определить автоматически'], ['openai', 'OpenAI-совместимый'], ['anthropic', 'Anthropic (Claude)']]
-                    .map(([val, label]) => `<option value="${val}" ${k.format === val ? 'selected' : ''}>${label}</option>`).join('')}
-                </select>
-              </label>` : ''}
-            ${v.note ? `<p class="small muted" style="margin-top:6px">${esc(v.note)}</p>` : ''}
-            ${canManage ? `
-              <div class="row ai-extra-actions">
-                <label class="row" style="gap:6px;align-items:center;margin:0;cursor:pointer">
-                  <input type="checkbox" class="f-ai-x-on" data-i="${i}" style="width:auto" ${k.enabled ? 'checked' : ''}>
-                  <span class="small">Включён</span>
-                </label>
-                <span class="grow"></span>
-                ${i > 0 ? `<button class="btn-link f-ai-x-move" data-i="${i}" data-dir="-1" style="width:auto">↑ Выше</button>` : ''}
-                ${i < st.extras.length - 1 ? `<button class="btn-link f-ai-x-move" data-i="${i}" data-dir="1" style="width:auto">↓ Ниже</button>` : ''}
-                <button class="btn-link f-ai-x-del" data-i="${i}" style="width:auto;color:var(--danger)">Удалить</button>
-              </div>` : ''}
-          </div>`;
-      };
+      const v = aiExtraVendor(k.vendor);
+      const known = k.hasKey && !k.apiKey;
+      const models = k.model ? `быстрые ответы — ${esc(k.model)}${k.analyticsModel && k.analyticsModel !== k.model ? `, сложные — ${esc(k.analyticsModel)}` : ''}` : 'модели подберутся при сохранении';
       return `
-        <div class="card">
-          <div class="row" style="justify-content:space-between;align-items:center">
-            <b>Дополнительные ключи</b>
-            <span class="small muted">${st.extras.length} из ${AI_EXTRA_MAX}</span>
+        <div class="card ai-extra${k.enabled ? '' : ' ai-extra-off'}">
+          <div class="row" style="justify-content:space-between;align-items:center;gap:8px">
+            <b>Ключ ${i + 1}${known ? ` · ${esc(v.title)}` : ''}</b>
+            <span class="small muted">${i === 0 ? 'основной' : 'запасной'}${k.enabled ? '' : ' · выключен'}</span>
           </div>
-          <p class="small muted" style="margin:6px 0 0">Закончились деньги, ключ отклонён или провайдер молчит — касса и приложение гостя
-            сами берут следующий ключ: основной → резервный → дополнительные по порядку. Отказавший ключ на время уходит в конец
-            очереди и не задерживает ответы. Можно добавить несколько ключей одного шлюза и любой свой шлюз.</p>
-        </div>
-        ${st.extras.map(card).join('')}
-        ${canManage && st.extras.length < AI_EXTRA_MAX
-          ? '<button class="btn btn-ghost" id="f-ai-x-add" style="width:auto;margin:0 0 14px">＋ Добавить ключ</button>' : ''}`;
+          ${known ? `<p class="small" style="margin:6px 0 0">✓ Подключён: ${models}</p>` : ''}
+          <label class="field"><span>${known ? 'Заменить ключ' : 'API-ключ'}</span>
+            <input type="password" autocomplete="off" id="f-ai-k-${esc(k.id)}" class="f-ai-k" data-i="${i}" data-field="apiKey" value="${esc(k.apiKey)}"
+              placeholder="${known ? 'сохранён — вставьте новый, только если меняете' : 'Вставьте ключ любого провайдера'}" ${dis}>
+          </label>
+          <details${k.vendor === 'custom' && k.baseUrl ? ' open' : ''} style="margin-top:4px">
+            <summary class="small muted" style="cursor:pointer">Ключ своего шлюза, которого нет в списке</summary>
+            <label class="field" style="margin-top:6px"><span>Адрес API шлюза</span>
+              <input class="f-ai-k" data-i="${i}" data-field="baseUrl" value="${esc(k.baseUrl)}" placeholder="https://ваш-шлюз/v1" ${dis}>
+            </label>
+          </details>
+          ${canManage ? `
+            <div class="row ai-extra-actions">
+              ${total > 1 ? `<label class="row" style="gap:6px;align-items:center;margin:0;cursor:pointer">
+                <input type="checkbox" class="f-ai-k-on" data-i="${i}" style="width:auto" ${k.enabled ? 'checked' : ''}>
+                <span class="small">Включён</span>
+              </label>` : ''}
+              <span class="grow"></span>
+              ${i > 0 ? `<button class="btn-link f-ai-k-move" data-i="${i}" style="width:auto">↑ Сделать основным</button>` : ''}
+              <button class="btn-link f-ai-k-del" data-i="${i}" style="width:auto;color:var(--danger)">Удалить</button>
+            </div>` : ''}
+        </div>`;
     };
 
     const aiHtml = () => {
@@ -5464,36 +5405,30 @@ function watchDashboardData(tenantId) {
         <h2>ИИ-помощники</h2>
         <div class="card">
           <p class="small muted" style="margin-top:0">${tenant.chainId
-            ? `Общие настройки для всей сети${chainName ? ` «${esc(chainName)}»` : ''}: ключ провайдера покупается один раз и работает во всех точках сети.`
-            : 'Ключ провайдера ИИ этого заведения. Оплата идёт напрямую провайдеру по его тарифам — платформа ключи не выдаёт.'}</p>
-          <p class="small" style="margin:6px 0 0">Ключа ещё нет? <a href="#" class="f-dash-tab" data-tab="guide" data-guide-q="где взять ключ">Где взять ключ и какую модель выбрать</a> — пошагово, с примером.</p>
+            ? `Общие настройки для всей сети${chainName ? ` «${esc(chainName)}»` : ''}: ключ покупается один раз и работает во всех точках сети.`
+            : 'ИИ подсказывает кассиру, собирает отчёты и отвечает гостям в приложении. Оплата — напрямую провайдеру ИИ по его тарифам.'}</p>
+          <p class="small" style="margin:6px 0 0"><b>Как подключить:</b> вставьте API-ключ и нажмите «Сохранить». Подойдёт ключ любого провайдера —
+            Tooken Club, DarkAPI, OpenRouter, DeepSeek, OpenAI, Claude, Gemini или своего шлюза. Чей это ключ, какие у него модели и какую брать
+            для быстрых и для сложных задач, система определит сама. VPN не нужен: касса обращается к ИИ через сервер ZalPOS.</p>
+          <p class="small" style="margin:6px 0 0">Ключа ещё нет? <a href="#" class="f-dash-tab" data-tab="guide" data-guide-q="где взять ключ">Где взять ключ</a> — проще всего Tooken Club, оплата в рублях.</p>
           ${st.migrated ? '<p class="small" style="color:var(--warning,#F59E0B)">Сейчас работают прежние настройки этой точки. После сохранения они станут общими для всей сети.</p>' : ''}
-          <label class="row" style="gap:8px;align-items:center;margin:8px 0">
+          <label class="row" style="gap:8px;align-items:center;margin:10px 0 0">
             <input type="checkbox" id="f-ai-enabled" ${st.enabled ? 'checked' : ''} ${canManage ? '' : 'disabled'}>
-            <span>Включить ИИ-помощников (касса и консьерж в гостевом приложении)</span>
-          </label>
-          <label class="field"><span>Основной провайдер</span>
-            <select id="f-ai-vendor" ${canManage ? '' : 'disabled'}>
-              ${AI_VENDORS.map((v) => `<option value="${v.id}" ${st.vendor === v.id ? 'selected' : ''}>${esc(v.title)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="field"><span>Резервный провайдер — если основной не ответил</span>
-            <select id="f-ai-fallback" ${canManage ? '' : 'disabled'}>
-              <option value="">— нет —</option>
-              ${AI_VENDORS.filter((v) => v.id !== st.vendor).map((v) => `<option value="${v.id}" ${st.fallbackVendor === v.id ? 'selected' : ''}>${esc(v.title)}</option>`).join('')}
-            </select>
+            <span>ИИ-помощники включены</span>
           </label>
         </div>
-        ${aiVendorCardHtml(st, st.vendor, 'основной')}
-        ${st.fallbackVendor && st.fallbackVendor !== st.vendor ? aiVendorCardHtml(st, st.fallbackVendor, 'резервный') : ''}
-        ${aiExtrasHtml(st)}
+        ${st.keys.map((k, i) => aiKeyCardHtml(k, i, st.keys.length)).join('')}
+        ${canManage && st.keys.length < AI_EXTRA_MAX + 1
+          ? `<button class="btn btn-ghost" id="f-ai-k-add" style="width:auto;margin:0 0 6px">＋ ${st.keys.length ? 'Добавить запасной ключ' : 'Добавить ключ'}</button>
+             ${st.keys.length ? '<p class="small muted" style="margin:0 0 14px">Запасной ключ отвечает, если у основного кончились деньги или провайдер молчит, — касса переключится сама.</p>' : ''}`
+          : ''}
         ${canManage ? `
           <div class="row" style="gap:8px;flex-wrap:wrap">
             <button class="btn btn-primary" id="f-ai-save" style="width:auto">Сохранить</button>
-            <button class="btn btn-ghost" id="f-ai-test" style="width:auto">Проверить все ключи</button>
+            ${st.keys.some((k) => k.hasKey) ? '<button class="btn btn-ghost" id="f-ai-test" style="width:auto">Проверить связь</button>' : ''}
           </div>` : '<p class="small muted">Менять настройки ИИ может владелец или администратор.</p>'}
         <div id="f-ai-msg" class="small" style="margin-top:10px;white-space:pre-line"></div>
-        <p class="small muted">Тонкая настройка агентов (какие помощники включены, лимит ответа) — в кассе: Админ → Настройки ИИ.</p>
+        <p class="small muted">Какие помощники работают в кассе и длина ответа — в кассе: Админ → Настройки ИИ.</p>
       `;
     };
 
@@ -5888,102 +5823,147 @@ function watchDashboardData(tenantId) {
         const el = $('f-ai-msg');
         if (el) { el.textContent = text; el.style.color = ok ? 'var(--success,#22C55E)' : 'var(--danger)'; }
       };
-      document.querySelectorAll('.f-ai-input').forEach((el) => {
-        el.oninput = el.onchange = () => { ensureDraft().vendors[el.dataset.vendor][el.dataset.field] = el.value.trim(); };
+      const keyAt = (el) => ensureDraft().keys[Number(el.dataset.i)];
+      document.querySelectorAll('.f-ai-k').forEach((el) => {
+        el.oninput = el.onchange = () => { const k = keyAt(el); if (k) k[el.dataset.field] = el.value.trim(); };
       });
       if ($('f-ai-enabled')) $('f-ai-enabled').onchange = (e) => { ensureDraft().enabled = e.target.checked; };
-      if ($('f-ai-vendor')) $('f-ai-vendor').onchange = (e) => {
-        const d = ensureDraft();
-        d.vendor = e.target.value;
-        if (d.fallbackVendor === d.vendor) d.fallbackVendor = '';
-        draw();
-      };
-      if ($('f-ai-fallback')) $('f-ai-fallback').onchange = (e) => { ensureDraft().fallbackVendor = e.target.value; draw(); };
-
-      // Дополнительные ключи.
-      const extraAt = (el) => ensureDraft().extras[Number(el.dataset.i)];
-      document.querySelectorAll('.f-ai-x').forEach((el) => {
-        el.oninput = el.onchange = (e) => {
-          const k = extraAt(el);
-          if (!k) return;
-          k[el.dataset.field] = el.value.trim();
-          // Другой шлюз — другие подсказки и поля (адрес, формат).
-          if (el.dataset.field === 'vendor' && e.type === 'change') draw();
-        };
+      document.querySelectorAll('.f-ai-k-on').forEach((el) => {
+        el.onchange = () => { const k = keyAt(el); if (k) { k.enabled = el.checked; draw(); } };
       });
-      document.querySelectorAll('.f-ai-x-on').forEach((el) => {
-        el.onchange = () => { const k = extraAt(el); if (k) { k.enabled = el.checked; draw(); } };
-      });
-      document.querySelectorAll('.f-ai-x-move').forEach((el) => {
+      document.querySelectorAll('.f-ai-k-move').forEach((el) => {
         el.onclick = () => {
-          const list = ensureDraft().extras;
+          const list = ensureDraft().keys;
           const i = Number(el.dataset.i);
-          const j = i + Number(el.dataset.dir);
-          if (j < 0 || j >= list.length) return;
-          [list[i], list[j]] = [list[j], list[i]];
+          const [k] = list.splice(i, 1);
+          list.unshift(k);
           draw();
         };
       });
-      document.querySelectorAll('.f-ai-x-del').forEach((el) => {
+      document.querySelectorAll('.f-ai-k-del').forEach((el) => {
         el.onclick = () => {
           const d = ensureDraft();
-          const k = d.extras[Number(el.dataset.i)];
-          if (!k || !window.confirm(`Удалить ключ «${aiExtraVendor(k.vendor).title}»? Он перестанет работать после сохранения.`)) return;
-          d.extras.splice(Number(el.dataset.i), 1);
-          d.removedExtras.push(k.id);
+          const k = d.keys[Number(el.dataset.i)];
+          if (!k || (k.hasKey && !window.confirm(`Удалить ключ ${Number(el.dataset.i) + 1}? Он перестанет работать после сохранения.`))) return;
+          d.keys.splice(Number(el.dataset.i), 1);
+          if (!k.id.startsWith('v-')) d.removed.push(k.id);
           draw();
         };
       });
-      if ($('f-ai-x-add')) $('f-ai-x-add').onclick = () => {
+      if ($('f-ai-k-add')) $('f-ai-k-add').onclick = () => {
         const d = ensureDraft();
-        if (d.extras.length >= AI_EXTRA_MAX) return;
+        if (d.keys.length >= AI_EXTRA_MAX + 1) return;
         const id = `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-        // По умолчанию — тот же шлюз, что основной: чаще всего докупают второй ключ к нему.
-        d.extras.push({ id, vendor: d.vendor, model: '', analyticsModel: '', format: '', enabled: true, hasKey: false, apiKey: '', baseUrl: '' });
+        // Первый ключ — сразу включаем ИИ: иначе «сохранил, а не работает».
+        if (!d.keys.length) d.enabled = true;
+        d.keys.push({ id, vendor: 'custom', savedKey: '', apiKey: '', baseUrl: '', model: '', analyticsModel: '', format: '', enabled: true, hasKey: false });
         draw();
-        const input = document.getElementById(`f-ai-x-${id}-key`);
+        const input = document.getElementById(`f-ai-k-${id}`);
         if (input) { input.scrollIntoView({ block: 'center', behavior: 'smooth' }); input.focus({ preventScroll: true }); }
+      };
+
+      // Проверка ключа на сервере: провайдер, модели, пробный ответ.
+      const probe = async (k, n) => {
+        const r = await callSaasGateway('aiKeyProbe', { tenantId, apiKey: k.apiKey || k.savedKey, baseUrl: k.baseUrl || '' });
+        if (!r?.ok) throw new Error(`Ключ ${n}: ${r?.reason || 'не подключился'}`);
+        Object.assign(k, {
+          vendor: r.vendor, format: r.format || '', model: r.light || '', analyticsModel: r.heavy || r.light || '',
+          // Адрес храним только у своего шлюза — у известных берётся свой.
+          baseUrl: r.vendor === 'custom' ? r.baseUrl : (k.baseUrl ? r.baseUrl : ''),
+        });
+        return r;
       };
 
       const saveAi = async () => {
         const d = ensureDraft();
-        const main = d.vendors[d.vendor];
-        if (d.enabled && !main.hasKey && !main.apiKey) throw new Error('Укажите API-ключ основного провайдера');
-        if (d.vendor === 'custom' && !main.baseUrl) throw new Error('Для своего шлюза нужен «Адрес API»');
-        const base = aiExtraBase(d);
-        d.extras.forEach((k, i) => {
-          if (k.enabled && !k.hasKey && !k.apiKey) throw new Error(`Ключ ${base + i + 1}: укажите API-ключ или выключите его`);
-          if (k.vendor === 'custom' && !k.baseUrl) throw new Error(`Ключ ${base + i + 1}: для своего шлюза нужен «Адрес API»`);
-        });
-        const secExtras = {};
-        d.extras.forEach((k) => { secExtras[k.id] = { baseUrl: k.baseUrl || '', ...(k.apiKey ? { apiKey: k.apiKey } : {}) }; });
-        (d.removedExtras || []).forEach((id) => { if (!secExtras[id]) secExtras[id] = deleteField(); });
-        const pubExtras = d.extras.map((k) => ({
-          id: k.id, vendor: k.vendor, format: k.vendor === 'custom' ? (k.format || '') : '', model: k.model || '',
-          analyticsModel: k.analyticsModel || '', enabled: k.enabled !== false, hasKey: !!(k.hasKey || k.apiKey),
-        }));
+        const keys = d.keys.filter((k) => k.apiKey || k.savedKey || k.hasKey);
+        if (d.enabled && !keys.length) throw new Error('Вставьте API-ключ — без него ИИ не заработает');
+        // Новые и изменённые ключи, а также ключи без подобранных моделей — через сервер.
+        for (let i = 0; i < keys.length; i++) {
+          const k = keys[i];
+          if (!k.apiKey && !k.savedKey) throw new Error(`Ключ ${i + 1}: вставьте его ещё раз — сохранённый ключ не прочитался`);
+          if (k.apiKey || !k.model || (k.baseUrl || '') !== (k.baseUrl0 || '')) {
+            aiMsg(`Подключаю ключ ${i + 1}…`);
+            await probe(k, i + 1);
+          }
+        }
+        const main = keys.find((k) => k.enabled) || keys[0];
+        const rest = keys.filter((k) => k !== main);
+        // Основной — в слоте провайдера: свои у Tooken, DarkAPI и Gemini, остальные — как «свой шлюз».
+        const mainSlot = main && AI_VENDORS.some((v) => v.id === main.vendor && v.id !== 'custom') ? main.vendor : 'custom';
         const secVendors = {};
         const pubVendors = {};
         AI_VENDORS.forEach((v) => {
-          const c = d.vendors[v.id];
-          const key = c.apiKey || c.carryKey || '';
-          secVendors[v.id] = { baseUrl: c.baseUrl || '', ...(key ? { apiKey: key } : {}) };
+          const on = main && v.id === mainSlot;
+          const base = on ? (main.baseUrl || (mainSlot === 'custom' ? aiExtraVendor(main.vendor).baseUrl : '')) : '';
+          secVendors[v.id] = { baseUrl: base, apiKey: on ? (main.apiKey || main.savedKey) : '' };
           pubVendors[v.id] = {
-            format: v.id === 'custom' ? (c.format || '') : '', model: c.model || '',
-            analyticsModel: c.analyticsModel || '', hasKey: !!(c.hasKey || c.apiKey),
+            format: on && mainSlot === 'custom' ? (main.format || (aiExtraVendor(main.vendor).anthropic ? 'anthropic' : 'openai')) : '',
+            model: on ? main.model : '', analyticsModel: on ? main.analyticsModel : '', hasKey: !!on,
           };
         });
+        const extras = rest.map((k) => ({ ...k, id: k.id.startsWith('v-') ? `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}` : k.id }));
+        const secExtras = {};
+        extras.forEach((k) => { secExtras[k.id] = { baseUrl: k.baseUrl || '', apiKey: k.apiKey || k.savedKey }; });
+        (d.removed || []).forEach((id) => { if (!secExtras[id]) secExtras[id] = deleteField(); });
+        // Прежние дополнительные, ставшие основным, — из списка дополнительных убираем.
+        if (main && !main.id.startsWith('v-') && !secExtras[main.id]) secExtras[main.id] = deleteField();
+        const pubExtras = extras.map((k) => ({
+          id: k.id, vendor: AI_EXTRA_VENDORS.some((v) => v.id === k.vendor) ? k.vendor : 'custom',
+          format: k.vendor === 'custom' ? (k.format || '') : '', model: k.model || '',
+          analyticsModel: k.analyticsModel || '', enabled: k.enabled !== false, hasKey: true,
+        }));
         // Сначала ключи (только персонал), потом публичная часть без ключей.
         await setDoc(doc(state.db, ...aiRoot(), 'meta', 'aiSecrets'), { vendors: secVendors, extraKeys: secExtras }, { merge: true });
         const del = deleteField();
         await setDoc(doc(state.db, ...aiRoot(), 'meta', 'aiSettings'), {
-          enabled: d.enabled, vendor: d.vendor, fallbackVendor: d.fallbackVendor || '', vendors: pubVendors,
+          enabled: d.enabled, vendor: mainSlot, fallbackVendor: '', vendors: pubVendors,
           extraKeys: pubExtras, updatedAt: Timestamp.fromDate(new Date()),
           apiKey: del, baseUrl: del, provider: del, model: del, analyticsModel: del, vendorKeys: del,
         }, { merge: true });
         aiDraft = null;
-        // Сохранённый ключ в поле не держим — иначе перерисовка вернёт его туда.
-        document.querySelectorAll('.f-ai-input[data-field="apiKey"], .f-ai-x[data-field="apiKey"]').forEach((el) => { el.value = ''; });
+        document.querySelectorAll('.f-ai-k[data-field="apiKey"]').forEach((el) => { el.value = ''; });
+      };
+
+      // Проверка всех сохранённых ключей настоящим запросом через сервер (как ходит касса).
+      const testAll = async () => {
+        const st = aiState();
+        if (!st.enabled) return { head: 'ИИ выключен — включите «ИИ-помощники включены» вверху и нажмите «Сохранить»', ok: false, lines: [] };
+        const slots = [];
+        st.keys.forEach((k, i) => {
+          if (!k.hasKey || !k.enabled) return;
+          const anthropic = k.format === 'anthropic' || !!aiExtraVendor(k.vendor).anthropic;
+          slots.push({ slot: i === 0 ? 'primary' : (k.id.startsWith('v-') ? (k.id === `v-${aiPub?.fallbackVendor}` ? 'fallback' : 'primary') : `extra:${k.id}`),
+            label: `Ключ ${i + 1} · ${aiExtraVendor(k.vendor).title}`, anthropic });
+        });
+        const idToken = await state.auth.currentUser?.getIdToken();
+        const check = async (s) => {
+          try {
+            const res = await fetch(`${SAAS_GATEWAY_URL}/aiProxy`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
+              body: JSON.stringify({
+                tenantId, slot: s.slot, format: s.anthropic ? 'anthropic' : 'openai',
+                path: s.anthropic ? 'v1/messages' : 'chat/completions',
+                body: { messages: [{ role: 'user', content: 'Ответь одним словом: OK' }], max_tokens: 256 },
+              }),
+            });
+            const json = await res.json().catch(() => null);
+            if (!res.ok) {
+              const err = json?.error;
+              throw new Error(typeof err === 'string' ? err : (err?.message || `провайдер ответил ${res.status}`));
+            }
+            return { ok: true, line: `✓ ${s.label} — отвечает` };
+          } catch (e) {
+            return { ok: false, line: `✕ ${s.label} — ${e?.message || e}` };
+          }
+        };
+        const results = await Promise.all(slots.map(check));
+        const okCount = results.filter((r) => r.ok).length;
+        const head = !results.length ? 'Нет включённых ключей'
+          : okCount === results.length ? 'ИИ работает: касса и приложение гостя будут отвечать'
+            : (okCount ? `Работают ${okCount} из ${results.length} — ИИ ответит через рабочие` : 'Ни один ключ не ответил');
+        return { head, ok: !!results.length && okCount === results.length, lines: results.map((r) => r.line) };
       };
 
       if ($('f-ai-save')) $('f-ai-save').onclick = async () => {
@@ -5992,9 +5972,11 @@ function watchDashboardData(tenantId) {
         try {
           await saveAi();
           draw();
-          aiMsg('Сохранено');
+          aiMsg('Сохранено. Проверяю связь…');
+          const r = await testAll();
+          aiMsg(`Сохранено. ${r.head}${r.lines.length ? `\n${r.lines.join('\n')}` : ''}`, r.ok);
         } catch (e) {
-          aiMsg(`Не удалось сохранить: ${e?.message || e}`, false);
+          aiMsg(`Не сохранено: ${e?.message || e}`, false);
         } finally {
           if ($('f-ai-save')) $('f-ai-save').disabled = false;
         }
@@ -6002,55 +5984,13 @@ function watchDashboardData(tenantId) {
       if ($('f-ai-test')) $('f-ai-test').onclick = async () => {
         const btn = $('f-ai-test');
         btn.disabled = true;
-        aiMsg('Проверяю ключи…');
+        aiMsg('Проверяю…');
         try {
           if (aiDraft) await saveAi();
-          const st = aiState();
-          if (!st.enabled) throw new Error('Сначала включите ИИ и сохраните');
-          // Все ключи очереди: основной, резервный и включённые дополнительные.
-          const slots = [{ slot: 'primary', label: `1 · ${aiVendor(st.vendor).title}`,
-            anthropic: st.vendor === 'custom' && st.vendors.custom.format === 'anthropic' }];
-          const fb = st.fallbackVendor && st.fallbackVendor !== st.vendor ? st.fallbackVendor : '';
-          if (fb && st.vendors[fb]?.hasKey) {
-            slots.push({ slot: 'fallback', label: `2 · ${aiVendor(fb).title}`, anthropic: fb === 'custom' && st.vendors.custom.format === 'anthropic' });
-          }
-          const base = aiExtraBase(st);
-          st.extras.forEach((k, i) => {
-            if (k.enabled && k.hasKey) {
-              slots.push({ slot: `extra:${k.id}`, label: `${base + i + 1} · ${aiExtraVendor(k.vendor).title}`, anthropic: aiExtraIsAnthropic(k) });
-            }
-          });
-          const idToken = await state.auth.currentUser?.getIdToken();
-          const check = async (s) => {
-            try {
-              const res = await fetch(`${SAAS_GATEWAY_URL}/aiProxy`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
-                body: JSON.stringify({
-                  tenantId, slot: s.slot, format: s.anthropic ? 'anthropic' : 'openai',
-                  path: s.anthropic ? 'v1/messages' : 'chat/completions',
-                  body: { messages: [{ role: 'user', content: 'Ответь одним словом: OK' }], max_tokens: 256 },
-                }),
-              });
-              const json = await res.json().catch(() => null);
-              if (!res.ok) {
-                const err = json?.error;
-                throw new Error(typeof err === 'string' ? err : (err?.message || `провайдер ответил ${res.status}`));
-              }
-              const text = json?.choices?.[0]?.message?.content ?? json?.content?.[0]?.text ?? '';
-              return { ok: true, line: `✓ ${s.label} — отвечает${text ? ` «${String(text).slice(0, 40)}»` : ''}` };
-            } catch (e) {
-              return { ok: false, line: `✕ ${s.label} — ${e?.message || e}` };
-            }
-          };
-          const results = await Promise.all(slots.map(check));
-          const okCount = results.filter((r) => r.ok).length;
-          const head = okCount === results.length
-            ? (results.length > 1 ? `Все ключи работают (${okCount})` : 'Связь есть')
-            : (okCount ? `Работают ${okCount} из ${results.length} — ИИ ответит через рабочие` : 'Ни один ключ не ответил');
-          aiMsg(`${head}\n${results.map((r) => r.line).join('\n')}`, okCount === results.length);
+          const r = await testAll();
+          aiMsg(`${r.head}${r.lines.length ? `\n${r.lines.join('\n')}` : ''}`, r.ok);
         } catch (e) {
-          aiMsg(`Нет связи: ${e?.message || e}`, false);
+          aiMsg(`${e?.message || e}`, false);
         } finally {
           if ($('f-ai-test')) $('f-ai-test').disabled = false;
         }
