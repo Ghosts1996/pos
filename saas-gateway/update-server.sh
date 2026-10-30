@@ -134,8 +134,19 @@ if [[ -d /opt/zalpos-site ]]; then
   else
     echo "!! сайт не собран — работает прежняя версия; повторите: bash $REPO/saas-gateway/build-site.sh"
   fi
+  # Домен ещё смотрит на Firebase (A-запись не переключена) — посетители
+  # получают копию оттуда: выкладываем туда ту же версию, пока DNS не сменят.
+  only=firestore
+  here="$(getent ahostsv4 pii.zalpos.ru | awk 'NR==1{print $1}' || true)"
+  there="$(getent ahostsv4 zalpos.ru | awk '{print $1}' | sort -u | tr '\n' ' ' || true)"
+  if [[ -n "$here" && -n "$there" && "$there" != "$here " ]]; then
+    echo "!! zalpos.ru указывает на: ${there}— а этот сервер: $here. Посетители открывают копию с Firebase (в России она медленная)."
+    echo "!! У регистратора домена (раздел DNS): A-запись «@» и «www» → $here, прочие A-записи удалите."
+    echo "   Пока DNS не переключён — выкладываю эту же версию и на Firebase Hosting."
+    only=hosting,firestore
+  fi
   if command -v firebase >/dev/null; then
-    (cd "$REPO/saas" && firebase deploy --only firestore --non-interactive) || echo "правила Firestore не выложены — не страшно, данные на этом сервере"
+    (cd "$REPO/saas" && firebase deploy --only "$only" --non-interactive) || echo "Firebase ($only) не выложен — данные на этом сервере, сайт на нём собран"
   fi
 elif command -v firebase >/dev/null; then
   say "Сайт zalpos.ru (Firebase Hosting), правила и индексы базы"
