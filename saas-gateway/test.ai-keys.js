@@ -91,6 +91,10 @@ test("выбор моделей: новее, без даты, живой псе�
   assert.deepStrictEqual(keys.pickModels(["gemini-2.5-flash", "gemini-flash-latest", "gemini-pro-latest", "gemini-2.5-flash-image"]),
     { light: "gemini-flash-latest", heavy: "gemini-pro-latest" });
   assert.deepStrictEqual(keys.pickModels(["deepseek-chat", "deepseek-reasoner"]), { light: "deepseek-chat", heavy: "deepseek-chat" });
+  // DeepSeek v4: flash — быстрые ответы, pro — сложные; у шлюза со всеми моделями быстрая — Haiku.
+  assert.deepStrictEqual(keys.pickModels(["deepseek-v4-pro", "deepseek-v4-flash"]), { light: "deepseek-v4-flash", heavy: "deepseek-v4-pro" });
+  assert.strictEqual(keys.pickModels(["claude-haiku-5-5", "deepseek-v4-flash", "gpt-5.5", "gpt-image-2"]).light, "claude-haiku-5-5");
+  assert.deepStrictEqual(keys.candidatesFor("tc_live_0123456789abcdef").map((c) => c.id), ["tooken"]);
   assert.strictEqual(keys.replacementModel("gpt-4o-mini", ["gpt-4o-mini-2024-07-18", "gpt-4o"]), "gpt-4o-mini-2024-07-18");
   assert.strictEqual(keys.replacementModel("gemini-1.5-pro", ["gemini-2.5-flash", "gemini-2.5-pro"], "heavy"), "gemini-2.5-pro");
 });

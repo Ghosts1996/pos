@@ -34,6 +34,7 @@ function candidatesFor(apiKey, baseUrl = "") {
   if (/^sk-ant-/.test(key)) return [byId("anthropic")];
   if (/^AIza[0-9A-Za-z_-]{20,}$/.test(key)) return [byId("gemini")];
   if (/^sk-or-/.test(key)) return [byId("openrouter")];
+  if (/^tc_(live|test)_/.test(key)) return [byId("tooken")];
   if (/^sk-proj-|^sk-svcacct-/.test(key)) return [byId("openai")];
   // Остальное (sk-…, свои форматы шлюзов) — пробуем всех по очереди.
   return KNOWN.filter((k) => k.id !== "anthropic" && k.id !== "gemini");
@@ -45,13 +46,13 @@ function candidatesFor(apiKey, baseUrl = "") {
 const NOT_CHAT = /(embed|whisper|tts|audio|speech|transcri|image|dall-?e|imagen|vision-preview|moderation|realtime|search|rerank|davinci|babbage|curie|ada-|-instruct|computer-use|veo|sora|lyria|robotics|guard)/i;
 // По порядку предпочтения. Быстрые — дёшево и мгновенно; умные — для отчётов и сложного.
 const LIGHT = [
-  /gpt-(4\.1|5(\.\d)?)-mini/i, /gpt-4o-mini/i, /deepseek-(chat|v3)/i, /claude.*haiku/i,
+  /gpt-(4\.1|5(\.\d)?)-mini/i, /gpt-4o-mini/i, /claude.*haiku/i, /deepseek.*flash/i, /deepseek-(chat|v3)/i,
   /gemini.*flash(?!.*lite)/i, /gemini.*flash/i, /qwen.*(plus|turbo|flash)/i, /glm-4/i, /llama.*(70b|90b)/i,
   /(mini|flash|small|lite|haiku|turbo)/i,
 ];
 const HEAVY = [
   /^(openai\/)?gpt-5(\.\d)?$/i, /gpt-5(?!.*(mini|nano|codex))/i, /gpt-4\.1(?!-(mini|nano))/i, /gpt-4o(?!-mini)/i,
-  /claude.*sonnet/i, /gemini.*pro/i, /deepseek-(chat|v3)/i, /qwen.*max/i, /claude.*opus/i,
+  /claude.*sonnet/i, /gemini.*pro/i, /deepseek.*pro/i, /deepseek-(chat|v3)/i, /qwen.*max/i, /claude.*opus/i,
 ];
 const hasDate = (id) => /(\d{4}-\d{2}-\d{2}|\d{6,8}|-\d{4}$|preview|exp)/i.test(id);
 /** Номер поколения модели: gpt-4o → 4, claude-haiku-4-5 → 4.5, gemini-2.5-flash → 2.5. */

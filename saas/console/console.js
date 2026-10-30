@@ -6081,7 +6081,7 @@ function watchDashboardData(tenantId) {
 
       // Проверка ключа на сервере: провайдер, модели, пробный ответ.
       const probe = async (k, n) => {
-        const r = await callSaasGateway('aiKeyProbe', { tenantId, apiKey: k.apiKey || k.savedKey, baseUrl: k.baseUrl || '' });
+        const { data: r } = await callSaasGateway('aiKeyProbe', { tenantId, apiKey: k.apiKey || k.savedKey, baseUrl: k.baseUrl || '' });
         if (!r?.ok) throw new Error(`Ключ ${n}: ${r?.reason || 'не подключился'}`);
         Object.assign(k, {
           vendor: r.vendor, format: r.format || '', model: r.light || '', analyticsModel: r.heavy || r.light || '',
@@ -6472,7 +6472,7 @@ function watchDashboardData(tenantId) {
       btn.disabled = true;
       try {
         const r = await callSaasGateway('purgeDevice', { tenantId, ...body });
-        toast(done(r?.purged || 0));
+        toast(done(r?.data?.purged || 0));
       } catch (e) {
         toast(e?.message || String(e));
         btn.disabled = false;
