@@ -4079,6 +4079,7 @@ function watchDashboardData(tenantId) {
   let aiSec = null;
   let aiLegacy = null; // настройки самой точки сети до перехода на общие
   let aiDraft = null;
+  let aiAutoFixTried = false;
   let paymentHistory = null;
   // Счета для ИП и организаций и черновик формы плательщика — по той же
   // причине, что aiDraft.
@@ -6111,19 +6112,20 @@ function watchDashboardData(tenantId) {
         const d = ensureDraft();
         const keys = d.keys.filter((k) => k.apiKey || k.savedKey || k.hasKey);
         if (d.enabled && !keys.length) throw new Error('Вставьте API-ключ — без него ИИ не заработает');
-        // Новые и изменённые ключи, а также ключи без подобранных моделей — через сервер.
+        // Каждый ключ — через сервер, и сохранённые тоже: провайдер и модели
+        // всегда по самому ключу (старые настройки могли записать его не тому
+        // провайдеру или с устаревшими моделями).
+        const vendorBefore = new Map(keys.map((k) => [k, k.vendor]));
         for (let i = 0; i < keys.length; i++) {
           const k = keys[i];
           if (!k.apiKey && !k.savedKey) throw new Error(`Ключ ${i + 1}: вставьте его ещё раз — сохранённый ключ не прочитался`);
-          if (k.apiKey || !k.model || (k.baseUrl || '') !== (k.baseUrl0 || '')) {
-            aiMsg(`Подключаю ключ ${i + 1}…`);
-            await probe(k, i + 1);
-          }
+          aiMsg(`Подключаю ключ ${i + 1}…`);
+          await probe(k, i + 1);
         }
         // Tooken Club — основной по умолчанию: только что вставленный ключ
         // Tooken встаёт первым, остальные — запасными. Порядок, выбранный
         // потом кнопкой «Сделать основным», не трогаем (ключ уже не новый).
-        const tk = keys.findIndex((k) => k.apiKey && k.vendor === 'tooken' && k.enabled !== false);
+        const tk = keys.findIndex((k) => (k.apiKey || vendorBefore.get(k) !== 'tooken') && k.vendor === 'tooken' && k.enabled !== false);
         if (tk > 0) {
           const [k] = keys.splice(tk, 1);
           keys.unshift(k);
@@ -6209,6 +6211,17 @@ function watchDashboardData(tenantId) {
         return { head, ok: !!results.length && okCount === results.length, lines: results.map((r) => r.line) };
       };
 
+      // Ключ Tooken, записанный старыми настройками как другой провайдер
+      // (касса ходила бы с ним не туда), — исправляем сами при открытии.
+      const mislabeled = canManage && !aiDraft && aiState().keys.some((k) => /^tc_(live|test)_/.test(k.savedKey || '') && k.vendor !== 'tooken');
+      if (mislabeled && !aiAutoFixTried) {
+        aiAutoFixTried = true;
+        aiMsg('Сохранённый ключ — от Tooken Club, а записан как другой провайдер. Исправляю…');
+        saveAi().then(() => {
+          draw();
+          aiMsg('Исправлено: ключ Tooken Club — основной.', true);
+        }).catch((e) => aiMsg(`Не удалось исправить: ${e?.message || e}. Нажмите «Сохранить».`, false));
+      }
       if ($('f-ai-save')) $('f-ai-save').onclick = async () => {
         const btn = $('f-ai-save');
         btn.disabled = true;
