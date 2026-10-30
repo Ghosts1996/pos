@@ -339,14 +339,21 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
   }
 
   function send(s, event) {
-    if (!s.res) return;
+    if (!s.res) {
+      // Потока нет — изменение не дошло: при подключении подписку пересчитаем.
+      const sub = event && s.subs.get(String(event.sub));
+      if (sub) sub.missed = true;
+      return;
+    }
     try {
       s.res.write(`data: ${JSON.stringify(event)}\n\n`);
     } catch (_) { s.res = null; }
   }
 
-  /** Проверить подписку и отправить изменения с прошлого раза. */
-  function pump(s, sub, initial = false) {
+  /** Проверить подписку и отправить изменения с прошлого раза (out —
+   *  собрать события в ответ запроса вместо потока). */
+  function pump(s, sub, initial = false, out = null) {
+    const emit = (ev) => (out ? out.push(ev) : send(s, ev));
     let docsNow;
     try {
       if (s.auth && s.auth.expiresAt && s.auth.expiresAt < now()) throw new DataError("unauthenticated", "Сеанс истёк — обновите вход", 401);
@@ -354,7 +361,7 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
       else docsNow = secure.queryDocs(s.auth, sub.spec);
     } catch (e) {
       if (!(e instanceof DataError)) console.error(`data-server: подписка: ${e && e.stack ? e.stack : e}`);
-      send(s, { sub: sub.id, error: e.message || String(e), code: e.code || "internal" });
+      emit({ sub: sub.id, error: e.message || String(e), code: e.code || "internal" });
       s.subs.delete(sub.id);
       return;
     }
@@ -373,7 +380,7 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     if (!initial && !adds.length && !removes.length && !orderChanged && existsNow === sub.exists) return;
     sub.order = order;
     sub.exists = existsNow;
-    send(s, { sub: sub.id, docs: adds, removes, order: orderChanged || initial ? order : undefined, exists: existsNow, initial: initial || undefined });
+    emit({ sub: sub.id, docs: adds, removes, order: orderChanged || initial ? order : undefined, exists: existsNow, initial: initial || undefined });
   }
 
   /** Простой запрос (без сортировки, лимита, курсоров, не по группе): выдачу
@@ -420,6 +427,11 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     s.auth = auth;
     for (const id of Array.isArray(body.remove) ? body.remove : []) s.subs.delete(String(id));
     const errors = [];
+    // inline — первая выдача подписок сразу в ответе, а не через поток:
+    // страница не ждёт, пока откроется поток (через VPN это лишний путь
+    // туда-обратно), и данные доходят, даже если поток кто-то придерживает.
+    const inline = body.inline === true;
+    const events = [];
     for (const a of (Array.isArray(body.add) ? body.add : []).slice(0, 200)) {
       try {
         if (s.subs.size >= MAX_SUBS_PER_SESSION && !s.subs.has(String(a.id))) throw new DataError("resource-exhausted", "Слишком много подписок", 429);
@@ -429,13 +441,15 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
           sub.doc = a.doc;
         } else sub.spec = secure.specFrom(a.query);
         s.subs.set(sub.id, sub);
-        pump(s, sub, true);
+        // Выдано в ответе, пока потока нет, — при подключении потока не повторять.
+        if (inline) sub.inline = !s.res;
+        pump(s, sub, true, inline ? events : null);
       } catch (e) {
         if (!(e instanceof DataError)) throw e;
         errors.push({ id: a.id, error: e.message, code: e.code });
       }
     }
-    sendJson(res, 200, { ok: true, errors });
+    sendJson(res, 200, inline ? { ok: true, errors, events } : { ok: true, errors });
   }
 
   async function handleListen(req, res) {
@@ -464,7 +478,14 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     s.res = out;
     s.lastSeen = now();
     // Переподключение: подписки на месте — отправим всё заново (клиент сверит).
-    for (const sub of s.subs.values()) { sub.seen = new Map(); sub.order = null; sub.exists = undefined; pump(s, sub, true); }
+    // Выданное в ответе подписки и не менявшееся с тех пор не повторяем.
+    for (const sub of s.subs.values()) {
+      const fresh = sub.inline && !sub.missed;
+      sub.inline = false;
+      sub.missed = false;
+      if (fresh) continue;
+      sub.seen = new Map(); sub.order = null; sub.exists = undefined; pump(s, sub, true);
+    }
     const ping = setInterval(() => { try { out.write(`: ping\n\n`); } catch (_) {} }, 20000);
     req.on("close", () => {
       clearInterval(ping);

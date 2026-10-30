@@ -1312,6 +1312,16 @@ function handleAuthChange(user) {
 
   state.uid = user.uid;
   state.tenantsLoaded = false;
+  // Заведения с прошлого входа — кабинет открывается сразу, список
+  // сверяется фоном (watchMemberships): через VPN это три запроса подряд.
+  try {
+    const cached = JSON.parse(localStorage.getItem(`${TENANTS_CACHE_KEY}:${user.uid}`) || 'null');
+    if (Array.isArray(cached) && cached.length && cached.every((t) => t && typeof t.id === 'string')) {
+      state.tenants = cached;
+      state.tenantsLoaded = true;
+      if (!state.activeTenantId || !cached.some((t) => t.id === state.activeTenantId)) state.activeTenantId = cached[0].id;
+    }
+  } catch (_) { /* приватный режим */ }
   state.partner = null;
   state.partnerChecked = false;
   route();
@@ -1345,6 +1355,8 @@ function handleAuthChange(user) {
     route();
   }));
 }
+
+const TENANTS_CACHE_KEY = 'zalTenants';
 
 function watchMemberships() {
   const q = query(
@@ -1382,6 +1394,7 @@ function watchMemberships() {
     }));
     state.tenants = list;
     state.tenantsLoaded = true;
+    try { localStorage.setItem(`${TENANTS_CACHE_KEY}:${state.uid}`, JSON.stringify(list)); } catch (_) { /* приватный режим */ }
     if (!list.length) {
       state.activeTenantId = null;
     } else if (!state.activeTenantId || !list.some((t) => t.id === state.activeTenantId)) {
@@ -1557,7 +1570,10 @@ function screenDashboardOrOnboarding() {
 window.addEventListener('hashchange', route);
 captureTelegramApp();
 capturePartnerRef();
-boot();
+// Запуск — после того как весь модуль выполнится: boot() без ожидания сети
+// (статус сервера из кэша) идёт синхронно и иначе обращается к переменным,
+// объявленным ниже по файлу (DATA_IN_RF и др.), раньше их объявления.
+Promise.resolve().then(boot);
 
 // ---------- ЛЕНДИНГ ----------
 

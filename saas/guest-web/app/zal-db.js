@@ -163,6 +163,9 @@ class LocalDb {
         await this.openSession();
         const es = new EventSource(`${this.gateway}/db/listen?sid=${encodeURIComponent(this.sid)}`);
         this.es = es;
+        // Подписки — сразу, не дожидаясь открытия потока: первая выдача
+        // придёт в ответе (через VPN это на путь туда-обратно быстрее).
+        this.sendSubs([...this.subs.values()].filter((s) => !s.sent), []);
         es.onopen = () => {
           this.retry = 1;
           this.sendSubs([...this.subs.values()].filter((s) => !s.sent), []);
@@ -207,14 +210,28 @@ class LocalDb {
     if (!this.sid || !this.es) return;
     add = add.filter((s) => !s.sent);
     if (!add.length && !remove.length) return;
-    for (const s of add) s.sent = true;
+    for (const s of add) { s.sent = true; s.pending = []; }
+    // События потока, пришедшие раньше ответа с первой выдачей, — после неё.
+    const flush = () => {
+      for (const s of add) {
+        const buf = s.pending || [];
+        s.pending = null;
+        for (const ev of buf) this.handle(s, ev);
+      }
+    };
     try {
-      const j = await this.post('/db/listen', { sid: this.sid, add: add.map((s) => s.wire()), remove });
+      const j = await this.post('/db/listen', { sid: this.sid, add: add.map((s) => s.wire()), remove, inline: true });
+      for (const ev of j.events || []) {
+        const s = this.subs.get(String(ev.sub));
+        if (s) this.handle(s, ev);
+      }
       for (const e of j.errors || []) {
         const s = this.subs.get(String(e.id));
         if (s) s.fail(dbError(e.code || 'internal', e.error));
       }
+      flush();
     } catch (e) {
+      for (const s of add) s.pending = null;
       if (e.code === 'not-found') { this.sid = null; this.restart(); return; }
       if (e.code === 'unavailable') { for (const s of add) s.sent = false; return; }
       for (const s of add) s.fail(e);
@@ -226,6 +243,11 @@ class LocalDb {
     try { j = JSON.parse(raw); } catch (_) { return; }
     const s = this.subs.get(String(j.sub));
     if (!s) return;
+    if (s.pending) { s.pending.push(j); return; }
+    this.handle(s, j);
+  }
+
+  handle(s, j) {
     if (j.error) {
       if (j.code === 'unauthenticated') {
         s.sent = false;
@@ -241,7 +263,14 @@ class LocalDb {
   listen(target, onNext, onError) {
     const s = new Sub(this, String(this.nextSub++), target, onNext, onError);
     this.subs.set(s.id, s);
-    if (this.es && this.es.readyState === 1) this.sendSubs([s], []);
+    // Подписки одного кадра (экран открывает их десятками) — одним запросом.
+    if (this.es && this.es.readyState !== 2 && !this.batch) {
+      this.batch = true;
+      queueMicrotask(() => {
+        this.batch = false;
+        if (this.es && this.es.readyState !== 2) this.sendSubs([...this.subs.values()].filter((x) => !x.sent), []);
+      });
+    }
     this.ensureStream();
     return () => {
       if (!this.subs.delete(s.id)) return;
