@@ -1123,8 +1123,24 @@ function firebaseApp() {
   return firebaseAppPromise;
 }
 
+const STATUS_CACHE_KEY = 'zalStatus';
 async function boot() {
-  const status = await dataBackend(SAAS_GATEWAY_URL);
+  // Где данные и вход — ответ сервера с прошлого раза: страница открывается
+  // сразу, без ожидания /db/status (через VPN и мобильную сеть это секунды),
+  // свежий ответ приходит фоном и пригодится в следующий раз.
+  let status = null;
+  try { status = JSON.parse(localStorage.getItem(STATUS_CACHE_KEY) || 'null'); } catch (_) { status = null; }
+  const fresh = dataBackend(SAAS_GATEWAY_URL).then((s) => {
+    if (s && s.backend && !s.offline) {
+      try { localStorage.setItem(STATUS_CACHE_KEY, JSON.stringify(s)); } catch (_) { /* приватный режим */ }
+    }
+    return s;
+  });
+  if (!status || !status.backend) {
+    status = await fresh;
+  } else {
+    fresh.then((s) => { if (s && !s.offline) applyLegalMode(s); }).catch(() => {});
+  }
   applyLegalMode(status);
   let authBackend = status.auth;
   try {
@@ -3996,6 +4012,9 @@ function watchDashboardData(tenantId) {
   let devices = null; // кассы заведения: tenants/{id}/devices
   let branding = null;
   let subscription = null;
+  // Подписка ещё не пришла — не пишем «Тариф не выбран» (он выбран, просто
+  // данные в пути).
+  let subscriptionLoaded = false;
   let members = null;
   let plans = null;
   let buildJobs = null;
@@ -4438,6 +4457,7 @@ function watchDashboardData(tenantId) {
     // Тариф и сколько осталось до конца триала или списания: название —
     // крупно, срок — строкой под ним; tone красит значок тарифа.
     const subscriptionInfo = (() => {
+      if (!subscriptionLoaded || (subscription?.planId && plans === null)) return { title: 'Тариф', detail: 'Загружаю…', tone: 'ok' };
       const plan = planName(plans, subscription?.planId);
       const title = plan ? `Тариф «${plan}»` : 'Тариф не выбран';
       if (!subscription?.status) return { title, detail: 'Выберите тариф в разделе «Тарифы»', tone: 'warn' };
@@ -6649,8 +6669,9 @@ function watchDashboardData(tenantId) {
     if (unsubSubscription) { unsubSubscription(); unsubSubscription = null; }
     unsubSubscription = onSnapshot(doc(state.db, 'subscriptions', chainId || tenantId), (d) => {
       subscription = d.exists() ? d.data() : null;
+      subscriptionLoaded = true;
       draw();
-    }, () => {});
+    }, () => { subscriptionLoaded = true; draw(); });
   };
   sub(() => { if (unsubSubscription) unsubSubscription(); });
 
@@ -7194,10 +7215,22 @@ function forgetPartnerRef() {
 }
 
 /** Вошедший — менеджер программы? (фоном после входа) */
+// partnerMe — один запрос на вход: его ждут и checkPartner, и кабинет
+// менеджера (в Telegram через VPN каждый лишний запрос — заметная пауза).
+let partnerMeShared = null;
+function partnerMeOnce() {
+  if (!partnerMeShared || partnerMeShared.uid !== state.uid || Date.now() - partnerMeShared.at > 30000) {
+    const p = callSaasGateway('partnerMe', {});
+    partnerMeShared = { uid: state.uid, at: Date.now(), p };
+    p.catch(() => { partnerMeShared = null; });
+  }
+  return partnerMeShared.p;
+}
+
 async function checkPartner() {
   const uid = state.uid;
   try {
-    const r = await callSaasGateway('partnerMe', {});
+    const r = await partnerMeOnce();
     if (state.uid !== uid) return;
     const was = !!state.partner;
     state.partner = r.data.partner || null;
@@ -7228,8 +7261,11 @@ function screenPartner() {
 
   const load = async () => {
     try {
-      data = (await callSaasGateway('partnerDashboard', {})).data;
-      const me = (await callSaasGateway('partnerMe', {})).data;
+      // Сводка и настройки — параллельно, partnerMe — тот же, что при входе.
+      // Повторная загрузка (после действий) — свежий partnerMe.
+      const [dash, meRes] = await Promise.all([callSaasGateway('partnerDashboard', {}), data ? callSaasGateway('partnerMe', {}) : partnerMeOnce()]);
+      data = dash.data;
+      const me = meRes.data;
       data.settings = me.settings;
       data.bot = me.bot;
       error = '';

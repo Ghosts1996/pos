@@ -23,6 +23,9 @@ trap 'rm -rf "$STAGE"' EXIT
 # о новых страницах (build-blog.mjs --announce).
 node "$REPO/saas/scripts/build-blog.mjs"
 cp -a "$REPO/saas/console/." "$STAGE/"
+# Текст лендинга прямо в index.html: виден сразу, до загрузки кабинета, и
+# поисковикам без выполнения скриптов. Не вышло — сайт работает как раньше.
+node "$REPO/saas/scripts/prerender-landing.mjs" "$STAGE/index.html" || echo "!! текст лендинга не вписан — главная покажет его после загрузки"
 
 # Настройки Firebase для кабинета — только на случай возврата к Firebase
 # (сейчас вход и данные на этом сервере). Ключи в репозиторий не кладём:
