@@ -5449,7 +5449,7 @@ function watchDashboardData(tenantId) {
         ${st.keys.map((k, i) => aiKeyCardHtml(k, i, st.keys.length)).join('')}
         ${canManage && st.keys.length < AI_EXTRA_MAX + 1
           ? `<button class="btn btn-ghost" id="f-ai-k-add" style="width:auto;margin:0 0 6px">＋ ${st.keys.length ? 'Добавить запасной ключ' : 'Добавить ключ'}</button>
-             ${st.keys.length ? '<p class="small muted" style="margin:0 0 14px">Запасной ключ отвечает, если у основного кончились деньги или провайдер молчит, — касса переключится сама.</p>' : ''}`
+             ${st.keys.length ? '<p class="small muted" style="margin:0 0 14px">Запасной ключ отвечает, если у основного кончились деньги или провайдер молчит, — касса переключится сама. Ключ Tooken Club при сохранении сам становится основным.</p>' : ''}`
           : ''}
         ${canManage ? `
           <div class="row" style="gap:8px;flex-wrap:wrap">
@@ -6103,6 +6103,16 @@ function watchDashboardData(tenantId) {
             aiMsg(`Подключаю ключ ${i + 1}…`);
             await probe(k, i + 1);
           }
+        }
+        // Tooken Club — основной по умолчанию: только что вставленный ключ
+        // Tooken встаёт первым, остальные — запасными. Порядок, выбранный
+        // потом кнопкой «Сделать основным», не трогаем (ключ уже не новый).
+        const tk = keys.findIndex((k) => k.apiKey && k.vendor === 'tooken' && k.enabled !== false);
+        if (tk > 0) {
+          const [k] = keys.splice(tk, 1);
+          keys.unshift(k);
+          d.keys.splice(d.keys.indexOf(k), 1);
+          d.keys.unshift(k);
         }
         const main = keys.find((k) => k.enabled) || keys[0];
         const rest = keys.filter((k) => k !== main);
