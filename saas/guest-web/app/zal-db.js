@@ -44,11 +44,16 @@ export function deleteField() {
   return { [OP]: 'delete' };
 }
 
+/** Прибавить к числу на сервере (два устройства сразу — оба изменения сложатся). */
+export function increment(n) {
+  return { [OP]: 'increment', value: Number(n) || 0 };
+}
+
 const isOp = (v) => v && typeof v === 'object' && v[OP];
 
 /** Значение страницы → Firestore (наши служебные — в его служебные). */
 function toFs(v) {
-  if (isOp(v)) return F.deleteField();
+  if (isOp(v)) return v[OP] === 'increment' ? F.increment(v.value) : F.deleteField();
   if (v instanceof Timestamp) return new F.Timestamp(v.seconds, v.nanoseconds);
   if (Array.isArray(v)) return v.map(toFs);
   if (v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
@@ -63,7 +68,7 @@ function toFs(v) {
 function toWire(v) {
   if (v === undefined) return undefined;
   if (v === null || typeof v !== 'object') return v;
-  if (isOp(v)) return { __op: v[OP] };
+  if (isOp(v)) return v[OP] === 'increment' ? { __op: 'increment', value: v.value } : { __op: v[OP] };
   if (isTs(v)) return { __ts: v.toMillis() };
   if (v instanceof Date) return { __ts: v.getTime() };
   if (v instanceof DocRef) return v.path;

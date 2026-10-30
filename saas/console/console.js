@@ -16,7 +16,7 @@ import {
 // Данные — Firestore или свой сервер платформы (zal-db.js решает по серверу).
 import {
   dataBackend, openDb, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
-  collection, query, where, orderBy, limit, Timestamp, deleteField, writeBatch,
+  collection, query, where, orderBy, limit, Timestamp, deleteField, writeBatch, increment,
 } from './zal-db.js';
 
 // saas-gateway — сервер платформы (saas-gateway/README.md), живёт на том же
@@ -1568,7 +1568,7 @@ boot();
 const LANDING_FEATURES = [
   { icon: 'tablet', title: 'Зал, кухня и касса', desc: 'Схему зала рисуете прямо на планшете: стены, зоны, столы любой формы, у каждого свой таймер. Повар и бармен видят заказ на экране «Кухня и бар» или получают бумажный бегунок с пожеланиями гостя. Новый заказ звенит, пока его не примут, а «готово» вибрирует у официанта на телефоне или часах. Пропал интернет — касса работает дальше. Платить можно наличными, картой, через терминал любого банка, по QR СБП или частями, а в отчёте выручка разложена по банкам.' },
   { icon: 'phone', title: 'Приложение гостя', desc: 'Под вашим названием и логотипом, не под нашим. Гость сканирует QR на столе, смотрит меню с фото, заказывает, зовёт официанта, оставляет чаевые, копит бонусы и бронирует стол. Счёт оплачивает сам, по СБП или картой. На iPhone ничего ставить не нужно, всё открывается в браузере.' },
-  { icon: 'box', title: 'Склад', desc: 'Продали пасту или лимонад, и продукты списались по граммовке. Уже в пятницу днём видно, чего не хватит к вечеру. Расхождения инвентаризация считает сама, а накладные ЕГАИС приходят через ваш УТМ.' },
+  { icon: 'box', title: 'Склад', desc: 'Продали пасту или лимонад, и продукты списались по граммовке. Уже в пятницу днём видно, чего не хватит к вечеру. Накладную поставщика из ЭДО загружаете файлом — приход и средняя себестоимость посчитаются сами. Расхождения считает инвентаризация, а накладные ЕГАИС приходят через ваш УТМ.' },
   { icon: 'users', title: 'Смены и зарплата', desc: 'Приход и уход отмечаются на кассе, время берётся с сервера, а не с телефона сотрудника. Ставка за час или за смену, процент по роли и бонус, если заведение выполнило план по выручке. Любая ручная правка видна в отчёте, так что приписать себе пару часов не получится.' },
   { icon: 'gift', title: 'Гости возвращаются', desc: 'Кешбэк бонусами с уровнями, скидочные карты, сертификаты и новости в ленте приложения. После визита гость ставит оценку, а отзывы ниже четырёх звёзд собираются в отдельный список, чтобы вы успели перезвонить.' },
   { icon: 'clock', title: 'Тайм-кафе и антикафе', desc: 'Оплата за время отдельно от заказа: цена часа за гостя, отдельная цена первого часа, минимальная оплата, округление и стоп-чек. Касса сама считает, сколько должен каждый гость, а при закрытии стола пересчитывает время на момент оплаты.' },
@@ -3859,6 +3859,7 @@ const NAV_ICON_PATHS = {
   plus: '<path d="M12 20.5s6.5-5.6 6.5-10.7a6.5 6.5 0 0 0-13 0c0 5.1 6.5 10.7 6.5 10.7Z"/><path class="ac" d="M12 7v5.6M9.2 9.8h5.6"/>',
   back: '<path d="M19.5 12h-14"/><path class="ac" d="M10.5 6.5 5 12l5.5 5.5"/>',
   upload: '<path d="M4.5 14.5v3.3a2.2 2.2 0 0 0 2.2 2.2h10.6a2.2 2.2 0 0 0 2.2-2.2v-3.3"/><path d="M7.5 9 12 4.5 16.5 9"/><path class="ac" d="M12 4.8v10"/>',
+  box: '<path d="M4 8.2 12 4.4l8 3.8v7.6L12 19.6 4 15.8Z"/><path d="M4 8.2l8 3.8 8-3.8M12 12v7.6"/><path class="ac" d="M8 6.3l8 3.8"/>',
 };
 
 function navIconHtml(name, color) {
@@ -3906,6 +3907,7 @@ const DASHBOARD_NAV = [
   { id: 'overview', icon: 'home', color: '#2F6FED', label: 'Обзор' },
   { id: 'guide', icon: 'book', color: '', label: 'Инструкция' },
   { id: 'devices', icon: 'device', color: '#0EA5E9', label: 'Устройства' },
+  { id: 'stock', icon: 'box', color: '#22C55E', label: 'Склад' },
   { id: 'billing', icon: 'card', color: '#F59E0B', label: 'Оплата' },
   { id: 'plans', icon: 'gem', color: '#8B5CF6', label: 'Тарифы' },
   { id: 'branding', icon: 'palette', color: '#EC4899', label: 'Брендинг' },
@@ -4068,6 +4070,13 @@ function watchDashboardData(tenantId) {
   // Перенос данных из другой кассы (import-core.js — разбор выгрузок).
   // Шаги: pick → map → preview → done. Файл живёт только в браузере.
   let imp = { step: 'pick' };
+  // Склад кабинета: остатки (живые) и приход по накладной УПД.
+  let stockItems = null;
+  let stockWatching = false;
+  let stockFilter = '';
+  let upd = { step: 'pick' };
+  let updCore = null;
+  const loadUpdCore = async () => (updCore = updCore || await import('./upd-import.js'));
   let importCore = null;
   const IMPORT_LOG_KEY = `zalposImports_${tenantId}`;
   const importLog = () => { try { return JSON.parse(window.localStorage.getItem(IMPORT_LOG_KEY) || '[]'); } catch (_) { return []; } };
@@ -5627,10 +5636,97 @@ function watchDashboardData(tenantId) {
         </div>${history}`;
     };
 
+    // Склад: остатки и приход по накладной (УПД из ЭДО) — upd-import.js.
+    const STOCK_UNIT = { g: 'г', kg: 'кг', ml: 'мл', l: 'л', pcs: 'шт' };
+    const STOCK_PRICE_UNIT = { g: '₽/кг', kg: '₽/кг', ml: '₽/л', l: '₽/л', pcs: '₽/шт' };
+    const fmtQty = (q) => (Math.round((Number(q) || 0) * 1000) / 1000).toLocaleString('ru-RU');
+    const stockHtml = () => {
+      const canPost = role === 'owner' || role === 'admin';
+      const items = (stockItems || []).filter((x) => x.active !== false);
+      const term = (stockFilter || '').trim().toLowerCase();
+      const shown = items.filter((x) => !term || String(x.name || '').toLowerCase().includes(term))
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ru'));
+      const U = updCore;
+      const lineRow = (d, di, l, li) => {
+        const choice = d.choices[li];
+        const item = items.find((x) => x.id === choice);
+        const compatible = U ? items.filter((x) => !l.unit || U.convertQty(1, l.unit, x.unit) !== null)
+          .map((x) => ({ x, s: U.similarity(l.name, x.name) })).sort((a, b) => b.s - a.s).slice(0, 40) : [];
+        const delta = item && U ? U.convertQty(l.qty, l.unit || item.unit, item.unit) : null;
+        return `<tr>
+          <td>${esc(l.name)}</td>
+          <td style="white-space:nowrap">${fmtQty(l.qty)} ${esc(l.unitLabel || STOCK_UNIT[l.unit] || '')}</td>
+          <td style="white-space:nowrap">${l.price.toLocaleString('ru-RU')} ₽</td>
+          <td><select class="f-upd-choice" data-d="${di}" data-l="${li}" ${canPost ? '' : 'disabled'}>
+            <option value="new" ${choice === 'new' ? 'selected' : ''}>＋ Новая позиция склада</option>
+            <option value="skip" ${choice === 'skip' ? 'selected' : ''}>— не приходовать —</option>
+            ${compatible.map(({ x }) => `<option value="${esc(x.id)}" ${choice === x.id ? 'selected' : ''}>${esc(x.name)} (${STOCK_UNIT[x.unit] || ''})</option>`).join('')}
+          </select>
+          ${item && delta !== null ? `<div class="small muted">+${fmtQty(delta)} ${STOCK_UNIT[item.unit] || ''} → станет ${fmtQty((Number(item.quantity) || 0) + delta)}</div>` : ''}
+          ${choice === 'new' ? `<div class="small muted">новая: ${fmtQty(l.qty)} ${STOCK_UNIT[l.unit || 'pcs']}</div>` : ''}</td>
+        </tr>`;
+      };
+      const updCard = () => {
+        if (upd.step === 'done') {
+          return `<div class="card"><b>Приход проведён</b>
+            <p class="small" style="margin:6px 0 0">${esc(upd.summary || '')}</p>
+            <button class="btn btn-ghost" id="f-upd-again" style="width:auto;margin-top:10px">Загрузить ещё накладную</button></div>`;
+        }
+        if (upd.step === 'preview') {
+          return `<div class="card">
+            ${upd.docs.map((d, di) => `
+              <div style="margin-bottom:14px">
+                <b>${esc(d.supplier.name || 'Поставщик не указан')}</b>${d.supplier.inn ? ` <span class="small muted">ИНН ${esc(d.supplier.inn)}</span>` : ''}
+                <div class="small muted">Накладная № ${esc(d.number || '—')} от ${esc(d.date || '—')} · строк ${d.lines.length} · на сумму ${d.total.toLocaleString('ru-RU')} ₽ с НДС${d.dup ? ' · <b style="color:var(--danger)">уже проведена раньше</b>' : ''}</div>
+                <div style="overflow-x:auto;margin-top:8px"><table class="table">
+                  <thead><tr><th>Товар в накладной</th><th>Кол-во</th><th>Цена</th><th>Позиция склада</th></tr></thead>
+                  <tbody>${d.lines.map((l, li) => lineRow(d, di, l, li)).join('')}</tbody>
+                </table></div>
+              </div>`).join('')}
+            <p class="small muted">Цена — за единицу накладной с НДС. Цена закупки позиции пересчитается как средняя: остаток по старой цене и приход по новой.</p>
+            ${upd.error ? `<p class="small" style="color:var(--danger)">${esc(upd.error)}</p>` : ''}
+            ${canPost ? `<div class="row" style="gap:8px;flex-wrap:wrap">
+              <button class="btn btn-primary" id="f-upd-post" style="width:auto">Провести приход</button>
+              <button class="btn btn-ghost" id="f-upd-cancel" style="width:auto">Отмена</button>
+            </div>` : '<p class="small muted">Провести приход может владелец или администратор.</p>'}
+          </div>`;
+        }
+        return `<div class="card">
+          <b>Приход по накладной</b>
+          <p class="small muted" style="margin:6px 0 10px">Загрузите XML-файл УПД — его выгружают системы ЭДО (Диадок, СБИС, Контур и другие) или присылает поставщик.
+            Строки сами сопоставятся с позициями склада, остатки и цены закупки пересчитаются. Можно выбрать несколько файлов сразу.</p>
+          ${canPost ? '<input type="file" id="f-upd-file" accept=".xml,text/xml,application/xml" multiple>' : '<p class="small muted">Проводить приход может владелец или администратор.</p>'}
+          ${upd.error ? `<p class="small" style="color:var(--danger);margin-top:8px">${esc(upd.error)}</p>` : ''}
+        </div>`;
+      };
+      return `
+        <h2>Склад</h2>
+        ${updCard()}
+        <div class="card">
+          <div class="row" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+            <b>Остатки</b>
+            <input id="f-stock-filter" placeholder="Поиск по названию" value="${esc(stockFilter || '')}" style="max-width:260px">
+          </div>
+          ${stockItems === null ? '<div class="spinner"></div>' : !items.length
+            ? '<p class="small muted">На складе пока пусто. Загрузите накладную выше, перенесите склад из прежней системы («Перенос данных») или заведите продукты в кассе: Админ → Склад.</p>'
+            : `<div style="overflow-x:auto;margin-top:8px"><table class="table">
+                <thead><tr><th>Позиция</th><th>Остаток</th><th>Цена закупки</th></tr></thead>
+                <tbody>${shown.slice(0, 400).map((x) => {
+                  const low = Number(x.minQuantity) > 0 && Number(x.quantity) <= Number(x.minQuantity);
+                  return `<tr><td>${esc(x.name || '')}${x.category ? ` <span class="small muted">· ${esc(x.category)}</span>` : ''}</td>
+                    <td style="white-space:nowrap;${Number(x.quantity) < 0 || low ? 'color:var(--danger)' : ''}">${fmtQty(x.quantity)} ${STOCK_UNIT[x.unit] || ''}${low ? ' · мало' : ''}</td>
+                    <td style="white-space:nowrap">${Number(x.costPrice) > 0 ? `${Number(x.costPrice).toLocaleString('ru-RU')} ${STOCK_PRICE_UNIT[x.unit] || '₽'}` : '<span class="muted">—</span>'}</td></tr>`;
+                }).join('')}</tbody>
+              </table></div>
+              ${shown.length > 400 ? `<p class="small muted">Показаны первые 400 из ${shown.length} — уточните поиск.</p>` : ''}`}
+          <p class="small muted" style="margin-top:8px">Списание по техкартам при продаже, инвентаризация и заготовки — в кассе: Админ → Склад.</p>
+        </div>`;
+    };
+
     const TAB_RENDERERS = {
       overview: overviewHtml, guide: guideTabHtml, devices: devicesHtml, billing: billingHtml, plans: plansHtml,
       branding: brandingHtml, team: teamHtml, ai: aiHtml, profile: profileHtml, settings: settingsHtml,
-      faq: faqHtml, support: supportHtml, import: importHtml,
+      faq: faqHtml, support: supportHtml, import: importHtml, stock: stockHtml,
     };
     renderKeepingInputs(body, (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardNavHtml(activeTab, daysLeft !== null, tenant.name, tenant.chainId));
     // В кабинете кнопки чата нет: у него есть раздел «Поддержка».
@@ -5646,6 +5742,107 @@ function watchDashboardData(tenantId) {
         draw();
       };
     });
+    if (activeTab === 'stock') {
+      if (!stockWatching) {
+        stockWatching = true;
+        sub(onSnapshot(tcol('inventoryItems'), (snap) => {
+          stockItems = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          if (activeTab === 'stock') draw();
+        }, () => { stockItems = stockItems || []; if (activeTab === 'stock') draw(); }));
+      }
+      if (!updCore) loadUpdCore().then(() => { if (activeTab === 'stock') draw(); }).catch(() => {});
+      if ($('f-stock-filter')) $('f-stock-filter').oninput = (e) => { stockFilter = e.target.value; draw(); };
+      if ($('f-upd-file')) $('f-upd-file').onchange = async (e) => {
+        const files = [...(e.target.files || [])];
+        if (!files.length) return;
+        try {
+          const U = await loadUpdCore();
+          const items = (stockItems || []).filter((x) => x.active !== false);
+          const docs = [];
+          for (const f of files) {
+            let d;
+            try {
+              d = U.parseUpd(U.decodeXml(await f.arrayBuffer()));
+            } catch (err) {
+              throw new Error(`${f.name}: ${err?.message || err}`);
+            }
+            d.key = [d.supplier.inn || d.supplier.name, d.number, d.date].join('|');
+            // Та же накладная уже проведена — предупреждаем (приход не задвоится).
+            const seen = await getDocs(query(tcol('inventoryMovements'), where('invoiceKey', '==', d.key), limit(1))).catch(() => null);
+            d.dup = !!(seen && seen.docs && seen.docs.length);
+            d.choices = d.lines.map((l) => { const m = U.matchItem(l, items); return m ? m.id : 'new'; });
+            docs.push(d);
+          }
+          upd = { step: 'preview', docs, error: '' };
+        } catch (err) {
+          upd = { step: 'pick', error: err?.message || String(err) };
+        }
+        draw();
+      };
+      document.querySelectorAll('.f-upd-choice').forEach((el) => {
+        el.onchange = () => { upd.docs[Number(el.dataset.d)].choices[Number(el.dataset.l)] = el.value; draw(); };
+      });
+      if ($('f-upd-cancel')) $('f-upd-cancel').onclick = () => { upd = { step: 'pick' }; draw(); };
+      if ($('f-upd-again')) $('f-upd-again').onclick = () => { upd = { step: 'pick' }; draw(); };
+      if ($('f-upd-post')) $('f-upd-post').onclick = async () => {
+        const btn = $('f-upd-post');
+        const U = updCore;
+        const dups = upd.docs.filter((d) => d.dup);
+        if (dups.length && !window.confirm(`Накладная № ${dups[0].number} уже проводилась. Провести приход ещё раз?`)) return;
+        btn.disabled = true;
+        try {
+          const now = Timestamp.fromDate(new Date());
+          const byId = new Map((stockItems || []).map((x) => [x.id, { ...x }]));
+          const ops = [];
+          let added = 0;
+          let created = 0;
+          for (const d of upd.docs) {
+            const reason = `Накладная № ${d.number || '—'} от ${d.date || '—'}${d.supplier.name ? `, ${d.supplier.name}` : ''}`;
+            d.lines.forEach((l, li) => {
+              const choice = d.choices[li];
+              if (choice === 'skip') return;
+              if (choice === 'new') {
+                const unit = l.unit || 'pcs';
+                const ref = doc(tcol('inventoryItems'));
+                ops.push({ type: 'set', ref, data: {
+                  name: l.name, category: '', unit, quantity: l.qty, minQuantity: 0, active: true, note: '', updatedAt: now,
+                  isMarked: false, gtin: '', costPrice: U.costPerPriceUnit(l, unit), recipe: [], recipeOutput: 0,
+                } });
+                ops.push({ type: 'set', ref: doc(tcol('inventoryMovements')), data: {
+                  itemId: ref.id, itemName: l.name, unit, type: 'receipt', delta: l.qty, resultingQty: l.qty, reason, invoiceKey: d.key, createdAt: now,
+                } });
+                created++;
+                return;
+              }
+              const it = byId.get(choice);
+              if (!it) return;
+              const delta = U.convertQty(l.qty, l.unit || it.unit, it.unit);
+              if (delta === null) throw new Error(`«${l.name}»: в накладной ${l.unitLabel || l.unit}, а на складе ${STOCK_UNIT[it.unit]} — выберите другую позицию или «Новая позиция»`);
+              const pu = U.priceUnit(it.unit);
+              const was = Math.max(0, Number(it.quantity) || 0);
+              const cost = U.averageCost(U.convertQty(was, it.unit, pu), Number(it.costPrice) || 0, U.convertQty(delta, it.unit, pu), U.costPerPriceUnit(l, it.unit));
+              it.quantity = (Number(it.quantity) || 0) + delta;
+              it.costPrice = cost;
+              ops.push({ type: 'update', ref: doc(tcol('inventoryItems'), it.id), data: { quantity: increment(delta), costPrice: cost, updatedAt: now } });
+              ops.push({ type: 'set', ref: doc(tcol('inventoryMovements')), data: {
+                itemId: it.id, itemName: it.name, unit: it.unit, type: 'receipt', delta, resultingQty: it.quantity, reason, invoiceKey: d.key, createdAt: now,
+              } });
+              added++;
+            });
+          }
+          // Пачками: у хранилища предел на одну запись.
+          for (let i = 0; i < ops.length; i += 400) {
+            const batch = writeBatch(state.db);
+            ops.slice(i, i + 400).forEach((o) => (o.type === 'set' ? batch.set(o.ref, o.data) : batch.update(o.ref, o.data)));
+            await batch.commit();
+          }
+          upd = { step: 'done', summary: `Оприходовано строк: ${added + created}${created ? `, из них новых позиций склада: ${created}` : ''}. Остатки и цены закупки обновлены — касса увидит их сразу.` };
+        } catch (err) {
+          upd.error = `Не проведено: ${err?.message || err}`;
+        }
+        draw();
+      };
+    }
     if (activeTab === 'import') {
       if (!importCore) loadImportCore().then(draw).catch((e) => { imp.error = `Не загрузился модуль переноса: ${e?.message || e}`; draw(); });
       const I = importCore;
