@@ -25,6 +25,35 @@ BACKUP="/root/nginx-backup-$(date +%Y%m%d-%H%M%S)"
 say() { echo; echo "== $*"; }
 die() { echo; echo "ОШИБКА: $*" >&2; exit 1; }
 
+# certbot из пакета Ubuntu падает (ImportError: appengine), если pip поставил
+# в /usr/local новый urllib3 2.x. Чужие библиотеки не трогаем: certbot
+# запускается только с системными модулями Python — обёрткой в
+# /usr/local/sbin (её находят и скрипты, и продление сертификатов по таймеру).
+fix_certbot() {
+  export PATH="/usr/local/sbin:$PATH"
+  certbot --version >/dev/null 2>&1 && return 0
+  [[ -x /usr/bin/certbot ]] || die "certbot не запускается: $(certbot --version 2>&1 | tail -1)"
+  cat > /usr/local/sbin/certbot <<'WRAP'
+#!/bin/sh
+# Обёртка ZalPOS (move-site-to-server.sh): certbot из пакета Ubuntu — только
+# с системными модулями Python, без библиотек pip из /usr/local.
+PYTHONPATH=/usr/lib/python3/dist-packages exec /usr/bin/python3 -S /usr/bin/certbot "$@"
+WRAP
+  chmod 755 /usr/local/sbin/certbot
+  hash -r
+  if systemctl cat certbot.service >/dev/null 2>&1; then
+    mkdir -p /etc/systemd/system/certbot.service.d
+    cat > /etc/systemd/system/certbot.service.d/zalpos-python.conf <<'UNIT'
+[Service]
+ExecStart=
+ExecStart=/usr/local/sbin/certbot -q renew
+UNIT
+    systemctl daemon-reload
+  fi
+  certbot --version >/dev/null 2>&1 || die "certbot не запускается и с системными модулями: $(certbot --version 2>&1 | tail -2)"
+  echo "ok: certbot починен — обёртка /usr/local/sbin/certbot, продление по таймеру идёт через неё"
+}
+
 [[ $EUID -eq 0 ]] || die "запустите от root"
 command -v nginx >/dev/null || die "nginx не установлен"
 command -v certbot >/dev/null || die "certbot не установлен (apt-get install -y certbot python3-certbot-nginx)"
@@ -156,7 +185,8 @@ echo "ok"
 
 say "3/4 DNS"
 got4="$(getent ahostsv4 "$SITE" | awk 'NR==1{print $1}' || true)"
-got6="$(getent ahostsv6 "$SITE" | awk '$1 ~ /:/ {print $1; exit}' || true)"
+# ::ffff:… — это тот же IPv4, а не запись AAAA.
+got6="$(getent ahostsv6 "$SITE" | awk '$1 ~ /:/ && $1 !~ /^::ffff:/ {print $1; exit}' || true)"
 if [[ "$got4" != "$IP" ]]; then
   cat <<TXT
 
@@ -179,6 +209,7 @@ fi
 echo "ok: $SITE указывает на этот сервер ($IP)"
 
 say "4/4 Сертификат и https"
+fix_certbot
 if [[ ! -f "/etc/letsencrypt/live/$SITE/fullchain.pem" ]]; then
   certbot certonly --webroot -w "$WEBROOT" --cert-name "$SITE" -d "$SITE" \
     --keep-until-expiring --non-interactive --agree-tos -m "admin@$SITE" \
