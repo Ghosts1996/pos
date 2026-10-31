@@ -1,5 +1,6 @@
 import '../services/app_scope.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/client_models.dart';
 import '../services/guest_link_service.dart';
 import '../theme/app_colors.dart';
@@ -38,6 +39,7 @@ class BonusRedeemPanel extends StatefulWidget {
 class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
   final _link = GuestLinkService();
   final _phone = TextEditingController();
+  final _amount = TextEditingController();
 
   ClientProfile? _profile;
   double _applied = 0;
@@ -53,6 +55,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
   @override
   void dispose() {
     _phone.dispose();
+    _amount.dispose();
     super.dispose();
   }
 
@@ -186,6 +189,22 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
     }
   }
 
+  /// Списать сумму, которую кассир вписал сам (1 бонус = 1 ₽), — в пределах
+  /// лимита: баланс гостя и доля чека.
+  void _redeemTyped() {
+    final v = int.tryParse(_amount.text.trim()) ?? 0;
+    if (v <= 0) {
+      setState(() => _error = 'Впишите, сколько бонусов списать');
+      return;
+    }
+    if (v > _limit) {
+      setState(() => _error = 'Можно списать не больше ${rub(_limit)}');
+      return;
+    }
+    setState(() => _error = null);
+    _redeem(v.toDouble());
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -289,6 +308,36 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
                   ),
                 ],
               ),
+              // Своя сумма — только в ZalPOS (SaaS): общую кассу hookah-pos не меняем.
+              if (AppScope.isSaasMode && _limit > 0) ...[
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _amount,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(7)],
+                        style: TextStyle(color: AppColors.textPrimary),
+                        decoration: const InputDecoration(
+                          labelText: 'Сколько бонусов списать',
+                          helperText: '1 бонус = 1 ₽',
+                          isDense: true,
+                        ),
+                        onSubmitted: (_) {
+                          if (!_busy) _redeemTyped();
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    FilledButton(
+                      style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+                      onPressed: _busy ? null : _redeemTyped,
+                      child: const Text('Списать'),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ],
           if (_error != null)
