@@ -16,6 +16,10 @@ const { startHarness } = require("./test-data-harness.js");
 const consoleSrc = fs.readFileSync(path.join(here, "..", "saas", "console", "zal-db.js"), "utf8");
 const guestSrc = fs.readFileSync(path.join(here, "..", "saas", "guest-web", "app", "zal-db.js"), "utf8");
 assert.strictEqual(guestSrc, consoleSrc, "saas/guest-web/app/zal-db.js должен совпадать с saas/console/zal-db.js");
+assert.strictEqual(
+  fs.readFileSync(path.join(here, "..", "saas", "guest-web", "app", "heal.js"), "utf8"),
+  fs.readFileSync(path.join(here, "..", "saas", "console", "heal.js"), "utf8"),
+  "saas/guest-web/app/heal.js должен совпадать с saas/console/heal.js");
 
 // Firebase с CDN в Node не загрузить — подставляем то, что нужно клиенту.
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zaldb-"));

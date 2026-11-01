@@ -210,6 +210,13 @@ echo "журнал: /var/log/zalpos-blog.log"
 # Зашифрованная копия всех данных в хранилище S3 в другом городе — каждый
 # час (offsite-backup.sh). Пока нет /etc/zalpos-offsite.env, скрипт ничего
 # не делает, а панель и бот подсказывают, что копия не настроена.
+# Сторож: зависшие службы, остановленный nginx, пропавшие файлы сайта,
+# истекающие сертификаты, кончающееся место (self-heal.sh). Пишет в журнал
+# только то, что сделал.
+say "Сторож сервера"
+timer zalpos-heal "*:0/2" "/bin/bash $REPO/saas-gateway/self-heal.sh >> /var/log/zalpos-heal.log 2>&1" "Сторож ZalPOS: службы, сайт, сертификаты, диск" 5min
+echo "журнал: /var/log/zalpos-heal.log (пишет только о сделанном)"
+
 say "Копия данных в другом городе"
 # Предел 100 минут: зависший запуск systemd остановит сам, и следующий пойдёт.
 timer zalpos-offsite "*-*-* *:17:00" "/bin/bash $REPO/saas-gateway/offsite-backup.sh >> /var/log/zalpos-offsite.log 2>&1" "Копия данных ZalPOS в хранилище S3" 100min

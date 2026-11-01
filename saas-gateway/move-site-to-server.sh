@@ -227,7 +227,16 @@ systemctl reload nginx
 HOOK
 chmod 755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
 
-code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 --resolve "$SITE:443:127.0.0.1" "https://$SITE/" || true)"
+# nginx применяет настройки не мгновенно — несколько попыток, потом и по
+# внешнему адресу (часть серверов слушает 443 только на нём).
+code=000
+for i in 1 2 3 4 5; do
+  sleep 2
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 --resolve "$SITE:443:127.0.0.1" "https://$SITE/" || true)"
+  [[ "$code" == "200" ]] && break
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://$SITE/" || true)"
+  [[ "$code" == "200" ]] && break
+done
 [[ "$code" == "200" ]] || die "https://$SITE ответил $code — посмотрите: nginx -t; tail /var/log/nginx/error.log"
 enc="$(curl -s -o /dev/null -D - --max-time 15 -H 'Accept-Encoding: gzip' --resolve "$SITE:443:127.0.0.1" "https://$SITE/console.js" | grep -i '^content-encoding' || true)"
 echo "ok: https://$SITE работает с этого сервера${enc:+ (сжатие: ${enc#*: })}"

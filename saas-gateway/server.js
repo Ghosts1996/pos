@@ -3710,6 +3710,35 @@ function checkDemoRateLimit(ip) {
  * X-Forwarded-For; первый элемент X-Forwarded-For присылает сам клиент,
  * ему верить нельзя.
  */
+/**
+ * Сбой страницы у посетителя (heal.js: кабинет или приложение гостя не
+ * загрузились, упал скрипт) — строкой в журнал сервера: так видно, что
+ * где-то не открывается, ещё до жалобы. Без входа, коротко, с лимитом;
+ * почта, телефоны и длинные ключи в журнал не попадают.
+ */
+const clientErrorLimiter = new Map();
+async function handleClientError(req, res) {
+  const done = () => { res.writeHead(204, { "Access-Control-Allow-Origin": "*" }); res.end(); };
+  const ip = clientIp(req);
+  const now = Date.now();
+  const lim = clientErrorLimiter.get(ip);
+  if (!lim || lim.resetAt <= now) clientErrorLimiter.set(ip, { count: 1, resetAt: now + 10 * 60 * 1000 });
+  else if (lim.count >= 10) return done();
+  else lim.count += 1;
+  if (clientErrorLimiter.size > 5000) clientErrorLimiter.clear();
+  let j = {};
+  try { j = JSON.parse(await readBody(req, 4096)); } catch (_) { return done(); }
+  const clean = (v, n) => String(v || "").replace(/[\r\n\t]+/g, " ")
+    .replace(/[^\s@]+@[^\s@]+/g, "***@***")
+    .replace(/\+?\d[\d\s()-]{8,}\d/g, "***")
+    .replace(/[A-Za-z0-9_-]{24,}/g, "***")
+    .slice(0, n);
+  const kind = ["fatal", "slow", "error"].includes(j.kind) ? j.kind : "error";
+  const ms = Math.max(0, Math.min(Number(j.sinceStartMs) || 0, 36e5));
+  console.warn(`client-error: ${kind} ${clean(j.page, 80)} — ${clean(j.message, 200)} (${Math.round(ms / 100) / 10} с, ${clean(req.headers["user-agent"], 60)})`);
+  done();
+}
+
 function clientIp(req) {
   const real = req.headers["x-real-ip"];
   if (typeof real === "string" && real.trim()) return real.trim();
@@ -9262,6 +9291,7 @@ const server = http.createServer((req, res) => {
 
   const urlPath = (req.url || "").split("?")[0];
   if (req.method === "GET" && urlPath === "/health") return sendJson(res, 200, { ok: true, version: SERVER_VERSION });
+  if (req.method === "POST" && urlPath === "/clientError") return handleClientError(req, res);
   if (req.method === "GET" && urlPath === "/downloadBuild") return runHandler(handleDownloadBuild, req, res);
   // Гостевой APK по QR стола — без входа.
   if (req.method === "GET" && urlPath === "/publicGuestApk") return runHandler(handlePublicGuestApk, req, res);
