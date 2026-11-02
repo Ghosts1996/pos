@@ -2211,6 +2211,29 @@ test("без ИИ: подбор тарифа по числу устройств 
   process.exit(process.exitCode || 0);
 })();
 
+test("знает все возможности и не опровергает их; вопросы «а есть ли…» — сразу шаблоном", () => {
+  const core = sb.SYSTEM_CORE;
+  for (const f of ["Яндекс Еда", "ЕГАИС", "«Честный знак»", "OrangeData", "Тайм-кафе".toLowerCase(), "УПД", "Сотрудники без ограничений"]) {
+    assert.ok(core.toLowerCase().includes(f.toLowerCase()), `в «Возможностях ZalPOS» нет: ${f}`);
+  }
+  assert.match(core, /никогда не опровергай/);
+  assert.ok(!/где не уверен — так и скажи/.test(require("fs").readFileSync(require.resolve("./support-bot"), "utf8")), "осталась установка сомневаться");
+  const { TEMPLATES } = require("./support-templates");
+  const { MORE_TEMPLATES } = require("./support-templates-more");
+  const { EXTRA_Q, EXTRA_TEMPLATES } = require("./support-templates-extra");
+  const all = [...TEMPLATES, ...MORE_TEMPLATES, ...EXTRA_TEMPLATES].filter((t, i, a) => a.findIndex((x) => x.id === t.id) === i)
+    .map((t) => (EXTRA_Q[t.id] ? { ...t, q: [...t.q, ...EXTRA_Q[t.id]] } : t));
+  const ids = new Set(all.map((t) => t.id));
+  assert.deepStrictEqual(Object.keys(EXTRA_Q).filter((k) => !ids.has(k)), [], "формулировки к несуществующему шаблону");
+  const idx = sb.tplIndex(all);
+  for (const [q, id] of [["Есть интеграция с Яндекс Едой?", "aggregators"], ["А ЕГАИС есть?", "egais-key"], ["честный знак поддерживаете", "marking"],
+    ["работаете с атол?", "kassa-which"], ["есть чаевые?", "tips"], ["загрузить накладную из диадока", "stock-upd"], ["есть KDS для кухни", "kitchen-screen"],
+    ["подходит для сети кофеен?", "plan-chain-what"], ["какие функции есть", "features-all"], ["как сделать заготовку", "stock-prep"]]) {
+    const m = sb.matchTemplate(q, idx);
+    assert.ok(m && m.template.id === id && m.score >= 0.65 && m.score - m.second >= 0.12, `${q} → ${m && m.template.id} ${m && m.score.toFixed(2)}/${m && m.second.toFixed(2)}`);
+  }
+});
+
 test("ссылки на статьи инструкции: адрес как на сайте, повтор заголовка — с id раздела", () => {
   const docs = sb.guideDocs([
     { id: "hall", title: "Зал", items: [{ title: "Тайм-кафе: оплата за время", steps: ["Включите"] }] },
