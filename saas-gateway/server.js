@@ -36,6 +36,7 @@ const tls = require("tls");
 const dns = require("dns");
 const net = require("net");
 const zlib = require("zlib");
+const { createLegalPapers } = require("./legal-papers");
 const {
   authEmailLetter, passwordLetter, superAdminGrantedLetter, superAdminRevokedLetter, passwordChangedLetter, brandAuthLink,
   createMailer, AUTH_EMAIL_TYPES,
@@ -6952,7 +6953,12 @@ async function handleAnonymizeGuest(req, res) {
   const clientSnap = await root.collection("clients").doc(clientUid).get();
   if (!clientSnap.exists) throw new HttpError(404, "Профиль гостя не найден");
   const c = clientSnap.data();
-  const { scrubbed, accountDeleted } = await anonymizeGuestData({ root, scope, rootId, clientUid, c, forgetInVault: true });
+  const venueName = String(rootDoc.data().name || "").trim();
+  const { scrubbed, accountDeleted } = await anonymizeGuestData({
+    root, scope, rootId, clientUid, c, forgetInVault: true,
+    reason: "Требование субъекта персональных данных об уничтожении его данных (запрос выполнен Оператором)",
+    processor: venueName ? `${scope === "chain" ? "Сеть заведений" : "Заведение"} «${venueName}» (Заказчик Платформы)` : "",
+  });
 
   if (typeof body.requestId === "string" && body.requestId) {
     await firestore.collection("dataRequests").doc(body.requestId).set({
@@ -7015,7 +7021,12 @@ async function handleDeleteGuestData(req, res) {
       throw new HttpError(409, "У вас открыт счёт за столом — удалить данные можно после его закрытия");
     }
   }
-  const { scrubbed, accountDeleted } = await anonymizeGuestData({ root, scope, rootId, clientUid, c });
+  const venueName = String(tenantDoc.data().name || "").trim();
+  const { scrubbed, accountDeleted } = await anonymizeGuestData({
+    root, scope, rootId, clientUid, c,
+    reason: "Отзыв согласия и требование субъекта персональных данных об уничтожении его данных (гость удалил данные в приложении)",
+    processor: venueName ? `Заведение «${venueName}» (Заказчик Платформы)` : "",
+  });
 
   const now = admin.firestore.FieldValue.serverTimestamp();
   const open = await firestore.collection("dataRequests").where("clientUid", "==", clientUid).get();
@@ -7113,7 +7124,10 @@ async function handleRestoreGuestSession(req, res) {
  * перед этим уже стёр там всё сам (pii-gateway, guest_delete). Справочник —
  * первым: не вышло — Firestore не трогаем, супер-админ повторит.
  */
-async function anonymizeGuestData({ root, scope, rootId, clientUid, c, forgetInVault = false }) {
+// Состав данных гостя — как в Политике (раздел 2), для акта об уничтожении.
+const GUEST_PD_CATEGORIES = ["имя", "номер телефона", "день и месяц рождения", "адрес доставки", "сведения о бронированиях, заказах, посещениях, бонусах и отзывах"];
+
+async function anonymizeGuestData({ root, scope, rootId, clientUid, c, forgetInVault = false, reason = "", processor = "" }) {
   const firestore = db();
   const clientRef = root.collection("clients").doc(clientUid);
   const tenantIds = scope === "chain"
@@ -7208,6 +7222,13 @@ async function anonymizeGuestData({ root, scope, rootId, clientUid, c, forgetInV
       accountDeleted = true;
     }
   } catch (_) {}
+  // Акт об уничтожении — владельцу платформы; удаление уже сделано, не ждём.
+  const phone = String(c.phone || "").replace(/\D/g, "");
+  legalPapers.destruction([{
+    subject: `Гость${String(c.name || "").trim() ? ` ${String(c.name).trim()}` : ""}${phone ? `, телефон ***${phone.slice(-4)}` : ""}, идентификатор ${clientUid}`,
+    categories: GUEST_PD_CATEGORIES,
+    processor,
+  }], { reason: reason || "Требование субъекта персональных данных об уничтожении его данных" });
   return { scrubbed, accountDeleted };
 }
 
@@ -7621,6 +7642,14 @@ const AUTH_EMAIL_ADDRESS_MAX = 5;
 const AUTH_EMAIL_WINDOW_MS = 60 * 60 * 1000;
 const authEmailHits = new Map();
 let authMailer;
+const getAuthMailer = () => (authMailer === undefined ? (authMailer = createMailer()) : authMailer);
+// Бумаги владельцу платформы по событиям (акты об уничтожении ПДн, договоры
+// с менеджерами) — сразу заполненные, на почту только ему (legal-papers.js).
+const legalPapers = createLegalPapers({
+  db,
+  getMailer: getAuthMailer,
+  platformLegal: async () => (await db().collection("platformConfig").doc("legal").get()).data() || {},
+});
 
 function hitAuthEmailLimit(key, max) {
   const now = Date.now();
@@ -8035,6 +8064,7 @@ async function runDeliveryPiiRetention() {
   const border = Date.now() - DELIVERY_PII_DAYS * 24 * 3600 * 1000;
   const tenants = await db().collection("tenants").get();
   const vault = pii.enabled();
+  const destroyed = []; // для акта об уничтожении — один на проход
   for (const t of tenants.docs) {
     try {
       const snap = await t.ref.collection("sessions").where("source", "==", "app").get();
@@ -8068,10 +8098,23 @@ async function runDeliveryPiiRetention() {
         }));
         await batch.commit();
       }
+      const venue = String(t.data().name || "").trim();
+      touched.forEach((d) => {
+        const s = d.data();
+        const phone = String(s.customerPhone || "").replace(/\D/g, "");
+        destroyed.push({
+          subject: `Получатель заказа ${d.id}${s.customerName ? ` (${String(s.customerName).trim().split(/\s+/)[0]})` : ""}${phone ? `, телефон ***${phone.slice(-4)}` : ""}`,
+          categories: ["имя", "номер телефона", "адрес доставки", "комментарий к доставке"],
+          processor: venue ? `Заведение «${venue}» (Заказчик Платформы)` : "",
+        });
+      });
     } catch (e) {
       console.error(`saas-gateway: обезличивание доставки ${t.id}:`, e.message || e);
     }
   }
+  await legalPapers.destruction(destroyed, {
+    reason: `Истечение срока хранения: ${DELIVERY_PII_DAYS} дней после закрытия заказа (Политика обработки персональных данных)`,
+  });
 }
 
 // Telegram-боты заведений: доставка, смены, отчёты, сигналы — см. telegram.js.
@@ -8875,6 +8918,7 @@ const partners = createPartners({
   notifyAdmins: (html) => supportBot.notifyAdmins(html),
   supportSend: (uid, text, opts) => supportBot.partnerSend(uid, text, opts),
   supportHasTicket: (uid) => supportBot.partnerHasTicket(uid),
+  papers: legalPapers,
   // Реквизиты для договора; лимит Firebase исчерпан — последняя копия на сервере.
   platformLegal: async () => {
     const cache = partnersDb.collection("partnerSettings").doc("legalCache");

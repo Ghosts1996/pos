@@ -123,6 +123,8 @@ function createPartners(deps) {
     hookBase = (process.env.TELEGRAM_HOOK_BASE || "").replace(/\/+$/, ""),
     letters = require("./auth-email"),
     platformLegal = async () => ({}),
+    // Бумаги владельцу (legal-papers.js): договор с менеджером — на почту, когда он указал реквизиты.
+    papers = null,
     notifyAdmins = () => {},
     // Поддержка менеджеров (support-bot.js): вопрос из бота менеджеров.
     supportSend = async () => { throw new Error("поддержка не подключена"); },
@@ -782,6 +784,27 @@ function createPartners(deps) {
     try { d = cleanDetails(body); } catch (e) { throw new HttpError(400, e.message); }
     await partnersCol().doc(partner.id).set({ payoutDetailsEnc: encrypt(secretKey(), JSON.stringify(d)), payoutDetailsMask: maskDetails(d), payoutDetailsAt: ts(now()) }, { merge: true });
     sendJson(res, 200, { ok: true, payoutDetails: maskDetails(d) });
+    if (papers) sendContractToOwner(partner.id).catch((e) => console.error(`partners: договор владельцу: ${e.message || e}`));
+  }
+
+  /** Договор с менеджером — уже с его ФИО, ИНН и реквизитами — владельцу на почту. */
+  async function sendContractToOwner(id) {
+    const p = (await partnersCol().doc(id).get()).data();
+    if (!p) return;
+    const number = await contractNumberOf({ id, ...p });
+    const file = require("./partner-contract").buildPartnerContract({
+      platform: (await platformLegal().catch(() => ({}))) || {}, partner: p, settings: await settings(), number, now: new Date(now()), details: detailsOf(p),
+    });
+    await papers.sendFile({
+      fileName: `Договор_с_менеджером_${number}.docx`,
+      buf: file,
+      subject: `Договор № ${number} с менеджером ${p.name || p.email || ""} — распечатать и подписать`.trim(),
+      text: [
+        `Менеджер партнёрской программы ${p.name || ""} (${p.email || ""}) указал реквизиты для выплат.`,
+        "Во вложении договор возмездного оказания услуг, уже заполненный его данными.",
+        "Распечатайте 2 экземпляра, подпишите и передайте менеджеру на подпись (или обменяйтесь сканами).",
+      ].join("\n"),
+    });
   }
 
   async function requestPayout(partner) {

@@ -287,7 +287,8 @@ function createMailer(env = process.env) {
   });
   const from = env.MAIL_FROM || `ZalPOS <${env.SMTP_USER}>`;
   return {
-    send: ({ to, subject, text, html }) => transport.sendMail({ from, to, subject, text, html }),
+    // attachments — файлы (бумаги владельцу, legal-papers.js): [{ filename, content, contentType }].
+    send: ({ to, subject, text, html, attachments }) => transport.sendMail({ from, to, subject, text, html, ...(attachments ? { attachments } : {}) }),
   };
 }
 
