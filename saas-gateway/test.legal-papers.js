@@ -84,6 +84,11 @@ test("удаление → акт с номером по порядку, на п
   assert.ok(text.includes("u2") && text.includes("Истечение срока хранения"), text.slice(0, 300));
   assert.ok(fs.existsSync(path.join(dir, file.filename)), "копия на сервере");
   assert.strictEqual(await papers.destruction([], { reason: "x" }), null, "пусто — без акта");
+  // Одновременно — разные номера.
+  const before = mails.length;
+  await Promise.all([1, 2, 3].map(() => papers.destruction([item], { reason: "r" })));
+  const nums = mails.slice(before).map((m) => (m.subject.match(/Акт № (\d+)/) || [])[1]).sort();
+  assert.deepStrictEqual(nums, ["3", "4", "5"]);
 });
 
 test("LEGAL_PAPERS_TO важнее почты из реквизитов; без почты — только файл; сбой почты не бросает", async () => {

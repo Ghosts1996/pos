@@ -90,12 +90,18 @@ function destructionActBlocks({ legal = {}, number, at, items, reason }) {
 
 function createLegalPapers({ db, getMailer, platformLegal, dir = process.env.PAPERS_DIR || path.join(__dirname, "state", "papers"), now = () => Date.now(), env = process.env }) {
   /** Номер документа по порядку — свой счётчик на каждый вид. */
-  async function nextNumber(kind) {
-    const ref = db().collection("platformConfig").doc("legalPapers");
-    const snap = await ref.get();
-    const n = (Number((snap.exists && snap.data()[kind]) || 0) || 0) + 1;
-    await ref.set({ [kind]: n }, { merge: true });
-    return n;
+  // Номера выдаются по очереди: два удаления одновременно не получат один номер.
+  let numbering = Promise.resolve();
+  function nextNumber(kind) {
+    const run = numbering.then(async () => {
+      const ref = db().collection("platformConfig").doc("legalPapers");
+      const snap = await ref.get();
+      const n = (Number((snap.exists && snap.data()[kind]) || 0) || 0) + 1;
+      await ref.set({ [kind]: n }, { merge: true });
+      return n;
+    });
+    numbering = run.catch(() => {});
+    return run;
   }
 
   /** Сохранить на сервере и отправить владельцу. */
