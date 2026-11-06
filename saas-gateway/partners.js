@@ -1302,6 +1302,9 @@ function createPartners(deps) {
   };
   const cabinetUrl = () => `${site}#/partner`;
   const cabinetBtn = (text = "🖥 Открыть кабинет") => ({ text, web_app: { url: appUrl() } });
+  // Кабинет на сервере в России: многие VPN через зарубежные серверы на
+  // российские сайты не пускают — тогда он «вечно грузится».
+  const VPN_HINT = "Не открывается с включённым VPN? Добавьте zalpos.ru в исключения VPN (раздельное туннелирование) или выберите в VPN сервер в России.";
   const HELP = [
     "💼 <b>Бот менеджеров ZalPOS</b>",
     "",
@@ -1414,7 +1417,7 @@ function createPartners(deps) {
     const cmd = byButton || (text.match(/^\/(\w+)/) || [])[1] || "";
     if (cmd === "support") return askSupport(chatId);
     if (cmd === "start" || cmd === "help") return say(chatId, HELP, { reply_markup: MENU });
-    if (cmd === "cabinet") return say(chatId, "🖥 <b>Личный кабинет менеджера</b> — откроется прямо в Telegram, вход без пароля.", { reply_markup: { inline_keyboard: [[cabinetBtn("🖥 Открыть кабинет")]] } });
+    if (cmd === "cabinet") return say(chatId, `🖥 <b>Личный кабинет менеджера</b> — откроется прямо в Telegram, вход без пароля.\n\n${VPN_HINT}`, { reply_markup: { inline_keyboard: [[cabinetBtn("🖥 Открыть кабинет")]] } });
     if (cmd === "link") return say(chatId, linkText(p), { reply_markup: linkButtons(p) });
     if (cmd === "income") {
       const s = await summaryOf(p);

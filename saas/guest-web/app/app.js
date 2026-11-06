@@ -127,6 +127,11 @@ async function rememberGuestKey(user) {
 function homeScreenManifest(k) {
   const link = document.querySelector('link[rel="manifest"]');
   if (!link) return;
+  // Только iPhone и iPad: у ярлыка там своё хранилище, и вход переносится
+  // ссылкой с ключом. Android делит хранилище с браузером, а манифест,
+  // подменённый на data:-ссылку, Chrome не даёт «Установить приложение».
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (!ios) return;
   const base = `${location.origin}/`;
   const name = document.title || 'Личный кабинет гостя';
   const m = {
@@ -484,7 +489,9 @@ async function resolveTenant() {
   });
   if (tenantResp.ok) {
     const json = await tenantResp.json();
-    return { type: 'tenant', tenantId: json.tenantId };
+    // Точка сети по своему адресу — тоже сеть: брендинг и бонусы общие на
+    // все точки (как на кассе), а не свои у точки.
+    return { type: 'tenant', tenantId: json.tenantId, chainId: json.chainId || '' };
   }
 
   const chainResp = await fetch(`${GATEWAY}/resolveChainBySlug`, {
@@ -573,6 +580,13 @@ async function applyBranding() {
   }
 }
 
+/// Служба для установки на Android (sw.js): без неё Chrome не предлагает
+/// «Установить приложение». Не вышло — веб-версия работает и так.
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('sw.js', { scope: './' }).catch(() => {});
+}
+
 async function boot() {
   // Заведение и конфиг Firebase друг от друга не зависят — запрашиваем
   // параллельно.
@@ -610,9 +624,12 @@ async function boot() {
     }
   } else {
     tenantId = resolved.tenantId;
+    chainId = resolved.chainId || '';
   }
   state.tenantId = tenantId;
   state.chainId = chainId;
+  // Выбор точки — только на адресе сети; у точки свой адрес, менять нечего.
+  state.chainPicker = resolved.type === 'chain';
 
   // Приложение Firebase — только если вход или данные ещё у Firebase.
   // Не zalpos.ru/__/firebase/init.json: для поддомена это чужой origin, и
@@ -961,6 +978,7 @@ function route() {
   }
 }
 
+registerServiceWorker();
 boot();
 
 // ---------- ГЛАВНАЯ ----------
@@ -3466,7 +3484,7 @@ function screenProfile() {
     <h2>История бонусов</h2>
     <div id="bonusOps"><div class="spinner"></div></div>
 
-    ${state.chainId ? `
+    ${state.chainId && state.chainPicker ? `
       <p class="center" style="margin-top:20px">
         <button class="btn-ghost" id="switchVenueBtn">Сменить заведение сети</button>
       </p>` : ''}
@@ -3486,7 +3504,7 @@ function screenProfile() {
     const el = $(id);
     if (el) el.addEventListener('input', () => { state.profileDirty = true; });
   });
-  if (state.chainId) {
+  if (state.chainId && state.chainPicker) {
     // Забываем выбранную точку и перезагружаем страницу — boot() спросит заново.
     $('switchVenueBtn').onclick = () => {
       // Открытый стол останется в прежней точке, и «Мой стол» его не

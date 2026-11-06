@@ -75,7 +75,7 @@
       + 'font:15px/1.4 system-ui,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.35);display:flex;gap:12px;align-items:center';
     var t = document.createElement('div');
     t.style.flex = '1';
-    t.textContent = 'Страница загружается дольше обычного. Проверьте интернет или обновите.';
+    t.textContent = 'Страница загружается дольше обычного. Проверьте интернет и обновите. Включён VPN — выберите в нём сервер в России или добавьте этот сайт в исключения VPN.';
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = 'Обновить';
