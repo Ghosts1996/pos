@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../models/client_models.dart';
 import '../../models/delivery_status.dart';
 import '../../models/reservation_model.dart';
 import '../../services/guest_link_service.dart';
@@ -58,6 +59,7 @@ class KolibriNotifications {
   String get _resKey => 'notif_res_$_uid';
   String get _orderKey => 'notif_order_$_uid';
   String get _bonusKey => 'notif_bonus_$_uid';
+  String get _promoKey => 'notif_promo_$_uid';
 
   Future<void> start(String uid) async {
     if (_running && _uid == uid) return;
@@ -369,6 +371,7 @@ class KolibriNotifications {
   void _watchBonuses() {
     _profileSub = _link.profileStream(_uid).listen((profile) {
       if (profile == null) return;
+      final promo = _showPromo(profile.promo);
       final previous = _lastBonusBalance;
       _lastBonusBalance = profile.bonusBalance;
       _prefs?.setDouble(_bonusKey, profile.bonusBalance);
@@ -379,6 +382,8 @@ class KolibriNotifications {
       if (previous == null) return;
       final gained = profile.bonusBalance - previous;
       if (gained < 1 || _silenced) return;
+      // Бонусы подарка «Вернуть гостя» уже названы в его уведомлении.
+      if (promo != null && promo.bonus > 0 && (gained - promo.bonus).abs() < 1) return;
 
       unawaited(_notify.show(
         id: NotificationService.idFor('bonus_${DateTime.now().millisecondsSinceEpoch}'),
@@ -387,6 +392,23 @@ class KolibriNotifications {
             'Списать можно на кассе при следующем визите.',
       ));
     }, onError: (_) {});
+  }
+
+  /// Подарок «Вернуть гостя» (поле promo профиля, пишет сервер) — одно
+  /// уведомление на подарок: показанный id лежит в памяти телефона. Без неё
+  /// не показываем вовсе, иначе уведомление повторялось бы при каждом
+  /// изменении профиля. Возвращает подарок, если уведомление показано сейчас.
+  GuestPromo? _showPromo(GuestPromo? promo) {
+    final prefs = _prefs;
+    if (promo == null || prefs == null || _silenced) return null;
+    if (prefs.getString(_promoKey) == promo.id) return null;
+    prefs.setString(_promoKey, promo.id);
+    unawaited(_notify.show(
+      id: NotificationService.idFor('promo_${promo.id}'),
+      title: promo.title,
+      body: promo.body.isEmpty ? 'Загляните в приложение' : promo.body,
+    ));
+    return promo;
   }
 
   // ---------- ФОРМАТ ----------

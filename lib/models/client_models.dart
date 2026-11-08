@@ -54,6 +54,16 @@ class ClientProfile {
   /// отметка; пусто — гость ещё не соглашался.
   final String consentEdition;
 
+  /// Гость сам согласился получать подарки и предложения заведения
+  /// (галочка в профиле приложения). Ставит только сервер в РФ вместе с
+  /// записью-доказательством — правила базы не дают записать её из
+  /// приложения (saas-gateway/guest-marketing.js). В [toMap] не входит.
+  final bool adsConsent;
+
+  /// Подарок «Вернуть гостя» от сервера. Null — подарка нет или срок
+  /// показа прошёл. В [toMap] не входит.
+  final GuestPromo? promo;
+
   ClientProfile({
     required this.uid,
     String name = '',
@@ -73,6 +83,8 @@ class ClientProfile {
     this.aiProfile = '',
     required this.createdAt,
     this.lastVisitAt,
+    this.adsConsent = false,
+    this.promo,
   }) : _name = name, _phone = phone;
 
   /// Пороги уровней по сумме всех закрытых чеков — одно место для уровня,
@@ -179,6 +191,8 @@ class ClientProfile {
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       lastVisitAt: last is Timestamp ? last.toDate() : null,
       consentEdition: asText(data['consentEdition']),
+      adsConsent: data['adsConsent'] == true,
+      promo: GuestPromo.fromMap(data['promo']),
     );
   }
 
@@ -323,6 +337,8 @@ class BonusOpView {
         return 'Друг дошёл до нас';
       case 'birthday':
         return 'Подарок ко дню рождения';
+      case 'winback':
+        return 'Подарок: ждём вас снова';
       case 'refund':
         return plus ? 'Возврат чека: бонусы вернулись' : 'Возврат чека: бонусы за визит отменены';
       case 'refund_undone':
@@ -330,6 +346,52 @@ class BonusOpView {
     }
     if (type == 'redeem_cancelled') return 'Оплата бонусами отменена';
     return plus ? 'Начисление за визит' : 'Списание бонусов';
+  }
+}
+
+/// Подарок «Вернуть гостя» в профиле гостя (поле promo). Пишет сервер:
+/// гостю с согласием на предложения, который давно не приходил, — текст
+/// заведения и, по желанию, бонусы (они уже начислены на счёт).
+class GuestPromo {
+  final String id;
+  final String title;
+  final String text;
+  final int bonus;
+  final String from;
+  final DateTime? until;
+
+  const GuestPromo({
+    required this.id,
+    required this.title,
+    this.text = '',
+    this.bonus = 0,
+    this.from = '',
+    this.until,
+  });
+
+  /// Null — поля нет, оно неполное или срок показа ([until]) прошёл.
+  static GuestPromo? fromMap(Object? raw, {DateTime? now}) {
+    if (raw is! Map) return null;
+    final id = asText(raw['id']).trim();
+    final title = asText(raw['title']).trim();
+    if (id.isEmpty || title.isEmpty) return null;
+    final u = raw['until'];
+    final until = u is Timestamp ? u.toDate() : null;
+    if (until != null && until.isBefore(now ?? DateTime.now())) return null;
+    return GuestPromo(
+      id: id,
+      title: title,
+      text: asText(raw['text']).trim(),
+      bonus: asNum(raw['bonus'])?.toInt() ?? 0,
+      from: asText(raw['from']).trim(),
+      until: until,
+    );
+  }
+
+  /// Текст уведомления: сообщение заведения и бонусы, если они есть.
+  String get body {
+    final gift = bonus > 0 ? '+$bonus бонусов уже на счету.' : '';
+    return [text, gift].where((s) => s.isNotEmpty).join(' ');
   }
 }
 

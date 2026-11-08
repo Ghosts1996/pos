@@ -135,11 +135,17 @@ service cloud.firestore {
         d.get('discountPercent', 0) == 0 &&
         d.get('discountCardId', '') in ['', null] &&
         !('tier' in d) &&
-        !('phoneOnFile' in d);
+        !('phoneOnFile' in d) &&
+        !('adsConsent' in d) && !('adsConsentAt' in d) && !('adsConsentEdition' in d) &&
+        !('promo' in d) && !('winbackAt' in d) && !('winbackSpent' in d) && !('winbackTries' in d);
     }
+    // Согласие на рекламные сообщения (adsConsent*) и подарки «Вернуть гостя»
+    // (promo, winback*) пишет только сервер (saas-gateway/guest-marketing.js):
+    // согласие — с записью-доказательством, подарок — вместе с бонусами.
     function guestProfileCleanOnUpdate() {
       return !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['bonusBalance', 'tier', 'totalSpent', 'visits', 'discountPercent', 'discountCardId', 'phoneOnFile']);
+        .hasAny(['bonusBalance', 'tier', 'totalSpent', 'visits', 'discountPercent', 'discountCardId', 'phoneOnFile',
+                 'adsConsent', 'adsConsentAt', 'adsConsentEdition', 'promo', 'winbackAt', 'winbackSpent', 'winbackTries']);
     }
 
     // Номер похож на настоящий: 10–15 цифр, знаки форматирования не в счёт

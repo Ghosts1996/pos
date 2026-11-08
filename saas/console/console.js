@@ -249,6 +249,151 @@ function apiKeysBoxHtml(tenantId) {
     </details>`;
 }
 
+// ---------- Гости: сегменты и «Вернуть гостя» (saas-gateway/guest-marketing.js)
+// Только цифры: имён и телефонов гостей в кабинете нет. Сообщения получают
+// лишь гости, которые сами отметили «Получать подарки и предложения».
+const guestSegCache = new Map(); // tenantId → данные | { error } | null (загружаю)
+const GUEST_SEGMENTS = [
+  { id: 'new', label: 'Новые', hint: 'один визит, были за 30 дней' },
+  { id: 'regular', label: 'Постоянные', hint: '2+ визита, были за 30 дней' },
+  { id: 'lapsing', label: 'Давно не были', hint: '31–90 дней без визита' },
+  { id: 'lost', label: 'Ушли', hint: 'больше 90 дней без визита' },
+  { id: 'noVisits', label: 'Без визитов', hint: 'зарегистрировались, но не приходили' },
+];
+const fmtInt = (n) => (Number(n) || 0).toLocaleString('ru-RU');
+
+function guestPromoPreviewHtml(c) {
+  const bonus = Number(c.bonus) || 0;
+  return `<div style="border:1px solid var(--border);border-radius:12px;padding:12px 14px">
+      <div class="small" style="color:var(--primary);font-weight:600">Подарок от заведения</div>
+      <div style="font-weight:600;margin:4px 0">${esc(c.title || 'Заголовок')}</div>
+      <div class="small muted" style="line-height:1.5">${esc(c.text || 'Текст сообщения')}</div>
+      ${bonus > 0 ? `<div class="small" style="margin-top:6px;font-weight:600">+${fmtInt(bonus)} бонусов уже на счету</div>` : ''}
+    </div>`;
+}
+
+function guestsTabHtml(tenantId) {
+  const st = guestSegCache.get(tenantId);
+  const head = `<h1>Гости</h1>
+    <p class="muted" style="margin-top:-6px">Кто приходит часто, кто давно не был и кого можно вернуть подарком.
+      Только цифры — имён и телефонов здесь нет.</p>`;
+  if (st === undefined || st === null) return `${head}<div class="spinner"></div>`;
+  if (st.error) return `${head}<div class="card"><p style="color:var(--danger);margin-top:0">${esc(st.error)}</p>
+    <button class="btn btn-ghost" id="f-guests-retry" style="width:auto">Повторить</button></div>`;
+  const s = st.stats;
+  const c = st.campaign;
+  const L = st.limits;
+  const dis = st.canEdit ? '' : 'disabled';
+  const pct = (a, b) => (b > 0 ? Math.round((a / b) * 100) : 0);
+  const camp = s.campaign;
+  const last = st.lastRun && st.lastRun.at ? st.lastRun.at : null;
+  return `${head}
+    ${st.scope === 'chain' ? '<p class="small muted">Гости, бонусы и рассылка — общие на все точки сети.</p>' : ''}
+    <div class="admin-stat-grid">
+      <div class="card" style="text-align:center;padding:14px 8px">
+        <div style="font-size:22px;font-weight:700">${fmtInt(s.total)}</div>
+        <div class="small muted">Всего гостей в приложении</div>
+      </div>
+      ${GUEST_SEGMENTS.map((g) => `
+        <div class="card" style="text-align:center;padding:14px 8px" title="${esc(g.hint)}">
+          <div style="font-size:22px;font-weight:700">${fmtInt(s.segments[g.id])}</div>
+          <div class="small"><b>${esc(g.label)}</b></div>
+          <div class="small muted">${esc(g.hint)}</div>
+        </div>`).join('')}
+    </div>
+    <div class="card small" style="line-height:1.7">
+      Средний чек гостя из приложения: <b>${fmtInt(s.avgCheck)} ₽</b><br>
+      ${s.topShare !== null ? `20% самых активных гостей приносят <b>${s.topShare}%</b> их выручки<br>` : ''}
+      Дни рождения в этом месяце: <b>${fmtInt(s.birthdays)}</b><br>
+      Согласны получать подарки и предложения: <b>${fmtInt(s.ads)}</b> из ${fmtInt(s.total)} (${pct(s.ads, s.total)}%)
+    </div>
+
+    <h2>Вернуть гостя</h2>
+    <div class="card" id="f-winback">
+      <p class="small" style="margin-top:0;line-height:1.55">Гостю, который был у вас, но не приходит выбранное число дней,
+        приложение заведения покажет сообщение и начислит бонусы. Только тем, кто сам согласился получать предложения
+        (галочка в профиле приложения), раз в день с ${L.hours[0]}:00 до ${L.hours[1]}:00 по времени заведения,
+        не больше ${fmtInt(L.perDay)} гостей в день. Кто не пришёл после двух подарков подряд — больше не беспокоим.</p>
+      ${st.hookah ? `<p class="small" style="border-left:3px solid var(--danger);padding-left:10px;line-height:1.55">
+        Не упоминайте кальяны, табак и алкоголь — их рекламу запрещает закон (15-ФЗ, 38-ФЗ), такой текст не сохранится.
+        Пригласите на кухню, чай, события. Бонусы на кальяны не тратятся.</p>` : ''}
+      <label class="row" style="gap:8px;align-items:center;margin:10px 0">
+        <input type="checkbox" id="f-wb-on" style="width:auto" ${c.enabled ? 'checked' : ''} ${dis}>
+        <span><b>Включить «Вернуть гостя»</b></span></label>
+      <div class="row" style="gap:12px;flex-wrap:wrap">
+        <label class="field" style="flex:1 1 160px"><span>Если не приходил</span>
+          <select id="f-wb-after" ${dis}>${L.afterDays.map((d) => `<option value="${d}" ${d === c.afterDays ? 'selected' : ''}>${d} ${pluralDays(d)}</option>`).join('')}</select></label>
+        <label class="field" style="flex:1 1 160px"><span>Одному гостю — не чаще</span>
+          <select id="f-wb-repeat" ${dis}>${L.repeatDays.map((d) => `<option value="${d}" ${d === c.repeatDays ? 'selected' : ''}>раза в ${d} ${pluralDays(d)}</option>`).join('')}</select></label>
+        <label class="field" style="flex:1 1 160px"><span>Бонусы в подарок</span>
+          <input id="f-wb-bonus" type="number" min="0" max="${L.maxBonus}" step="50" value="${c.bonus}" ${dis}></label>
+      </div>
+      <label class="field"><span>Заголовок</span>
+        <input id="f-wb-title" maxlength="60" value="${esc(c.title)}" ${dis}></label>
+      <label class="field"><span>Текст</span>
+        <textarea id="f-wb-text" rows="3" maxlength="300" style="width:100%;resize:vertical" ${dis}>${esc(c.text)}</textarea></label>
+      <div class="small muted" style="margin:4px 0 6px">Так гость увидит сообщение:</div>
+      <div id="f-wb-preview">${guestPromoPreviewHtml(c)}</div>
+      <div id="f-wb-msg" class="small" style="margin-top:10px"></div>
+      ${st.canEdit ? '<button class="btn btn-primary" id="f-wb-save" style="margin-top:6px">Сохранить</button>'
+        : `<p class="small muted">Настраивает владелец или администратор${st.scope === 'chain' ? ' сети' : ''}.</p>`}
+      <div class="small" style="margin-top:12px;line-height:1.7">
+        Подарок положен сейчас: <b>${fmtInt(s.eligible)}</b> ${s.eligible === 1 ? 'гостю' : 'гостям'}
+        ${c.enabled ? '' : ' — рассылка выключена'}<br>
+        ${last ? `Последняя рассылка: ${esc(isoToText(last))}, подарков: ${fmtInt(st.lastRun.sent)}<br>` : ''}
+        За ${camp.days} дней: подарков <b>${fmtInt(camp.sent)}</b>, вернулись <b>${fmtInt(camp.returned)}</b>
+        (${pct(camp.returned, camp.sent)}%)${camp.returned ? `, принесли <b>${fmtInt(camp.revenue)} ₽</b>` : ''}
+      </div>
+    </div>`;
+}
+
+function bindGuestsTab(tenantId, redraw) {
+  const load = async () => {
+    try {
+      const r = await callSaasGateway('guestSegments', { tenantId });
+      guestSegCache.set(tenantId, r.data);
+    } catch (e) {
+      guestSegCache.set(tenantId, { error: e.message || 'Не удалось загрузить данные о гостях' });
+    }
+    redraw();
+  };
+  if (!guestSegCache.has(tenantId)) {
+    guestSegCache.set(tenantId, null);
+    load();
+    return;
+  }
+  if ($('f-guests-retry')) $('f-guests-retry').onclick = () => { guestSegCache.set(tenantId, null); redraw(); load(); };
+  const form = () => ({
+    enabled: !!($('f-wb-on') && $('f-wb-on').checked),
+    afterDays: Number($('f-wb-after').value),
+    repeatDays: Number($('f-wb-repeat').value),
+    bonus: Math.max(0, Math.round(Number($('f-wb-bonus').value) || 0)),
+    title: $('f-wb-title').value.trim(),
+    text: $('f-wb-text').value.trim(),
+  });
+  const preview = () => { const el = $('f-wb-preview'); if (el && $('f-wb-title')) el.innerHTML = guestPromoPreviewHtml(form()); };
+  ['f-wb-title', 'f-wb-text', 'f-wb-bonus'].forEach((id) => { if ($(id)) $(id).oninput = preview; });
+  if ($('f-wb-title')) preview();
+  const btn = $('f-wb-save');
+  if (!btn) return;
+  btn.onclick = async () => {
+    const msg = $('f-wb-msg');
+    btn.disabled = true;
+    msg.textContent = '';
+    try {
+      const r = await callSaasGateway('guestCampaign', { tenantId, settings: form() });
+      const cur = guestSegCache.get(tenantId) || {};
+      guestSegCache.set(tenantId, { ...cur, campaign: r.data.campaign, stats: r.data.stats });
+      toast(r.data.campaign.enabled ? '«Вернуть гостя» включено' : 'Сохранено');
+      redraw();
+    } catch (e) {
+      msg.textContent = e.message || 'Не удалось сохранить';
+      msg.style.color = 'var(--danger)';
+      btn.disabled = false;
+    }
+  };
+}
+
 function bindApiKeysBox(tenantId, redraw) {
   const load = async () => {
     try {
@@ -2948,7 +3093,11 @@ function applyLegalMode(status) {
   const since = status?.auth === 'own' && status.authSince ? new Date(status.authSince) : null;
   AUTH_IN_RF = !!since && !Number.isNaN(since.getTime());
   if (AUTH_IN_RF) {
-    LEGAL_EDITION = `Редакция № 3 от ${since.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Moscow' })}`;
+    // № 4 (9 ноября 2026 г.) — отдельное согласие гостей на подарки и
+    // предложения, «Вернуть гостя». Свой вход включили позже — от его даты.
+    const ed4 = new Date('2026-11-09T00:00:00+03:00');
+    const from = since > ed4 ? since : ed4;
+    LEGAL_EDITION = `Редакция № 4 от ${from.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Moscow' })}`;
   }
 }
 const xborderConsentHtml = () => (AUTH_IN_RF ? '' : ', в том числе на их трансграничную передачу');
@@ -3003,6 +3152,7 @@ function screenLegalOffer() {
           + (LEGACY_GOOGLE ? ' Копии, сохранившиеся в зарубежной инфраструктуре с прежних версий Платформы, Исполнитель сам переносит в РФ и удаляет оттуда.' : ''),
         '<b>7.6. Роскомнадзор.</b> Об обработке персональных данных Гостей в Платформе Роскомнадзор уведомляет Исполнитель как их оператор. Использование Платформы не требует от Заказчика уведомления о трансграничной передаче: её нет. Обязанность работодателя уведомить Роскомнадзор об обработке персональных данных своих работников (ст. 22 Федерального закона № 152-ФЗ) существует у Заказчика независимо от использования Платформы; памятка с готовым текстом — в личном кабинете.',
         '<b>7.7. ИИ-помощники</b> подключаются Заказчиком по собственному желанию с ключом выбранного им провайдера ИИ; договор с провайдером заключает Заказчик. Исполнитель передаёт провайдеру только сведения, нужные для ответа, без телефонов и email Гостей; имена Гостей — первой буквой, работников — условными обозначениями.',
+        '<b>7.8. Подарки и предложения Гостям («Вернуть гостя»).</b> По поручению Заказчика Исполнитель показывает в приложении Заведения сообщения и начисляет бонусы Гостям, которые давно не приходили. Сообщения получают только Гости, давшие Исполнителю отдельное согласие на получение рекламы (ст. 18 Федерального закона «О рекламе»); Гость отказывается от них в профиле приложения, и направление прекращается сразу. Содержание сообщений и размер подарка определяет Заказчик как рекламодатель и отвечает за их соответствие законодательству; Платформа не принимает тексты с упоминанием табачной, никотинсодержащей и алкогольной продукции и ссылок. Исполнитель не передаёт Заказчику сведения о том, кто из Гостей получил сообщение, — только общие цифры.',
         'Обработка персональных данных самого Заказчика и его представителей осуществляется по Политике обработки персональных данных, опубликованной на сайте.',
       ])}
       ${legalSection('8. Интеллектуальная собственность и данные Заказчика', [
@@ -3124,11 +3274,12 @@ function screenLegalPrivacy() {
         'Специальные категории и биометрические персональные данные не обрабатываются. Платформа не предназначена для сбора данных лиц младше 14 лет.',
       ])}
       ${legalSection('3. Цели обработки', [
-        'Заключение и исполнение договора с Заказчиком; предоставление доступа к Платформе и техническая поддержка; предоставление Гостям бронирования, заказов, доставки и программы лояльности в заведениях на Платформе; ведение учёта смен и зарплаты работников по поручению заведений; направление сервисных уведомлений; исполнение требований законодательства, в том числе о бухгалтерском учёте, применении ККТ и налоге на профессиональный доход (чеки с ИНН покупателя).',
+        'Заключение и исполнение договора с Заказчиком; предоставление доступа к Платформе и техническая поддержка; предоставление Гостям бронирования, заказов, доставки и программы лояльности в заведениях на Платформе; ведение учёта смен и зарплаты работников по поручению заведений; направление сервисных уведомлений; направление Гостям, давшим отдельное согласие, подарков и предложений заведения в его приложении; исполнение требований законодательства, в том числе о бухгалтерском учёте, применении ККТ и налоге на профессиональный доход (чеки с ИНН покупателя).',
       ])}
       ${legalSection('4. Правовые основания', [
         'Согласие субъекта персональных данных; исполнение договора, стороной или выгодоприобретателем по которому является субъект (в том числе когда Гость сообщает телефон для брони или заказа по телефону); поручение оператора-работодателя по ч. 3 ст. 6 Федерального закона № 152-ФЗ — для данных работников; исполнение обязанностей, возложенных законодательством РФ.',
         'Гости дают Оператору согласие на обработку персональных данных отметкой в приложении или веб-версии заведения перед первой отправкой имени, телефона или адреса. Отметка с датой, редакцией текста, IP-адресом и сведениями о браузере хранится на сервере в РФ; при отзыве согласия IP-адрес и сведения о браузере удаляются.',
+        'Подарки и предложения заведения (рекламные сообщения) Гость получает только при отдельном согласии — отметке «Получать подарки и предложения заведения» в профиле приложения или веб-версии (ст. 18 Федерального закона от 13.03.2006 № 38-ФЗ «О рекламе», ст. 15 Закона № 152-ФЗ). Отметка не ставится по умолчанию и не влияет на бонусы, бронирование и заказы. Для таких сообщений используются сведения о посещениях, покупках и бонусах Гостя; они показываются только в приложении заведения — без SMS, звонков, писем и push-сервисов Google и Apple, не чаще одного раза в два месяца. Снять отметку можно в профиле в любой момент — сообщения прекращаются сразу. Запись о согласии с датой, редакцией текста, IP-адресом и сведениями о браузере хранится на сервере в РФ; при отказе IP-адрес и сведения о браузере удаляются.',
       ])}
     </div>
     <div class="card">
@@ -3989,6 +4140,7 @@ const NAV_ICON_PATHS = {
   plus: '<path d="M12 20.5s6.5-5.6 6.5-10.7a6.5 6.5 0 0 0-13 0c0 5.1 6.5 10.7 6.5 10.7Z"/><path class="ac" d="M12 7v5.6M9.2 9.8h5.6"/>',
   back: '<path d="M19.5 12h-14"/><path class="ac" d="M10.5 6.5 5 12l5.5 5.5"/>',
   upload: '<path d="M4.5 14.5v3.3a2.2 2.2 0 0 0 2.2 2.2h10.6a2.2 2.2 0 0 0 2.2-2.2v-3.3"/><path d="M7.5 9 12 4.5 16.5 9"/><path class="ac" d="M12 4.8v10"/>',
+  heart: '<path d="M12 19.6s-7.5-4.4-7.5-9.9A4.1 4.1 0 0 1 12 7.4a4.1 4.1 0 0 1 7.5 2.3c0 5.5-7.5 9.9-7.5 9.9Z"/><path class="ac" d="M8.4 10.6h2.1l1-1.6 1.4 3.2 1-1.6h1.7"/>',
   box: '<path d="M4 8.2 12 4.4l8 3.8v7.6L12 19.6 4 15.8Z"/><path d="M4 8.2l8 3.8 8-3.8M12 12v7.6"/><path class="ac" d="M8 6.3l8 3.8"/>',
 };
 
@@ -4038,6 +4190,7 @@ const DASHBOARD_NAV = [
   { id: 'guide', icon: 'book', color: '', label: 'Инструкция' },
   { id: 'devices', icon: 'device', color: '#0EA5E9', label: 'Устройства' },
   { id: 'stock', icon: 'box', color: '#22C55E', label: 'Склад' },
+  { id: 'guests', icon: 'heart', color: '#E11D48', label: 'Гости' },
   { id: 'billing', icon: 'card', color: '#F59E0B', label: 'Оплата' },
   { id: 'plans', icon: 'gem', color: '#8B5CF6', label: 'Тарифы' },
   { id: 'branding', icon: 'palette', color: '#EC4899', label: 'Брендинг' },
@@ -5862,7 +6015,7 @@ function watchDashboardData(tenantId) {
     const TAB_RENDERERS = {
       overview: overviewHtml, guide: guideTabHtml, devices: devicesHtml, billing: billingHtml, plans: plansHtml,
       branding: brandingHtml, team: teamHtml, ai: aiHtml, profile: profileHtml, settings: settingsHtml,
-      faq: faqHtml, support: supportHtml, import: importHtml, stock: stockHtml,
+      faq: faqHtml, support: supportHtml, import: importHtml, stock: stockHtml, guests: () => guestsTabHtml(tenantId),
     };
     renderKeepingInputs(body, (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardNavHtml(activeTab, daysLeft !== null, tenant.name, tenant.chainId));
     // В кабинете кнопки чата нет: у него есть раздел «Поддержка».
@@ -5878,6 +6031,7 @@ function watchDashboardData(tenantId) {
         draw();
       };
     });
+    if (activeTab === 'guests') bindGuestsTab(tenantId, draw);
     if (activeTab === 'stock') {
       if (!stockWatching) {
         stockWatching = true;

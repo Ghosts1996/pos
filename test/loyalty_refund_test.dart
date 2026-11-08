@@ -94,5 +94,12 @@ void main() {
       expect(op.title, 'Подарок ко дню рождения');
       expect(op.bonuses, 500);
     });
+
+    test('подарок «Вернуть гостя»', () {
+      final op = BonusOpView.fromMap({'type': 'accrual', 'reason': 'winback', 'amount': 300});
+      expect(op.plus, isTrue);
+      expect(op.title, 'Подарок: ждём вас снова');
+      expect(op.bonuses, 300);
+    });
   });
 }

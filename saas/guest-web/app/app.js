@@ -1008,6 +1008,7 @@ function screenHome() {
       ` : `<div class="small muted" style="margin-top:8px">Максимальный уровень — спасибо, что вы с нами</div>`}
     </div>
 
+    ${promoHtml(p)}
     <div id="soon"></div>
     <div id="stories"></div>
 
@@ -1022,6 +1023,68 @@ function screenHome() {
 
   renderStories();
   renderBookingSoon('soon');
+  bindPromo();
+}
+
+// ---------- ПОДАРОК «ВЕРНУТЬ ГОСТЯ» ----------
+// Сервер (guest-marketing.js) кладёт в профиль promo: заголовок, текст,
+// бонусы, до какой даты показывать. Гость закрыл карточку — больше её не
+// показываем (запоминаем id на этом устройстве).
+const promoSeenKey = () => `zalpos.promoSeen.${state.chainId || state.tenantId}`;
+
+function activePromo(p) {
+  const promo = p && p.promo;
+  if (!promo || !promo.id || !promo.title) return null;
+  const until = toDate(promo.until);
+  if (until && until < new Date()) return null;
+  try { if (localStorage.getItem(promoSeenKey()) === String(promo.id)) return null; } catch (_) { /* приватный режим */ }
+  return promo;
+}
+
+function promoHtml(p) {
+  const promo = activePromo(p);
+  if (!promo) return '';
+  const bonus = Number(promo.bonus) || 0;
+  return `<div class="card" id="promoCard" style="border-color:color-mix(in srgb, var(--gold) 55%, transparent)">
+    <div class="overline" style="color:var(--gold)">${ic('gift', 'inline')}Подарок от заведения</div>
+    <div style="font-weight:600;font-size:17px;margin:6px 0">${esc(promo.title)}</div>
+    <div class="small muted" style="line-height:1.5">${esc(promo.text || '')}</div>
+    ${bonus > 0 ? `<div style="margin-top:10px;font-weight:600">+${esc(String(bonus))} бонусов уже на счету</div>` : ''}
+    <button class="btn-ghost" id="promoOk" style="margin-top:12px">Понятно</button>
+  </div>`;
+}
+
+function bindPromo() {
+  const btn = $('promoOk');
+  if (!btn) return;
+  btn.onclick = () => {
+    const promo = activePromo(state.profile);
+    try { if (promo) localStorage.setItem(promoSeenKey(), String(promo.id)); } catch (_) { /* приватный режим */ }
+    const card = $('promoCard');
+    if (card) card.remove();
+  };
+}
+
+/** Галочка «Получать подарки и предложения» в профиле. */
+function bindAdsConsent() {
+  const box = $('adsOn');
+  if (!box) return;
+  const link = $('adsText');
+  if (link) link.onclick = (e) => { e.preventDefault(); showConsentText('ads'); };
+  box.onchange = async () => {
+    const on = box.checked;
+    box.disabled = true;
+    try {
+      await gatewayPost('/guestAdsConsent', { on, edition: ADS_EDITION, source: 'web' });
+      if (state.profile) state.profile = { ...state.profile, adsConsent: on };
+      toast(on ? 'Будем присылать подарки и предложения' : 'Больше не будем присылать предложения');
+    } catch (e) {
+      box.checked = !on;
+      toast(e.message && !/оплаты/.test(e.message) ? e.message : 'Не получилось сохранить — проверьте интернет');
+    } finally {
+      box.disabled = false;
+    }
+  };
 }
 
 function progressPercent(spent) {
@@ -1229,15 +1292,34 @@ function askConsent() {
   });
 }
 
-async function showConsentText() {
+// ---------- СОГЛАСИЕ НА ПРЕДЛОЖЕНИЯ (РЕКЛАМА) ----------
+// Отдельная галочка в профиле, не отмечена по умолчанию: ст. 18 закона
+// «О рекламе», ст. 15 152-ФЗ. Записывает сервер в РФ (saas-gateway,
+// guest-marketing.js) с датой и редакцией текста; отказ — та же галочка.
+const ADS_EDITION = '2026-11-08';
+
+function adsConsentTexts() {
+  return {
+    title: 'Согласие на получение предложений',
+    label: 'Редакция от 8 ноября 2026 г.',
+    body: [
+      `Отмечая этот пункт, я даю согласие получать в приложении ${consentVenue()} сообщения об акциях, подарках, бонусах и специальных предложениях заведения. По поручению заведения их направляет ${consentOperator()}.`,
+      'Для этого используются сведения о моих посещениях, покупках и бонусах в заведении (ст. 15 закона № 152-ФЗ). Сообщения приходят только в приложение заведения — без SMS, звонков и писем; данные не покидают Россию.',
+      'Предложения приходят не чаще одного раза в два месяца. Табак, кальяны и алкоголь в них не рекламируются.',
+      'Согласие добровольное: без него бонусы, бронирование и заказы работают как обычно. Отказаться можно в любой момент — снимите отметку в профиле, и сообщения прекратятся сразу.',
+    ],
+  };
+}
+
+async function showConsentText(kind = 'pd') {
   await loadPlatformLegal();
-  const t = consentTexts();
+  const t = kind === 'ads' ? adsConsentTexts() : consentTexts();
   const el = document.createElement('div');
   el.className = 'sheet-backdrop';
   el.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(t.title)}">
     <div class="sheet-grip"></div>
     <h2 style="margin:0 0 4px">${esc(t.title)}</h2>
-    <p class="small muted" style="margin:0 0 14px">${CONSENT_EDITION_LABEL}</p>
+    <p class="small muted" style="margin:0 0 14px">${esc(t.label || CONSENT_EDITION_LABEL)}</p>
     ${t.body.map((p) => `<p style="margin:0 0 12px;line-height:1.5">${esc(p)}</p>`).join('')}
     <button class="btn-primary" data-close style="margin-top:8px">Понятно</button>
   </div>`;
@@ -3453,6 +3535,15 @@ function screenProfile() {
       ${privacyNotice()}
     </div>
 
+    ${p.id && p.anonymized !== true ? `
+    <div class="card" id="adsCard">
+      <label class="consent-row" style="padding:0"><input type="checkbox" id="adsOn" ${p.adsConsent === true ? 'checked' : ''}>
+        <span>Получать подарки и предложения заведения
+          <a href="#" id="adsText">условия</a></span></label>
+      <p class="small muted" style="margin:6px 0 0 30px">Только в этом приложении, не чаще раза в два месяца.
+        Снимите отметку — и сообщения прекратятся.</p>
+    </div>` : ''}
+
     <div class="card" style="border-color:color-mix(in srgb, var(--gold) 45%, transparent)">
       <div class="row" style="align-items:flex-start">
         <span style="color:var(--gold)">${ic('info')}</span>
@@ -3499,6 +3590,7 @@ function screenProfile() {
   bindConsent($('pSave'));
   $('pSave').onclick = saveProfile;
   $('deleteDataBtn').onclick = deleteMyData;
+  bindAdsConsent();
   state.profileDirty = false;
   ['pName', 'pPhone'].forEach((id) => {
     const el = $(id);
@@ -3589,6 +3681,7 @@ function bonusReason(reason, plus, type) {
     case 'referral_inviter': return 'Друг дошёл до нас';
     case 'giftCard': return 'Сертификат активирован';
     case 'birthday': return 'Подарок ко дню рождения';
+    case 'winback': return 'Подарок: ждём вас снова';
     case 'refund': return plus ? 'Возврат чека: бонусы вернулись' : 'Возврат чека: бонусы за визит отменены';
     case 'refund_undone': return plus ? 'Возврат отменён: бонусы за визит' : 'Возврат отменён: бонусы списаны снова';
     case 'visit': return 'Начисление за визит';

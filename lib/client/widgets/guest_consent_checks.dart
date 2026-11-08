@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../build_info.dart';
+import '../../models/client_models.dart';
+import '../../services/gateway_api.dart';
 import '../../services/venue_service.dart';
 import '../services/guest_consent.dart';
 import '../theme/kolibri_theme.dart';
@@ -135,10 +138,12 @@ class _ConsentTile extends StatelessWidget {
 }
 
 /// Полный текст согласия — оператор ZalPOS с реквизитами платформы.
-Future<void> showGuestConsentText(BuildContext context) {
+/// [ads] — согласие на подарки и предложения, а не на обработку данных.
+Future<void> showGuestConsentText(BuildContext context, {bool ads = false}) {
   final venue = VenueService.instance.cached;
-  const title = GuestConsent.pdTitle;
-  final paragraphs = GuestConsent.pdText(venue);
+  final title = ads ? GuestConsent.adsTitle : GuestConsent.pdTitle;
+  final label = ads ? GuestConsent.adsEditionLabel : GuestConsent.editionLabel;
+  final paragraphs = ads ? GuestConsent.adsText(venue) : GuestConsent.pdText(venue);
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -165,11 +170,11 @@ Future<void> showGuestConsentText(BuildContext context) {
             ),
           ),
           const SizedBox(height: 16),
-          const Text(title,
-              style: TextStyle(
+          Text(title,
+              style: const TextStyle(
                   fontSize: 18, fontWeight: FontWeight.w700, height: 1.3)),
           const SizedBox(height: 4),
-          Text(GuestConsent.editionLabel,
+          Text(label,
               style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
           const SizedBox(height: 14),
           for (final p in paragraphs) ...[
@@ -226,5 +231,126 @@ Future<bool> ensureGuestConsent(
           .showSnackBar(SnackBar(content: Text(e.toString())));
     }
     return false;
+  }
+}
+
+/// Галочка «Получать подарки и предложения заведения» в профиле. Отдельно
+/// от согласия на обработку данных и не отмечена, пока гость не отметит сам.
+/// Записывает сервер в РФ (saas-gateway, /guestAdsConsent) — с датой и
+/// редакцией текста; отметка в профиле приходит обратно потоком профиля.
+class GuestAdsConsentTile extends StatefulWidget {
+  final bool initial;
+  const GuestAdsConsentTile({super.key, required this.initial});
+
+  @override
+  State<GuestAdsConsentTile> createState() => _GuestAdsConsentTileState();
+}
+
+class _GuestAdsConsentTileState extends State<GuestAdsConsentTile> {
+  late bool _on = widget.initial;
+  bool _busy = false;
+
+  @override
+  void didUpdateWidget(GuestAdsConsentTile old) {
+    super.didUpdateWidget(old);
+    if (!_busy && old.initial != widget.initial) _on = widget.initial;
+  }
+
+  Future<void> _set(bool v) async {
+    if (_busy) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _busy = true;
+      _on = v;
+    });
+    String? error;
+    try {
+      await GatewayApi.post('guestAdsConsent', {
+        'on': v,
+        'edition': GuestConsent.adsEdition,
+        'source': 'app',
+      });
+    } on GatewayException catch (e) {
+      error = e.message;
+    } catch (_) {
+      error = 'Не получилось сохранить — проверьте интернет';
+    }
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      if (error != null) _on = !v;
+    });
+    messenger.showSnackBar(SnackBar(
+        content: Text(error ??
+            (v ? 'Будем присылать подарки и предложения' : 'Больше не будем присылать предложения'))));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (kSaasGatewayUrl.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _ConsentTile(
+            value: _on,
+            onChanged: (v) {
+              if (!_busy) _set(v);
+            },
+            parts: [
+              const _Plain('Получать подарки и предложения заведения — '),
+              _Link('условия', () => showGuestConsentText(context, ads: true)),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 40),
+            child: Text(
+                'Только в этом приложении, не чаще раза в два месяца. '
+                'Снимите отметку — и сообщения прекратятся.',
+                style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Карточка подарка «Вернуть гостя» в профиле — пока не прошёл срок показа.
+class GuestPromoCard extends StatelessWidget {
+  final GuestPromo promo;
+  const GuestPromoCard({super.key, required this.promo});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: KolibriColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: KolibriColors.primary.withValues(alpha: 0.55)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.card_giftcard_outlined, size: 18, color: KolibriColors.primary),
+            const SizedBox(width: 6),
+            Text('Подарок от заведения',
+                style: TextStyle(color: KolibriColors.primary, fontSize: 12, fontWeight: FontWeight.w600)),
+          ]),
+          const SizedBox(height: 8),
+          Text(promo.title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, height: 1.3)),
+          if (promo.text.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(promo.text, style: TextStyle(color: KolibriColors.textMuted, fontSize: 13.5, height: 1.45)),
+          ],
+          if (promo.bonus > 0) ...[
+            const SizedBox(height: 8),
+            Text('+${promo.bonus} бонусов уже на счету', style: const TextStyle(fontWeight: FontWeight.w600)),
+          ],
+        ],
+      ),
+    );
   }
 }

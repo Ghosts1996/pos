@@ -382,6 +382,12 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           const SizedBox(height: 20),
         ],
 
+        // ---- Подарок «Вернуть гостя» (пишет сервер, пока не прошёл срок) ----
+        if (p?.promo != null) ...[
+          GuestPromoCard(promo: p!.promo!),
+          const SizedBox(height: 16),
+        ],
+
         // ---- Карта лояльности ----
         Container(
           padding: const EdgeInsets.all(20),
@@ -480,6 +486,9 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                 child: Text(_saving ? 'Сохраняем…' : 'Сохранить'),
               ),
               if (_consent.given) GuestConsentChecks(consent: _consent),
+              // Подарки и предложения — отдельная галочка, когда профиль уже есть.
+              if (_consent.given && p != null && kSaasMode)
+                GuestAdsConsentTile(initial: p.adsConsent),
             ],
           ),
         ),

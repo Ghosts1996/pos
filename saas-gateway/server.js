@@ -51,6 +51,7 @@ const { createLocalDb } = require("./local-db");
 const { createTenantCache, guestMenu } = require("./tenant-cache");
 const { createPartners } = require("./partners");
 const { createOpenApi } = require("./open-api");
+const { createGuestMarketing, rootKeyOf: guestRootKey } = require("./guest-marketing");
 const { createPiiInternal } = require("./pii-internal");
 const { createPiiMigrate } = require("./pii-migrate");
 
@@ -7213,6 +7214,9 @@ async function anonymizeGuestData({ root, scope, rootId, clientUid, c, forgetInV
   // Ключ восстановления входа (guestRecovery) — иначе приложение вернуло бы
   // удалённый аккаунт при следующем запуске.
   await firestore.collection("guestRecovery").doc(clientUid).delete().catch(() => {});
+  // Согласие на рекламные сообщения: отказ, без IP-адреса и браузера.
+  await guestMarketing.forgetConsent(scope, rootId, clientUid)
+    .catch((e) => console.error(`согласие на рекламу ${guestRootKey(scope, rootId)}: ${e.message || e}`));
 
   // Анонимный аккаунт гостя (у владельцев/сотрудников с почтой не трогаем)
   let accountDeleted = false;
@@ -8941,6 +8945,12 @@ const openApi = createOpenApi({
   db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole, writeAuditLog, clientIp,
 });
 
+// Гости: сегменты, согласие на рекламные сообщения, «Вернуть гостя»
+// (guest-marketing.js). Рассылка — раз в час проверка, раз в день по поясу заведения.
+const guestMarketing = createGuestMarketing({
+  db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole, requireChainRole, writeAuditLog, clientIp,
+});
+
 
 /** Первое заведение или сеть владельца — только тогда закрепляем за менеджером. */
 async function isFirstVenueOf(uid) {
@@ -9217,6 +9227,9 @@ const ROUTES = {
   // Письма входа/смены пароля/подтверждения почты в оформлении ZalPOS.
   "/sendAuthEmail": handleSendAuthEmail,
   "/apiKeys": (req, res) => openApi.handleKeys(req, res),
+  "/guestAdsConsent": (req, res) => guestMarketing.handleConsent(req, res),
+  "/guestSegments": (req, res) => guestMarketing.handleSegments(req, res),
+  "/guestCampaign": (req, res) => guestMarketing.handleCampaign(req, res),
   "/auth/login": handleAuth,
   "/auth/signup": handleAuth,
   "/auth/anonymous": handleAuth,
@@ -9410,6 +9423,8 @@ scheduleRemovedDevicesSweep();
 scheduleAppRollout();
 scheduleMenuPopularity();
 scheduleDailyJob("deliveryPiiRetention", 24 * 3600 * 1000, runDeliveryPiiRetention, 40 * 60 * 1000);
+// Каждый час: у кого из заведений сейчас день — тем «Вернуть гостя».
+scheduleDailyJob("guestWinback", 60 * 60 * 1000, () => guestMarketing.runAll(), 12 * 60 * 1000);
 // Smoke-тесты поднимают сервер без секретов — бот там не нужен.
 if (process.env.PORT !== "8099") {
   telegram.start();

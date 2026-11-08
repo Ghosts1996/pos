@@ -2213,7 +2213,7 @@ test("без ИИ: подбор тарифа по числу устройств 
 
 test("знает все возможности и не опровергает их; вопросы «а есть ли…» — сразу шаблоном", () => {
   const core = sb.SYSTEM_CORE;
-  for (const f of ["Яндекс Еда", "ЕГАИС", "«Честный знак»", "OrangeData", "Тайм-кафе".toLowerCase(), "УПД", "Сотрудники без ограничений", "Открытый API"]) {
+  for (const f of ["Яндекс Еда", "ЕГАИС", "«Честный знак»", "OrangeData", "Тайм-кафе".toLowerCase(), "УПД", "Сотрудники без ограничений", "Открытый API", "Вернуть гостя"]) {
     assert.ok(core.toLowerCase().includes(f.toLowerCase()), `в «Возможностях ZalPOS» нет: ${f}`);
   }
   assert.match(core, /никогда не опровергай/);
@@ -2229,7 +2229,8 @@ test("знает все возможности и не опровергает и
   for (const [q, id] of [["Есть интеграция с Яндекс Едой?", "aggregators"], ["А ЕГАИС есть?", "egais-key"], ["честный знак поддерживаете", "marking"],
     ["работаете с атол?", "kassa-which"], ["есть чаевые?", "tips"], ["загрузить накладную из диадока", "stock-upd"], ["есть KDS для кухни", "kitchen-screen"],
     ["подходит для сети кофеен?", "plan-chain-what"], ["какие функции есть", "features-all"], ["как сделать заготовку", "stock-prep"],
-    ["есть открытый api?", "open-api"], ["как выгрузить чеки в свою программу", "open-api"]]) {
+    ["есть открытый api?", "open-api"], ["как выгрузить чеки в свою программу", "open-api"],
+    ["как вернуть гостей", "guest-winback"], ["есть рассылка гостям?", "guest-winback"]]) {
     const m = sb.matchTemplate(q, idx);
     assert.ok(m && m.template.id === id && m.score >= 0.65 && m.score - m.second >= 0.12, `${q} → ${m && m.template.id} ${m && m.score.toFixed(2)}/${m && m.second.toFixed(2)}`);
   }
