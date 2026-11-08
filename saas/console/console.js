@@ -829,10 +829,14 @@ function greetingHtml() {
   return name ? `${greeting}, <span class="grad-text">${esc(name)}</span>` : greeting;
 }
 
+// Названия тарифов на случай, когда список с сервера ещё не пришёл или в нём
+// нет тарифа подписки (снят с продажи) — чтобы не показывать «start».
+const PLAN_NAMES = { start: 'Старт', standard: 'Бизнес', pro: 'Про', chain: 'Сеть', 'chain-pro': 'Сеть Про' };
+
 function planName(plans, planId) {
-  if (!plans || !planId) return null;
-  const plan = plans.find((p) => p.id === planId);
-  return plan ? plan.name || plan.id : null;
+  if (!planId) return null;
+  const plan = (plans || []).find((p) => p.id === planId);
+  return (plan && plan.name) || PLAN_NAMES[planId] || null;
 }
 
 // Превышенные лимиты тарифа («сотрудников: 5 из 3») — повод для
