@@ -191,6 +191,115 @@ function telegramBoxHtml(st) {
     <div id="f-tg-msg" class="small" style="margin-top:8px"></div>`;
 }
 
+// ---------- Открытый API заведения (saas-gateway/open-api.js): ключи владельца
+const apiKeysCache = new Map(); // tenantId → { keys } | { error } | null (загружаю)
+const apiKeyFresh = new Map(); // tenantId → только что созданный ключ, показываем один раз
+const API_BASE = `${SAAS_GATEWAY_URL}/api/v1`;
+
+function isoToText(iso) {
+  const d = iso ? new Date(iso) : null;
+  if (!d || Number.isNaN(d.getTime())) return '—';
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function apiKeysBoxHtml(tenantId) {
+  const st = apiKeysCache.get(tenantId);
+  const fresh = apiKeyFresh.get(tenantId);
+  const intro = `<p class="small muted" style="margin-top:0">Ключ даёт бухгалтерии, сайту, BI-системе или интегратору
+    доступ на чтение к данным этой точки: меню, стоп-листу, чекам, Z-отчётам и складу. Имён, телефонов и адресов гостей
+    и сотрудников в ответах нет. Изменить данные по ключу нельзя.</p>`;
+  if (st === undefined || st === null) return `${intro}<p class="small muted">Загружаю ключи…</p>`;
+  if (st.error) return `${intro}<p class="small" style="color:var(--danger)">${esc(st.error)}</p><button class="btn btn-ghost" id="f-api-retry">Повторить</button>`;
+  const active = st.keys.filter((k) => k.status === 'active');
+  const revoked = st.keys.filter((k) => k.status !== 'active');
+  const row = (k) => `
+    <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border)">
+      <div style="min-width:0;flex:1 1 220px">
+        <div><b>${esc(k.name)}</b> <span class="small muted" style="font-family:var(--mono, monospace)">${esc(k.preview)}</span></div>
+        <div class="small muted">Создан ${esc(isoToText(k.createdAt))} · ${k.lastUsedAt ? `последний запрос ${esc(isoToText(k.lastUsedAt))}` : 'запросов ещё не было'}${k.revokedAt ? ` · отозван ${esc(isoToText(k.revokedAt))}` : ''}</div>
+      </div>
+      ${k.status === 'active' ? `<button class="btn btn-ghost f-api-revoke" data-key="${esc(k.id)}" style="color:var(--danger);flex:none;width:auto;padding-left:18px;padding-right:18px">Отозвать</button>` : ''}
+    </div>`;
+  return `${intro}
+    ${fresh ? `
+      <div style="border:1px solid var(--primary);border-radius:10px;padding:12px;margin-bottom:12px">
+        <div class="small"><b>Новый ключ — скопируйте его сейчас.</b> Мы храним только его отпечаток и больше его не покажем.</div>
+        <div style="font-family:var(--mono, monospace);word-break:break-all;margin:8px 0;user-select:all" id="f-api-fresh">${esc(fresh)}</div>
+        <button class="btn btn-primary" id="f-api-copy">Скопировать ключ</button>
+        <button class="btn btn-ghost" id="f-api-hide" style="margin-top:8px">Я сохранил ключ</button>
+      </div>` : ''}
+    ${active.length ? active.map(row).join('') : '<p class="small muted">Ключей пока нет.</p>'}
+    ${active.length < 5 ? `
+      <label class="field" style="margin-top:12px"><span>Для чего ключ</span>
+        <input id="f-api-name" maxlength="60" placeholder="Например: Бухгалтерия, сайт доставки">
+      </label>
+      <button class="btn btn-ghost" id="f-api-create">Создать ключ</button>` : '<p class="small muted">Активных ключей не больше пяти — отзовите ненужный, чтобы создать новый.</p>'}
+    <div id="f-api-msg" class="small" style="margin-top:8px"></div>
+    ${revoked.length ? `<details style="margin-top:10px"><summary class="small muted">Отозванные ключи (${revoked.length})</summary>${revoked.map(row).join('')}</details>` : ''}
+    <details style="margin-top:12px"><summary class="small"><b>Как подключить</b></summary>
+      <div class="small" style="margin-top:8px">Адрес: <code style="word-break:break-all">${esc(API_BASE)}/…</code>, ключ — в заголовке
+        <code>Authorization: Bearer zp_…</code>. Ответ — JSON.</div>
+      <div class="small" style="margin-top:6px"><code>GET /venue</code> — заведение · <code>GET /menu</code> — категории и позиции ·
+        <code>GET /stoplist</code> — что в стоп-листе · <code>GET /stock</code> — остатки склада ·
+        <code>GET /sales?from=2026-11-01&amp;to=2026-11-07</code> — закрытые чеки ·
+        <code>GET /shifts?from=…&amp;to=…</code> — Z-отчёты.</div>
+      <div class="small muted" style="margin-top:6px">Даты — по часовому поясу заведения, to включительно, период до 31 дня.
+        Чеков больше 500 — в ответе next: передайте его как cursor. До 120 запросов в минуту на ключ.
+        Подробнее — в «Инструкции», раздел «Открытый API».</div>
+    </details>`;
+}
+
+function bindApiKeysBox(tenantId, redraw) {
+  const load = async () => {
+    try {
+      const r = await callSaasGateway('apiKeys', { tenantId, action: 'list' });
+      apiKeysCache.set(tenantId, { keys: r.data.keys || [] });
+    } catch (e) {
+      apiKeysCache.set(tenantId, { error: e.message || 'Не удалось загрузить ключи' });
+    }
+    redraw();
+  };
+  if (!apiKeysCache.has(tenantId)) {
+    apiKeysCache.set(tenantId, null);
+    load();
+    return;
+  }
+  const msg = (t, bad) => { const el = $('f-api-msg'); if (el) { el.textContent = t; el.style.color = bad ? 'var(--danger)' : ''; } };
+  if ($('f-api-retry')) $('f-api-retry').onclick = () => { apiKeysCache.set(tenantId, null); redraw(); load(); };
+  if ($('f-api-copy')) $('f-api-copy').onclick = () => copyToClipboard(apiKeyFresh.get(tenantId));
+  if ($('f-api-hide')) $('f-api-hide').onclick = () => { apiKeyFresh.delete(tenantId); redraw(); };
+  if ($('f-api-create')) {
+    $('f-api-create').onclick = async () => {
+      const name = ($('f-api-name').value || '').trim();
+      if (!name) { msg('Напишите, для чего ключ — так проще понять, какой отозвать.', true); return; }
+      $('f-api-create').disabled = true;
+      try {
+        const r = await callSaasGateway('apiKeys', { tenantId, action: 'create', name });
+        apiKeyFresh.set(tenantId, r.data.key);
+        $('f-api-name').value = '';
+        await load();
+      } catch (e) {
+        msg(e.message || 'Не удалось создать ключ', true);
+        if ($('f-api-create')) $('f-api-create').disabled = false;
+      }
+    };
+  }
+  document.querySelectorAll('.f-api-revoke').forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm('Отозвать ключ? Программы, которые работают с ним, сразу потеряют доступ.')) return;
+      b.disabled = true;
+      try {
+        await callSaasGateway('apiKeys', { tenantId, action: 'revoke', keyId: b.dataset.key });
+        toast('Ключ отозван');
+        await load();
+      } catch (e) {
+        msg(e.message || 'Не удалось отозвать ключ', true);
+        b.disabled = false;
+      }
+    };
+  });
+}
+
 function bindTelegramBox(tenantId, redraw) {
   const refresh = async () => {
     try {
@@ -5254,6 +5363,11 @@ function watchDashboardData(tenantId) {
       ` : ''}
 
       ${role === 'owner' ? `
+        <h2>Открытый API</h2>
+        <div class="card" id="f-api-box">${apiKeysBoxHtml(tenantId)}</div>
+      ` : ''}
+
+      ${role === 'owner' ? `
         <h2>Резервная копия</h2>
         <div class="card">
           <p class="small muted">Все данные ${tenant.chainId ? 'точки' : 'заведения'} одним файлом: меню, залы и столы,
@@ -6026,6 +6140,7 @@ function watchDashboardData(tenantId) {
     // «Брендинга». Правила дают владельцу менять в документе только name.
     if ($('f-copy-slug')) $('f-copy-slug').onclick = () => copyToClipboard(tenant.slug || '');
     if ($('f-tg-box')) bindTelegramBox(tenantId, draw);
+    if ($('f-api-box')) bindApiKeysBox(tenantId, draw);
     if ($('f-backup-tenant')) $('f-backup-tenant').onclick = () => exportVenueBackup({ tenantId, fileKey: tenant.slug, label: tenant.name });
     if ($('f-backup-chain')) $('f-backup-chain').onclick = () => {
       const chain = state.tenants.find((t) => t.chainId === tenant.chainId) || {};

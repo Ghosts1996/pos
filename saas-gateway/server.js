@@ -50,6 +50,7 @@ const { createSupportBot } = require("./support-bot");
 const { createLocalDb } = require("./local-db");
 const { createTenantCache, guestMenu } = require("./tenant-cache");
 const { createPartners } = require("./partners");
+const { createOpenApi } = require("./open-api");
 const { createPiiInternal } = require("./pii-internal");
 const { createPiiMigrate } = require("./pii-migrate");
 
@@ -8934,6 +8935,13 @@ const partners = createPartners({
   },
 });
 
+// Открытый API заведения: ключи создаёт владелец в кабинете, по ключу —
+// только чтение (меню, стоп-лист, чеки, Z-отчёты, склад) без ПДн.
+const openApi = createOpenApi({
+  db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole, writeAuditLog, clientIp,
+});
+
+
 /** Первое заведение или сеть владельца — только тогда закрепляем за менеджером. */
 async function isFirstVenueOf(uid) {
   const firestore = db();
@@ -9208,6 +9216,7 @@ const ROUTES = {
   "/exportBackup": handleExportBackup,
   // Письма входа/смены пароля/подтверждения почты в оформлении ZalPOS.
   "/sendAuthEmail": handleSendAuthEmail,
+  "/apiKeys": (req, res) => openApi.handleKeys(req, res),
   "/auth/login": handleAuth,
   "/auth/signup": handleAuth,
   "/auth/anonymous": handleAuth,
@@ -9374,6 +9383,10 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/guestPayRobokassa") return runHandler(handleAnyRobokassaResult, req, res);
   if (req.method === "GET" && urlPath === "/guestPayDone") return runHandler(handleAnyRobokassaReturn, req, res);
   if (req.method === "GET" && urlPath === "/guestPayDemo") return runHandler(guestPay.handleDemoPage, req, res);
+  // Открытый API заведения: GET по ключу заведения, см. open-api.js.
+  if (urlPath === "/api/v1" || urlPath.startsWith("/api/v1/")) {
+    return runHandler((rq, rs) => openApi.handleApi(rq, rs, urlPath), req, res);
+  }
   if (req.method !== "POST") return sendJson(res, 405, { error: "метод не поддерживается" });
 
   const handler = ROUTES[urlPath];
