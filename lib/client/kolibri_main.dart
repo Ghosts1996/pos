@@ -26,6 +26,7 @@ import 'theme/kolibri_theme.dart';
 import '../widgets/people_refresh.dart';
 import '../services/people_directory.dart';
 import '../data/app_db.dart';
+import '../services/app_auth.dart';
 
 /// Точка входа приложения гостя: тот же Firebase, модели и сервисы, что у
 /// кассы, свой main (`flutter build apk -t lib/client/kolibri_main.dart`).
@@ -56,6 +57,10 @@ void main() async {
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       await AppDb.init();
+      // Вход гостя — свой вход платформы на сервере в РФ, как у кассы
+      // (lib/main.dart); прежний вход Firebase один раз меняется на свой с тем
+      // же uid. Без этого приложение гостя оставалось на Firebase.
+      await AppAuth.instance.init();
     } catch (e) {
       runApp(KolibriApp(ready: false, startupError: e.toString()));
       return;
@@ -72,6 +77,10 @@ void main() async {
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       await AppDb.init();
+      // Вход гостя — свой вход платформы на сервере в РФ, как у кассы
+      // (lib/main.dart); прежний вход Firebase один раз меняется на свой с тем
+      // же uid. Без этого приложение гостя оставалось на Firebase.
+      await AppAuth.instance.init();
     } catch (e) {
       runApp(KolibriApp(ready: false, startupError: e.toString()));
       return;
@@ -89,6 +98,10 @@ void main() async {
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       await AppDb.init();
+      // Вход гостя — свой вход платформы на сервере в РФ, как у кассы
+      // (lib/main.dart); прежний вход Firebase один раз меняется на свой с тем
+      // же uid. Без этого приложение гостя оставалось на Firebase.
+      await AppAuth.instance.init();
 
       if (kSaasMode) {
         final resolved = await _resolveSaasTenantId();
@@ -277,15 +290,25 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
     final cachedTenantId = sameChain ? prefs.getString(kChainLocationCacheKey) : null;
     final cachedChainId = sameChain ? prefs.getString(kChainIdCacheKey) : null;
     _lastTenantId = (cachedTenantId ?? '').isEmpty ? null : cachedTenantId;
+    // Гость уже выбирал заведение — открываем его сразу, без ожидания сети
+    // и без экрана выбора. Работает ли оно ещё, сверяем в фоне. Сменить
+    // заведение — в профиле («Другое заведение сети») или при брони.
+    if (!forcePick && _lastTenantId != null && (cachedChainId ?? '').isNotEmpty) {
+      unawaited(_checkLocationLater(_lastTenantId!));
+      await _enterLocation(_lastTenantId!, cachedChainId!);
+      return;
+    }
     try {
       final directory =
           await SaasDeviceJoinService().resolveChainBySlug(widget.chainSlug).timeout(const Duration(seconds: 12));
       if (!mounted) return;
       final live = directory.locations.where((l) => l.status != 'suspended' && l.status != 'deleted').toList();
-      if (live.length == 1 && !forcePick) {
+      // Точка одна — сразу она. Демо — сразу первая: гость пришёл посмотреть
+      // приложение, а не выбирать.
+      if ((live.length == 1 || (_isDemo && live.isNotEmpty)) && !forcePick) {
         _picking = true;
-        await _remember(live.single.tenantId, directory.chainId);
-        await _enterLocation(live.single.tenantId, directory.chainId);
+        await _remember(live.first.tenantId, directory.chainId);
+        await _enterLocation(live.first.tenantId, directory.chainId);
         return;
       }
       // Выбор заведения — уже в цветах сети (брендинг сети читается без
@@ -314,6 +337,29 @@ class _KolibriChainBootstrapState extends State<_KolibriChainBootstrap> {
         _error = e.toString();
         _phase = _ChainBootPhase.error;
       });
+    }
+  }
+
+  /// Демо приложения гостя с сайта (только оно знает, что делать, если сеть
+  /// пропала, — открыть новое демо).
+  bool get _isDemo => widget.onChainMissing != null;
+
+  /// Сохранённое заведение открыли без ожидания сети — сверяем, что оно
+  /// ещё работает. Закрыли — просим выбрать другое; сети больше нет (демо
+  /// сбросилось) — сообщаем выше.
+  Future<void> _checkLocationLater(String tenantId) async {
+    try {
+      final directory =
+          await SaasDeviceJoinService().resolveChainBySlug(widget.chainSlug).timeout(const Duration(seconds: 20));
+      final alive = directory.locations
+          .any((l) => l.tenantId == tenantId && l.status != 'suspended' && l.status != 'deleted');
+      if (alive || !mounted) return;
+      _openTab = ChainVenueSwitch.homeTab;
+      setState(() => _phase = _ChainBootPhase.loading);
+      await _bootstrap(forcePick: true);
+    } catch (e) {
+      if (e is GatewayNotFound && widget.onChainMissing != null && mounted) widget.onChainMissing!();
+      // Нет сети — остаёмся в сохранённом заведении.
     }
   }
 
@@ -551,6 +597,11 @@ class _GuestDemoBootstrapState extends State<_GuestDemoBootstrap> {
   String? _slug;
   String? _notice;
 
+  /// Открываем новое демо сами — гость сразу попадает в приложение и
+  /// смотрит меню, бонусы и уровни, без кода и лишних экранов. Экран с кодом
+  /// — только когда гость сам нажал «Другой код демо» или нет интернета.
+  bool _creating = false;
+
   @override
   void initState() {
     super.initState();
@@ -561,7 +612,22 @@ class _GuestDemoBootstrapState extends State<_GuestDemoBootstrap> {
         _slug = prefs.getString(_slugKey);
         _loaded = true;
       });
+      if (_slug == null) unawaited(_openNewDemo());
     });
+  }
+
+  Future<void> _openNewDemo() async {
+    if (_creating || !mounted) return;
+    setState(() => _creating = true);
+    try {
+      final demo = await SaasDeviceJoinService().createDemoTenant().timeout(const Duration(seconds: 25));
+      if (demo.chainSlug.isEmpty) throw StateError('сервис не вернул код демо');
+      await _open(demo.chainSlug);
+    } catch (_) {
+      // Нет связи или сервис занят — экран с кодом и кнопкой «Открыть новое демо».
+    } finally {
+      if (mounted) setState(() => _creating = false);
+    }
   }
 
   @override
@@ -603,7 +669,8 @@ class _GuestDemoBootstrapState extends State<_GuestDemoBootstrap> {
       return _KolibriChainBootstrap(
         key: ValueKey(slug),
         chainSlug: slug,
-        onChainMissing: () => unawaited(_forget('Это демо уже сбросилось — введите новый код или откройте новое демо.')),
+        // Демо живёт 3 дня: сбросилось — сразу открываем новое.
+        onChainMissing: () => unawaited(_forget(null).then((_) => _openNewDemo())),
       );
     }
     return MaterialApp(
@@ -618,7 +685,7 @@ class _GuestDemoBootstrapState extends State<_GuestDemoBootstrap> {
       ],
       supportedLocales: const [Locale('ru', 'RU')],
       locale: const Locale('ru', 'RU'),
-      home: !_loaded
+      home: !_loaded || _creating
           ? Scaffold(
               backgroundColor: KolibriColors.background,
               body: Center(child: CircularProgressIndicator(color: KolibriColors.primary)),

@@ -42,7 +42,13 @@ class AppDb {
   }
 
   /// Сразу после Firebase.initializeApp и до первого обращения к данным.
-  static Future<void> init() async {
+  ///
+  /// [background] — фоновая служба кассы или приложения гостя (свой
+  /// изолят): данные в памяти, без папки на устройстве — её ведёт основное
+  /// приложение, и два движка в одной папке отправили бы одни и те же
+  /// записи дважды. Без слушателя жизненного цикла: в изоляте службы нет
+  /// окон, к которым он привязан.
+  static Future<void> init({bool background = false}) async {
     if (_inited) return;
     _inited = true;
     if (!kSaasMode || kSaasGatewayUrl.isEmpty || kIsWeb) return;
@@ -63,20 +69,23 @@ class AppDb {
       } catch (_) {}
     }
     if (backend != 'local') {
-      _watchSwitch(prefs);
+      if (!background) _watchSwitch(prefs);
       return;
     }
     Directory? dir;
-    try {
-      dir = Directory('${(await getApplicationSupportDirectory()).path}/zal_data');
-    } catch (e) {
-      debugPrint('local-db: нет папки для данных, работаем без памяти устройства: $e');
+    if (!background) {
+      try {
+        dir = Directory('${(await getApplicationSupportDirectory()).path}/zal_data');
+      } catch (e) {
+        debugPrint('local-db: нет папки для данных, работаем без памяти устройства: $e');
+      }
     }
     final engine = LocalEngine(baseUrl: kSaasGatewayUrl, storageDir: dir);
     await engine.load();
     engine.start();
     _engine = engine;
     _local = LocalFirestore(engine);
+    if (background) return;
     AppLifecycleListener(
       onResume: engine.reconnectNow,
       onHide: () => unawaited(engine.flushToDisk()),

@@ -17,6 +17,8 @@ import '../services/kolibri_auth_service.dart';
 import '../services/chain_venue_switch.dart';
 import '../theme/kolibri_theme.dart';
 import '../services/guest_consent.dart';
+import '../services/guest_watch_service.dart';
+import '../../services/background_reliability.dart';
 import '../widgets/guest_consent_checks.dart';
 import 'kolibri_extras_screen.dart';
 import '../../utils/table_label.dart';
@@ -62,6 +64,9 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
   /// и, если выключено, говорим об этом прямым текстом с кнопкой.
   bool _notificationsOn = true;
 
+  /// Система может усыплять приложение в фоне — уведомления запаздывают.
+  bool _bgRestricted = false;
+
   @override
   void initState() {
     super.initState();
@@ -74,7 +79,22 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
 
   Future<void> _checkNotifications() async {
     final on = await NotificationService.instance.areEnabled();
-    if (mounted) setState(() => _notificationsOn = on);
+    // Телефон усыпляет приложение в фоне (экономия батареи) — уведомления
+    // о брони, заказе и подарках приходят с опозданием или не приходят.
+    final restricted = GuestWatchService.supported && await BackgroundReliability.isRestricted();
+    if (mounted) {
+      setState(() {
+        _notificationsOn = on;
+        _bgRestricted = restricted;
+      });
+    }
+  }
+
+  /// Системный экран «Без ограничений» для батареи; потом проверяем снова.
+  Future<void> _allowBackground() async {
+    await BackgroundReliability.openSettings();
+    await Future<void>.delayed(const Duration(seconds: 1));
+    await _checkNotifications();
   }
 
   /// Проверка уведомлений: показывает тестовое и объясняет результат.
@@ -374,6 +394,39 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                   child: FilledButton(
                     onPressed: _enableNotifications,
                     child: const Text('Включить уведомления'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+
+        if (_notificationsOn && _bgRestricted) ...[
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: KolibriColors.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: KolibriColors.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Уведомления могут опаздывать', style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 6),
+                Text(
+                  'Телефон экономит батарею и усыпляет приложение, когда оно закрыто. '
+                  'Разрешите работу без ограничений — и сообщения о брони, заказе и подарках '
+                  'будут приходить сразу.',
+                  style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: _allowBackground,
+                    child: const Text('Разрешить работу в фоне'),
                   ),
                 ),
               ],

@@ -386,7 +386,9 @@ class KolibriNotifications {
       if (promo != null && promo.bonus > 0 && (gained - promo.bonus).abs() < 1) return;
 
       unawaited(_notify.show(
-        id: NotificationService.idFor('bonus_${DateTime.now().millisecondsSinceEpoch}'),
+        // Номер — по балансу после начисления: приложение и фоновая служба
+        // замечают одно начисление под одним номером, гость видит одно.
+        id: NotificationService.idFor('bonus_${_uid}_${profile.bonusBalance.round()}'),
         title: 'Начислено ${bonusesLabel(gained)}',
         body: 'Баланс: ${rub(profile.bonusBalance)}. '
             'Списать можно на кассе при следующем визите.',

@@ -1,10 +1,10 @@
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter/painting.dart' show Color;
 
 import '../build_info.dart';
-import '../firebase_options.dart';
+import 'app_auth.dart';
 import 'app_scope.dart';
+import 'background_boot.dart';
 import 'auth_service.dart';
 import 'notification_service.dart';
 import 'people_directory.dart';
@@ -169,14 +169,20 @@ class _HallWatchHandler extends TaskHandler {
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     try {
-      if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp(
-            options: DefaultFirebaseOptions.currentPlatform);
-      }
+      // Данные и вход — как у приложения: сервер данных в РФ и свой вход
+      // платформы. Раньше служба поднимала только Firebase и после переезда
+      // данных на свой сервер слушала пустой Firestore — вызовы и брони в
+      // фоне не приходили.
+      final signedIn = await bootBackgroundIsolate();
       // Вход берётся сохранённый — тот же uid, что у приложения. Иначе
       // правила базы не признают устройство рабочим и молча не отдадут
-      // ни вызовов, ни броней.
-      await AuthService().ensureSignedIn();
+      // ни вызовов, ни броней. Свой вход новым здесь не создаём: это дело
+      // приложения. Вход Firebase (сборка одного заведения) — как раньше.
+      if (!AppAuth.instance.isOwn) {
+        await AuthService().ensureSignedIn();
+      } else if (!signedIn) {
+        return;
+      }
       // Изолят службы не видит памяти приложения: AppScope здесь пустой, и в
       // SaaS-сборке подписки ушли бы в корневые коллекции вместо
       // tenants/{id}/… — уведомления в фоне молча не приходили. Заведение

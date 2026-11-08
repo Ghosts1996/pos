@@ -103,9 +103,12 @@ test("текст: табак, кальяны и алкоголь — нельз�
 
 test("настройки приводятся к допустимым: дни из списка, бонусы 0–5000, длина текста", () => {
   const s = gm.normalizeSettings({ enabled: "yes", afterDays: 7, repeatDays: 999, bonus: 99999, title: "x".repeat(100), text: "  a\n\tb  " });
-  assert.deepStrictEqual(s, { enabled: false, afterDays: 30, repeatDays: 90, bonus: 5000, title: "x".repeat(60), text: "a b" });
+  assert.deepStrictEqual(s, { enabled: false, afterDays: 30, repeatDays: 60, bonus: 5000, title: "x".repeat(60), text: "a b" });
   assert.strictEqual(gm.normalizeSettings({ bonus: -5 }).bonus, 0);
   assert.strictEqual(gm.normalizeSettings({ afterDays: "45" }).afterDays, 45);
+  assert.deepStrictEqual(gm.REPEAT_DAYS, [30, 60, 90], "владелец выбирает: раз в 30, 60 или 90 дней");
+  assert.strictEqual(gm.normalizeSettings({ repeatDays: 30 }).repeatDays, 30);
+  assert.strictEqual(gm.normalizeSettings({ repeatDays: 180 }).repeatDays, 60, "180 больше нет — по умолчанию 60");
   assert.deepStrictEqual(gm.normalizeSettings({}), { ...gm.DEFAULTS });
   assert.ok(gm.settingsProblem({ ...gm.DEFAULTS, title: "" }));
   assert.strictEqual(gm.settingsProblem({ ...gm.DEFAULTS }), null, "текст по умолчанию допустим");
@@ -288,7 +291,7 @@ test("рассылка: ночью и с неактивной подпиской
   assert.deepStrictEqual((await unpaid.mod.runAll())[`t_${TID}`], { skipped: "subscription" });
 });
 
-test("рассылка: не чаще раза в 90 дней и не больше двух подарков подряд, если гость не пришёл", async () => {
+test("рассылка: не чаще выбранного срока и не больше двух подарков подряд, если гость не пришёл", async () => {
   const h = harness();
   await seedVenue(h.store);
   await enable(h, { repeatDays: 60 });
@@ -304,6 +307,7 @@ test("рассылка: не чаще раза в 90 дней и не больш
   assert.strictEqual(await run(), 1, "второй подарок");
   h.setNow(h.now() + 61 * DAY);
   assert.strictEqual(await run(), 0, "третий подряд без визита — нет");
+
   // Гость пришёл — счётчик начинается заново.
   await h.store.doc(`tenants/${TID}/clients/g`).set({ lastVisitAt: Timestamp.fromMillis(h.now()), visits: 4, totalSpent: 9000 }, { merge: true });
   const st = (await h.segments("owner")).body.stats.campaign;
@@ -311,6 +315,13 @@ test("рассылка: не чаще раза в 90 дней и не больш
   h.setNow(h.now() + 40 * DAY);
   assert.strictEqual(await run(), 1);
   assert.strictEqual((await data(h, `tenants/${TID}/clients/g`)).winbackTries, 1);
+  // Раз в 30 дней: через месяц после подарка — снова можно.
+  await enable(h, { repeatDays: 30 });
+  assert.strictEqual((await data(h, `guestCampaigns/t_${TID}`)).repeatDays, 30);
+  h.setNow(h.now() + 29 * DAY);
+  assert.strictEqual(await run(), 0, "29 дней — рано");
+  h.setNow(h.now() + 2 * DAY);
+  assert.strictEqual(await run(), 1, "31 день — второй подарок");
 });
 
 test("рассылка сети: общий профиль гостя, бонусы и запись согласия сети", async () => {

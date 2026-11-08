@@ -58,7 +58,11 @@ class AppAuth {
   }
 
   /// Сразу после [AppDb.init] и до первого входа.
-  Future<void> init() async {
+  ///
+  /// [restoreOnly] — для фоновой службы (свой изолят): только поднять
+  /// сохранённый свой вход. Обмен входа Firebase и новый вход делает само
+  /// приложение — иначе два изолята делали бы это наперегонки.
+  Future<void> init({bool restoreOnly = false}) async {
     if (!kSaasMode || kSaasGatewayUrl.isEmpty || kIsWeb) return;
     try {
       _prefs = await SharedPreferences.getInstance();
@@ -77,6 +81,10 @@ class AppAuth {
     if (_session != null) {
       _own = true;
       _user = AppUser._own(this, _session!);
+      return;
+    }
+    if (restoreOnly) {
+      _own = true;
       return;
     }
     // Своего входа ещё нет — меняем прежний вход Firebase на свой (тот же uid).
@@ -263,19 +271,53 @@ class AppAuth {
   }
 
   Future<String> _refresh(_OwnSession s) async {
+    // Вход держит не только приложение: у кассы и у приложения гостя есть
+    // фоновая служба со своим изолятом и своей памятью. Ключ обновления
+    // одноразовый — если другой изолят уже обновил вход, берём его
+    // результат с диска, а не тратим устаревший ключ.
+    var cur = s;
+    final shared = await _adoptFromDisk(cur);
+    if (shared != null) {
+      if (shared.exp.isAfter(DateTime.now().add(const Duration(minutes: 1)))) return shared.idToken;
+      cur = shared;
+    }
     try {
-      final r = await _post('/auth/refresh', {'refreshToken': s.refreshToken});
+      final r = await _post('/auth/refresh', {'refreshToken': cur.refreshToken});
       final next = _OwnSession.fromTokens(r);
-      if (_session?.uid == s.uid) _setSession(next);
+      if (_session?.uid == cur.uid) _setSession(next);
       return next.idToken;
     } on FirebaseAuthException catch (e) {
       // Вход отозван, устарел или аккаунт удалён — выходим, как Firebase.
       if (e.code != 'network-request-failed' && e.code != 'too-many-requests' && e.code != 'internal-error') {
-        if (_session?.uid == s.uid) _setSession(null);
+        // Но сначала проверяем, не потратил ли ключ другой изолят мгновением
+        // раньше: тогда на диске уже его свежий вход. Выйти здесь значило бы
+        // стереть вход и у него — гость остался бы без своих бонусов.
+        for (final wait in const [Duration.zero, Duration(milliseconds: 1500)]) {
+          if (wait > Duration.zero) await Future<void>.delayed(wait);
+          final other = await _adoptFromDisk(cur);
+          if (other != null && other.exp.isAfter(DateTime.now().add(const Duration(seconds: 30)))) return other.idToken;
+        }
+        if (_session?.uid == cur.uid) _setSession(null);
         throw FirebaseAuthException(code: e.code == 'user-not-found' || e.code == 'user-disabled' ? e.code : 'user-token-expired', message: e.message);
       }
       rethrow;
     }
+  }
+
+  /// Вход того же пользователя, который другой изолят уже обновил и записал
+  /// на диск (ключ обновления не совпадает с [s]). Принимаем его без
+  /// записи — он и так на диске. null — на диске то же, что у нас.
+  Future<_OwnSession?> _adoptFromDisk(_OwnSession s) async {
+    try {
+      await _prefs?.reload();
+    } catch (_) {}
+    final disk = _readSession();
+    if (disk == null || disk.uid != s.uid || disk.refreshToken == s.refreshToken) return null;
+    if (_session?.uid == s.uid) {
+      _session = disk;
+      _user?._s = disk;
+    }
+    return disk;
   }
 }
 

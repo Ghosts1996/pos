@@ -201,6 +201,9 @@ class NotificationService {
           priority: Priority.high,
           icon: _icon,
           styleInformation: BigTextStyleInformation(body),
+          // То же событие под тем же номером второй раз (приложение и его
+          // фоновая служба заметили его одновременно) — без второго звука.
+          onlyAlertOnce: true,
         ),
       ),
     );

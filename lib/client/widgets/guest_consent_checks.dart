@@ -306,7 +306,7 @@ class _GuestAdsConsentTileState extends State<GuestAdsConsentTile> {
           Padding(
             padding: const EdgeInsets.only(left: 40),
             child: Text(
-                'Только в этом приложении, не чаще раза в два месяца. '
+                'Только в этом приложении, не чаще раза в месяц. '
                 'Снимите отметку — и сообщения прекратятся.',
                 style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
           ),

@@ -9,6 +9,8 @@ import '../services/kolibri_auth_service.dart';
 import '../services/kolibri_deep_links.dart';
 import '../services/kolibri_image_cache.dart';
 import '../services/kolibri_notifications.dart';
+import '../services/guest_watch_service.dart';
+import '../../services/app_scope.dart';
 import '../theme/kolibri_theme.dart';
 import '../widgets/check_picker_sheet.dart';
 import '../widgets/kolibri_ai_chat.dart';
@@ -123,6 +125,18 @@ class _KolibriShellState extends State<KolibriShell> {
     // Уведомления гостя без сервера: статус брони, готовность заказа,
     // бонусы и напоминание за час до брони (Cloud Functions нет).
     unawaited(KolibriNotifications.instance.start(uid));
+    // И при закрытом приложении: фоновая служба слушает то же самое в своём
+    // изоляте (Android). Одинаковые уведомления от приложения и службы
+    // приходят под одним номером — гость видит одно.
+    if (uid.isEmpty) {
+      unawaited(GuestWatchService.instance.stop());
+    } else {
+      unawaited(GuestWatchService.instance.start(
+        tenantId: AppScope.tenantId ?? '',
+        chainId: AppScope.chainId,
+        venueName: VenueService.instance.cached.name,
+      ));
+    }
   }
 
   @override

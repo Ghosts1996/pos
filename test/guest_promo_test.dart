@@ -59,11 +59,11 @@ void main() {
   });
 
   group('Согласие на подарки и предложения', () {
-    test('отдельный текст: заведение, не чаще раза в два месяца, отказ в профиле', () {
+    test('отдельный текст: заведение, не чаще раза в месяц, отказ в профиле', () {
       GuestConsent.platformForTest = const {};
       final text = GuestConsent.adsText(const VenueProfile(name: 'Лаунж')).join('\n');
       expect(text, contains('в приложении заведения «Лаунж»'));
-      expect(text, contains('не чаще одного раза в два месяца'));
+      expect(text, contains('не чаще одного раза в месяц'));
       expect(text, contains('снимите отметку в профиле'));
       expect(text, contains('сервис ZalPOS'));
       expect(text, isNot(contains('Telegram')));

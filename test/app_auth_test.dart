@@ -102,6 +102,52 @@ void main() {
     await sub.cancel();
   });
 
+  group('вход в двух изолятах (приложение и фоновая служба)', () {
+    // Сервер как настоящий: ключ обновления одноразовый.
+    late Set<String> live;
+    late int issued;
+    MockClient rotating() => MockClient((req) async {
+          calls.add(req.url.path);
+          final token = (jsonDecode(req.body) as Map<String, dynamic>)['refreshToken'] as String?;
+          if (req.url.path != '/auth/refresh') return res({'ok': true}, 200);
+          refreshes++;
+          if (!live.remove(token)) return res({'error': 'Вход устарел', 'code': 'auth/user-token-expired'}, 400);
+          final next = 'rot${++issued}';
+          live.add(next);
+          return res({'uid': 'g1', 'idToken': jwt('g1', expSec: inSec(const Duration(hours: 1))), 'refreshToken': next}, 200);
+        });
+
+    setUp(() {
+      live = {'r0'};
+      issued = 0;
+      SharedPreferences.setMockInitialValues({
+        'own_auth_session_v1': jsonEncode({'uid': 'g1', 'idToken': jwt('g1', expSec: 1), 'refreshToken': 'r0', 'exp': 0}),
+      });
+    });
+
+    test('второй изолят берёт обновлённый вход с диска, а не тратит старый ключ', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final app = AppAuth.debugOwn(client: rotating(), baseUrl: 'https://gw', prefs: prefs);
+      final bg = AppAuth.debugOwn(client: rotating(), baseUrl: 'https://gw', prefs: prefs);
+      expect(await app.currentUser!.getIdToken(), isNotEmpty);
+      expect(await bg.currentUser!.getIdToken(), isNotEmpty);
+      expect(refreshes, 1, reason: 'фоновая служба не обновляла вход повторно');
+      expect(bg.currentUser!.uid, 'g1');
+    });
+
+    test('обновили одновременно — проигравший не выходит, а берёт вход победителя', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final app = AppAuth.debugOwn(client: rotating(), baseUrl: 'https://gw', prefs: prefs);
+      final bg = AppAuth.debugOwn(client: rotating(), baseUrl: 'https://gw', prefs: prefs);
+      final tokens = await Future.wait<String?>([app.currentUser!.getIdToken(), bg.currentUser!.getIdToken()]);
+      expect(tokens.every((t) => t != null && t.isNotEmpty), isTrue);
+      expect(app.currentUser, isNotNull);
+      expect(bg.currentUser, isNotNull, reason: 'вход гостя не стёрт');
+      expect(prefs.getString('own_auth_session_v1'), isNotNull, reason: 'на диске вход остался');
+      expect(refreshes, 2);
+    });
+  });
+
   test('восстановление гостя по ключу и выход', () async {
     final a = AppAuth.debugOwn(client: server(), baseUrl: 'https://gw', prefs: await SharedPreferences.getInstance());
     await expectLater(a.signInWithCustomToken('zct.bad'), throwsA(isA<FirebaseAuthException>().having((e) => e.code, 'code', 'invalid-action-code')));
