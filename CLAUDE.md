@@ -42,7 +42,7 @@ SaaS-касса и система управления для общепита (
 
 ## 3. Инфраструктура и доступы
 
-- **Сервер:** VPS в Новосибирске, IP `45.87.245.63`, Ubuntu 22.04 (минимальная, без cron — расписания через systemd-таймеры). Пароль по SSH закрыт; у меня (Claude) прямого доступа нет.
+- **Сервер:** VPS в Новосибирске, IP `45.87.245.63`, Ubuntu 22.04 (минимальная, без cron — расписания через systemd-таймеры). У меня (Claude) прямого доступа нет. По проверке `server-shield.sh` (09.11.2026) в sshd вход по паролю **включён** (`PasswordAuthentication yes`), подбор закрывает fail2ban; выключать — только когда владелец входит по ключу, иначе он потеряет доступ. После автообновлений безопасности сервер ждёт перезагрузки (ядро) — владелец делает `reboot` в тихое время.
 - **Домены (DNS у hostiman.ru):** `zalpos.ru` и `www` → 45.87.245.63 (сайт на своём сервере, nginx, сертификат Let's Encrypt до 30.01.2027); `pii.zalpos.ru` — API (`/saas/...` → saas-gateway, корень → pii-gateway); поддомены заведений `*.zalpos.ru` (веб-версия гостя `/app/`, страница стола `/table/`). Резервные копии — в S3 в Санкт-Петербурге.
 - **Деплой автоматический:** каждый push в `production` → workflow «Обновление сервера» (`server-deploy.yml`, ключ `SERVER_DEPLOY_KEY` умеет только запускать `update-server.sh`) → сервер тянет код, перезапускает saas-gateway, собирает сайт (`build-site.sh` → `/opt/zalpos-site`), веб-версию гостя (`/opt/saas-guest-web`), pii-gateway, таймеры. Проверка: GitHub MCP `actions_list` / `get_job_logs` по `server-deploy.yml`; сервер отвечает версией на `https://pii.zalpos.ru/saas/health`.
 - **Сборки APK кассы и гостя** — workflows `saas-on-demand-build.yml`, `saas-rollout.yml` (секреты Firebase/подписи в GitHub Secrets).
