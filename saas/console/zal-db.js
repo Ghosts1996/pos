@@ -330,6 +330,12 @@ export async function dataBackend(gateway) {
         const j = await r.json();
         if (j.backend) { memo.set(j.backend); return j; }
       }
+      // Защита сервера на время закрыла адрес сети (shield.js) — это не обрыв
+      // связи: страница покажет причину и когда можно снова.
+      if (r.status === 429) {
+        const j = await r.json().catch(() => ({}));
+        if (j.code === 'too-many-requests') return { backend: memo.get() || 'local', offline: true, blocked: String(j.error || 'Слишком много запросов — попробуйте позже') };
+      }
     } catch (_) { /* повторим */ }
     await new Promise((res) => setTimeout(res, 800 * (i + 1)));
   }

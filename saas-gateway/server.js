@@ -38,7 +38,7 @@ const net = require("net");
 const zlib = require("zlib");
 const { createLegalPapers } = require("./legal-papers");
 const {
-  authEmailLetter, passwordLetter, superAdminGrantedLetter, superAdminRevokedLetter, passwordChangedLetter, brandAuthLink,
+  authEmailLetter, passwordLetter, superAdminGrantedLetter, superAdminRevokedLetter, passwordChangedLetter, passwordAttackLetter, brandAuthLink,
   createMailer, AUTH_EMAIL_TYPES,
 } = require("./auth-email");
 const { createGuestPay, onlinePaySettings, credsPrint, sellerReady } = require("./guest-pay");
@@ -52,6 +52,7 @@ const { createTenantCache, guestMenu } = require("./tenant-cache");
 const { createPartners } = require("./partners");
 const { createOpenApi } = require("./open-api");
 const { createGuestMarketing, rootKeyOf: guestRootKey } = require("./guest-marketing");
+const { createShield } = require("./shield");
 const { createPiiInternal } = require("./pii-internal");
 const { createPiiMigrate } = require("./pii-migrate");
 
@@ -7774,9 +7775,21 @@ async function handleAuth(req, res) {
   }
   try {
     if (action === "login") {
+      const email = String(body.email || "").trim().toLowerCase();
+      // Пароль к этой почте подбирали — вход по паролю закрыт на время, по
+      // ссылке из письма и через «Забыли пароль?» — можно.
+      const locked = shield.emailLocked(email);
+      if (locked) {
+        return sendJson(res, 429, {
+          error: `К этой почте много раз подбирали пароль — вход по паролю закрыт ещё на ${Math.ceil(locked / 3600000)} ч. Войти можно и сейчас: нажмите «Забыли пароль?» — придёт ссылка для нового пароля.`,
+          code: "auth/password-locked",
+        });
+      }
       authLimit(`ip:${ip}`, 30, 15 * 60 * 1000);
-      authLimit(`em:${String(body.email || "").toLowerCase()}`, 10, 15 * 60 * 1000);
-      return sendJson(res, 200, await ownAuth().signIn(body.email, body.password));
+      authLimit(`em:${email}`, 10, 15 * 60 * 1000);
+      const r = await ownAuth().signIn(body.email, body.password);
+      shield.authOk(email);
+      return sendJson(res, 200, r);
     }
     if (action === "signup") {
       authLimit(`su:${ip}`, 10, 60 * 60 * 1000);
@@ -7800,6 +7813,8 @@ async function handleAuth(req, res) {
       authLimit(`ap:${ip}`, 30, 15 * 60 * 1000);
       const mode = String(body.mode || "");
       const r = await ownAuth().applyCode(mode, String(body.code || ""), { password: body.password });
+      // Вход по ссылке или новый пароль — значит, почта у хозяина: замок снят.
+      if (r && r.email && (mode === "signIn" || mode === "resetPassword")) shield.authOk(String(r.email).toLowerCase());
       if (mode === "resetPassword") notifyByMail(r.email, passwordChangedLetter({ siteUrl: CONSOLE_URL }), "пароль изменён");
       return sendJson(res, 200, r);
     }
@@ -7826,6 +7841,12 @@ async function handleAuth(req, res) {
       return sendJson(res, 200, { uid: u.uid, email: u.email || null, emailVerified: !!u.emailVerified, createdAt });
     }
   } catch (e) {
+    // Неверный пароль, код или подписанный ключ — в счёт подбора (shield.js).
+    const code = String((e && e.code) || "");
+    if (["login", "apply", "reauth", "custom"].includes(action)
+        && ["auth/invalid-credential", "auth/invalid-action-code", "auth/argument-error"].includes(code)) {
+      shield.authFailed(req, action === "login" ? String(body.email || "") : "");
+    }
     return authFail(res, e);
   }
   sendJson(res, 404, { error: "Нет такого действия" });
@@ -8332,6 +8353,7 @@ async function supportAdminDigest(kind) {
       lines.push(`${off.state === "ok" && age !== null && age < 120 ? "" : "⚠️ "}Копия в другом городе: ${age === null ? "ещё не было" : `${age < 60 ? `${age} мин` : `${Math.round(age / 60)} ч`} назад`}${off.verifiedAt ? ` · проверена ${esc(supportFmt(Date.parse(off.verifiedAt)))}` : ""}${off.state === "error" ? ` · ошибка: ${esc(String(off.message || "").slice(0, 120))}` : ""}`);
     }
     lines.push(`Данные: ${DATA_LOCAL ? "свой сервер в РФ" : "Firestore (Google)"} · вход: ${authOwn() ? "свой" : "Firebase"}`);
+    lines.push("", ...securityDigestLines());
     return lines.join("\n");
   }
   const firestore = db();
@@ -8397,6 +8419,39 @@ async function supportAdminDigest(kind) {
     for (const x of fresh.sort((a, b) => b.at - a.at).slice(0, 10)) lines.push(`• ${esc(String(x.name).slice(0, 60))} — ${esc(supportFmt(x.at))}`);
   }
   return lines.join("\n");
+}
+
+// Защита сервера (server-shield.sh, от root при каждом обновлении): что
+// включено на самой машине — fail2ban, обновления безопасности, вход по
+// паролю SSH, закрытые наружу порты баз.
+function hostShieldStatus() {
+  const file = process.env.SHIELD_STATUS_FILE || "/var/lib/zalpos-shield/status.json";
+  try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch (_) { return null; }
+}
+
+/** Строки «🛡 Защита» для сводки «🖥 Сервер» в боте поддержки. */
+function securityDigestLines() {
+  const n = (v) => Number(v || 0).toLocaleString("ru-RU");
+  const st = shield.status();
+  const d = st.day;
+  const lines = ["🛡 <b>Защита</b>"];
+  lines.push(`API за сутки: отбито запросов ${n(d.blocked + d.throttled)}, сканеров ${n(d.scans)}, неверных паролей ${n(d.authFails)} · закрыто адресов ${n(d.bans)} (сейчас ${n(st.bannedNow)})`);
+  if (st.lockedNow) lines.push(`⚠️ Вход по паролю закрыт из-за подбора: ${n(st.lockedNow)} почт(ы)`);
+  if (d.readAlerts) lines.push(`⚠️ Необычно много чтений данных: ${n(d.readAlerts)} раз(а) за сутки`);
+  const h = hostShieldStatus();
+  if (!h) {
+    lines.push("Сервер: проверка защиты ещё не запускалась (server-shield.sh — при следующем обновлении)");
+    return lines;
+  }
+  const parts = [];
+  parts.push(h.fail2ban === "active" ? `fail2ban работает${h.sshBanned ? `, закрыто адресов SSH: ${n(h.sshBanned)}` : ""}` : "⚠️ fail2ban не работает");
+  parts.push(h.autoUpdates === "on" ? "обновления безопасности ставятся сами" : "⚠️ обновления безопасности не включены");
+  if (h.sshPassword === "off") parts.push("вход по паролю SSH выключен");
+  else if (h.sshPassword === "on") parts.push("⚠️ вход по паролю SSH включён");
+  parts.push(Array.isArray(h.exposed) && h.exposed.length ? `⚠️ наружу открыты порты баз: ${h.exposed.join(", ")}` : "базы данных наружу закрыты");
+  lines.push(`Сервер: ${parts.join(" · ")}`);
+  if (h.rebootRequired) lines.push("ℹ️ Обновления ждут перезагрузки сервера — перезагрузите в тихое время (reboot)");
+  return lines;
 }
 
 // Копия в другом городе (offsite-backup.sh, cron от root): итог последнего
@@ -8547,6 +8602,7 @@ for (const sig of ["SIGTERM", "SIGINT"]) {
     try { supportDb.flushSync(); } catch (e) { console.error(`support-bot: запись хранилища: ${e.message || e}`); }
     try { partnersDb.flushSync(); } catch (e) { console.error(`partners: запись хранилища: ${e.message || e}`); }
     try { if (dataStore) dataStore.flushSync(); } catch (e) { console.error(`сервер данных: запись: ${e.message || e}`); }
+    try { shield.flush(); } catch (_) { /* баны — не данные, не страшно */ }
     process.exit(0);
   });
 }
@@ -8596,6 +8652,23 @@ function rulesSource() {
 }
 
 let dataSecure = null;
+// Щит: флуд, сканеры, программы взлома, подбор паролей, выкачка данных
+// (shield.js). Активные баны — в state/shield.json; в тестах (сервер
+// подключён через require) на диск ничего не пишется.
+const shield = createShield({
+  ipOf: clientIp,
+  file: process.env.SHIELD_FILE || (require.main === module ? path.join(__dirname, "state", "shield.json") : null),
+  alert: (html) => supportBot.notifyAdmins(html),
+  // Хозяину почты — письмо, что пароль подбирают (только если такой вход есть:
+  // иначе чужими неверными паролями можно было бы слать письма на любые адреса).
+  onEmailLocked: (email) => {
+    if (!authOwn()) return;
+    ownAuth().adminAuth().getUserByEmail(email)
+      .then(() => notifyByMail(email, passwordAttackLetter({ siteUrl: CONSOLE_URL }), "подбор пароля"))
+      .catch(() => {});
+  },
+});
+
 let dataApi = null;
 function dataApiOrNull() {
   if (!DATA_LOCAL) return null;
@@ -8603,7 +8676,16 @@ function dataApiOrNull() {
     const ds = require("./data-server");
     dataSecure = ds.createSecureDb({ store: localDataStore(), rulesSource: rulesSource(), admin });
     // Пачка записей кассы (до 500 документов) больше обычного лимита тела.
-    dataApi = ds.createDataApi({ store: localDataStore(), secure: dataSecure, verifyAuth, parseJsonBody: (req) => parseJsonBody(req, 8 * 1048576), sendJson, HttpError });
+    dataApi = ds.createDataApi({
+      store: localDataStore(), secure: dataSecure, verifyAuth, parseJsonBody: (req) => parseJsonBody(req, 8 * 1048576), sendJson, HttpError,
+      guard: {
+        onRead: (uid, n) => shield.noteReads(uid, n),
+        readThrottled: (uid) => shield.readThrottled(uid),
+        // Новые подключения к потоку данных: касса и гость открывают одно на
+        // запуск — 300 за 10 минут с адреса хватает и большому залу.
+        newSession: (req) => shield.hit("dbSession", req, 300, 10 * 60 * 1000),
+      },
+    });
   }
   return dataApi;
 }
@@ -9353,9 +9435,17 @@ const SECURITY_HEADERS = {
 
 const server = http.createServer((req, res) => {
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
-  if (req.method === "OPTIONS") return sendJson(res, 200, { ok: true });
-
   const urlPath = (req.url || "").split("?")[0];
+  // Предварительный запрос браузера (CORS) — всегда «да»: он ничего не
+  // читает, а без него страница не увидит, почему адрес закрыт.
+  if (req.method === "OPTIONS") return sendJson(res, 200, { ok: true });
+  // Щит — до всего остального: закрытый адрес, сканер или флуд дальше не идут.
+  const blocked = shield.gate(req, urlPath);
+  if (blocked) {
+    if (blocked.retryAfter) res.setHeader("Retry-After", String(blocked.retryAfter));
+    return sendJson(res, blocked.status, { error: blocked.error, code: blocked.code, gateway: true });
+  }
+
   if (req.method === "GET" && urlPath === "/health") return sendJson(res, 200, { ok: true, version: SERVER_VERSION });
   if (req.method === "POST" && urlPath === "/clientError") return handleClientError(req, res);
   if (req.method === "GET" && urlPath === "/downloadBuild") return runHandler(handleDownloadBuild, req, res);
@@ -9484,4 +9574,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor });
+Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines });

@@ -487,6 +487,11 @@ async function resolveTenant() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ slug }),
   });
+  // Защита сервера на время закрыла адрес сети (shield.js) — не «не найдено».
+  if (tenantResp.status === 429) {
+    const j = await tenantResp.json().catch(() => ({}));
+    throw Object.assign(new Error(j.error || 'Слишком много запросов — попробуйте позже'), { blocked: true });
+  }
   if (tenantResp.ok) {
     const json = await tenantResp.json();
     // Точка сети по своему адресу — тоже сеть: брендинг и бонусы общие на
@@ -587,6 +592,14 @@ function registerServiceWorker() {
   navigator.serviceWorker.register('sw.js', { scope: './' }).catch(() => {});
 }
 
+/// Адрес сети закрыт защитой сервера на время — объясняем, а не «нет связи».
+function blockedHtml(msg) {
+  return `
+    <h1>Доступ временно закрыт</h1>
+    <p class="muted">${esc(msg)}</p>
+    <p class="muted">Так бывает в общем Wi-Fi или мобильном интернете. Попробуйте переключиться на другую сеть.</p>`;
+}
+
 async function boot() {
   // Заведение и конфиг Firebase друг от друга не зависят — запрашиваем
   // параллельно.
@@ -598,6 +611,7 @@ async function boot() {
   try {
     resolved = await tenantPromise;
   } catch (e) {
+    if (e && e.blocked) { screenEl().innerHTML = blockedHtml(e.message); return; }
     screenEl().innerHTML = `
       <h1>Заведение не найдено</h1>
       <p class="muted">Проверьте адрес — возможно, ссылка или QR-код
@@ -652,6 +666,8 @@ async function boot() {
   let auth;
   try {
     const status = await statusPromise;
+    // Защита сервера на время закрыла адрес сети — говорим как есть.
+    if (status && status.blocked) { screenEl().innerHTML = blockedHtml(status.blocked); return; }
     let authBackend = status.auth;
     try {
       if (authBackend) localStorage.setItem('zalAuthBackend', authBackend);

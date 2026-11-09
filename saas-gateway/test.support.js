@@ -2230,7 +2230,9 @@ test("знает все возможности и не опровергает и
     ["работаете с атол?", "kassa-which"], ["есть чаевые?", "tips"], ["загрузить накладную из диадока", "stock-upd"], ["есть KDS для кухни", "kitchen-screen"],
     ["подходит для сети кофеен?", "plan-chain-what"], ["какие функции есть", "features-all"], ["как сделать заготовку", "stock-prep"],
     ["есть открытый api?", "open-api"], ["как выгрузить чеки в свою программу", "open-api"],
-    ["как вернуть гостей", "guest-winback"], ["есть рассылка гостям?", "guest-winback"]]) {
+    ["как вернуть гостей", "guest-winback"], ["есть рассылка гостям?", "guest-winback"],
+    ["пишет вход по паролю закрыт", "login-locked"], ["пишет слишком много подозрительных запросов", "login-locked"],
+    ["не могу войти в личный кабинет", "password"]]) {
     const m = sb.matchTemplate(q, idx);
     assert.ok(m && m.template.id === id && m.score >= 0.65 && m.score - m.second >= 0.12, `${q} → ${m && m.template.id} ${m && m.score.toFixed(2)}/${m && m.second.toFixed(2)}`);
   }

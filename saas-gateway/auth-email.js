@@ -151,6 +151,20 @@ function passwordChangedLetter({ siteUrl = "https://zalpos.ru/" } = {}) {
   });
 }
 
+/** Уведомление о безопасности: к почте подбирали пароль (shield.js). */
+function passwordAttackLetter({ siteUrl = "https://zalpos.ru/" } = {}) {
+  return renderLetter({
+    subject: "Кто-то пытался подобрать пароль к ZalPOS",
+    title: "Пароль пытались подобрать",
+    lead: "К вашей учётной записи ZalPOS много раз подряд вводили неверный пароль. Мы на время закрыли вход по паролю — ваши данные в безопасности. Войти можно и сейчас: на странице входа нажмите «Забыли пароль?» — придёт ссылка, по ней задайте новый пароль.",
+    button: "Войти в ZalPOS",
+    link: `${siteUrl}#/login`,
+    note: "Если это были не вы — после входа смените пароль на длинный и неповторяющийся (Настройки → Сменить пароль). Сотрудники ZalPOS никогда не спрашивают пароль.",
+    siteUrl,
+    hideRawLink: true,
+  });
+}
+
 /**
  * Ссылка Firebase (…firebaseapp.com/__/auth/action?mode=…&oobCode=…) →
  * страница самого кабинета: смена пароля и подтверждение почты открываются
@@ -294,4 +308,4 @@ function createMailer(env = process.env) {
 
 module.exports = {
   authEmailLetter, passwordLetter, partnerInviteLetter, partnerWelcomeLetter, superAdminGrantedLetter, superAdminRevokedLetter,
-  partnerTelegramLetter, passwordChangedLetter, brandAuthLink, createMailer, AUTH_EMAIL_TYPES: Object.keys(LETTERS) };
+  partnerTelegramLetter, passwordChangedLetter, passwordAttackLetter, brandAuthLink, createMailer, AUTH_EMAIL_TYPES: Object.keys(LETTERS) };

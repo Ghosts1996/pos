@@ -6,7 +6,8 @@
 #     настройки не трогаем);
 #   * файлы сайта пропали — сайт собирается заново (build-site.sh);
 #   * сертификату осталось меньше 14 дней — продление (раз в сутки);
-#   * на диске меньше 1 ГБ — чистка журналов systemd и кэша apt.
+#   * на диске меньше 1 ГБ — чистка журналов systemd и кэша apt;
+#   * fail2ban остановился — запуск; порты баз снаружи закрыты (server-shield.sh).
 # Пока идёт обновление сервера, сторож ничего не делает. В журнал
 # (/var/log/zalpos-heal.log) пишет только то, что сделал или заметил.
 set -u
@@ -62,6 +63,11 @@ check_service() {
 
 check_service saas-gateway
 check_service pii-gateway
+check_service fail2ban
+
+# Защита: порты баз закрыты снаружи и после перезагрузки, итог — в сводку
+# бота (server-shield.sh --quick; пишет в журнал, только если что-то закрыл).
+[[ -f "$REPO/saas-gateway/server-shield.sh" ]] && bash "$REPO/saas-gateway/server-shield.sh" --quick 2>/dev/null
 
 if command -v nginx >/dev/null && ! systemctl is-active --quiet nginx; then
   if nginx -t >/dev/null 2>&1; then

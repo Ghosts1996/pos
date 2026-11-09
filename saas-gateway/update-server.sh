@@ -217,6 +217,12 @@ say "Сторож сервера"
 timer zalpos-heal "*:0/2" "/bin/bash $REPO/saas-gateway/self-heal.sh >> /var/log/zalpos-heal.log 2>&1" "Сторож ZalPOS: службы, сайт, сертификаты, диск" 5min
 echo "журнал: /var/log/zalpos-heal.log (пишет только о сделанном)"
 
+# Защита самой машины: fail2ban для SSH, обновления безопасности, настройки
+# ядра, права на папки с данными, закрытые наружу порты баз (server-shield.sh).
+# nginx, Docker и вход по SSH не трогает; не вышло — обновление идёт дальше.
+say "Защита сервера"
+bash "$REPO/saas-gateway/server-shield.sh" || echo "!! защита сервера настроилась не полностью — повторится при следующем обновлении"
+
 say "Копия данных в другом городе"
 # Предел 100 минут: зависший запуск systemd остановит сам, и следующий пойдёт.
 timer zalpos-offsite "*-*-* *:17:00" "/bin/bash $REPO/saas-gateway/offsite-backup.sh >> /var/log/zalpos-offsite.log 2>&1" "Копия данных ZalPOS в хранилище S3" 100min

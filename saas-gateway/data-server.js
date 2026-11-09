@@ -279,8 +279,19 @@ function resolveServerTs(v, t, admin) {
 
 // ------------------------------------------------------------ HTTP и SSE
 
-function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, HttpError, now = () => Date.now() }) {
+// Щит сервера (shield.js): учёт прочитанного и лимит новых подключений с
+// адреса. По умолчанию — ничего не ограничивает.
+const NO_GUARD = { onRead: () => false, readThrottled: () => false, newSession: () => false };
+
+function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, HttpError, now = () => Date.now(), guard = NO_GUARD }) {
   const sessions = new Map(); // sid → { auth, subs: Map(id → sub), res, expiresAt, queue }
+  const g = { ...NO_GUARD, ...guard };
+  const uidOfAuth = (a) => (a ? a.uid : "");
+  const throttled = (res, auth) => {
+    if (!g.readThrottled(uidOfAuth(auth))) return false;
+    sendJson(res, 429, { error: "Слишком много данных подряд — подождите несколько минут", code: "resource-exhausted" });
+    return true;
+  };
 
   // Без входа (экран входа, витрина) — как в Firestore: request.auth == null.
   async function authOf(req) {
@@ -300,16 +311,22 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     const auth = await authOf(req);
     const body = await parseJsonBody(req);
     const paths = Array.isArray(body.paths) ? body.paths.slice(0, 500) : [];
+    if (throttled(res, auth)) return;
     try {
-      sendJson(res, 200, { docs: paths.map((p) => secure.get(auth, p)) });
+      const docs = paths.map((p) => secure.get(auth, p));
+      g.onRead(uidOfAuth(auth), docs.filter((d) => d.exists).length);
+      sendJson(res, 200, { docs });
     } catch (e) { fail(res, e); }
   }
 
   async function handleQuery(req, res) {
     const auth = await authOf(req);
     const body = await parseJsonBody(req);
+    if (throttled(res, auth)) return;
     try {
-      sendJson(res, 200, { docs: secure.query(auth, body.query) });
+      const docs = secure.query(auth, body.query);
+      g.onRead(uidOfAuth(auth), docs.length);
+      sendJson(res, 200, { docs });
     } catch (e) { fail(res, e); }
   }
 
@@ -331,6 +348,7 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     if (s && uidOf(s.auth) !== uidOf(auth)) s = null;
     if (!s) {
       if (sessions.size >= MAX_SESSIONS) throw new DataError("resource-exhausted", "Сервер перегружен — попробуйте через минуту", 503);
+      if (g.newSession(req)) return sendJson(res, 429, { error: "Слишком много подключений с этого адреса — подождите несколько минут", code: "resource-exhausted" });
       sid = crypto.randomBytes(18).toString("hex");
       s = { sid, auth, subs: new Map(), res: null, lastSeen: now() };
       sessions.set(sid, s);
@@ -380,6 +398,7 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     if (!initial && !adds.length && !removes.length && !orderChanged && existsNow === sub.exists) return;
     sub.order = order;
     sub.exists = existsNow;
+    if (initial) g.onRead(uidOfAuth(s.auth), adds.length);
     emit({ sub: sub.id, docs: adds, removes, order: orderChanged || initial ? order : undefined, exists: existsNow, initial: initial || undefined });
   }
 

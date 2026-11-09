@@ -1339,6 +1339,9 @@ function authErrorMessage(e) {
     'auth/too-many-requests': 'Слишком много попыток — попробуйте позже',
     'auth/network-request-failed': 'Нет связи с сервером — проверьте интернет',
   };
+  // Защита сервера (shield.js) сама объясняет: вход по паролю закрыт из-за
+  // подбора, адрес сети закрыт на время или слишком много попыток.
+  if ((e?.code === 'auth/password-locked' || e?.code === 'auth/too-many-requests') && e?.message && !e.message.startsWith('auth/')) return e.message;
   return map[e?.code] || `Не удалось выполнить: ${e?.message || e}`;
 }
 
@@ -1394,10 +1397,21 @@ async function boot() {
     }
     return s;
   });
+  const blockedScreen = (msg) => {
+    screenEl().innerHTML = `
+      <div class="brand">ZalPOS</div>
+      <h1>Доступ временно закрыт</h1>
+      <p class="muted">${esc(msg)}</p>
+      <p class="muted small">Так бывает в общем Wi-Fi или мобильном интернете, если с того же адреса работает чужая программа. Можно переключиться на другую сеть. Касса тем временем работает без интернета.</p>`;
+  };
   if (!status || !status.backend) {
     status = await fresh;
+    if (status && status.blocked) return blockedScreen(status.blocked);
   } else {
-    fresh.then((s) => { if (s && !s.offline) applyLegalMode(s); }).catch(() => {});
+    fresh.then((s) => {
+      if (s && s.blocked) blockedScreen(s.blocked);
+      else if (s && !s.offline) applyLegalMode(s);
+    }).catch(() => {});
   }
   applyLegalMode(status);
   let authBackend = status.auth;

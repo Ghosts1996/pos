@@ -432,6 +432,25 @@ async function main() {
       takeaway.every((x) => !("customerName" in x) && !("customerPhone" in x) && !("deliveryAddress" in x)));
   }
 
+  {
+    // Сводка «🛡 Защита» в боте поддержки: щит API и итог server-shield.sh.
+    const fs = require("fs");
+    const os = require("os");
+    const path = require("path");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zal-shield-st-"));
+    process.env.SHIELD_STATUS_FILE = path.join(dir, "status.json");
+    let lines = server.securityDigestLines();
+    check("защита: сводка без итога сервера — подсказка", lines[0].includes("Защита") && lines.some((l) => l.includes("ещё не запускалась")));
+    fs.writeFileSync(process.env.SHIELD_STATUS_FILE, JSON.stringify({ fail2ban: "active", sshBanned: 3, autoUpdates: "on", sshPassword: "off", closed: ["5432"], exposed: [], rebootRequired: true }));
+    lines = server.securityDigestLines().join("\n");
+    check("защита: сводка сервера", lines.includes("fail2ban работает, закрыто адресов SSH: 3") && lines.includes("обновления безопасности ставятся сами")
+      && lines.includes("вход по паролю SSH выключен") && lines.includes("базы данных наружу закрыты") && lines.includes("перезагрузки"));
+    fs.writeFileSync(process.env.SHIELD_STATUS_FILE, JSON.stringify({ fail2ban: "off", autoUpdates: "off", sshPassword: "on", exposed: ["6379"] }));
+    lines = server.securityDigestLines().join("\n");
+    check("защита: сводка предупреждает", ["fail2ban не работает", "не включены", "SSH включён", "открыты порты баз: 6379"].every((x) => lines.includes(x)));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
   server.close();
   console.log(`\nsaas-gateway: smoke-тесты валидации — ${passed} прошли, ${failed} упали`);
   process.exit(failed ? 1 : 0);
