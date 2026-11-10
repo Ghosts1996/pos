@@ -67,6 +67,14 @@ const DAY_START_HOUR = 6; // рабочие сутки 06:00–06:00: ночна
 const SUMMARY_HOUR = 10;
 const BIG_DISCOUNT_PERCENT = 20;
 const ADDRESS_LINK_TTL_MS = 12 * 3600 * 1000;
+// Ссылка курьеру: геолокация с его телефона; живёт весь рабочий день доставки.
+const COURIER_LINK_TTL_MS = 10 * 3600 * 1000;
+// Позиция старше этого срока на карте не показываем.
+const COURIER_FRESH_MS = 10 * 60 * 1000;
+// Живая точка в чате: Telegram сам гасит её через 3 часа.
+const COURIER_LIVE_PERIOD_S = 3 * 3600;
+// Правка живой точки — не чаще раза в 15 с (иначе Telegram режет запросы).
+const COURIER_LIVE_EDIT_MS = 15 * 1000;
 // «👤 Кто» — имя сотрудника на странице сервера в РФ: в Telegram (серверы за
 // рубежом) имён сотрудников и гостей не отправляем.
 const WHO_LINK_TTL_MS = 14 * 24 * 3600 * 1000;
@@ -255,6 +263,11 @@ function secretKey() {
 /** Подпись ссылки на адрес доставки: заведение, заказ, срок. */
 function addressSig(key, tenantId, sessionId, exp) {
   return crypto.createHmac("sha256", key).update(`addr|${tenantId}|${sessionId}|${exp}`).digest("hex").slice(0, 32);
+}
+
+/** Подпись ссылки курьеру (передача геолокации): заведение, заказ, срок. */
+function courierSig(key, tenantId, sessionId, exp) {
+  return crypto.createHmac("sha256", key).update(`crr|${tenantId}|${sessionId}|${exp}`).digest("hex").slice(0, 32);
 }
 
 function whoSig(key, tenantId, what, id, exp) {
@@ -546,7 +559,7 @@ function deliveryCardText(s, tz, pendingItems = [], pointName = "") {
   return lines.join("\n");
 }
 
-function deliveryKeyboard(s, addressUrl) {
+function deliveryKeyboard(s, addressUrl, courierUrl = null) {
   const type = s.orderType === "delivery" ? "delivery" : "takeaway";
   const rows = [];
   // Заказ из приложения подтверждают на кассе после звонка гостю.
@@ -556,8 +569,11 @@ function deliveryKeyboard(s, addressUrl) {
   if (type === "delivery") {
     const row = [];
     if (next && next !== "done") row.push({ text: "🚴 Назначить курьера", callback_data: `c:${s.id}` });
-    if (addressUrl) row.push({ text: "📍 Адрес", url: addressUrl });
+    if (addressUrl) row.push({ text: "📍 Адрес и карта", url: addressUrl });
     if (row.length) rows.push(row);
+    // Ссылка курьеру — когда он назначен и заказ ещё в работе.
+    const working = !flow.isFinal(type, s.deliveryStatus);
+    if (courierUrl && working && (s.courierSet || s.courierName)) rows.push([{ text: "🛵 Ссылка курьеру", url: courierUrl }]);
   }
   return { inline_keyboard: rows };
 }
@@ -966,12 +982,14 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   const escHtml = (v) => String(v || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   /** Страница на нашем сервере в РФ: адрес доставки, кто из сотрудников. */
-  function htmlPage(res, code, title, html) {
+  // csp — своя политика страницы (общая на сервере запрещает всё, в т.ч. скрипты и карту).
+  function htmlPage(res, code, title, html, csp = null) {
     res.writeHead(code, {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
       "X-Robots-Tag": "noindex",
       "Referrer-Policy": "no-referrer",
+      ...(csp ? { "Content-Security-Policy": csp } : {}),
     });
     res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escHtml(title)}</title><body style="font:18px/1.5 system-ui,sans-serif;margin:24px;max-width:520px">${html}</body>`);
@@ -986,7 +1004,9 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     const t = u.searchParams.get("t") || "";
     const s = u.searchParams.get("s") || "";
     const exp = Number(u.searchParams.get("e")) || 0;
-    const page = (code, html) => htmlPage(res, code, "Адрес доставки", html);
+    // Карта курьера — только iframe Яндекса; скриптов нет.
+    const page = (code, html) => htmlPage(res, code, "Адрес доставки", html,
+      "default-src 'none'; style-src 'unsafe-inline'; frame-src https://yandex.ru; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
     const esc = escHtml;
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(t) || !/^[A-Za-z0-9_-]{1,128}$/.test(s) || exp < Date.now()
         || !sigOk(u.searchParams.get("k"), addressSig(secretKey(), t, s, exp))) {
@@ -1005,11 +1025,157 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       phone = String(rec.phone || phone);
       name = String(rec.name || name);
     }
+    const courierMap = await courierMapHtml(t, ses);
     page(200, `<h2 style="margin:0 0 12px">Доставка №${esc(orderNo(s, ses.orderNo))}</h2>
 <p><b>Адрес:</b><br>${esc(address) || "не указан"}</p>
 ${phone ? `<p><b>Телефон:</b> <a href="tel:${esc(phone.replace(/[^+\d]/g, ""))}">${esc(phone)}</a></p>` : ""}
 ${name ? `<p><b>Имя:</b> ${esc(name)}</p>` : ""}
-${address ? `<p><a href="https://yandex.ru/maps/?text=${encodeURIComponent(address)}">Открыть на карте</a></p>` : ""}`);
+${address ? `<p><a href="https://yandex.ru/maps/?text=${encodeURIComponent(address)}">Открыть адрес в Яндекс Картах</a></p>` : ""}
+${courierMap}`);
+  }
+
+  /** Карта с курьером: точка из последней передачи геолокации (не старше 10 минут). */
+  async function courierMapHtml(tenantId, ses) {
+    const pos = ses.courierPos || {};
+    const at = toDate(pos.at);
+    const lat = Number(pos.lat);
+    const lng = Number(pos.lng);
+    const finished = flow.isFinal("delivery", ses.deliveryStatus);
+    if (finished || !at || !Number.isFinite(lat) || !Number.isFinite(lng) || Date.now() - at.getTime() > COURIER_FRESH_MS) {
+      return `<p style="color:#666">Курьер пока не передаёт геолокацию. Она появится, когда курьер откроет ссылку из карточки.</p>`;
+    }
+    const venue = await venueOf(tenantId);
+    const tz = venue.timezone || "Europe/Moscow";
+    // Координаты — числа из нашей базы, в адрес подставляются только они.
+    const la = lat.toFixed(6);
+    const lo = lng.toFixed(6);
+    return `<p><b>Курьер на карте</b> · позиция на ${escHtml(hhmm(at, tz))}</p>
+<iframe src="https://yandex.ru/map-widget/v1/?ll=${lo},${la}&z=16&pt=${lo},${la},pm2rdm" title="Карта курьера" style="width:100%;height:300px;border:0;border-radius:8px" loading="lazy"></iframe>`;
+  }
+
+  // ------------------------------------------------------------ геолокация курьера
+
+  /** Разбор подписанной ссылки курьеру; при ошибке — HttpError. */
+  async function courierLinkOf(u) {
+    const t = u.searchParams.get("t") || "";
+    const s = u.searchParams.get("s") || "";
+    const exp = Number(u.searchParams.get("e")) || 0;
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(t) || !/^[A-Za-z0-9_-]{1,128}$/.test(s) || exp < Date.now()
+        || !sigOk(u.searchParams.get("k"), courierSig(secretKey(), t, s, exp))) {
+      throw new HttpError(403, "Ссылка устарела или неверна. Попросите новую в карточке заказа.");
+    }
+    return { t, s };
+  }
+
+  /** Страница курьера: открыта — телефон передаёт геолокацию заказа. */
+  async function handleCourierPage(req, res) {
+    const u = new URL(req.url, "http://x");
+    const page = (code, html, nonce = "") => htmlPage(res, code, "Геолокация курьера", html,
+      `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`);
+    let link;
+    try { link = await courierLinkOf(u); } catch (e) {
+      return page(403, `<p>${escHtml(e.message)}</p>`);
+    }
+    const ses = (await tenantRef(link.t).collection("sessions").doc(link.s).get()).data();
+    if (!ses || ses.orderType !== "delivery") return page(404, "<p>Заказ не найден.</p>");
+    if (flow.isFinal("delivery", ses.deliveryStatus)) return page(410, "<p>Заказ уже закрыт. Передавать геолокацию больше не нужно.</p>");
+    // Адрес сюда не выводим: курьер берёт его по кнопке «Адрес и карта».
+    const pingUrl = `${publicUrl}/courierPing${u.search}`;
+    const nonce = crypto.randomBytes(16).toString("base64");
+    page(200, `<h2 style="margin:0 0 12px">Доставка №${escHtml(orderNo(link.s, ses.orderNo))}</h2>
+<p id="st">Определяем вашу геолокацию…</p>
+<p style="color:#666;font-size:15px">Держите страницу открытой, пока едете. Геолокация нужна только для карты доставки и не передаётся гостю.</p>
+<p><button id="stop" style="font:inherit;padding:10px 16px">Остановить передачу</button></p>
+<script nonce="${nonce}">
+(function () {
+  var PING = ${JSON.stringify(pingUrl).replace(/</g, "\\u003c")};
+  var st = document.getElementById("st");
+  var last = 0, watch = null;
+  function setText(t) { st.textContent = t; }
+  function stop() {
+    if (watch !== null) navigator.geolocation.clearWatch(watch);
+    watch = null;
+    setText("Передача остановлена. Чтобы возобновить, откройте ссылку снова.");
+  }
+  function send(pos) {
+    var now = Date.now();
+    if (now - last < 10000) return;
+    last = now;
+    fetch(PING, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy })
+    }).then(function (r) {
+      if (r.status === 410) { setText("Заказ закрыт. Спасибо!"); stop(); return; }
+      setText(r.ok ? "Передаём геолокацию. Не закрывайте страницу." : "Не получилось передать, пробуем снова…");
+    }).catch(function () { setText("Нет связи, пробуем снова…"); });
+  }
+  function fail(err) {
+    setText(err && err.code === 1 ? "Разрешите доступ к геолокации в настройках браузера." : "Не удалось определить положение. Выйдите на открытое место.");
+  }
+  if (!navigator.geolocation) { setText("Этот браузер не умеет передавать геолокацию."); return; }
+  watch = navigator.geolocation.watchPosition(send, fail, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+  document.getElementById("stop").onclick = stop;
+})();
+</script>`, nonce);
+  }
+
+  /** Приём координат курьера: пишем в заказ и обновляем живую точку в чате. */
+  async function handleCourierPing(req, res) {
+    const u = new URL(req.url, "http://x");
+    const { t, s } = await courierLinkOf(u);
+    const body = await parseJsonBody(req).catch(() => ({}));
+    const lat = Number(body.lat);
+    const lng = Number(body.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+      throw new HttpError(400, "Нет координат");
+    }
+    const acc = Number(body.acc);
+    const ref = tenantRef(t).collection("sessions").doc(s);
+    const ses = (await ref.get()).data();
+    if (!ses || ses.orderType !== "delivery") throw new HttpError(404, "Заказ не найден");
+    if (flow.isFinal("delivery", ses.deliveryStatus)) throw new HttpError(410, "Заказ уже закрыт");
+    await ref.update({
+      courierPos: {
+        lat: Math.round(lat * 1e6) / 1e6,
+        lng: Math.round(lng * 1e6) / 1e6,
+        acc: Number.isFinite(acc) ? Math.round(acc) : 0,
+        at: admin.firestore.Timestamp.now(),
+      },
+    });
+    sendJson(res, 200, { ok: true });
+    // Живая точка в чате — отдельно: ошибка Telegram не должна ломать ответ курьеру.
+    updateLivePoint(t, s, lat, lng).catch((e) => console.error(`telegram courier point (${t}): ${e.message}`));
+  }
+
+  /** Бот, который ведёт карточки этой точки (у сети — один бот на все точки). */
+  const botForPoint = (tid) => [...bots.values()].find((b) => b.tenantId === tid || (b.points || []).some((p) => p.id === tid)) || null;
+
+  /** Живая точка курьера в топике доставок: отправляем, потом двигаем. */
+  async function updateLivePoint(tid, sid, lat, lng) {
+    const bot = botForPoint(tid);
+    if (!bot) return;
+    const cardRef = botsCol().doc(bot.tenantId).collection("cards").doc(sid);
+    const card = (await cardRef.get()).data();
+    if (!card || !card.chatId) return;
+    const coords = { latitude: lat, longitude: lng };
+    if (card.liveMessageId) {
+      if (card.liveAt && Date.now() - card.liveAt < COURIER_LIVE_EDIT_MS) return;
+      try {
+        await api(bot.token, "editMessageLiveLocation", { chat_id: card.chatId, message_id: card.liveMessageId, ...coords });
+        await cardRef.update({ liveAt: Date.now() });
+        return;
+      } catch (e) {
+        // Точку уже погасили или удалили — ниже отправим новую. Иное — в журнал.
+        if (!/not found|can't be edited|to edit|not modified/i.test(e.message || "")) throw e;
+        if (/not modified/i.test(e.message || "")) return;
+      }
+    }
+    const m = await api(bot.token, "sendLocation", {
+      chat_id: card.chatId, ...coords, live_period: COURIER_LIVE_PERIOD_S,
+      ...(card.threadId ? { message_thread_id: card.threadId } : {}),
+    });
+    await cardRef.update({ liveMessageId: m.message_id, liveAt: Date.now() });
   }
 
   // ------------------------------------------------------------ «кто» без имён в Telegram
@@ -1103,6 +1269,12 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     const exp = Date.now() + ADDRESS_LINK_TTL_MS;
     const k = addressSig(secretKey(), tenantId, sessionId, exp);
     return `${publicUrl}/deliveryAddress?t=${encodeURIComponent(tenantId)}&s=${encodeURIComponent(sessionId)}&e=${exp}&k=${k}`;
+  }
+
+  function courierUrl(tenantId, sessionId) {
+    const exp = Date.now() + COURIER_LINK_TTL_MS;
+    const k = courierSig(secretKey(), tenantId, sessionId, exp);
+    return `${publicUrl}/courierTrack?t=${encodeURIComponent(tenantId)}&s=${encodeURIComponent(sessionId)}&e=${exp}&k=${k}`;
   }
 
   // ------------------------------------------------------------ webhook
@@ -2189,7 +2361,8 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       pending = g.docs.map((d) => d.data()).filter((o) => o.status === "new").flatMap((o) => o.items || []);
     }
     const text = deliveryCardText(s, venue.timezone, pending, multi(bot) ? pointName(bot, tid) : "");
-    const markup = deliveryKeyboard(s, s.orderType === "delivery" ? addressUrl(tid, s.id) : null);
+    const isDelivery = s.orderType === "delivery";
+    const markup = deliveryKeyboard(s, isDelivery ? addressUrl(tid, s.id) : null, isDelivery ? courierUrl(tid, s.id) : null);
     const sig = `${s.deliveryStatus || "new"}|${s.courierName || ""}|${s.courierSet ? 1 : 0}|${(s.orderItems || []).length}|${sessionBill(s)}|${pending.length}|${Number(s.guestPaidTotal) || 0}|${s.status}`;
     if (!card || card.chatId !== staff.id) {
       const where = inThread(staff, s.orderType === "delivery" ? "delivery" : "pickup");
@@ -2219,7 +2392,14 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         ? `✅ №${orderNo(sessionId, s && s.orderNo)} ${type === "delivery" ? "доставлен" : "выдан"}`
         : `✅ №${orderNo(sessionId, s && s.orderNo)} закрыт на кассе`;
     await api(bot.token, "editMessageReplyMarkup", { chat_id: card.chatId, message_id: card.messageId, reply_markup: { inline_keyboard: [] } }).catch(() => {});
+    if (card.liveMessageId) {
+      await api(bot.token, "stopMessageLiveLocation", { chat_id: card.chatId, message_id: card.liveMessageId }).catch(() => {});
+    }
     await api(bot.token, "sendMessage", { chat_id: card.chatId, text, reply_to_message_id: card.messageId, ...(card.threadId ? { message_thread_id: card.threadId } : {}) }).catch(() => {});
+    // Геолокация курьера больше не нужна: убираем её из заказа.
+    if (card.tenantId) {
+      await tenantRef(card.tenantId).collection("sessions").doc(sessionId).update({ courierPos: null }).catch(() => {});
+    }
     await cardRef.delete();
   }
 
@@ -2516,12 +2696,13 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
   }
 
   return {
-    handleSetup, handleStatus, handleLinkCode, handleAccess, handleNotify, handleUnlink, handleJoinChain, handleAddress, handleWho, handleHook, start,
+    handleSetup, handleStatus, handleLinkCode, handleAccess, handleNotify, handleUnlink, handleJoinChain, handleAddress, handleWho, handleHook,
+    handleCourierPage, handleCourierPing, start,
   };
 }
 
 module.exports = {
   createTelegram, buildSummary, buildChainSummary, alertText, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
-  deliveryCardText, deliveryKeyboard, salesStats, addressSig, whoSig, roleLabel, allowedList, parseAllowed, staleCashText, menuKeyboard,
+  deliveryCardText, deliveryKeyboard, salesStats, addressSig, courierSig, whoSig, roleLabel, allowedList, parseAllowed, staleCashText, menuKeyboard,
   secretKey, fmtTg, stripHtml,
 };

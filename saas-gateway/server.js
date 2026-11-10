@@ -9456,6 +9456,9 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/firebaseConfig") return runHandler(handleFirebaseWebConfig, req, res);
   // Адрес доставки для курьера — по подписанной ссылке из карточки в Telegram.
   if (req.method === "GET" && urlPath === "/deliveryAddress") return runHandler(telegram.handleAddress, req, res);
+  // Геолокация курьера по подписанной ссылке из карточки: страница и приём координат.
+  if (req.method === "GET" && urlPath === "/courierTrack") return runHandler(telegram.handleCourierPage, req, res);
+  if (req.method === "POST" && urlPath === "/courierPing") return runHandler(telegram.handleCourierPing, req, res);
   if (req.method === "GET" && urlPath === "/staffWho") return runHandler(telegram.handleWho, req, res);
   // Документ поддержки по подписанной ссылке из обращения в кабинете.
   if (req.method === "GET" && urlPath === "/supportDoc") return runHandler(supportBot.handleDocDownload, req, res);

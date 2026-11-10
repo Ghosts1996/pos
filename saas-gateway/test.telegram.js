@@ -126,7 +126,7 @@ const fetchImpl = async (url, opts) => {
 
 class HttpError extends Error { constructor(s, m) { super(m); this.status = s; } }
 const mkReq = (body, headers = {}, url = "/") => { const r = Readable.from([Buffer.from(JSON.stringify(body))]); r.headers = { authorization: "Bearer x", ...headers }; r.url = url; return r; };
-const mkRes = () => { const r = { code: 0, body: null, writeHead(c) { r.code = c; }, end(b) { r.body = b; } }; return r; };
+const mkRes = () => { const r = { code: 0, body: null, headers: {}, writeHead(c, h) { r.code = c; r.headers = h || {}; }, end(b) { r.body = b; } }; return r; };
 const deps = {
   db, admin,
   // admin2 — администратор только точки C2 сети.
@@ -408,6 +408,83 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   res = mkRes();
   await tg.handleAddress({ url: `/deliveryAddress?t=B&s=s1abcd&e=${exp}&k=${k}` }, res);
   assert.equal(res.code, 403, "подпись заведения А не открывает адрес в Б");
+
+  // ================= Геолокация курьера: ссылка, страница, живая точка, карта
+  {
+    // Свой заказ курьера: в работе, курьер назначен, карточка уже в группе доставок
+    store.set("tenants/A/sessions/s2dlvr", { tableId: "takeaway", status: "active", orderType: "delivery", deliveryStatus: "courier", courierSet: true,
+      courierName: "Николай", guestTag: "Пётр", deliveryAddress: "ул. Пушкина 2", orderItems: [{ name: "Кальян", price: 900, qty: 1 }], startTime: new Date() });
+    fire(); await tick(); await tick();
+    assert.ok(store.get("telegramBots/A/cards/s2dlvr"), "карточка заказа курьера создана");
+    const exp2 = Date.now() + 60000;
+    const k2 = tgmod.addressSig(key, "A", "s2dlvr", exp);
+    const ck = tgmod.courierSig(key, "A", "s2dlvr", exp2);
+    const q = `t=A&s=s2dlvr&e=${exp2}&k=${ck}`;
+    // Страница курьера: свой скрипт по nonce; общая политика «всё запрещено» не мешает
+    res = mkRes();
+    await tg.handleCourierPage({ url: `/courierTrack?${q}` }, res);
+    assert.equal(res.code, 200, "страница курьера открывается по верной ссылке");
+    const nonce = (res.headers["Content-Security-Policy"].match(/nonce-([^']+)'/) || [])[1];
+    assert.ok(nonce, "у страницы курьера есть своя политика с nonce");
+    assert.ok(res.body.includes(`<script nonce="${nonce}">`), "скрипт страницы подписан тем же nonce");
+    assert.ok(res.body.includes("/courierPing?t=A&s=s2dlvr"), "страница шлёт координаты на верный адрес");
+    assert.ok(!/Ленина|\+7900/.test(res.body), "на странице курьера нет адреса и телефона гостя");
+    res = mkRes();
+    await tg.handleCourierPage({ url: `/courierTrack?t=B&s=s2dlvr&e=${exp2}&k=${ck}` }, res);
+    assert.equal(res.code, 403, "подпись заведения А не открывает курьера в Б");
+    // Ссылка курьеру — кнопка в карточке, только пока заказ в работе и курьер назначен
+    const kb = tgmod.deliveryKeyboard({ id: "s2dlvr", orderType: "delivery", deliveryStatus: "courier", courierSet: true }, "https://a", "https://c");
+    assert.ok(kb.inline_keyboard.flat().some((b) => b.text === "🛵 Ссылка курьеру" && b.url === "https://c"), "кнопка ссылки курьеру есть");
+    const kbNoCourier = tgmod.deliveryKeyboard({ id: "s2dlvr", orderType: "delivery", deliveryStatus: "cooking" }, "https://a", "https://c");
+    assert.ok(!kbNoCourier.inline_keyboard.flat().some((b) => b.text === "🛵 Ссылка курьеру"), "без курьера кнопки нет");
+    // Неверная подпись — координаты не принимаются
+    await assert.rejects(tg.handleCourierPing(mkReq({ lat: 55.75, lng: 37.6, acc: 10 }, {}, `/courierPing?t=A&s=s2dlvr&e=${exp2}&k=bad`), mkRes()),
+      (e) => e.status === 403, "с неверной подписью координаты не принимаются");
+    await assert.rejects(tg.handleCourierPing(mkReq({ lat: 999, lng: 37.6 }, {}, `/courierPing?${q}`), mkRes()),
+      (e) => e.status === 400, "широта вне диапазона — отказ");
+    // Верные координаты: пишем в заказ, открываем живую точку в топике доставок
+    sent.length = 0;
+    res = mkRes();
+    await tg.handleCourierPing(mkReq({ lat: 55.7512345, lng: 37.6, acc: 12 }, {}, `/courierPing?${q}`), res);
+    assert.equal(res.code, 200, "координаты курьера приняты");
+    const pos = store.get("tenants/A/sessions/s2dlvr").courierPos;
+    assert.ok(pos && Math.abs(pos.lat - 55.751235) < 1e-9 && pos.acc === 12, "позиция записана в заказ");
+    await tick(); await tick();
+    const live = sent.find((m) => m.method === "sendLocation");
+    assert.ok(live && live.body.chat_id === -900 && live.body.live_period === 10800, "живая точка ушла в группу на 3 часа");
+    const liveId = store.get("telegramBots/A/cards/s2dlvr").liveMessageId;
+    assert.ok(liveId, "id живой точки сохранён в карточке");
+    // Второе сообщение курьера в пределах 15 с — без правки живой точки
+    sent.length = 0;
+    await tg.handleCourierPing(mkReq({ lat: 55.752, lng: 37.61, acc: 9 }, {}, `/courierPing?${q}`), mkRes());
+    await tick(); await tick();
+    assert.ok(!sent.some((m) => m.method === "editMessageLiveLocation"), "чаще раза в 15 с точку не двигаем");
+    // Прошло больше 15 с — точка двигается, новая не создаётся
+    store.set("telegramBots/A/cards/s2dlvr", { ...store.get("telegramBots/A/cards/s2dlvr"), liveAt: Date.now() - 60000 });
+    sent.length = 0;
+    await tg.handleCourierPing(mkReq({ lat: 55.753, lng: 37.62, acc: 9 }, {}, `/courierPing?${q}`), mkRes());
+    await tick(); await tick();
+    const moved = sent.find((m) => m.method === "editMessageLiveLocation");
+    assert.ok(moved && moved.body.message_id === liveId && moved.body.latitude === 55.753, "живая точка переехала на новые координаты");
+    assert.ok(!sent.some((m) => m.method === "sendLocation"), "вторую точку не заводим");
+    // Карта в адресе: позиция свежая — точка курьера есть; без свежей — честная подсказка
+    res = mkRes();
+    await tg.handleAddress({ url: `/deliveryAddress?t=A&s=s2dlvr&e=${exp}&k=${k2}` }, res);
+    assert.ok(/map-widget\/v1\/\?ll=37\.620000,55\.753000/.test(res.body) && /Курьер на карте/.test(res.body), "на странице адреса карта курьера");
+    assert.ok(/yandex\.ru/.test(res.headers["Content-Security-Policy"]), "для карты разрешён Яндекс");
+    store.set("tenants/A/sessions/s2dlvr", { ...store.get("tenants/A/sessions/s2dlvr"), courierPos: { lat: 55.7, lng: 37.6, at: new TS(Date.now() - 3600000) } });
+    res = mkRes();
+    await tg.handleAddress({ url: `/deliveryAddress?t=A&s=s2dlvr&e=${exp}&k=${k2}` }, res);
+    assert.ok(!/map-widget/.test(res.body) && /не передаёт геолокацию/.test(res.body), "старая позиция на карте не показывается");
+    // Заказ закрыт — передача не принимается; живая точка гаснет, геолокация убирается
+    store.set("tenants/A/sessions/s2dlvr", { ...store.get("tenants/A/sessions/s2dlvr"), deliveryStatus: "done" });
+    await assert.rejects(tg.handleCourierPing(mkReq({ lat: 55.75, lng: 37.6 }, {}, `/courierPing?${q}`), mkRes()),
+      (e) => e.status === 410, "закрытый заказ больше не принимает координаты");
+    sent.length = 0;
+    fire(); await tick(); await tick();
+    assert.ok(sent.some((m) => m.method === "stopMessageLiveLocation" && m.body.message_id === liveId), "живая точка погашена при закрытии заказа");
+    assert.equal(store.get("tenants/A/sessions/s2dlvr").courierPos, null, "геолокация курьера убрана из заказа");
+  }
 
   // ================= Сеть: один бот на все точки, переключение точек
   const H = 3600000;
