@@ -375,9 +375,19 @@
 
   // ---------------------------------------------------------------- геолокация
 
+  // Приложение для Android (ZalNative): точка курьера идёт на сервер и при
+  // выключенном экране — службой телефона; браузерные отправки тогда не нужны.
+  const NATIVE = (() => { try { return !!(window.ZalNative && window.ZalNative.isNative()); } catch (_) { return false; } })();
+  function nativeTracking() {
+    try { return NATIVE && window.ZalNative.isTracking(); } catch (_) { return false; }
+  }
+
   function startShiftServices() {
     startGeo();
     requestWake();
+    if (NATIVE && S.token) {
+      try { window.ZalNative.startTracking(S.token, new URL(".", location.href).href); } catch (_) { /* старая версия приложения */ }
+    }
   }
 
   function startGeo() {
@@ -391,6 +401,7 @@
   function stopGeo() {
     if (S.geo.watch !== null && "geolocation" in navigator) navigator.geolocation.clearWatch(S.geo.watch);
     S.geo.watch = null;
+    if (NATIVE) { try { window.ZalNative.stopTracking(); } catch (_) { /* нет службы */ } }
   }
 
   function onPos(p) {
@@ -405,7 +416,8 @@
     S.geo.fix = fix;
     const last = S.geo.lastBuffered;
     // В память — каждые 15 с или при сдвиге на 25 м: путь считается точно, лишнего не шлём.
-    if (!last || fix.at - last.at > 15000 || dist(last, fix) > 25) {
+    // В приложении для Android точки шлёт служба телефона — здесь только карта.
+    if (!nativeTracking() && (!last || fix.at - last.at > 15000 || dist(last, fix) > 25)) {
       S.pings.push(fix);
       if (S.pings.length > 600) S.pings = S.pings.slice(-600);
       S.geo.lastBuffered = fix;
@@ -1168,7 +1180,9 @@
         <div class="lrow">${I.sound()}<span class="grow">Звук нового заказа</span>${sw(S.sound, "sound")}</div>
         ${"Notification" in window ? `<div class="lrow">${I.bell()}<span class="grow">Уведомления, когда приложение свёрнуто</span>${Notification.permission === "granted" ? `<span class="chip green">Да</span>` : Notification.permission === "denied" ? `<span class="chip red">Запрещены</span>` : `<button class="btn go" style="min-height:40px" data-a="notify">Разрешить</button>`}</div>` : ""}
         <div class="lrow">${I.sun()}<span class="grow">Экран не гаснет на линии</span><span class="chip ${S.wake ? "green" : ""}">${S.wake ? "Да" : "wakeLock" in navigator ? "Включится на линии" : "Не поддерживается"}</span></div>
-        ${standalone ? `<div class="lrow">${I.download()}<span class="grow">Приложение установлено</span><span class="chip green">Да</span></div>`
+        ${NATIVE ? `<div class="lrow">${I.download()}<span class="grow">Приложение для Android</span><span class="chip green">${nativeTracking() ? "Точка идёт в фоне" : "Установлено"}</span></div>`
+          : /Android/i.test(navigator.userAgent) ? `<div class="lrow">${I.download()}<span class="grow">Приложение для Android: точка курьера идёт и при выключенном экране</span><a class="btn go" style="min-height:40px" href="../courierApk" download>Скачать</a></div>` : ""}
+        ${NATIVE ? "" : standalone ? `<div class="lrow">${I.download()}<span class="grow">Приложение установлено</span><span class="chip green">Да</span></div>`
           : S.install ? `<div class="lrow">${I.download()}<span class="grow">Приложение на экран телефона</span><button class="btn go" style="min-height:40px" data-a="install">Установить</button></div>`
             : iosHint ? `<div class="lrow">${I.download()}<span class="grow small">На iPhone: «Поделиться» → «На экран „Домой“»</span></div>`
               : `<div class="lrow">${I.download()}<span class="grow small">Установить на Android: меню браузера ⋮ → «Добавить на главный экран»</span></div>`}

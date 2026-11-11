@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Курьер ZalPOS</string>
+    <string name="channel_name">На линии</string>
+    <string name="track_title">Вы на линии</string>
+    <string name="track_text">Заведение видит, где вы, пока идёт смена</string>
+    <string name="offline">Нет связи с сервером. Проверьте интернет — страница откроется сама.</string>
+</resources>

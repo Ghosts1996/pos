@@ -787,6 +787,27 @@ async function handleGuestDemoApk(req, res) {
 }
 
 /**
+ * Приложение курьера для Android (фоновая геолокация на смене). Собирает
+ * workflow «Приложение курьера» (courier-apk.yml), кладёт тем же скриптом
+ * доставки в publicdemo/courier.apk, отдаёт nginx. Ссылка — в профиле
+ * веб-приложения курьера: …/saas/courierApk.
+ */
+async function handleCourierApk(req, res) {
+  const filePath = path.join(TENANT_BUILDS_DIR, PUBLIC_DEMO_DIR, "courier.apk");
+  try {
+    await fs.promises.access(filePath, fs.constants.R_OK);
+  } catch (_) {
+    throw new HttpError(404, "Приложение курьера ещё собирается — пока работайте в браузере, загляните чуть позже");
+  }
+  res.writeHead(200, {
+    "Content-Type": "application/vnd.android.package-archive",
+    "Content-Disposition": 'attachment; filename="zalpos-courier.apk"',
+    "X-Accel-Redirect": `/internal-tenant-builds/${PUBLIC_DEMO_DIR}/courier.apk`,
+  });
+  res.end();
+}
+
+/**
  * Демо-касса для Windows (установщик setup.exe) для кнопки на сайте. Кладёт
  * её тот же workflow «Публичный APK» (job build-windows, папка publicdemo,
  * файл kassawin.apk — скрипт доставки пишет только *.apk), отдаёт nginx.
@@ -8473,6 +8494,7 @@ async function supportAdminDigest(kind) {
     }
     lines.push(`Данные: ${DATA_LOCAL ? "свой сервер в РФ" : "Firestore (Google)"} · вход: ${authOwn() ? "свой" : "Firebase"}`);
     lines.push("", ...securityDigestLines());
+    lines.push("", ...mapDigestLines());
     return lines.join("\n");
   }
   const firestore = db();
@@ -8546,6 +8568,22 @@ async function supportAdminDigest(kind) {
 function hostShieldStatus() {
   const file = process.env.SHIELD_STATUS_FILE || "/var/lib/zalpos-shield/status.json";
   try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch (_) { return null; }
+}
+
+/** Строки «🗺 Карта» (своя карта курьеров, map-build.js) для сводки «🖥 Сервер». */
+function mapDigestLines() {
+  const info = zalMap.info();
+  let st = null;
+  try { st = JSON.parse(fs.readFileSync(path.join(process.env.MAP_DIR || "/opt/zalpos-maps", "status.json"), "utf8")); } catch (_) {}
+  const lines = ["🗺 <b>Своя карта</b>"];
+  const parts = [];
+  parts.push(info.tiles ? `тайлы есть (до ${info.tiles.maxzoom}-го масштаба)` : "тайлов пока нет — курьеры видят схему Яндекса");
+  parts.push(info.route ? `маршруты: районов ${info.route.regions.length}` : "маршрутов пока нет");
+  lines.push(parts.join(" · "));
+  if (!st) lines.push("Сборка ещё не завершалась (идёт в фоне после обновления; журнал /var/log/zalpos-map.log)");
+  else if (!st.ok) lines.push(`⚠️ Последняя сборка ${String(st.finishedAt || "").slice(0, 16).replace("T", " ")}: ${(st.errors || []).slice(0, 2).map((e) => String(e).slice(0, 160).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))).join("; ")}`);
+  else lines.push(`Последняя сборка: ${String(st.finishedAt || "").slice(0, 16).replace("T", " ")} UTC, без ошибок`);
+  return lines;
 }
 
 /** Строки «🛡 Защита» для сводки «🖥 Сервер» в боте поддержки. */
@@ -9592,6 +9630,7 @@ const server = http.createServer((req, res) => {
   // Гостевой APK по QR стола — без входа.
   if (req.method === "GET" && urlPath === "/publicGuestApk") return runHandler(handlePublicGuestApk, req, res);
   if (req.method === "GET" && urlPath === "/guestDemoApk") return runHandler(handleGuestDemoApk, req, res);
+  if (req.method === "GET" && urlPath === "/courierApk") return runHandler(handleCourierApk, req, res);
   if (req.method === "GET" && urlPath === "/windowsDemo") return runHandler(handleWindowsDemo, req, res);
   if (req.method === "GET" && urlPath === "/firebaseConfig") return runHandler(handleFirebaseWebConfig, req, res);
   // Адрес доставки для курьера — по подписанной ссылке из карточки в Telegram.

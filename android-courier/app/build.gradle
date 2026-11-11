@@ -1,0 +1,54 @@
+plugins {
+    id "com.android.application"
+}
+
+// Приложение курьера ZalPOS: окно с веб-приложением курьера и фоновая
+// геолокация на смене (служба переднего плана). Без сторонних библиотек и
+// без сервисов Google: только Android SDK.
+def runNo = (System.getenv("GITHUB_RUN_NUMBER") ?: "1") as int
+def keystore = System.getenv("ZC_KEYSTORE")
+
+android {
+    namespace "ru.zalpos.courier"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "ru.zalpos.courier"
+        minSdk 24
+        targetSdk 34
+        versionCode runNo
+        versionName "1.0.${runNo}"
+        buildConfigField "String", "APP_URL", "\"${System.getenv("ZC_APP_URL") ?: "https://pii.zalpos.ru/saas/courier/"}\""
+    }
+
+    signingConfigs {
+        release {
+            if (keystore) {
+                storeFile file(keystore)
+                storePassword System.getenv("ZC_STORE_PASS")
+                keyAlias System.getenv("ZC_KEY_ALIAS")
+                keyPassword System.getenv("ZC_KEY_PASS")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig keystore ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+    }
+}
