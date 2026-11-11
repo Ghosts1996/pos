@@ -4214,7 +4214,7 @@ const DEMO_CLIENTS = [
  * складывает в vault — их потом записывают в справочник в РФ, как у
  * настоящего заведения (handleCreateDemoTenant).
  */
-function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyaltyRef = null, seedClients = true, venueName = "Демо-заведение", address = "Москва, ул. Примерная, 1", vault = [] } = {}) {
+function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyaltyRef = null, seedClients = true, venueName = "Демо-заведение", address = "Москва, ул. Примерная, 1", vault = [], venuePos = null } = {}) {
   const col = (name) => tenantRef.collection(name);
   // Точка сети: гости и бонусы общие на сеть (chains/{chainId}/clients).
   const loyaltyCol = (name) => (loyaltyRef || tenantRef).collection(name);
@@ -4509,6 +4509,19 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
       orderItems, status: "closed", closedAt: ts(end), receiptPrinted: true,
       paymentAggregator: sumOf(orderItems), aggregator: aggId, aggregatorName: a.name, aggregatorCommission: a.commission,
     });
+  });
+
+  // Цена доставки и районы — чтобы в демо было видно, как считается
+  // доставка и как работает приложение курьера (QR у двери — без денег).
+  batch.set(col("settings").doc("delivery"), {
+    fee: 199, freeFrom: 2500, minOrder: 700, etaMin: 60,
+    zones: [
+      { id: "center", name: "Центр", fee: 0, minOrder: 0, freeFrom: 0, etaMin: 45 },
+      { id: "far", name: "За ТТК", fee: 349, minOrder: 1500, freeFrom: 4000, etaMin: 90 },
+    ],
+    payAtDoor: { cash: true, card: true, qr: true },
+    liveInTelegram: false, courierLink: true,
+    ...(venuePos ? { venuePos } : {}),
   });
 
   // Заказы с собой и доставка в работе — служебный стол «С собой и доставка».
@@ -4872,8 +4885,8 @@ async function handleCreateDemoTenant(req, res) {
   await head.commit();
 
   const points = [
-    { key: "center", name: "Демо · Центр", address: "Москва, ул. Примерная, 1", staffList: DEMO_STAFF },
-    { key: "river", name: "Демо · Набережная", address: "Москва, Набережная ул., 7", staffList: DEMO_STAFF_RIVER },
+    { key: "center", name: "Демо · Центр", address: "Москва, ул. Примерная, 1", staffList: DEMO_STAFF, venuePos: { lat: 55.7605, lng: 37.6086 } },
+    { key: "river", name: "Демо · Набережная", address: "Москва, Набережная ул., 7", staffList: DEMO_STAFF_RIVER, venuePos: { lat: 55.7485, lng: 37.5390 } },
   ];
   const created = [];
   for (const point of points) {
@@ -4916,6 +4929,7 @@ async function handleCreateDemoTenant(req, res) {
       seedClients: created.length === 0,
       venueName: point.name,
       address: point.address,
+      venuePos: point.venuePos,
       vault,
     });
     await batch.commit();
@@ -4955,6 +4969,7 @@ async function purgeDemoTenant(tenantId) {
   for (const name of TENANT_SUBCOLLECTIONS) {
     await firestore.recursiveDelete(tenantRef.collection(name));
   }
+  await courier.purgeRoot(`t_${tenantId}`).catch(() => {});
   await tenantRef.delete();
   await firestore.collection("subscriptions").doc(tenantId).delete().catch(() => {});
   await removeTenantUploads(tenantId);
@@ -4970,6 +4985,7 @@ async function purgeDemoTenant(tenantId) {
       }
       const members = await firestore.collection("chainMembers").where("chainId", "==", chainId).get();
       for (const d of members.docs) await d.ref.delete();
+      await courier.purgeRoot(`c_${chainId}`).catch(() => {});
       await chainRef.delete();
       await firestore.collection("subscriptions").doc(chainId).delete().catch(() => {});
     }
@@ -8188,6 +8204,7 @@ const deliveryAdmin = createDeliveryAdmin({
 });
 const COURIER_API = {
   login: courier.handleLogin,
+  demo: courier.handleDemoLogin,
   logout: courier.handleLogout,
   consent: courier.handleConsent,
   state: courier.handleState,

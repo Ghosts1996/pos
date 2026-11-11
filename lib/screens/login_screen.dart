@@ -457,12 +457,41 @@ class _LoginScreenState extends State<LoginScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      'Код демо для приложения гостя: ${AppScope.demoCode}',
+                      'Код демо для приложения гостя и курьера: ${AppScope.demoCode}',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: BrandPalette.brass, fontSize: 12, fontWeight: FontWeight.w700),
                     ),
                     const SizedBox(width: 4),
                     Icon(Icons.copy, size: 13, color: BrandPalette.brass),
+                  ],
+                ),
+              ),
+            ),
+          // Приложение курьера (веб) — входит в эту же демо-сеть по коду.
+          if (AppScope.demoCode.isNotEmpty && kSaasGatewayUrl.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: GestureDetector(
+                onTap: () {
+                  final base = kSaasGatewayUrl.replaceAll(RegExp(r'/+$'), '');
+                  Clipboard.setData(ClipboardData(text: '$base/courier/#demo=${AppScope.demoCode}'));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Ссылка на приложение курьера скопирована — откройте её в браузере телефона'), duration: Duration(seconds: 3)),
+                  );
+                },
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        'Приложение курьера: скопировать ссылку',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: BrandPalette.brass, fontSize: 12, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(Icons.delivery_dining, size: 14, color: BrandPalette.brass),
                   ],
                 ),
               ),

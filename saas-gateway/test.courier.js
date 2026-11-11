@@ -542,6 +542,35 @@ test("состояние: тот же ответ — коротко «без и�
   await assert.rejects(call(w.api.handleAdminList, { tenantId: "A" }, { uid: "stranger" }), (e) => e.status === 403);
 });
 
+test("демо: вход по коду демо-сети, заказы обеих точек, сброс демо стирает курьеров", async () => {
+  const w = world();
+  await seed(w);
+  const exp = Timestamp.fromMillis(clock + 3 * 86400000);
+  await w.set("tenants/N1", { name: "Демо · Центр", chainId: "N", timezone: "Europe/Moscow", status: "active", demo: true, demoCode: "demo-ab12cd34", demoExpiresAt: exp, createdAt: Timestamp.fromMillis(1) });
+  await w.set("tenants/N2", { name: "Демо · Набережная", chainId: "N", timezone: "Europe/Moscow", status: "active", demo: true, demoCode: "demo-ab12cd34", demoExpiresAt: exp, createdAt: Timestamp.fromMillis(2) });
+  await w.set("tenants/N2/sessions/s9", order());
+  // неверный и чужой (не демо) код — отказ и учёт в щите
+  await assert.rejects(call(w.api.handleDemoLogin, { code: "demo-zzzz0000" }), (e) => e.status === 404);
+  await assert.rejects(call(w.api.handleDemoLogin, { code: "../x" }), (e) => e.status === 404);
+  assert.equal(w.fails.length, 2);
+  const r = await call(w.api.handleDemoLogin, { code: " DEMO-ab12cd34 ", device: "Android" });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.courier, { no: 1, name: "Демо" });
+  const two = (await call(w.api.handleDemoLogin, { code: "demo-ab12cd34" })).body;
+  assert.equal(two.courier.no, 2);
+  await call(w.api.handleConsent, {}, asCourier(r.body.token));
+  await call(w.api.handleShift, { on: true }, asCourier(r.body.token));
+  const st = (await call(w.api.handleState, {}, asCourier(r.body.token))).body;
+  assert.equal(st.me.points.length, 2);
+  assert.deepEqual(st.free.map((f) => f.key), ["N2__s9"]);
+  // демо истекло — новый вход закрыт
+  clock += 4 * 86400000;
+  await assert.rejects(call(w.api.handleDemoLogin, { code: "demo-ab12cd34" }), (e) => e.status === 404);
+  assert.equal(await w.api.purgeRoot("c_N"), 2);
+  assert.equal((await w.db.collection("couriers").where("root", "==", "c_N").get()).docs.length, 0);
+  assert.equal((await w.db.doc("courierSettings/c_N").get()).exists, false);
+});
+
 (async () => {
   let n = 0;
   for (const [name, fn] of tests) {

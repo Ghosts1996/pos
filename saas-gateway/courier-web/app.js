@@ -134,10 +134,12 @@
 
   // ---------------------------------------------------------------- вход
 
-  async function login(code) {
-    $app.innerHTML = `<div class="boot"><div class="spinner" aria-hidden="true"></div><p>Входим по приглашению…</p></div>`;
+  async function login(code, demo = false) {
+    $app.innerHTML = `<div class="boot"><div class="spinner" aria-hidden="true"></div><p>${demo ? "Входим в демо…" : "Входим по приглашению…"}</p></div>`;
     try {
-      const r = await api("login", { invite: code, device: deviceName() });
+      const r = demo
+        ? await api("demo", { code, device: deviceName() })
+        : await api("login", { invite: code, device: deviceName() });
       S.token = r.token;
       save(KEY.token, r.token);
       S.fatal = "";
@@ -601,6 +603,10 @@
           <li>Ссылка одноразовая и действует 72 часа.</li>
           <li>Если ссылка устарела — попросите в заведении новую: Кабинет → «Доставка» → «Курьеры».</li>
         </ul>
+        <div class="section">Попробовать демо</div>
+        <p class="muted small">Код демо показан на экране входа демо-кассы (тот же, что для приложения гостя). Заказы доставки демо-сети сразу появятся здесь.</p>
+        <div class="field"><input id="demo-code" placeholder="demo-…" autocapitalize="none" autocomplete="off" spellcheck="false" inputmode="text" aria-label="Код демо"></div>
+        <button class="btn primary wide" data-a="demo">Войти в демо</button>
       </div>`;
   }
 
@@ -778,6 +784,14 @@
 
   async function onAction(a, el) {
     unlockAudio();
+    if (a === "demo") {
+      const code = (document.getElementById("demo-code") || {}).value || "";
+      if (!code.trim()) return toast("Введите код демо из кассы", "bad");
+      await login(code.trim(), true);
+      render();
+      if (S.token) await refresh(true);
+      return;
+    }
     const o = el.dataset.key ? byKey(el.dataset.key) : null;
     switch (a) {
       case "tab": S.tab = el.dataset.tab; if (S.tab !== "free") S.newFree.clear(); render(); window.scrollTo(0, 0); return;
@@ -966,7 +980,9 @@
       navigator.serviceWorker.register("sw.js").then((r) => { S.reg = r; }).catch(() => {});
     }
     const m = /[#&]i=([A-Za-z0-9_-]{16,64})/.exec(location.hash || "");
+    const demo = /[#&]demo=(demo-[A-Za-z0-9]{4,32})/.exec(location.hash || "");
     if (m) await login(m[1]);
+    else if (demo && !S.token) await login(demo[1], true);
     render();
     if (S.token) await refresh(true);
     flush();

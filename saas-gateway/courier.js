@@ -37,6 +37,9 @@ const LOST_MS = 15 * 60 * 1000;
 const SHIFT_AUTO_END_MS = 6 * 3600 * 1000;
 const POS_FRESH_MS = 5 * 60 * 1000;
 const MAX_ACTIVE = 8;
+/** Демо: курьеров на одно демо и входов с одного адреса за час. */
+const DEMO_MAX_COURIERS = 20;
+const DEMO_LOGINS_PER_HOUR = 10;
 const MAX_COURIERS = 300;
 const DAY_START_HOUR = 6; // рабочие сутки 06:00–06:00, как в отчётах бота
 const OPEN_ORDER_MAX_AGE_MS = 24 * 3600 * 1000;
@@ -394,6 +397,67 @@ function createCourier({
       device: clean(device, 80),
     });
     sendJson(res, 200, { token, courier: { no: c.no, name: c.name } });
+  }
+
+  /**
+   * Демо: вход в приложение курьера по коду демо-сети — тому же, что касса
+   * показывает для приложения гостя. Каждый вход — новый «Курьер №N · Демо»
+   * на обе точки сети; демо стирается вместе с курьерами (purgeRoot).
+   */
+  const demoHits = new Map(); // адрес -> { n, until }
+  async function handleDemoLogin(req, res) {
+    const { code, device } = await parseJsonBody(req);
+    const ip = String(req.headers["x-real-ip"] || (req.socket && req.socket.remoteAddress) || "");
+    const hit = demoHits.get(ip);
+    if (hit && hit.until > now() && hit.n >= DEMO_LOGINS_PER_HOUR) {
+      throw new HttpError(429, "Слишком много входов в демо — попробуйте через час");
+    }
+    const c = String(code || "").trim().toLowerCase();
+    const bad = () => {
+      authFailed(req);
+      return new HttpError(404, "Демо с таким кодом не найдено — возможно, оно уже сбросилось. Код показан на экране входа демо-кассы");
+    };
+    if (!/^demo-[a-z0-9]{4,32}$/.test(c)) throw bad();
+    const snap = await db().collection("tenants").where("demoCode", "==", c).limit(4).get();
+    const t = snap.docs.find((d) => d.data().demo === true && d.data().status === "active");
+    if (!t) throw bad();
+    const td = t.data();
+    if (ms(td.demoExpiresAt) && ms(td.demoExpiresAt) < now()) throw bad();
+    const root = td.chainId ? `c_${td.chainId}` : `t_${t.id}`;
+    const count = (await couriersCol().where("root", "==", root).get()).docs.length;
+    if (count >= DEMO_MAX_COURIERS) throw new HttpError(409, "В этом демо уже много курьеров — откройте новое демо в кассе");
+    if (!hit || hit.until <= now()) demoHits.set(ip, { n: 1, until: now() + 3600 * 1000 });
+    else hit.n += 1;
+    if (demoHits.size > 5000) for (const [k, v] of demoHits) if (v.until <= now()) demoHits.delete(k);
+    let no = 0;
+    await db().runTransaction(async (tx) => {
+      const s = (await tx.get(settingsRef(root))).data() || {};
+      no = (Math.trunc(Number(s.lastNo)) || 0) + 1;
+      tx.set(settingsRef(root), { lastNo: no }, { merge: true });
+    });
+    const token = crypto.randomBytes(32).toString("base64url");
+    const name = "Демо";
+    await couriersCol().doc().set({
+      root, no, name, phone: "", points: [], enabled: true, onShift: false, demo: true,
+      cashOnHand: 0, odometerM: 0, createdAt: ts(), createdBy: "demo",
+      tokenHash: sha(token), tokenAt: ts(), lastSeenAt: ts(), device: clean(device, 80),
+    });
+    sendJson(res, 200, { token, courier: { no, name } });
+  }
+
+  /** Стереть курьеров заведения или сети целиком (сброс демо). */
+  async function purgeRoot(root) {
+    const snap = await couriersCol().where("root", "==", root).get();
+    for (const d of snap.docs) {
+      for (const sub of ["trips", "shifts", "cash"]) {
+        const docs = (await d.ref.collection(sub).get()).docs;
+        for (const x of docs) await x.ref.delete();
+      }
+      await d.ref.delete();
+    }
+    await settingsRef(root).delete().catch(() => {});
+    cache.clear();
+    return snap.docs.length;
   }
 
   async function handleLogout(req, res) {
@@ -1294,12 +1358,12 @@ function createCourier({
 
   return {
     // приложение курьера
-    handleLogin, handleLogout, handleConsent, handleState, handleShift, handleAct, handlePing, handlePay,
+    handleLogin, handleDemoLogin, handleLogout, handleConsent, handleState, handleShift, handleAct, handlePing, handlePay,
     // кабинет
     handleAdminList, handleAdminSave, handleAdminInvite, handleAdminEnable, handleAdminCash, handleAdminAssign,
     handleAdminRates, handleAdminReport, handleAdminForget,
     // Telegram, сторож, тесты
-    onShiftFor, assignFromBot, sweep, start, act, stateOf,
+    onShiftFor, assignFromBot, sweep, start, act, stateOf, purgeRoot,
     setHooks: (h) => { hooks = { ...hooks, ...h }; },
     forgetCache: () => cache.clear(),
   };
