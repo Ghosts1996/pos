@@ -129,8 +129,28 @@ function priceItems(lines, menu, categoryNames, markup = null) {
   return { items: out, banned };
 }
 
-function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, recordContact, onlinePayReady, pii, now = () => new Date() }) {
+function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, recordContact, onlinePayReady, pii, now = () => new Date(), roadDistance = null }) {
   const tenantRef = (t) => db().collection("tenants").doc(t);
+
+  /**
+   * Сколько ехать от заведения до точки гости, метров: по дорогам своей карты
+   * (roadDistance), а где карты нет — по прямой с поправкой 1,3.
+   * → {m, s|null, exact} или null (нет координат заведения или гостя).
+   */
+  async function distanceTo(settings, geo) {
+    const v = settings && settings.venuePos;
+    if (!geo || !v || !Number.isFinite(Number(v.lat)) || !Number.isFinite(Number(v.lng))) return null;
+    if (roadDistance) {
+      try {
+        const r = await roadDistance({ lat: Number(v.lat), lng: Number(v.lng) }, { lat: geo.lat, lng: geo.lng });
+        if (r && Number.isFinite(r.m)) return { m: Math.round(r.m), s: Number.isFinite(r.s) ? Math.round(r.s) : null, exact: true };
+      } catch (_) { /* карты нет — по прямой */ }
+    }
+    const rad = Math.PI / 180;
+    const dLat = (geo.lat - v.lat) * rad, dLng = (geo.lng - v.lng) * rad;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(v.lat * rad) * Math.cos(geo.lat * rad) * Math.sin(dLng / 2) ** 2;
+    return { m: Math.round(2 * 6371008.8 * Math.asin(Math.min(1, Math.sqrt(a))) * 1.3), s: null, exact: false };
+  }
 
   function checkTenantId(tenantId) {
     if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
@@ -255,7 +275,10 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
         const names = [...new Set(off.map((i) => `«${i.name}»`))].join(", ");
         throw new HttpError(409, `${off.length > 1 ? "Эти позиции" : "Эту позицию"} заведение не доставляет: ${names} — уберите из корзины или выберите самовывоз`);
       }
-      const q = pricing.quote(settings, total, asked ? asked.zoneId : "", { legacy: !asked });
+      // Цена по расстоянию — когда гость отметил точку (считает сервер, не телефон).
+      // Телефон прислал km — значит гость видел цену по расстоянию; иначе — район или базовая.
+      const way = asked && asked.km !== undefined && asked.km !== null && pricing.normalizeSettings(settings).byKm.on ? await distanceTo(settings, geo) : null;
+      const q = pricing.quote(settings, total, asked ? asked.zoneId : "", { legacy: !asked, distM: way ? way.m : null });
       if (!q.ok) throw new HttpError(409, q.error);
       if (asked && asked.fee !== undefined && asked.fee !== null && Math.round(Number(asked.fee)) !== q.fee) {
         throw new HttpError(409, `Цена доставки изменилась: теперь ${q.fee ? pricing.fmtRub(q.fee) : "бесплатно"} — проверьте заказ и оформите ещё раз`);
@@ -265,6 +288,7 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
         subtotal: total,
         etaMin: q.etaMin,
         ...(q.zone ? { zoneId: q.zone.id, zoneName: q.zone.name } : {}),
+        ...(q.km !== undefined ? { km: q.km, zoneName: `${String(q.km).replace(".", ",")} км` } : {}),
         ...(asked && markupPct ? { markupPct } : {}),
         // Гость цену не видел (старое приложение) — касса и бот напомнят назвать её при звонке.
         ...(!asked && q.fee > 0 ? { feeUnseen: true } : {}),
@@ -534,10 +558,35 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
       off,
       markupPct: s.markupPct,
       prices,
+      byKm: s.byKm,
     });
   }
 
-  return { handleCreate, handleCancel, handleInfo, ensureFee, startFeeWatcher };
+  /**
+   * Цена доставки до точки гостя — сразу, до заказа: гость отметил, где он,
+   * и видит цену и расстояние. → {ok, fee, km, etaMin, toFree, short, error}.
+   */
+  async function handleQuote(req, res) {
+    const decoded = await verifyAuth(req);
+    const body = await parseJsonBody(req);
+    checkTenantId(body.tenantId);
+    await guestOf(body.tenantId, decoded.uid);
+    const g = body.geo && typeof body.geo === "object" ? body.geo : null;
+    const geo = g && Number.isFinite(Number(g.lat)) && Number.isFinite(Number(g.lng)) && Math.abs(Number(g.lat)) <= 90 && Math.abs(Number(g.lng)) <= 180
+      ? { lat: Number(g.lat), lng: Number(g.lng) } : null;
+    if (!geo) throw new HttpError(400, "Не указана точка на карте");
+    const settings = (await tenantRef(body.tenantId).collection("settings").doc("delivery").get()).data() || {};
+    const s = pricing.normalizeSettings(settings);
+    const way = s.byKm.on ? await distanceTo(settings, geo) : null;
+    const q = pricing.quote(settings, Math.max(0, Number(body.itemsTotal) || 0), String(body.zoneId || ""), { distM: way ? way.m : null });
+    sendJson(res, 200, {
+      ok: q.ok, fee: q.fee ?? null, km: q.km ?? null, byKm: !!way, exact: !!(way && way.exact),
+      etaMin: q.etaMin ?? null, toFree: q.toFree || 0, short: q.short || 0, tooFar: q.tooFar === true,
+      ...(q.error ? { error: q.error } : {}),
+    });
+  }
+
+  return { handleCreate, handleCancel, handleInfo, handleQuote, ensureFee, startFeeWatcher };
 }
 
 module.exports = { createGuestDelivery, remoteSaleBanned, priceItems, openNow, windowOf, localNow, normalizePhone };

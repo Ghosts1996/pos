@@ -641,6 +641,21 @@ function dlvPriceHtml(st) {
         <label class="field" style="flex:1 1 150px"><span>Время доставки, мин</span><input id="f-dl-eta" type="number" min="10" max="600" step="5" value="${f.etaMin}"></label>
       </div>
       <div class="small" style="margin-top:4px">Гость увидит: <b id="f-dl-preview">${esc(preview)}</b></div>
+      ${S.preset ? `<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px">
+        <button class="btn btn-ghost" id="f-dl-preset" style="width:auto">Подставить цены: ${esc(S.preset.name)}</button>
+        <span class="small muted" style="flex:1 1 240px">Ориентир для региона: доставка ${dlvRub(S.preset.fee)} (до ${S.preset.baseKm} км), дальше ${dlvRub(S.preset.perKm)} за км, бесплатно от ${dlvRub(S.preset.freeFrom)}. Подставит в поля — цены можно поправить и сохранить.</span></div>` : ''}
+    </div>
+    <h2>Цена по расстоянию</h2>
+    <div class="card">
+      <label class="row" style="gap:8px;align-items:center;margin:0 0 8px"><input type="checkbox" id="f-dl-km-on" style="width:auto" ${f.byKm && f.byKm.on ? 'checked' : ''}>
+        <span><b>Считать доставку по километрам</b></span></label>
+      <div class="row" style="gap:12px;flex-wrap:wrap">
+        <label class="field" style="flex:1 1 150px"><span>Км в базовой цене</span><input id="f-dl-km-base" type="number" min="0" max="100" step="0.5" value="${f.byKm ? f.byKm.baseKm : 3}"></label>
+        <label class="field" style="flex:1 1 150px"><span>За каждый км дальше, ₽</span><input id="f-dl-km-per" type="number" min="0" max="1000" step="5" value="${f.byKm ? f.byKm.perKm : 30}"></label>
+        <label class="field" style="flex:1 1 150px"><span>Не дальше, км</span><input id="f-dl-km-max" type="number" min="0" max="100" step="0.5" value="${f.byKm && f.byKm.maxKm ? f.byKm.maxKm : ''}" placeholder="без предела"></label>
+      </div>
+      <p class="small muted" style="margin:8px 0 0">Гость нажимает «Отметить, где я» — путь от заведения считается по дорогам на нашей карте, и цена сразу встаёт в счёт: базовая цена плюс доплата за километры сверх включённых. Если гость точку не отметил — действует базовая цена или район.
+      ${S.venuePos ? '' : ' <b>Пока не работает:</b> у точки нет места на карте — оно появится само после трёх заказов, которые курьер заберёт в заведении.'}</p>
     </div>
     <h2>Цены блюд в доставке</h2>
     <div class="card">
@@ -1009,6 +1024,7 @@ function bindDeliveryTab(tenantId, redraw) {
     st.form.courierLink = $('f-dl-link').checked;
     st.form.liveInTelegram = $('f-dl-live').checked;
     st.form.markupPct = n('f-dl-markup');
+    if ($('f-dl-km-on')) st.form.byKm = { on: $('f-dl-km-on').checked, baseKm: n('f-dl-km-base'), perKm: n('f-dl-km-per'), maxKm: n('f-dl-km-max') };
     document.querySelectorAll('.f-dz').forEach((inp) => {
       const z = st.form.zones.find((x) => x.id === inp.closest('tr').dataset.z);
       if (!z) return;
@@ -1030,6 +1046,15 @@ function bindDeliveryTab(tenantId, redraw) {
         $('f-dl-markup-ex').textContent = v ? `Например, блюдо за 500 ₽ в доставке — ${dlvRub(Math.ceil(500 * (100 + v) / 100 - 1e-9))}` : 'Цены в доставке — как в зале';
       };
     }
+  }
+  if ($('f-dl-preset')) {
+    $('f-dl-preset').onclick = () => {
+      syncForm();
+      const p = st.settings.preset;
+      Object.assign(st.form, { fee: p.fee, freeFrom: p.freeFrom, minOrder: p.minOrder, etaMin: p.etaMin, byKm: { on: !!st.settings.venuePos, baseKm: p.baseKm, perKm: p.perKm, maxKm: p.maxKm } });
+      redraw();
+      toast(`Подставлены цены: ${p.name}. Проверьте и нажмите «Сохранить»`);
+    };
   }
   if ($('f-dz-add')) $('f-dz-add').onclick = () => { syncForm(); st.form.zones.push({ id: `n${Date.now().toString(36)}${dlvSeq++}`, name: '', fee: null, minOrder: null, freeFrom: null, etaMin: null }); redraw(); };
   document.querySelectorAll('.f-dz-del').forEach((b) => { b.onclick = () => { syncForm(); st.form.zones = st.form.zones.filter((z) => z.id !== b.dataset.z); redraw(); }; });

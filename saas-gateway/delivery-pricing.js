@@ -12,6 +12,10 @@
  *   payAtDoor {cash, card, qr} — что курьер может принять при вручении;
  *   liveInTelegram — живая точка курьера в чате (координаты уходят за рубеж);
  *   courierLink — кнопка «Ссылка курьеру» в карточке для курьеров без приложения;
+ *   byKm {on, baseKm, perKm, maxKm} — цена по расстоянию (по дорогам, своя
+ *     карта): в базовую цену входит baseKm км, дальше perKm ₽ за каждый
+ *     начатый км; maxKm — дальше не возим (0 — без предела). Работает, когда
+ *     гость отметил точку на карте; без точки — базовая цена или районы;
  *   markupPct — наценка на блюда в доставке, % (0 — цены как в зале);
  *     у позиции может быть своя цена в доставке — menuItems.deliveryPrice.
  */
@@ -33,7 +37,60 @@ const DEFAULTS = Object.freeze({
   liveInTelegram: false,
   courierLink: true,
   markupPct: 0,
+  byKm: { on: false, baseKm: 3, perKm: 30, maxKm: 0 },
 });
+
+/** Настройки «по расстоянию»: км 0…100 (шаг 0,5), ₽ за км 0…1000. */
+function byKmOf(v) {
+  const r = v && typeof v === "object" ? v : {};
+  const km = (x, d) => { const n = Number(x); return Number.isFinite(n) && n >= 0 ? Math.min(100, Math.round(n * 2) / 2) : d; };
+  const per = Number(r.perKm);
+  return {
+    on: r.on === true,
+    baseKm: km(r.baseKm, DEFAULTS.byKm.baseKm),
+    perKm: Number.isFinite(per) && per >= 0 ? Math.min(1000, Math.round(per)) : DEFAULTS.byKm.perKm,
+    maxKm: km(r.maxKm, 0),
+  };
+}
+
+/**
+ * Ориентиры цен доставки по регионам — чтобы заведение не начинало с нуля.
+ * Основа — средняя цена курьерской доставки по данным Росстата за сентябрь
+ * 2026 г. (Россия 259 ₽, Москва 584 ₽, Подмосковье 440 ₽, Санкт-Петербург
+ * 286 ₽, Ленинградская область 165 ₽), приведённая к доставке еды на
+ * 3–5 км; города-миллионники — между Петербургом и средним по стране.
+ * Это подсказка: заведение ставит свои цены. Ставки курьеру — за заказ и за км.
+ */
+const REGION_PRESETS = Object.freeze([
+  { id: "moscow", name: "Москва", lat: 55.7558, lng: 37.6173, km: 22, fee: 349, baseKm: 3, perKm: 45, maxKm: 15, freeFrom: 3500, minOrder: 1000, etaMin: 60, ratePerTrip: 180, ratePerKm: 25 },
+  { id: "spb", name: "Санкт-Петербург", lat: 59.9386, lng: 30.3141, km: 22, fee: 249, baseKm: 3, perKm: 35, maxKm: 15, freeFrom: 2500, minOrder: 800, etaMin: 60, ratePerTrip: 140, ratePerKm: 20 },
+  { id: "mo", name: "Московская область", lat: 55.7558, lng: 37.6173, km: 95, fee: 299, baseKm: 3, perKm: 40, maxKm: 15, freeFrom: 3000, minOrder: 900, etaMin: 60, ratePerTrip: 160, ratePerKm: 22 },
+  { id: "lo", name: "Ленинградская область", lat: 59.9386, lng: 30.3141, km: 130, fee: 179, baseKm: 3, perKm: 30, maxKm: 15, freeFrom: 2000, minOrder: 700, etaMin: 60, ratePerTrip: 110, ratePerKm: 18 },
+  ...[
+    ["Новосибирск", 55.0302, 82.9204], ["Екатеринбург", 56.8389, 60.6057], ["Казань", 55.7961, 49.1064],
+    ["Нижний Новгород", 56.3269, 44.0059], ["Челябинск", 55.1644, 61.4368], ["Красноярск", 56.0153, 92.8932],
+    ["Самара", 53.1959, 50.1002], ["Уфа", 54.7388, 55.9721], ["Ростов-на-Дону", 47.2357, 39.7015],
+    ["Омск", 54.9885, 73.3242], ["Краснодар", 45.0355, 38.9753], ["Воронеж", 51.6608, 39.2003],
+    ["Пермь", 58.0105, 56.2502], ["Волгоград", 48.708, 44.5133],
+  ].map(([name, lat, lng]) => ({ id: "million", name, lat, lng, km: 25, fee: 199, baseKm: 3, perKm: 30, maxKm: 15, freeFrom: 2000, minOrder: 700, etaMin: 60, ratePerTrip: 110, ratePerKm: 18 })),
+]);
+const REGION_DEFAULT = Object.freeze({ id: "ru", name: "Россия (средние цены)", fee: 169, baseKm: 3, perKm: 25, maxKm: 12, freeFrom: 1500, minOrder: 600, etaMin: 60, ratePerTrip: 100, ratePerKm: 15 });
+
+/** Ориентир цен для точки на карте (pos {lat, lng}); без точки — средний по стране. */
+function regionPreset(pos) {
+  const lat = Number(pos && pos.lat), lng = Number(pos && pos.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng) && (lat || lng)) {
+    for (const r of REGION_PRESETS) {
+      const dy = (lat - r.lat) * 111.2;
+      const dx = (lng - r.lng) * 111.2 * Math.cos((lat * Math.PI) / 180);
+      if (Math.hypot(dx, dy) <= r.km) {
+        const { lat: _a, lng: _b, km: _c, ...rest } = r;
+        return rest;
+      }
+    }
+  }
+  return { ...REGION_DEFAULT };
+}
 
 /** Наценка 0…100 % с шагом 0,5. */
 function markupOf(v) {
@@ -104,6 +161,7 @@ function normalizeSettings(raw) {
     liveInTelegram: r.liveInTelegram === true,
     courierLink: r.courierLink !== false,
     markupPct: markupOf(r.markupPct),
+    byKm: byKmOf(r.byKm),
   };
 }
 
@@ -139,6 +197,13 @@ function settingsProblem(input) {
   if (mk !== undefined && mk !== null && mk !== "" && !(Number.isFinite(Number(mk)) && Number(mk) >= 0 && Number(mk) <= MAX_MARKUP_PCT)) {
     return `Наценка на доставку — от 0 до ${MAX_MARKUP_PCT} %`;
   }
+  const bk = r.byKm && typeof r.byKm === "object" ? r.byKm : null;
+  if (bk) {
+    const okKm = (v) => v === undefined || v === null || v === "" || (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 100);
+    if (!okKm(bk.baseKm)) return "Километры в базовой цене — от 0 до 100";
+    if (!okKm(bk.maxKm)) return "«Не дальше, км» — от 0 до 100";
+    if (bk.perKm !== undefined && bk.perKm !== null && bk.perKm !== "" && !(Number(bk.perKm) >= 0 && Number(bk.perKm) <= 1000)) return "Цена за километр — от 0 до 1000 ₽";
+  }
   const zones = Array.isArray(r.zones) ? r.zones : [];
   if (zones.length > MAX_ZONES) return `Районов — не больше ${MAX_ZONES}`;
   const names = new Set();
@@ -166,11 +231,18 @@ const fmtRub = (n) => `${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, 
  *   toFree — сколько добавить до бесплатной доставки (0 — не нужно/нельзя);
  *   short — сколько не хватает до минимального заказа.
  */
-function quote(settings, subtotal, zoneIdIn = "", { legacy = false } = {}) {
+function quote(settings, subtotal, zoneIdIn = "", { legacy = false, distM = null } = {}) {
   const s = normalizeSettings(settings);
   const sum = Math.max(0, Number(subtotal) || 0);
   let zone = null;
-  if (s.zones.length && !legacy) {
+  // Цена по расстоянию: гость отметил точку — район выбирать не нужно.
+  const d = Number(distM);
+  const far = s.byKm.on && !legacy && distM !== null && distM !== undefined && Number.isFinite(d) && d >= 0;
+  const km = far ? Math.round(d / 100) / 10 : null;
+  if (far && s.byKm.maxKm > 0 && km > s.byKm.maxKm) {
+    return { ok: false, tooFar: true, km, error: `Сюда не доставляем: до вас ${String(km).replace(".", ",")} км, возим не дальше ${String(s.byKm.maxKm).replace(".", ",")} км. Можно оформить самовывоз` };
+  }
+  if (!far && s.zones.length && !legacy) {
     const id = String(zoneIdIn || "");
     if (!id) return { ok: false, error: "Выберите район доставки", zones: s.zones };
     zone = s.zones.find((z) => z.id === id) || null;
@@ -180,7 +252,8 @@ function quote(settings, subtotal, zoneIdIn = "", { legacy = false } = {}) {
   const minOrder = pick("minOrder");
   const freeFrom = pick("freeFrom");
   const etaMin = pick("etaMin");
-  const base = pick("fee");
+  const extraKm = far ? Math.max(0, Math.ceil(km - s.byKm.baseKm - 1e-9)) : 0;
+  const base = pick("fee") + extraKm * s.byKm.perKm;
   const short = minOrder > 0 && sum < minOrder ? Math.ceil(minOrder - sum) : 0;
   const free = freeFrom > 0 && sum >= freeFrom;
   const fee = free ? 0 : base;
@@ -194,6 +267,7 @@ function quote(settings, subtotal, zoneIdIn = "", { legacy = false } = {}) {
     etaMin,
     toFree,
     short,
+    ...(far ? { km, extraKm } : {}),
   };
   if (short) out.error = `Минимальный заказ на доставку — ${fmtRub(minOrder)}: добавьте ещё на ${fmtRub(short)}`;
   return out;
@@ -239,5 +313,6 @@ function deliveryBlock(item, category, banned) {
 
 module.exports = {
   DELIVERY_ITEM_ID, DEFAULTS, MAX_ZONES, MAX_MARKUP_PCT,
+  REGION_PRESETS, regionPreset, byKmOf,
   normalizeSettings, settingsProblem, quote, feeLine, isFeeLine, deliveryBlock, fmtRub, deliveryUnit, markupOf,
 };

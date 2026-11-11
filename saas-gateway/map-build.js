@@ -4,7 +4,7 @@
  * идёт, только если что-то поменялось):
  *
  *   1. Районы — вокруг каждой точки заведения (state/map-regions.json пишет
- *      шлюз) и демо в Москве; близкие районы сливаются.
+ *      шлюз) и демо в Санкт-Петербурге; близкие районы сливаются.
  *   2. Тайлы — вырезка из свежей сборки Protomaps (данные OpenStreetMap)
  *      только по нашим районам: pmtiles extract → tiles.pmtiles.
  *   3. Дороги — выгрузка OpenStreetMap федерального округа (Geofabrik) →
@@ -40,8 +40,8 @@ const DISTRICTS = [
   "north-caucasus-fed-district", "ural-fed-district", "siberian-fed-district", "far-eastern-fed-district",
   "crimean-fed-district", "kaliningrad",
 ];
-// Демо всегда в Москве.
-const DEMO_POINTS = [[55.7579, 37.6108], [55.7507, 37.5439]];
+// Демо всегда в Санкт-Петербурге (Невский пр., 28 и Университетская наб., 3).
+const DEMO_POINTS = [[59.9357, 30.3258], [59.9415, 30.3045]];
 
 const log = (s) => console.log(`${new Date().toISOString().slice(0, 19).replace("T", " ")} ${s}`);
 

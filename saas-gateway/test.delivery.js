@@ -12,7 +12,7 @@ const test = (name, fn) => tests.push([name, fn]);
 
 const SELLER = { sellerName: "ООО «Лето»", sellerInn: "7707083893", sellerOgrn: "1027700132195", sellerAddress: "Москва, ул. Летняя, 1" };
 
-function setup({ now = new Date("2026-10-09T15:00:00Z"), online = false, pii = undefined } = {}) {
+function setup({ now = new Date("2026-10-09T15:00:00Z"), online = false, pii = undefined, roadDistance = null } = {}) {
   const { db, store } = fakeDb();
   const recorded = [];
   const api = gd.createGuestDelivery({
@@ -27,6 +27,7 @@ function setup({ now = new Date("2026-10-09T15:00:00Z"), online = false, pii = u
     onlinePayReady: async () => online,
     pii,
     now: () => now,
+    roadDistance,
   });
   store.set("tenants/t1", { status: "active", timezone: "Europe/Moscow" });
   store.set("tenants/t1/clients/g1", { name: "Аня" });
@@ -282,8 +283,8 @@ test("строка «Доставка»: услуга без скидки, не 
   assert.equal(pricing.deliveryBlock({ name: "Суп" }, {}, false), "");
 });
 
-const feeSetup = (settings = { fee: 150, freeFrom: 3000, minOrder: 500 }) => {
-  const env = setup();
+const feeSetup = (settings = { fee: 150, freeFrom: 3000, minOrder: 500 }, opts = {}) => {
+  const env = setup(opts);
   env.store.set("tenants/t1/settings/delivery", settings);
   return env;
 };
@@ -367,7 +368,7 @@ test("условия доставки гостю: цены, районы, опл
 
 test("цена в веб-версии гостя считается так же, как на сервере (2000 случайных наборов)", () => {
   const src = require("fs").readFileSync(require("path").join(__dirname, "..", "saas", "guest-web", "app", "app.js"), "utf8");
-  const m = /function deliveryQuote\(info, subtotal, zoneId\) \{[\s\S]*?\n\}\n/.exec(src);
+  const m = /function deliveryQuote\(info, subtotal, zoneId, km = null\) \{[\s\S]*?\n\}\n/.exec(src);
   assert.ok(m, "deliveryQuote есть в app.js");
   const webQuote = new Function(`${m[0]}; return deliveryQuote;`)();
   let seed = 7;
@@ -377,15 +378,66 @@ test("цена в веб-версии гостя считается так же,
     const zones = rnd(2) ? [] : Array.from({ length: 1 + rnd(3) }, (_, k) => ({
       id: `z${k}`, name: `Р${k}`, fee: maybe(rnd(400)), minOrder: maybe(rnd(3) * 500), freeFrom: maybe(rnd(4) * 1000), etaMin: maybe(30 + rnd(90)),
     }));
-    const raw = { fee: rnd(400), freeFrom: rnd(3) * 1000, minOrder: rnd(3) * 400, etaMin: 30 + rnd(60), zones };
+    const byKm = { on: rnd(2) === 0, baseKm: rnd(8) / 2, perKm: rnd(60), maxKm: rnd(3) ? 0 : 2 + rnd(10) };
+    const raw = { fee: rnd(400), freeFrom: rnd(3) * 1000, minOrder: rnd(3) * 400, etaMin: 30 + rnd(60), zones, byKm };
+    const distM = rnd(3) ? rnd(14000) : null; // гость отметил точку — или нет
     const info = pricing.normalizeSettings(raw); // то, что гостю отдаёт /guestDeliveryInfo
     const sub = rnd(4000);
     const zid = zones.length ? `z${rnd(zones.length)}` : "";
-    const a = pricing.quote(raw, sub, zid);
-    const b = webQuote(info, sub, zid);
-    assert.deepEqual([b.ok, b.fee, b.toFree, b.short, b.etaMin], [a.ok, a.fee, a.toFree, a.short, a.etaMin], `набор ${i}: ${JSON.stringify(raw)} сумма ${sub}`);
+    const a = pricing.quote(raw, sub, zid, { distM });
+    const b = webQuote(info, sub, zid, distM === null || !byKm.on ? null : Math.round(distM / 100) / 10);
+    if (a.tooFar || b.tooFar) { assert.deepEqual([!!b.tooFar, b.ok, b.km], [!!a.tooFar, a.ok, a.km], `набор ${i}: далеко`); continue; }
+    assert.deepEqual([b.ok, b.fee, b.toFree, b.short, b.etaMin, b.km], [a.ok, a.fee, a.toFree, a.short, a.etaMin, a.km], `набор ${i}: ${JSON.stringify(raw)} сумма ${sub} путь ${distM}`);
   }
   assert.equal(webQuote({ zones: [{ id: "a", name: "А" }] }, 100, "").needZone, true);
+});
+
+test("цена по расстоянию: километры сверх включённых, предел, заказ с точкой гостя, цена до заказа", async () => {
+  const byKm = { on: true, baseKm: 3, perKm: 35, maxKm: 10 };
+  // 3 км входят в цену; 3,1 км — уже +1 км; 7,4 км — +5 км.
+  assert.deepEqual([2900, 3000, 3100, 7400].map((d) => pricing.quote({ fee: 249, byKm }, 1000, "", { distM: d }).fee), [249, 249, 284, 424]);
+  assert.equal(pricing.quote({ fee: 249, freeFrom: 900, byKm }, 1000, "", { distM: 7400 }).fee, 0, "бесплатно от суммы — и по километрам");
+  const far = pricing.quote({ fee: 249, byKm }, 1000, "", { distM: 10400 });
+  assert.deepEqual([far.ok, far.tooFar], [false, true]);
+  assert.match(far.error, /до вас 10,4 км, возим не дальше 10 км/);
+  // Точки нет — район обязателен, как раньше; точка есть — район не нужен.
+  const zoned = { fee: 249, byKm, zones: [{ id: "c", name: "Центр", fee: 100 }] };
+  assert.equal(pricing.quote(zoned, 1000, "").ok, false);
+  assert.equal(pricing.quote(zoned, 1000, "", { distM: 5000 }).fee, 319);
+  assert.equal(pricing.quote({ fee: 249, byKm: { ...byKm, on: false } }, 1000, "", { distM: 9000 }).fee, 249, "выключено — базовая цена");
+  assert.equal(pricing.settingsProblem({ byKm: { perKm: 5000 } }), "Цена за километр — от 0 до 1000 ₽");
+
+  // Ориентиры по регионам.
+  assert.equal(pricing.regionPreset({ lat: 59.9357, lng: 30.3258 }).name, "Санкт-Петербург");
+  assert.equal(pricing.regionPreset({ lat: 55.7579, lng: 37.6108 }).name, "Москва");
+  assert.equal(pricing.regionPreset({ lat: 55.92, lng: 37.85 }).name, "Московская область");
+  assert.equal(pricing.regionPreset({ lat: 59.57, lng: 30.12 }).name, "Ленинградская область");
+  assert.equal(pricing.regionPreset({ lat: 55.03, lng: 82.92 }).name, "Новосибирск");
+  assert.equal(pricing.regionPreset({ lat: 61.25, lng: 73.4 }).id, "ru");
+  assert.equal(pricing.regionPreset(null).id, "ru");
+  for (const r of [...pricing.REGION_PRESETS, pricing.regionPreset(null)]) {
+    assert.equal(pricing.settingsProblem({ fee: r.fee, freeFrom: r.freeFrom, minOrder: r.minOrder, etaMin: r.etaMin, byKm: { on: true, baseKm: r.baseKm, perKm: r.perKm, maxKm: r.maxKm } }), "", r.name);
+  }
+
+  // Заказ: путь считает сервер (по дорогам — roadDistance), цена — в заказе и в строке чека.
+  const { api, store } = feeSetup({ fee: 249, byKm, venuePos: { lat: 59.9357, lng: 30.3258 } }, { roadDistance: async () => ({ m: 5200, s: 700 }) });
+  const geo = { lat: 59.9318, lng: 30.3604 };
+  const quoted = await call(api.handleQuote, { tenantId: "t1", geo, itemsTotal: 1580 });
+  assert.deepEqual([quoted.body.ok, quoted.body.fee, quoted.body.km, quoted.body.byKm, quoted.body.exact], [true, 354, 5.2, true, true]);
+  const made = await call(api.handleCreate, order({ geo, delivery: { fee: 354, km: 5.2, itemsTotal: 1580 } }));
+  assert.equal(made.body.deliveryFee, 354);
+  const sess = store.get(`tenants/t1/sessions/${made.body.sessionId}`);
+  assert.deepEqual([sess.delivery.fee, sess.delivery.km, sess.delivery.zoneName, sess.appTotal], [354, 5.2, "5,2 км", 1934]);
+  // Гость видел другую цену — отказ с новой ценой.
+  await assert.rejects(call(api.handleCreate, order({ geo, delivery: { fee: 249, km: 2, itemsTotal: 1580 } })),
+    (e) => (e.status || e.statusCode) === 409 && /Цена доставки изменилась: теперь 354\s₽/.test(e.message));
+  // Без точки — базовая цена (километры не выдумываем).
+  const { api: api2 } = feeSetup({ fee: 249, byKm, venuePos: { lat: 59.9357, lng: 30.3258 } });
+  assert.equal((await call(api2.handleCreate, order({ delivery: { fee: 249, itemsTotal: 1580 } }))).body.deliveryFee, 249);
+  // Карты нет — по прямой с поправкой 1,3: ~2 км по прямой → 2,6 км, в базовой цене.
+  const q2 = await call(api2.handleQuote, { tenantId: "t1", geo, itemsTotal: 1580 });
+  assert.deepEqual([q2.body.exact, q2.body.fee], [false, 249]);
+  await assert.rejects(call(api2.handleQuote, { tenantId: "t1", geo: { lat: "x" } }), (e) => e.status === 400);
 });
 
 test("наценка на доставку: цены доставки, своя цена позиции, проверка того, что видел гость; старому клиенту — цены зала", async () => {

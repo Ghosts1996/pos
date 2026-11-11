@@ -309,9 +309,32 @@ function createCourier({
     return d.length > 0 && d.every((i) => (Number(i.ready) || 0) >= (Number(i.qty) || 0));
   };
 
+  /**
+   * Путь заведение → гость, метров: по дорогам своей карты (hooks.route,
+   * ответ запоминается), а где карты нет — по прямой с поправкой.
+   */
+  const roadCache = new Map();
+  async function roadM(a, b) {
+    if (!a || !b) return null;
+    const straight = Math.round(distanceM(a, b) * ROAD_FACTOR);
+    if (!hooks.route) return straight;
+    const key = `${Number(a.lat).toFixed(4)},${Number(a.lng).toFixed(4)}>${Number(b.lat).toFixed(4)},${Number(b.lng).toFixed(4)}`;
+    const hit = roadCache.get(key);
+    if (hit && now() - hit.at < 6 * 3600 * 1000) return hit.m;
+    let m = straight;
+    try {
+      const r = await hooks.route({ points: [{ lat: a.lat, lng: a.lng }, { lat: b.lat, lng: b.lng }], mode: "auto" });
+      if (r && r.ok && Number.isFinite(r.m)) m = Math.round(r.m);
+      else if (r && (r.reason === "busy" || r.reason === "timeout")) return straight; // не запоминаем
+    } catch (_) { return straight; }
+    if (roadCache.size > 3000) roadCache.clear();
+    roadCache.set(key, { m, at: now() });
+    return m;
+  }
+
   /** Оценка пути заведение → гость по дороге (м) и заработка курьера. */
-  function estimateOf(point, dest, r) {
-    const tripM = point.venuePos && dest ? Math.round(distanceM(point.venuePos, dest) * ROAD_FACTOR) : null;
+  async function estimateOf(point, dest, r) {
+    const tripM = point.venuePos && dest ? await roadM(point.venuePos, dest) : null;
     const paid = r.ratePerTrip + r.ratePerKm > 0;
     const payout = !paid ? null : Math.round(r.ratePerTrip + (r.ratePerKm * (tripM || 0)) / 1000);
     return { tripM, payout, payoutExact: !r.ratePerKm || tripM != null };
@@ -321,7 +344,7 @@ function createCourier({
     const m = await moneyOf(point.id, s);
     const pos = courier.pos && now() - ms(courier.pos.at) < POS_FRESH_MS ? courier.pos : null;
     const dest = contact.geo || null;
-    const est = estimateOf(point, dest, await rates(courier.root));
+    const est = await estimateOf(point, dest, await rates(courier.root));
     return {
       key: `${point.id}__${s.id}`,
       t: point.id,
@@ -457,7 +480,7 @@ function createCourier({
       const s = (await tx.get(settingsRef(root))).data() || {};
       no = (Math.trunc(Number(s.lastNo)) || 0) + 1;
       // В демо видно, сколько курьер зарабатывает: 120 ₽ за заказ + 18 ₽ за км.
-      tx.set(settingsRef(root), { lastNo: no, ...(s.ratePerTrip === undefined ? { ratePerTrip: 120, ratePerKm: 18 } : {}) }, { merge: true });
+      tx.set(settingsRef(root), { lastNo: no, ...(s.ratePerTrip === undefined ? { ratePerTrip: 140, ratePerKm: 20 } : {}) }, { merge: true });
     });
     forget(`rates:${root}`);
     const token = crypto.randomBytes(32).toString("base64url");
@@ -755,7 +778,7 @@ function createCourier({
     const tz = point.tz || "Europe/Moscow";
     // Оценка пути по карте: если GPS телефона недосчитает, заработок не меньше её.
     const geo = ((await contactsOf(t, [{ id: s, ...x }])).get(s) || {}).geo;
-    const estM = point.venuePos && geo ? Math.round(distanceM(point.venuePos, geo) * ROAD_FACTOR) : 0;
+    const estM = point.venuePos && geo ? (await roadM(point.venuePos, geo)) || 0 : 0;
     await couriersCol().doc(c.id).update({ [`active.${t}__${s}`]: result });
     await couriersCol().doc(c.id).collection("trips").doc(`${t}__${s}`).set({
       root: c.root, tenantId: t, sessionId: s, orderNo: String(x.orderNo || ""), pointName: point.name || "",
@@ -1450,6 +1473,7 @@ function createCourier({
 
   return {
     // приложение курьера
+    invalidate: (t) => forget(`open:${t}`),
     handleLogin, handleDemoLogin, handleLogout, handleConsent, handleHistory, handleState, handleShift, handleAct, handlePing, handlePay, handleRoute,
     // кабинет
     handleAdminList, handleAdminSave, handleAdminInvite, handleAdminEnable, handleAdminCash, handleAdminAssign,

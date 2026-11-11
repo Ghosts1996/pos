@@ -48,6 +48,7 @@ const { createGuestDelivery } = require("./guest-delivery");
 const { createCourier } = require("./courier");
 const { createCourierWeb } = require("./courier-web");
 const { createMap } = require("./map");
+const deliveryPricing = require("./delivery-pricing");
 const { createDeliveryAdmin } = require("./delivery-admin");
 const { createTelegram, encrypt: tgEncrypt, decrypt: tgDecrypt, secretKey: tgSecretKey } = require("./telegram");
 const { createDeliveryServices } = require("./delivery-services");
@@ -4188,24 +4189,34 @@ const DEMO_ACTIVE_SESSIONS = [
 // (ждёт звонка), принят, готовится, у курьера, готов к выдаче; оплата
 // онлайн, при получении и через агрегатор. Контакты — в справочник в РФ.
 // start — минут назад; items — как у столов.
+// Цены доставки демо — ориентир для Санкт-Петербурга (delivery-pricing.regionPreset).
+const DEMO_DELIVERY_PRICES = {
+  fee: 249, freeFrom: 2500, minOrder: 800, etaMin: 60,
+  byKm: { on: true, baseKm: 3, perKm: 35, maxKm: 15 },
+  zones: [
+    { id: "center", name: "Центр", fee: 249, minOrder: 0, freeFrom: 2500, etaMin: 45 },
+    { id: "far", name: "Спальные районы", fee: 399, minOrder: 1500, freeFrom: 4000, etaMin: 90 },
+  ],
+};
+
 const DEMO_DELIVERY = [
   { type: "delivery", status: "new", source: "app", client: "demo-guest-2", pay: "online", start: 4,
-    name: "Игорь", phone: "+7 900 000-00-02", address: "Москва, ул. Тверская, 12, кв. 45, подъезд 2, этаж 5", geo: { lat: 55.7638, lng: 37.6064 },
+    name: "Игорь", phone: "+7 900 000-00-02", address: "Санкт-Петербург, Невский пр., 100, кв. 45, подъезд 2, этаж 5", geo: { lat: 59.9318, lng: 30.3604 },
     comment: "Позвоните за 10 минут, домофон не работает",
     guestItems: [["Пицца Маргарита", 1], ["Цезарь с курицей", 1], ["Морс клюквенный", 2]] },
   { type: "takeaway", status: "accepted", source: "app", client: "demo-guest-3", pay: "online", paid: true, start: 9,
     name: "Мария", phone: "+7 900 000-00-03",
     items: [["Капучино", 2, { mods: ["Овсяное"], wait: 2 }], ["Круассан с лососем", 1, { wait: 2 }]] },
   { type: "delivery", status: "cooking", source: "phone", pay: "on_receipt", start: 22,
-    name: "Павел", phone: "+7 900 000-00-11", address: "Москва, Пресненская наб., 8, стр. 1, офис 1203", geo: { lat: 55.7474, lng: 37.5396 },
+    name: "Павел", phone: "+7 900 000-00-11", address: "Санкт-Петербург, Биржевая пл., 4, офис 203", geo: { lat: 59.9437, lng: 30.3050 },
     items: [["Бургер с говядиной", 2, { mods: ["Бекон"], wait: 15 }], ["Картофель фри", 2, { mods: ["Кетчуп"], wait: 15 }], ["Кола", 2]] },
   { type: "delivery", status: "courier", source: "app", client: "demo-guest-4", pay: "online", paid: true, start: 48,
-    name: "Сергей", phone: "+7 900 000-00-04", address: "Москва, Ленинский пр-т, 30, кв. 12", geo: { lat: 55.7087, lng: 37.5857 },
+    name: "Сергей", phone: "+7 900 000-00-04", address: "Санкт-Петербург, Московский пр., 165, кв. 12", geo: { lat: 59.8660, lng: 30.3210 },
     courier: { name: "Николай", phone: "+7 900 000-00-20" },
     items: [["Рамен с курицей", 2], ["Гёдза с креветкой", 1], ["Облепиховый чай", 1]] },
   // Готов и оплачен онлайн — курьеру сразу есть что взять, деньги у двери не брать.
   { type: "delivery", status: "accepted", source: "app", client: "demo-guest-5", pay: "online", paid: true, start: 12,
-    name: "Анна", phone: "+7 900 000-00-05", address: "Москва, ул. Арбат, 24, кв. 7, подъезд 1, домофон 7", geo: { lat: 55.7502, lng: 37.5926 },
+    name: "Анна", phone: "+7 900 000-00-05", address: "Санкт-Петербург, Малая Садовая ул., 3, кв. 7, подъезд 1, домофон 7", geo: { lat: 59.9347, lng: 30.3373 },
     comment: "Оставьте у двери, ребёнок спит",
     items: [["Цезарь с курицей", 2], ["Морс клюквенный", 2]] },
   { type: "takeaway", status: "ready", source: "phone", pay: "on_receipt", start: 28,
@@ -4242,7 +4253,7 @@ const DEMO_CLIENTS = [
  * складывает в vault — их потом записывают в справочник в РФ, как у
  * настоящего заведения (handleCreateDemoTenant).
  */
-function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyaltyRef = null, seedClients = true, venueName = "Демо-заведение", address = "Москва, ул. Примерная, 1", vault = [], venuePos = null } = {}) {
+function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyaltyRef = null, seedClients = true, venueName = "Демо-заведение", address = "Санкт-Петербург, ул. Примерная, 1", vault = [], venuePos = null } = {}) {
   const col = (name) => tenantRef.collection(name);
   // Точка сети: гости и бонусы общие на сеть (chains/{chainId}/clients).
   const loyaltyCol = (name) => (loyaltyRef || tenantRef).collection(name);
@@ -4542,15 +4553,12 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
   // Цена доставки и районы — чтобы в демо было видно, как считается
   // доставка и как работает приложение курьера (QR у двери — без денег).
   batch.set(col("settings").doc("delivery"), {
-    fee: 199, freeFrom: 2500, minOrder: 700, etaMin: 60,
-    zones: [
-      { id: "center", name: "Центр", fee: 0, minOrder: 0, freeFrom: 0, etaMin: 45 },
-      { id: "far", name: "За ТТК", fee: 349, minOrder: 1500, freeFrom: 4000, etaMin: 90 },
-    ],
+    ...DEMO_DELIVERY_PRICES,
     payAtDoor: { cash: true, card: true, qr: true },
     liveInTelegram: false, courierLink: true,
     ...(venuePos ? { venuePos } : {}),
   });
+
 
   // Заказы с собой и доставка в работе — служебный стол «С собой и доставка».
   const takeawayIds = [];
@@ -4559,7 +4567,19 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
     const app = o.source === "app";
     const waiting = app && o.status === "new";
     const orderItems = waiting ? [] : orderItemsOf(o.items, staff.waiter.id, Math.max(1, o.start - 2));
-    const total = sumOf(waiting ? orderItemsOf(o.guestItems) : orderItems);
+    // Доставка в чеке сразу, по километрам от точки (по прямой ×1,3 — в демо без карты).
+    let dlv = null;
+    if (o.type === "delivery" && o.geo && venuePos) {
+      const sub = sumOf(waiting ? orderItemsOf(o.guestItems) : orderItems);
+      const rad = Math.PI / 180;
+      const a = Math.sin(((o.geo.lat - venuePos.lat) * rad) / 2) ** 2 + Math.cos(venuePos.lat * rad) * Math.cos(o.geo.lat * rad) * Math.sin(((o.geo.lng - venuePos.lng) * rad) / 2) ** 2;
+      const distM = 2 * 6371008.8 * Math.asin(Math.sqrt(a)) * 1.3;
+      const q = deliveryPricing.quote(DEMO_DELIVERY_PRICES, sub, "", { distM });
+      if (q.ok && !q.tooFar) dlv = { fee: q.fee, subtotal: sub, etaMin: q.etaMin, km: q.km, zoneName: `${String(q.km).replace(".", ",")} км` };
+    }
+    const feeItem = dlv && !waiting ? deliveryPricing.feeLine(dlv.fee, dlv.zoneName) : null;
+    if (feeItem) orderItems.push(feeItem);
+    const total = sumOf(waiting ? orderItemsOf(o.guestItems) : orderItems) + (waiting && dlv ? dlv.fee : 0);
     const payId = `p_demo_${i + 1}`;
     batch.set(ref, {
       ...sessionBase,
@@ -4568,6 +4588,8 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
       guestTag: o.tag || "",
       orderType: o.type, orderNo: ++orderNo, deliveryStatus: o.status, deliveryStatusAt: ts(Math.max(1, o.start - 6)), deliveryOpen: true,
       ...(app ? { source: "app", clientUid: o.client, appTotal: total } : {}),
+      ...(dlv ? { delivery: dlv } : {}),
+      ...(dlv && waiting && dlv.fee > 0 ? { deliveryFeePending: true } : {}),
       ...(o.pay ? { payMethod: o.pay } : {}),
       ...(o.courier ? { courierSet: true } : {}),
       ...(o.paid ? { guestPaidTotal: total, guestPaymentIds: [payId] } : {}),
@@ -4913,8 +4935,8 @@ async function handleCreateDemoTenant(req, res) {
   await head.commit();
 
   const points = [
-    { key: "center", name: "Демо · Центр", address: "Москва, ул. Тверская, 7", staffList: DEMO_STAFF, venuePos: { lat: 55.7579, lng: 37.6108 } },
-    { key: "river", name: "Демо · Набережная", address: "Москва, Краснопресненская наб., 14", staffList: DEMO_STAFF_RIVER, venuePos: { lat: 55.7507, lng: 37.5439 } },
+    { key: "center", name: "Демо · Центр", address: "Санкт-Петербург, Невский пр., 28", staffList: DEMO_STAFF, venuePos: { lat: 59.9357, lng: 30.3258 } },
+    { key: "river", name: "Демо · Набережная", address: "Санкт-Петербург, Университетская наб., 3", staffList: DEMO_STAFF_RIVER, venuePos: { lat: 59.9415, lng: 30.3045 } },
   ];
   const created = [];
   for (const point of points) {
@@ -8125,6 +8147,11 @@ const guestDelivery = createGuestDelivery({
   HttpError,
   recordContact: recordContactInRussia,
   pii,
+  // Расстояние по дорогам своей карты — для цены доставки «по километрам».
+  roadDistance: async (a, b) => {
+    const r = await zalMap.route({ points: [a, b], mode: "auto" });
+    return r && r.ok ? { m: r.m, s: r.s } : null;
+  },
   onlinePayReady: async (tenantId) => {
     const t = db().collection("tenants").doc(tenantId);
     const [integ, venue, tenant] = await Promise.all([
@@ -8274,7 +8301,7 @@ const deliveryAdmin = createDeliveryAdmin({
 const deliveryServices = createDeliveryServices({
   db, admin, HttpError, verifyAuth, parseJsonBody, sendJson, requireTenantRole, requireChainRole,
   encrypt: tgEncrypt, decrypt: tgDecrypt, secretKey: tgSecretKey, pii,
-  hooks: { event: (t, s, text) => telegram.deliveryEvent(t, s, text) },
+  hooks: { event: (t, s, text) => telegram.deliveryEvent(t, s, text), changed: (t) => courier.invalidate(t) },
 });
 // Кабинет «Доставка → Сейчас»: какие службы подключены у точек.
 courier.setHooks({
@@ -9447,6 +9474,7 @@ const ROUTES = {
   "/guestDeliveryCancel": guestDelivery.handleCancel,
   // Условия доставки до заказа: цены, районы, что не доставляем.
   "/guestDeliveryInfo": guestDelivery.handleInfo,
+  "/guestDeliveryQuote": guestDelivery.handleQuote,
   // Кабинет → «Доставка»: курьеры, цена и районы, что доставляем.
   "/courierAdminList": courier.handleAdminList,
   "/courierAdminSave": courier.handleAdminSave,

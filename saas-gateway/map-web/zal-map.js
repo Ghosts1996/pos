@@ -99,7 +99,7 @@
       style: styleFor(base, info, theme),
       center: [c.lng, c.lat],
       zoom: opts.zoom || 13,
-      minZoom: 8,
+      minZoom: 9,
       maxZoom: 19,
       maxBounds: [[b[0] - 0.6, b[1] - 0.4], [b[2] + 0.6, b[3] + 0.4]],
       attributionControl: false,
@@ -116,6 +116,8 @@
     const markers = new Map(); // id → {marker, el, cur:{lat,lng}, to, from, t0, kind}
     let routeData = null;
     let followOn = false;
+    let lastFit = null;
+    let userMoved = false;
     let anim = 0;
     let ready = false;
     const onReady = [];
@@ -127,9 +129,23 @@
       onReady.splice(0).forEach((f) => f());
     });
     // Пользователь сам двигает карту — перестаём следовать за курьером.
-    map.on("dragstart", () => { if (followOn) { followOn = false; if (opts.onFollow) opts.onFollow(false); } });
+    map.on("dragstart", () => { userMoved = true; if (followOn) { followOn = false; if (opts.onFollow) opts.onFollow(false); } });
 
+    map.on("zoomstart", (e) => { if (e && e.originalEvent) userMoved = true; });
     const whenReady = (f) => (ready ? f() : onReady.push(f));
+
+    // Окно карты меняется (шторка заказов, поворот телефона) — холст карты
+    // подстраивается сразу; если человек карту не двигал — вид пересчитывается.
+    let roTimer = 0;
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => {
+      map.resize();
+      clearTimeout(roTimer);
+      roTimer = setTimeout(() => {
+        if (followOn) { const me = markers.get("me"); if (me) map.jumpTo({ center: [me.cur.lng, me.cur.lat] }); }
+        else if (lastFit && !userMoved) fit(lastFit.points, { ...lastFit.opts, animate: false });
+      }, 120);
+    }) : null;
+    if (ro) ro.observe(el);
 
     function tick() {
       anim = 0;
@@ -200,15 +216,35 @@
       whenReady(() => { const s = map.getSource("zal-route"); if (s) s.setData(routeData); });
     }
 
-    function fit(points, { padding = 60, maxZoom = 16.5, animate = true } = {}) {
+    // Отступы не должны съедать окно карты: иначе точки «не помещаются» и
+    // карта отъезжает на всю область.
+    function safePadding(padding) {
+      const W = el.clientWidth || 300, H = el.clientHeight || 300;
+      const p = typeof padding === "number" ? { top: padding, bottom: padding, left: padding, right: padding } : { top: 0, bottom: 0, left: 0, right: 0, ...padding };
+      const kv = Math.min(1, (H * 0.5) / Math.max(1, p.top + p.bottom));
+      const kh = Math.min(1, (W * 0.5) / Math.max(1, p.left + p.right));
+      return { top: Math.round(p.top * kv), bottom: Math.round(p.bottom * kv), left: Math.round(p.left * kh), right: Math.round(p.right * kh) };
+    }
+
+    function fit(points, opts2 = {}) {
+      const { padding = 60, maxZoom = 16.5, minZoom = 11.5, animate = true } = opts2;
       const pts = (points || []).filter((p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng));
       if (!pts.length) return;
       followOn = false;
+      lastFit = { points: pts, opts: opts2 };
+      userMoved = false;
       const dur = animate && !reduceMotion() ? 600 : 0;
+      const pad = safePadding(padding);
       if (pts.length === 1) { map.easeTo({ center: [pts[0].lng, pts[0].lat], zoom: Math.min(maxZoom, 15.5), duration: dur }); return; }
       let w = 180, s = 90, e = -180, n = -90;
       for (const p of pts) { w = Math.min(w, p.lng); e = Math.max(e, p.lng); s = Math.min(s, p.lat); n = Math.max(n, p.lat); }
-      try { map.fitBounds([[w, s], [e, n]], { padding, maxZoom, duration: dur }); } catch (_) { /* слишком маленькое окно */ }
+      let cam = null;
+      try { cam = map.cameraForBounds([[w, s], [e, n]], { padding: pad, maxZoom }); } catch (_) { /* слишком маленькое окно */ }
+      if (!cam) return;
+      // Точки далеко друг от друга — не показываем полстраны: держим город,
+      // в центре — первая точка (курьер или заведение).
+      if (cam.zoom < minZoom) { map.easeTo({ center: [pts[0].lng, pts[0].lat], zoom: minZoom, duration: dur }); return; }
+      try { map.fitBounds([[w, s], [e, n]], { padding: pad, maxZoom, duration: dur }); } catch (_) { /* окно слишком маленькое */ }
     }
 
     function follow(on, zoom = 16.5) {
@@ -246,6 +282,8 @@
       resize: () => map.resize(),
       destroy() {
         if (anim) cancelAnimationFrame(anim);
+        if (ro) ro.disconnect();
+        clearTimeout(roTimer);
         if (mq && mq.removeEventListener) mq.removeEventListener("change", onScheme);
         map.remove();
       },

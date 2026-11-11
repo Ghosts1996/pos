@@ -770,7 +770,7 @@
       // Обзор: все точки на виду — один раз на набор точек.
       if ((keyChanged || force) && z.fitKey !== spec.key && !z.follow) {
         z.fitKey = spec.key;
-        api.fit(marks.map((m) => ({ lat: m.lat, lng: m.lng })), { padding: mapPadding() });
+        api.fit([...marks].sort((x, y) => (y.kind === "me") - (x.kind === "me")).map((m) => ({ lat: m.lat, lng: m.lng })), { padding: mapPadding() });
       }
       paintMapButtons();
       return;
@@ -822,14 +822,26 @@
   }
 
   /** Карта занимает видимую часть экрана над шторкой: маршрут целиком на виду. */
+  // Шторка меняет высоту плавно: карта подстраивается при каждом изменении
+  // (раньше размер брался в середине анимации — карта оставалась полоской сверху).
+  let sheetRO = null;
   function fitMap() {
     const map = $("map");
     const sheet = $("sheet");
     if (!map || !sheet) return;
+    if (!sheetRO && typeof ResizeObserver === "function") {
+      sheetRO = new ResizeObserver(() => fitMap());
+      sheetRO.observe(sheet);
+      sheet.addEventListener("transitionend", () => fitMap());
+    }
     if (S.view !== "orders" || sheet.hidden) { map.style.bottom = "0px"; return; }
-    const navH = $("bnav") ? $("bnav").getBoundingClientRect().height : 62;
-    const sh = sheet.getBoundingClientRect().height;
-    map.style.bottom = `${Math.max(0, Math.round(sh + navH - 22))}px`;
+    // Карта — от своего верха до верхнего края шторки (с заходом под скругление).
+    const mapTop = map.getBoundingClientRect().top;
+    const H = Math.max(1, window.innerHeight - mapTop);
+    const top = sheet.getBoundingClientRect().top - mapTop;
+    const bottom = Math.max(0, Math.round(H - top - 22));
+    // Шторка развёрнута почти на весь экран — карта остаётся целиком под ней, не сжимается в полоску.
+    map.style.bottom = bottom > H * 0.7 ? "0px" : `${bottom}px`;
   }
 
   // ---------------------------------------------------------------- отрисовка

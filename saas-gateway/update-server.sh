@@ -225,11 +225,10 @@ echo "журнал: /var/log/zalpos-heal.log (пишет только о сде�
 say "Своя карта"
 NODE_BIN="$(command -v node || echo /usr/bin/node)"
 timer zalpos-map "*-*-* 04:40:00 Europe/Moscow" "nice -n 15 $NODE_BIN $REPO/saas-gateway/map-build.js >> /var/log/zalpos-map.log 2>&1" "Своя карта ZalPOS: тайлы и дороги" 4h
-if [[ ! -f /opt/zalpos-maps/tiles.pmtiles ]] || ! compgen -G "/opt/zalpos-maps/roads-*.graph" >/dev/null; then
-  systemctl start --no-block zalpos-map.service && echo "первая сборка карты запущена в фоне, журнал: /var/log/zalpos-map.log"
-else
-  echo "карта есть: $(du -sh /opt/zalpos-maps 2>/dev/null | cut -f1), журнал: /var/log/zalpos-map.log"
-fi
+# Сборка — в фоне при каждом обновлении: если районы и версия те же, она
+# сразу выходит; добавилась точка или город (демо) — карта дособерётся сама.
+systemctl start --no-block zalpos-map.service && echo "сборка карты запущена в фоне (без изменений — сразу выйдет), журнал: /var/log/zalpos-map.log"
+[[ -d /opt/zalpos-maps ]] && echo "карта сейчас: $(du -sh /opt/zalpos-maps 2>/dev/null | cut -f1)"
 
 # Защита самой машины: fail2ban для SSH, обновления безопасности, настройки
 # ядра, права на папки с данными, закрытые наружу порты баз (server-shield.sh).

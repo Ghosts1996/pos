@@ -2270,21 +2270,28 @@ function remoteSaleBanned(item, catName = '') {
 
 /// Цена доставки — та же формула, что на шлюзе (saas-gateway/delivery-pricing.js
 /// → quote): гость видит цену до заказа, а при заказе сервер считает заново.
-function deliveryQuote(info, subtotal, zoneId) {
+function deliveryQuote(info, subtotal, zoneId, km = null) {
   const zones = (info && info.zones) || [];
   let zone = null;
-  if (zones.length) {
+  // Цена по расстоянию: точка отмечена — район не нужен (км считает сервер по дорогам).
+  const bk = (info && info.byKm) || {};
+  const far = bk.on === true && km !== null && Number.isFinite(km);
+  if (far && bk.maxKm > 0 && km > bk.maxKm) {
+    return { ok: false, tooFar: true, km, fee: 0, toFree: 0, short: 0, etaMin: info.etaMin, maxKm: bk.maxKm };
+  }
+  if (!far && zones.length) {
     zone = zones.find((z) => z.id === zoneId) || null;
     if (!zone) return { ok: false, needZone: true, fee: 0, toFree: 0, short: 0, etaMin: info.etaMin };
   }
   const pick = (k) => (zone && zone[k] !== null && zone[k] !== undefined ? zone[k] : Number(info[k]) || 0);
   const minOrder = pick('minOrder');
   const freeFrom = pick('freeFrom');
-  const base = pick('fee');
+  const extraKm = far ? Math.max(0, Math.ceil(km - (Number(bk.baseKm) || 0) - 1e-9)) : 0;
+  const base = pick('fee') + extraKm * (Number(bk.perKm) || 0);
   const short = minOrder > 0 && subtotal < minOrder ? Math.ceil(minOrder - subtotal) : 0;
   const free = freeFrom > 0 && subtotal >= freeFrom;
   const fee = free ? 0 : base;
-  return { ok: !short, fee, zone, minOrder, freeFrom, etaMin: pick('etaMin'), short, toFree: !free && freeFrom > 0 && base > 0 ? Math.ceil(freeFrom - subtotal) : 0 };
+  return { ok: !short, fee, zone, ...(far ? { km } : {}), minOrder, freeFrom, etaMin: pick('etaMin'), short, toFree: !free && freeFrom > 0 && base > 0 ? Math.ceil(freeFrom - subtotal) : 0 };
 }
 const DELIVERY_ITEM_ID = 'zalpos_delivery';
 
@@ -2398,7 +2405,11 @@ async function screenCheckout() {
   const priced = () => delivery && info && (Number(info.markupPct) > 0 || Object.keys(info.prices || {}).length > 0);
   const unit = (l) => (delivery && info ? deliveryUnit(l.base, l.modsSum, (info.prices || {})[l.menuItemId], info.markupPct) : l.price);
   const subtotal = () => Math.round(allowedNow().reduce((a, l) => a + unit(l) * l.qty, 0) * 100) / 100;
-  const quoteNow = () => (delivery && info ? deliveryQuote(info, subtotal(), zoneId) : null);
+  // Расстояние до отмеченной точки, км (по дорогам, считает сервер) — для цены по километрам.
+  let geoKm = null;
+  const byKmOn = () => !!(info && info.byKm && info.byKm.on);
+  const quoteNow = () => (delivery && info ? deliveryQuote(info, subtotal(), zoneId, geoKm) : null);
+  const kmText = (km) => `${String(km).replace('.', ',')} км`;
 
   screenEl().innerHTML = `
     <div class="backbar"><button data-back aria-label="В меню">${ic('back')}</button><h1 style="margin:0">Оформление заказа</h1></div>
@@ -2472,11 +2483,11 @@ async function screenCheckout() {
       ? 'Кнопка оплаты появится после того, как заведение подтвердит заказ.'
       : delivery ? `Курьеру при получении${doorWays.length ? ': ' + doorWays.join(', ') : ''}.` : 'На кассе заведения.';
     // Район доставки — если заведение их задало.
-    const zones = delivery && info ? info.zones || [] : [];
+    const zones = delivery && info && geoKm === null ? info.zones || [] : [];
     $('zoneBox').innerHTML = zones.length ? `<h2>Район доставки</h2><div class="chips">${zones.map((z) => {
       const q = deliveryQuote(info, subtotal(), z.id);
       return `<button class="chip${z.id === zoneId ? ' on' : ''}" data-zone="${esc(z.id)}">${esc(z.name)} · ${q.fee ? money(q.fee) : 'бесплатно'}</button>`;
-    }).join('')}</div>${zoneId ? '' : '<p class="small muted" style="margin:0 0 12px">Выберите район — от него зависят цена и время доставки.</p>'}` : '';
+    }).join('')}</div>${zoneId ? '' : `<p class="small muted" style="margin:0 0 12px">Выберите район — от него зависят цена и время доставки.${byKmOn() ? ' Или нажмите «Отметить, где я» — посчитаем точную цену по расстоянию.' : ''}</p>`}` : '';
     $('zoneBox').querySelectorAll('[data-zone]').forEach((b) => { b.onclick = () => { zoneId = b.dataset.zone; paint(); }; });
     // Счёт: блюда, доставка, итог, подсказки.
     const list = allowedNow();
@@ -2488,7 +2499,8 @@ async function screenCheckout() {
         <span class="grow">${esc(l.name)}${l.mods.length ? ` <span class="muted small">(${esc(l.mods.join(', '))})</span>` : ''} ×${l.qty}</span>
         <span class="muted">${money(unit(l) * l.qty)}</span></div>`).join('') || '<p class="small muted" style="margin:0">В заказе пока нет позиций.</p>'}
       ${priced() ? `<p class="small muted" style="margin:4px 0 8px">Цены в доставке${Number(info.markupPct) > 0 ? ` — на ${String(info.markupPct).replace('.', ',')} % выше, чем в зале` : ' — свои у некоторых позиций'}: так решило заведение.</p>` : ''}
-      ${q && !q.needZone ? `<div class="bill-line"><span class="grow">Доставка${q.zone ? ` · ${esc(q.zone.name)}` : ''}</span><span class="muted">${fee ? money(fee) : 'бесплатно'}</span></div>` : ''}
+      ${q && !q.needZone && !q.tooFar ? `<div class="bill-line"><span class="grow">Доставка${q.km !== undefined ? ` · ${kmText(q.km)}` : q.zone ? ` · ${esc(q.zone.name)}` : ''}</span><span class="muted">${fee ? money(fee) : 'бесплатно'}</span></div>` : ''}
+      ${q && q.tooFar ? `<p class="small" style="margin:8px 0 0;color:var(--danger)">Сюда не доставляем: до вас ${kmText(q.km)}, возим не дальше ${kmText(q.maxKm)}. Можно выбрать «Заберу сам».</p>` : ''}
       <div class="bill-total"><span>Итого</span><span>${money(sum + (q && !q.needZone ? fee : 0))}</span></div>
       ${q && q.toFree > 0 && q.ok ? `<p class="small" style="margin:8px 0 0;color:var(--gold)">До бесплатной доставки — ещё ${money(q.toFree)}</p>` : ''}
       ${q && q.short ? `<p class="small" style="margin:8px 0 0;color:var(--danger)">Минимальный заказ на доставку — ${money(q.minOrder)}: добавьте ещё на ${money(q.short)}</p>` : ''}
@@ -2496,7 +2508,7 @@ async function screenCheckout() {
     const off = delivery ? lines.filter((l) => !l.banned && isOff(l)) : [];
     $('offBox').innerHTML = off.length ? `<div class="card warn small">Не доставляем: ${esc(off.map((l) => l.name).join(', '))}.
       Их можно взять с собой — выберите «Заберу сам», или заказать в заведении. Остальное привезём.</div>` : '';
-    const blocked = !list.length || (q && (q.needZone || q.short > 0));
+    const blocked = !list.length || (q && (q.needZone || q.short > 0 || q.tooFar));
     send.disabled = blocked || !consent.ready();
     send.dataset.blocked = blocked ? '1' : '';
     send.textContent = `Оформить заказ · ${money(sum + (q && !q.needZone ? fee : 0))}`;
@@ -2516,6 +2528,8 @@ async function screenCheckout() {
     geoBtn.onclick = () => {
       if (geoMark) {
         geoMark = null;
+        geoKm = null;
+        paint();
         geoBtn.textContent = '📍 Отметить, где я — курьер найдёт быстрее';
         geoHint.textContent = 'Точка убрана — курьер поедет по адресу.';
         return;
@@ -2533,6 +2547,16 @@ async function screenCheckout() {
         geoMark = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc };
         geoBtn.textContent = '✓ Точка отмечена — убрать';
         geoHint.textContent = `Курьер увидит точку на карте (точность ±${Math.max(5, acc)} м). Адрес и квартиру всё равно укажите.`;
+        // Цена доставки сразу: сервер считает путь по дорогам от заведения.
+        if (byKmOn()) {
+          const mark = geoMark;
+          gatewayPost('/guestDeliveryQuote', { geo: { lat: mark.lat, lng: mark.lng }, itemsTotal: subtotal() }).then((r) => {
+            if (geoMark !== mark || !r || !r.byKm || !Number.isFinite(Number(r.km))) return;
+            geoKm = Number(r.km);
+            geoHint.textContent = `До вас ${kmText(geoKm)} — цена доставки посчитана и уже в счёте. Адрес и квартиру всё равно укажите.`;
+            paint();
+          }).catch(() => {});
+        }
       }, (err) => {
         geoBtn.disabled = false;
         geoBtn.textContent = '📍 Отметить, где я — курьер найдёт быстрее';
@@ -2580,7 +2604,7 @@ async function screenCheckout() {
         payMethod: payOnline && online ? 'online' : 'on_receipt',
         items: allowed.map((l) => ({ menuItemId: l.menuItemId, qty: l.qty, ...(l.mods.length ? { mods: l.mods } : {}) })),
         // Цены, которые гость видел: сервер проверит, что они не изменились.
-        ...(q ? { delivery: { zoneId, fee: q.fee, markupPct: Number(info.markupPct) || 0, itemsTotal: subtotal() } } : {}),
+        ...(q ? { delivery: { zoneId: q.km !== undefined ? '' : zoneId, fee: q.fee, markupPct: Number(info.markupPct) || 0, itemsTotal: subtotal(), ...(q.km !== undefined ? { km: q.km } : {}) } } : {}),
       });
       saveContact({ type: delivery ? 'delivery' : 'takeaway', name, phone: phoneRaw, ...address, ...(zoneId ? { zoneId } : {}) });
       // В корзине остаются только позиции, которые с собой не продаются, —

@@ -112,6 +112,8 @@ function createDeliveryServices({
   const ms = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : Number(v) || 0);
   const tenantRef = (t) => db().collection("tenants").doc(t);
   const servicesRef = (root) => db().collection("deliveryServices").doc(root);
+  // Заказ поменялся — кабинет и приложение курьера сразу видят новое (без старого кэша).
+  const changed = (t) => { try { if (hooks.changed) hooks.changed(t); } catch (_) { /* не главное */ } };
   const event = (t, s, text) => (hooks.event ? hooks.event(t, s, text).catch(() => {}) : Promise.resolve());
 
   // ------------------------------------------------------------ ключи
@@ -554,6 +556,7 @@ function createDeliveryServices({
     // Яндекс считает заявку несколько секунд — первый опрос чуть позже.
     const t = setTimeout(() => sweep().catch(() => {}), 4000);
     if (t.unref) t.unref();
+    changed(ctx.tenantId);
     sendJson(res, 200, { ok: true, ext });
   }
 
@@ -568,6 +571,7 @@ function createDeliveryServices({
     if (!creds) throw new HttpError(409, "Ключ службы отключён");
     await Y.call(creds.token, `claims/accept?claim_id=${encodeURIComponent(ext.id)}`, { version: ext.version || 1 });
     await o.ref.update({ "ext.status": "accepted", "ext.step": "search", "ext.label": "Ищем курьера", "ext.approveAsked": FieldValue.delete() });
+    changed(ctx.tenantId);
     sendJson(res, 200, { ok: true });
   }
 
@@ -593,6 +597,7 @@ function createDeliveryServices({
     }
     await applyInfo(ctx.tenantId, o.ref, ext, { status: "cancelled", step: "cancelled", label: "Вызов отменён", version: ext.version || 1 });
     await o.ref.update({ extActive: false });
+    changed(ctx.tenantId);
     sendJson(res, 200, { ok: true });
   }
 

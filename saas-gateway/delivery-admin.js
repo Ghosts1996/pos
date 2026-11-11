@@ -67,6 +67,8 @@ function createDeliveryAdmin({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     sendJson(res, 200, {
       settings: pricing.normalizeSettings(raw),
       venuePos: raw.venuePos || null,
+      // Ориентир цен для региона точки — кнопка «Подставить цены региона».
+      preset: pricing.regionPreset(raw.venuePos),
       deliveryEnabled: v.deliveryEnabled === true,
       // QR у двери — через банк онлайн-оплаты; без него способ не сработает.
       bankConnected: !!(integ.data() || {}).onlinePayVerified,

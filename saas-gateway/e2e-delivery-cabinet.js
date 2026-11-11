@@ -53,7 +53,7 @@ async function main() {
       : /claims\/create/.test(u) ? { id: "f".repeat(32), version: 1, status: "new" } : {};
     return { ok: true, status: 200, json: async () => body };
   };
-  const services = createDeliveryServices({ ...common, encrypt, decrypt, secretKey: () => require("crypto").createHash("sha256").update("e2e").digest(), fetchImpl });
+  const services = createDeliveryServices({ ...common, encrypt, decrypt, secretKey: () => require("crypto").createHash("sha256").update("e2e").digest(), fetchImpl, hooks: { changed: (t) => courier.invalidate(t) } });
   const courier = createCourier({ ...common, publicUrl: "https://pii.zalpos.ru/saas" });
   courier.setHooks({ services: async (ids) => Object.fromEntries(await Promise.all(ids.map(async (id) => [id, await services.connected(id)]))) });
   const delivery = createDeliveryAdmin(common);
@@ -252,7 +252,8 @@ draw();
   await shot(page, "c8-ext-quote");
   await page.click('.f-dx-call[data-p="yandex"]');
   await page.waitForFunction(() => window.toasts.some((t) => /Курьер вызван/.test(t)));
-  await page.waitForSelector("text=Считаем цену");
+  // Статус службы меняется сам через несколько секунд (опрос) — годится любой шаг после вызова.
+  await page.waitForFunction(() => /Считаем цену|Ищем курьера|Курьер (назначен|едет)/.test(document.body.innerText));
   const o2 = (await db.doc("tenants/P1/sessions/o2").get()).data();
   assert.deepEqual([o2.ext.provider, o2.ext.quoted, o2.extActive], ["yandex", 289, true]);
   assert.ok(yaCalls.some((u) => /claims\/create/.test(u)), "заявка в Яндексе создана");
