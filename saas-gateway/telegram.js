@@ -572,6 +572,11 @@ function deliveryCardText(s, tz, pendingItems = [], pointName = "") {
   // Курьер приложения — номером (имена в Telegram не отправляем).
   const stage = { toVenue: "едет в заведение", onWay: "в пути", arrived: "у двери", failed: "не удалось вручить" }[s.courierStage];
   if (s.courierId && s.courierNo) lines.push(`🛵 Курьер №${s.courierNo}${stage ? ` · ${stage}` : ""}`);
+  // Курьер службы доставки (delivery-services.js): без имени курьера — только служба и шаг.
+  if (!s.courierId && s.ext && s.ext.provider && s.ext.label) {
+    const svc = { yandex: "Яндекс Доставка", dostavista: "Достависта" }[s.ext.provider] || "Служба доставки";
+    lines.push(`🚕 ${escHtml(svc)} · ${escHtml(s.ext.label)}${s.ext.price ? ` · ${Math.round(s.ext.price)} ₽` : ""}`);
+  }
   else if (s.courierName || s.courierSet) lines.push("🚴 Курьер назначен");
   if (s.courierStage === "returned" && !s.courierId) lines.push("↩️ Заказ вернули в заведение — свободен для курьеров");
   const start = toDate(s.startTime);

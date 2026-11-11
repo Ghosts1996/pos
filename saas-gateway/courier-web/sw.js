@@ -2,7 +2,7 @@
  * Сначала сеть (обновления приходят сразу), кэш — запасной путь.
  * Запросы к серверу (api/) не кэшируются никогда: заказы — только свежие. */
 "use strict";
-const CACHE = "zalpos-courier-v1";
+const CACHE = "zalpos-courier-v2";
 const SHELL = ["./", "index.html", "app.js", "app.css", "qr.js", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {

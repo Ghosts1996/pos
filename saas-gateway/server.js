@@ -49,6 +49,7 @@ const { createCourier } = require("./courier");
 const { createCourierWeb } = require("./courier-web");
 const { createDeliveryAdmin } = require("./delivery-admin");
 const { createTelegram, encrypt: tgEncrypt, decrypt: tgDecrypt, secretKey: tgSecretKey } = require("./telegram");
+const { createDeliveryServices } = require("./delivery-services");
 const { createSupportBot } = require("./support-bot");
 const { createLocalDb } = require("./local-db");
 const { createTenantCache, guestMenu } = require("./tenant-cache");
@@ -4167,19 +4168,24 @@ const DEMO_ACTIVE_SESSIONS = [
 // start — минут назад; items — как у столов.
 const DEMO_DELIVERY = [
   { type: "delivery", status: "new", source: "app", client: "demo-guest-2", pay: "online", start: 4,
-    name: "Игорь", phone: "+7 900 000-00-02", address: "ул. Тверская, 12, кв. 45, подъезд 2, этаж 5",
+    name: "Игорь", phone: "+7 900 000-00-02", address: "Москва, ул. Тверская, 12, кв. 45, подъезд 2, этаж 5", geo: { lat: 55.7638, lng: 37.6064 },
     comment: "Позвоните за 10 минут, домофон не работает",
     guestItems: [["Пицца Маргарита", 1], ["Цезарь с курицей", 1], ["Морс клюквенный", 2]] },
   { type: "takeaway", status: "accepted", source: "app", client: "demo-guest-3", pay: "online", paid: true, start: 9,
     name: "Мария", phone: "+7 900 000-00-03",
     items: [["Капучино", 2, { mods: ["Овсяное"], wait: 2 }], ["Круассан с лососем", 1, { wait: 2 }]] },
   { type: "delivery", status: "cooking", source: "phone", pay: "on_receipt", start: 22,
-    name: "Павел", phone: "+7 900 000-00-11", address: "Пресненская наб., 8, офис 1203",
+    name: "Павел", phone: "+7 900 000-00-11", address: "Москва, Пресненская наб., 8, стр. 1, офис 1203", geo: { lat: 55.7474, lng: 37.5396 },
     items: [["Бургер с говядиной", 2, { mods: ["Бекон"], wait: 15 }], ["Картофель фри", 2, { mods: ["Кетчуп"], wait: 15 }], ["Кола", 2]] },
   { type: "delivery", status: "courier", source: "app", client: "demo-guest-4", pay: "online", paid: true, start: 48,
-    name: "Сергей", phone: "+7 900 000-00-04", address: "Ленинский пр-т, 30, кв. 12",
+    name: "Сергей", phone: "+7 900 000-00-04", address: "Москва, Ленинский пр-т, 30, кв. 12", geo: { lat: 55.7087, lng: 37.5857 },
     courier: { name: "Николай", phone: "+7 900 000-00-20" },
     items: [["Рамен с курицей", 2], ["Гёдза с креветкой", 1], ["Облепиховый чай", 1]] },
+  // Готов и оплачен онлайн — курьеру сразу есть что взять, деньги у двери не брать.
+  { type: "delivery", status: "accepted", source: "app", client: "demo-guest-5", pay: "online", paid: true, start: 12,
+    name: "Анна", phone: "+7 900 000-00-05", address: "Москва, ул. Арбат, 24, кв. 7, подъезд 1, домофон 7", geo: { lat: 55.7502, lng: 37.5926 },
+    comment: "Оставьте у двери, ребёнок спит",
+    items: [["Цезарь с курицей", 2], ["Морс клюквенный", 2]] },
   { type: "takeaway", status: "ready", source: "phone", pay: "on_receipt", start: 28,
     name: "Елена", phone: "+7 900 000-00-12", items: [["Латте", 1, { mods: ["Ваниль"] }], ["Чизкейк Нью-Йорк", 2]] },
   { type: "takeaway", status: "cooking", tag: "Яндекс Еда · №4821", start: 16,
@@ -4548,7 +4554,7 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
     });
     takeawayIds.push(ref.id);
     if (o.name) {
-      const extra = { guestContact: o.phone, ...(o.comment ? { comment: o.comment } : {}),
+      const extra = { guestContact: o.phone, ...(o.comment ? { comment: o.comment } : {}), ...(o.geo ? { geo: o.geo } : {}),
         ...(o.courier ? { courierName: o.courier.name, courierPhone: o.courier.phone } : {}) };
       vault.push({ k: "delivery", id: ref.id, fields: { name: o.name, phone: o.phone, ...(o.address ? { address: o.address } : {}), extra } });
     }
@@ -4885,8 +4891,8 @@ async function handleCreateDemoTenant(req, res) {
   await head.commit();
 
   const points = [
-    { key: "center", name: "Демо · Центр", address: "Москва, ул. Примерная, 1", staffList: DEMO_STAFF, venuePos: { lat: 55.7605, lng: 37.6086 } },
-    { key: "river", name: "Демо · Набережная", address: "Москва, Набережная ул., 7", staffList: DEMO_STAFF_RIVER, venuePos: { lat: 55.7485, lng: 37.5390 } },
+    { key: "center", name: "Демо · Центр", address: "Москва, ул. Тверская, 7", staffList: DEMO_STAFF, venuePos: { lat: 55.7579, lng: 37.6108 } },
+    { key: "river", name: "Демо · Набережная", address: "Москва, Краснопресненская наб., 14", staffList: DEMO_STAFF_RIVER, venuePos: { lat: 55.7507, lng: 37.5439 } },
   ];
   const created = [];
   for (const point of points) {
@@ -4942,6 +4948,23 @@ async function handleCreateDemoTenant(req, res) {
           console.error(`saas-gateway: справочник демо ${tenantRef.id}:`, e.message || e);
         });
       }
+    } else {
+      // Без справочника (стенд, старый режим) контакты доставки — в самом
+      // заказе, как у заведения без хранения в РФ: иначе курьер и касса
+      // демо не видят адресов.
+      const mirror = firestore.batch();
+      for (const v of vault.filter((x) => x.k === "delivery")) {
+        const f = v.fields || {};
+        const x = f.extra || {};
+        mirror.update(tenantRef.collection("sessions").doc(v.id), {
+          customerName: f.name || "", customerPhone: f.phone || "", guestContact: x.guestContact || f.phone || "",
+          ...(f.address ? { deliveryAddress: f.address } : {}),
+          ...(x.comment ? { deliveryComment: x.comment } : {}),
+          ...(x.geo ? { deliveryGeo: x.geo } : {}),
+          ...(x.courierName ? { courierName: x.courierName, courierPhone: x.courierPhone || "" } : {}),
+        });
+      }
+      await mirror.commit();
     }
     created.push({ tenantId: tenantRef.id, inviteCode });
   }
@@ -5206,7 +5229,7 @@ const OWNER_EXPORT_STRIP = {
   clients: ["name", "phone", "birthdayDay", "birthdayMonth", "pushToken"],
   reservations: ["guestName", "phone"],
   waitlist: ["guestName", "phone"],
-  sessions: ["customerName", "customerPhone", "deliveryAddress", "deliveryComment", "guestContact"],
+  sessions: ["customerName", "customerPhone", "deliveryAddress", "deliveryComment", "guestContact", "deliveryGeo"],
   guestOrders: ["guestName"],
   waiterCalls: ["guestName"],
   reviews: ["guestName"],
@@ -7225,6 +7248,7 @@ async function anonymizeGuestData({ root, scope, rootId, clientUid, c, forgetInV
       const batch = firestore.batch();
       own.slice(i, i + 400).forEach((d) => batch.update(d.ref, {
         customerName: "", customerPhone: "", deliveryAddress: "", deliveryComment: "", guestContact: "",
+        deliveryGeo: admin.firestore.FieldValue.delete(),
       }));
       await batch.commit();
     }
@@ -8115,7 +8139,7 @@ async function runDeliveryPiiRetention() {
   for (const t of tenants.docs) {
     try {
       const snap = await t.ref.collection("sessions").where("source", "==", "app").get();
-      const hasPd = (s) => !!(s.customerPhone || s.deliveryAddress || s.customerName);
+      const hasPd = (s) => !!(s.customerPhone || s.deliveryAddress || s.customerName || s.deliveryGeo);
       const old = snap.docs.filter((d) => {
         const s = d.data();
         const closed = s.closedAt?.toMillis?.() || s.cancelledAt?.toMillis?.() || 0;
@@ -8141,6 +8165,7 @@ async function runDeliveryPiiRetention() {
         const batch = db().batch();
         touched.slice(i, i + 400).forEach((d) => batch.update(d.ref, {
           customerName: "", customerPhone: "", deliveryAddress: "", deliveryComment: "", guestContact: "", piiErasedAt: admin.firestore.FieldValue.serverTimestamp(),
+          deliveryGeo: admin.firestore.FieldValue.delete(),
           ...(vaultErased.has(d.id) ? { piiVaultErasedAt: admin.firestore.FieldValue.serverTimestamp() } : {}),
         }));
         await batch.commit();
@@ -8202,6 +8227,18 @@ const deliveryAdmin = createDeliveryAdmin({
   db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole, requireChainRole,
   onSaved: (ids) => { telegram.forgetDeliverySettings(ids); courier.forgetCache(); },
 });
+// Курьеры служб доставки (Яндекс Доставка, Достависта) — delivery-services.js.
+const deliveryServices = createDeliveryServices({
+  db, admin, HttpError, verifyAuth, parseJsonBody, sendJson, requireTenantRole, requireChainRole,
+  encrypt: tgEncrypt, decrypt: tgDecrypt, secretKey: tgSecretKey, pii,
+  hooks: { event: (t, s, text) => telegram.deliveryEvent(t, s, text) },
+});
+// Кабинет «Доставка → Сейчас»: какие службы подключены у точек.
+courier.setHooks({
+  event: telegram.deliveryEvent,
+  moved: telegram.courierMoved,
+  services: async (ids) => Object.fromEntries(await Promise.all(ids.map(async (id) => [id, await deliveryServices.connected(id)]))),
+});
 const COURIER_API = {
   login: courier.handleLogin,
   demo: courier.handleDemoLogin,
@@ -8212,6 +8249,7 @@ const COURIER_API = {
   act: courier.handleAct,
   ping: courier.handlePing,
   pay: courier.handlePay,
+  history: courier.handleHistory,
 };
 
 // ИИ-бот поддержки платформы в Telegram — см. support-bot.js.
@@ -9360,6 +9398,12 @@ const ROUTES = {
   "/deliverySettings": deliveryAdmin.handleGet,
   "/deliverySettingsSave": deliveryAdmin.handleSave,
   "/deliveryMenuSave": deliveryAdmin.handleMenuSave,
+  "/deliveryServices": deliveryServices.handleGet,
+  "/deliveryServicesSave": deliveryServices.handleSave,
+  "/deliveryExtQuote": deliveryServices.handleQuote,
+  "/deliveryExtCall": deliveryServices.handleCall,
+  "/deliveryExtApprove": deliveryServices.handleApprove,
+  "/deliveryExtCancel": deliveryServices.handleCancel,
   "/resolveTenantBySlug": handleResolveTenantBySlug,
   "/resolveChainBySlug": handleResolveChainBySlug,
   "/createTenant": handleCreateTenant,
@@ -9609,6 +9653,7 @@ if (process.env.PORT !== "8099") {
   guestPay.startSweeper();
   guestDelivery.startFeeWatcher();
   courier.start();
+  deliveryServices.start();
   startSupportBot().catch((e) => console.error("support-bot: запуск:", e.message || e));
   partners.start();
 }

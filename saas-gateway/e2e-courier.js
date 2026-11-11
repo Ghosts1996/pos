@@ -55,7 +55,7 @@ async function main() {
     },
   });
   const web = createCourierWeb();
-  const routes = { login: api.handleLogin, consent: api.handleConsent, state: api.handleState, shift: api.handleShift, act: api.handleAct, ping: api.handlePing, pay: api.handlePay, logout: api.handleLogout };
+  const routes = { login: api.handleLogin, consent: api.handleConsent, state: api.handleState, shift: api.handleShift, act: api.handleAct, ping: api.handlePing, pay: api.handlePay, logout: api.handleLogout, history: api.handleHistory };
   const server = http.createServer((req, res) => {
     const p = req.url.split("?")[0].replace(/^\/saas/, "");
     if (req.method === "POST" && p.startsWith("/courier/api/")) {
@@ -111,40 +111,42 @@ async function main() {
 
   // 1. Без ссылки — понятный экран входа.
   await page.goto(base);
-  await page.waitForSelector("text=личную ссылку-приглашение");
+  await page.waitForSelector("text=личной ссылке-приглашению");
   // 2. По ссылке: вход, ссылка уходит из адреса.
   await page.goto(`${base}#i=${code}`);
   await page.waitForSelector("text=Геолокация во время смены");
   assert.ok(!page.url().includes(code), "код приглашения убран из адреса");
   await shot(page, "1-consent");
   await page.click("text=Согласен, продолжить");
-  await page.waitForSelector("text=Курьер №1 · Николай");
-  await page.waitForSelector("text=Вы не на смене");
+  await page.waitForSelector("text=Не на линии");
+  await page.waitForSelector("text=Вы не на линии");
   // Свободный заказ виден, но без смены не взять.
   assert.equal(await page.isDisabled('[data-a="take"]'), true);
   // 3. Смена.
-  await page.click('[data-a="shift"]');
-  await page.waitForSelector("text=На смене");
+  await page.click('.online-card [data-a="shift"]');
+  await page.waitForSelector("text=На линии");
   await page.waitForSelector('[data-a="take"]:not([disabled])');
-  const free = await page.textContent("main");
+  const free = await page.textContent("#sheetbody");
   assert.ok(free.includes("ул. Ленина, 5") && !/кв\.|79001234567|Анна/.test(free), "в свободных — улица без квартиры, телефона и имени");
   assert.ok(free.includes("1 090 ₽"), "к получению — с доставкой");
   await shot(page, "2-free");
   // 4. Новый заказ приходит сам — с подсветкой.
   await db.doc("tenants/A/sessions/s2").set(order(13, { deliveryStatus: "accepted", guestPaidTotal: 1090 }));
-  await page.waitForSelector("article.card.new", { timeout: 15000 });
+  await page.waitForSelector("article.offer.new", { timeout: 15000 });
   // 5. «Беру» → вкладка «Мои» с полным адресом.
   await page.click('[data-key="A__s1"][data-a="take"]');
-  await page.waitForSelector("text=Забрать в заведении");
+  await page.waitForSelector("text=Кафе «Лето»");
   await page.waitForSelector("text=подъезд 2");
-  const mine = await page.textContent("main");
-  assert.ok(mine.includes("Позвоните за 5 минут") && mine.includes("Анна"), "у своего заказа — полный адрес, имя, комментарий");
+  const mine = await page.textContent("#sheetbody");
+  assert.ok(/Дальше: ул\. Ленина, 5, кв\.\/офис 12/.test(mine), "у своего заказа — полный адрес");
   await shot(page, "3-mine-pickup");
   // 6. Без сети: «Забрал» сразу на экране, уходит потом.
   await ctx.setOffline(true);
   await page.click('[data-a="pickup"]');
   await page.waitForSelector("text=Я на месте");
-  await page.waitForSelector("text=нет связи");
+  await page.waitForSelector("text=Нет связи");
+  const onWay = await page.textContent("#sheetbody");
+  assert.ok(onWay.includes("Позвоните за 5 минут") && onWay.includes("Анна"), "в пути — имя и комментарий гостя");
   let s = (await db.doc("tenants/A/sessions/s1").get()).data();
   assert.equal(s.courierStage, "toVenue", "без сети на сервер не ушло");
   await shot(page, "4-offline");
@@ -162,12 +164,12 @@ async function main() {
   assert.ok((await db.doc("tenants/A/sessions/s1").get()).data().courierPos, "точка курьера — в заказе в пути");
   // 8. На месте → таймер; «Вручил» наличными со сдачей.
   await page.click('[data-a="arrive"]');
-  await page.waitForSelector("text=У двери");
-  await page.click('[data-a="deliver"]');
+  await page.waitForSelector(".main-act >> text=У двери");
+  await page.click('.main-act [data-a="deliver"]');
   await page.waitForSelector("text=Вручить заказ №12");
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "страница не шире экрана");
   await shot(page, "5a-deliver");
-  await page.click("text=💵 Наличные");
+  await page.click('[data-m="method"][data-v="cash"]');
   await page.click('[data-m="received"][data-v="2000"]');
   await page.waitForSelector("text=Сдача: 910");
   await shot(page, "5-cash");
@@ -178,7 +180,7 @@ async function main() {
   assert.equal(s.deliveryStatus, "done");
   assert.deepEqual([s.courierPayment.method, s.courierPayment.amount, s.courierPayment.change], ["cash", 1090, 910]);
   // 9. Оплата по QR: QR на экране, банк подтвердил → «Вручил».
-  await page.click('[data-tab="free"]');
+  await page.click('[data-a="list"][data-list="free"]');
   await db.doc("tenants/A/sessions/s3").set(order(14));
   await page.waitForSelector('[data-key="A__s3"][data-a="take"]', { timeout: 15000 });
   await page.click('[data-key="A__s3"][data-a="take"]');
@@ -187,8 +189,8 @@ async function main() {
   await page.waitForSelector('[data-key="A__s3"][data-a="arrive"]');
   await page.click('[data-key="A__s3"][data-a="arrive"]');
   await page.waitForSelector('[data-key="A__s3"][data-a="deliver"]');
-  await page.click('[data-key="A__s3"][data-a="deliver"]');
-  await page.click("text=📱 По QR");
+  await page.click('.main-act [data-key="A__s3"][data-a="deliver"]');
+  await page.click('[data-m="method"][data-v="qr"]');
   await page.waitForSelector(".qr svg");
   await page.waitForSelector("text=Ждём оплату");
   await shot(page, "6-qr");
@@ -198,15 +200,19 @@ async function main() {
   await page.click('[data-m="deliver"]');
   await page.waitForSelector("text=Заказ вручён");
   // 10. Итоги: 2 доставки, наличные на руках.
-  await page.click('[data-tab="day"]');
-  await page.waitForSelector("text=доставки сегодня");
-  const day = await page.textContent("main");
-  assert.ok(/1 090 ₽\s*наличные на руках/.test(day), "наличные на руках — 1 090 ₽");
+  await page.click('[data-a="view"][data-view="income"]');
+  await page.waitForSelector("text=Доставки сегодня");
+  await page.waitForSelector(".trip >> nth=1");
+  const day = (await page.textContent("#page")).replace(/\s+/g, " ");
+  assert.ok(/1 090 ₽ ?на руках/.test(day), "наличные на руках — 1 090 ₽");
   await shot(page, "7-day");
   // 11. Тёмная тема — без ошибок.
   await page.emulateMedia({ colorScheme: "dark" });
-  await page.click('[data-tab="mine"]');
-  await shot(page, "8-dark");
+  await page.click('[data-a="view"][data-view="profile"]');
+  await page.waitForSelector("text=Как езжу");
+  await shot(page, "8-dark-profile");
+  await page.click('[data-a="view"][data-view="orders"]');
+  await shot(page, "9-dark");
 
   assert.deepEqual(errors, [], "в консоли браузера нет ошибок");
   await browser.close();

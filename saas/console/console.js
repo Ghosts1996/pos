@@ -399,7 +399,7 @@ function bindGuestsTab(tenantId, redraw) {
 // гостей сюда не попадают: в заказах — номер, точка, статус и сумма.
 const deliveryState = new Map(); // tenantId → состояние раздела
 const DLV_SUBS = [
-  ['now', 'Сейчас'], ['couriers', 'Курьеры'], ['price', 'Цена и районы'], ['menu', 'Что доставляем'], ['report', 'Отчёт'],
+  ['now', 'Сейчас'], ['couriers', 'Курьеры'], ['price', 'Цена и районы'], ['menu', 'Что доставляем'], ['services', 'Службы доставки'], ['report', 'Отчёт'],
 ];
 const dlvRub = (n) => `${(Math.round(Number(n) || 0)).toLocaleString('ru-RU')} ₽`;
 const dlvAgo = (ms) => {
@@ -415,9 +415,12 @@ function dlvStateOf(tenantId) {
   return deliveryState.get(tenantId);
 }
 
-/** Карта Яндекса: точки — красные, курьеры — с номером (зелёный — свободен, синий — везёт). */
-function dlvMapHtml(points, couriers) {
+const DLV_PROVIDER = { yandex: 'Яндекс Доставка', dostavista: 'Достависта' };
+
+/** Карта Яндекса: точки — красные, курьеры — с номером (зелёный — свободен, синий — везёт), службы — фиолетовые. */
+function dlvMapHtml(points, couriers, extOrders = []) {
   const marks = [];
+  for (const o of extOrders) if (o.pos) marks.push([o.pos.lng, o.pos.lat, 'pm2vvm']);
   for (const p of points || []) if (p.venuePos) marks.push([p.venuePos.lng, p.venuePos.lat, 'pm2rdl']);
   for (const c of couriers || []) if (c.pos) marks.push([c.pos.lng, c.pos.lat, `pm2${c.orders ? 'bl' : 'gn'}m${Math.min(99, Number(c.no) || 1)}`]);
   if (!marks.length) return '<p class="small muted" style="margin:0">Карта появится, когда курьеры начнут смену в приложении и разрешат геолокацию. Точка заведения отметится сама после первых заборов заказов.</p>';
@@ -430,7 +433,7 @@ function dlvMapHtml(points, couriers) {
   const pt = marks.map((m) => `${m[0].toFixed(6)},${m[1].toFixed(6)},${m[2]}`).join('~');
   return `<iframe title="Курьеры на карте" loading="lazy" style="width:100%;height:340px;border:0;border-radius:12px"
     src="https://yandex.ru/map-widget/v1/?ll=${lng.toFixed(6)},${lat.toFixed(6)}&z=${z}&pt=${pt}"></iframe>
-    <p class="small muted" style="margin:6px 0 0">Красная метка — заведение, зелёная с номером — свободный курьер, синяя — везёт заказ. Обновляется раз в 15 секунд.</p>`;
+    <p class="small muted" style="margin:6px 0 0">Красная метка — заведение, зелёная с номером — свободный курьер, синяя — везёт заказ, фиолетовая — курьер службы доставки. Обновляется раз в 15 секунд.</p>`;
 }
 
 function deliveryTabHtml(tenantId) {
@@ -443,7 +446,8 @@ function deliveryTabHtml(tenantId) {
     : st.sub === 'couriers' ? dlvCouriersHtml(st)
       : st.sub === 'price' ? dlvPriceHtml(st)
         : st.sub === 'menu' ? dlvMenuHtml(st)
-          : dlvReportHtml(st);
+          : st.sub === 'services' ? dlvServicesHtml(st)
+            : dlvReportHtml(st);
   return `<div id="f-dl-root">${head}${body}</div>`;
 }
 
@@ -463,13 +467,25 @@ function dlvNowHtml(st) {
   const failed = L.orders.filter((o) => o.stage === 'failed');
   const pointName = (o) => (L.chain ? `<div class="small muted">${esc(o.point)}</div>` : '');
   const canTake = (o) => on.filter((c) => c.enabled && (!c.points.length || c.points.includes(o.t)));
+  const services = (t) => ((L.services || {})[t] || []);
   const orderRow = (o) => {
     let who;
+    const x = o.ext && !['cancelled', 'failed'].includes(o.ext.step) ? o.ext : null;
     if (o.courierId) who = `<b>№${esc(o.courierNo)}</b> · ${esc(o.stageLabel || '')}`;
-    else if (o.external) who = '<span class="muted">курьер без приложения</span>';
+    else if (x) {
+      who = `<b>🚕 ${esc(DLV_PROVIDER[x.provider] || x.provider)}</b><div class="small">${esc(x.label)}${x.price ? ` · ${dlvRub(x.price)}` : ''}</div>
+        ${x.courier ? `<div class="small muted">${esc(x.courier.name)}${x.courier.car ? ` · ${esc(x.courier.car)}` : ''}</div>` : ''}
+        ${x.error ? `<div class="small" style="color:var(--danger)">${esc(x.error)}</div>` : ''}
+        ${x.track ? `<a class="small" href="${esc(x.track)}" target="_blank" rel="noopener">Отслеживание</a>` : ''}`;
+    } else if (o.external) who = '<span class="muted">курьер без приложения</span>';
     else if (o.stage === 'returned') who = '<span style="color:var(--danger)">вернули в заведение</span>';
     else who = '<span class="muted">свободен</span>';
-    const assignable = !o.external && (o.free || o.stage === 'toVenue');
+    const assignable = !o.external && !x && (o.free || o.stage === 'toVenue');
+    const lastExt = o.ext && ['cancelled', 'failed'].includes(o.ext.step) ? `<div class="small muted">${esc(DLV_PROVIDER[o.ext.provider] || '')}: ${esc(o.ext.label)}</div>` : '';
+    const extBtn = x
+      ? `${x.approve ? `<button class="btn btn-primary f-dx-approve" data-t="${esc(o.t)}" data-s="${esc(o.s)}" style="width:auto;padding:6px 10px;margin:2px 0">Подтвердить ${dlvRub(x.price)}</button>` : ''}
+         ${['done'].includes(x.step) ? '' : `<button class="btn btn-ghost f-dx-cancel" data-t="${esc(o.t)}" data-s="${esc(o.s)}" style="width:auto;padding:6px 10px;margin:2px 0">Отменить вызов</button>`}`
+      : o.free && services(o.t).length ? `<button class="btn btn-ghost f-dx-quote" data-t="${esc(o.t)}" data-s="${esc(o.s)}" data-no="${esc(o.no)}" style="width:auto;padding:6px 10px;margin:4px 0 0">🚕 Курьер службы</button>` : '';
     const opts = canTake(o);
     const assign = assignable
       ? `<select class="f-dl-assign" data-t="${esc(o.t)}" data-s="${esc(o.s)}" style="min-width:150px">
@@ -479,10 +495,23 @@ function dlvNowHtml(st) {
     return `<tr>
       <td><b>№${esc(o.no)}</b>${pointName(o)}${o.zone ? `<div class="small muted">${esc(o.zone)}</div>` : ''}</td>
       <td>${esc(o.status)}<div class="small muted">${o.ageMin} мин</div>${o.fail ? `<div class="small" style="color:var(--danger)">⚠️ ${esc(o.fail)}</div>` : ''}</td>
-      <td>${who}</td>
+      <td>${who}${lastExt}</td>
       <td style="white-space:nowrap">${o.toCollect > 0 ? dlvRub(o.toCollect) : '<span class="muted">оплачен</span>'}</td>
-      <td>${assign}</td></tr>`;
+      <td>${assign}${extBtn}</td></tr>`;
   };
+  // Окно «Курьер службы»: цены служб и вызов.
+  const Q = st.extQuote;
+  const quoteCard = !Q ? '' : `<div class="card" style="border-left:4px solid var(--primary)">
+      <div class="row" style="justify-content:space-between;align-items:center"><b>Курьер службы для заказа №${esc(Q.no)}</b>
+        <button class="btn btn-ghost f-dx-close" style="width:auto;padding:4px 10px">Закрыть</button></div>
+      ${Q.loading ? '<div class="spinner"></div>' : Q.error ? `<p style="color:var(--danger)">${esc(Q.error)}</p>` : `
+        ${Q.unpaid ? `<p class="small" style="color:var(--danger);margin:8px 0 4px"><b>Заказ не оплачен (${dlvRub(Q.toCollect)}).</b> Курьер службы деньги за еду не берёт.</p>
+          <label class="row small" style="gap:6px;align-items:center;margin:0 0 8px"><input type="checkbox" id="f-dx-unpaid" style="width:auto"> Гость оплатит заведению сам (по ссылке или переводом)</label>` : ''}
+        ${Q.quotes.map((q) => `<div class="row" style="gap:10px;align-items:center;justify-content:space-between;border-top:1px solid var(--border);padding:8px 0;flex-wrap:wrap">
+          <span><b>${esc(q.name)}</b>${q.error ? `<div class="small" style="color:var(--danger)">${esc(q.error)}</div>` : `<div class="small muted">${q.etaMin ? `приедет за ~${q.etaMin} мин · ` : ''}${q.distanceM ? `${(q.distanceM / 1000).toFixed(1).replace('.', ',')} км` : 'цена по тарифу службы'}</div>`}</span>
+          ${q.error ? '' : `<button class="btn btn-primary f-dx-call" data-p="${esc(q.provider)}" data-price="${q.price}" style="width:auto">Вызвать за ${dlvRub(q.price)}</button>`}</div>`).join('')}
+        <p class="small muted" style="margin:6px 0 0">Цена — предварительная, от службы. Яндекс может пересчитать её при вызове: если она вырастет больше чем на 20 %, вызов будет ждать вашего подтверждения.</p>`}
+    </div>`;
   return `
     <div class="admin-stat-grid">
       <div class="card" style="text-align:center;padding:14px 8px"><div style="font-size:22px;font-weight:700">${on.length}</div><div class="small muted">курьеров на смене</div></div>
@@ -491,8 +520,9 @@ function dlvNowHtml(st) {
       <div class="card" style="text-align:center;padding:14px 8px"><div style="font-size:22px;font-weight:700">${dlvRub(cash)}</div><div class="small muted">наличные у курьеров</div></div>
     </div>
     ${failed.length ? `<div class="card" style="border-left:4px solid var(--danger)"><b>Не удалось вручить: ${failed.length}</b><div class="small muted">Позвоните гостю или курьеру: курьер попробует ещё раз или вернёт заказ.</div></div>` : ''}
-    <div class="card">${dlvMapHtml(L.points, on)}</div>
+    <div class="card">${dlvMapHtml(L.points, on, L.orders.filter((o) => o.ext && o.pos))}</div>
     <h2>Заказы в работе</h2>
+    ${quoteCard}
     ${L.orders.length ? `<div class="card" style="padding:6px 8px"><div style="overflow-x:auto"><table class="table">
       <thead><tr><th>Заказ</th><th>Статус</th><th>Курьер</th><th>К оплате</th><th></th></tr></thead>
       <tbody>${L.orders.map(orderRow).join('')}</tbody></table></div></div>`
@@ -612,6 +642,14 @@ function dlvPriceHtml(st) {
       </div>
       <div class="small" style="margin-top:4px">Гость увидит: <b id="f-dl-preview">${esc(preview)}</b></div>
     </div>
+    <h2>Цены блюд в доставке</h2>
+    <div class="card">
+      <div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-end">
+        <label class="field" style="flex:0 1 220px;margin:0"><span>Наценка на блюда в доставке, %</span><input id="f-dl-markup" type="number" min="0" max="100" step="0.5" value="${f.markupPct || ''}" placeholder="0 — как в зале"></label>
+        <span class="small muted" id="f-dl-markup-ex" style="flex:1 1 220px">${f.markupPct ? `Например, блюдо за 500 ₽ в доставке — ${dlvRub(Math.ceil(500 * (100 + f.markupPct) / 100 - 1e-9))}` : 'Цены в доставке — как в зале'}</span>
+      </div>
+      <p class="small muted" style="margin:8px 0 0">Как в агрегаторах: доставка дороже упаковкой и временем. Гость видит цены доставки при оформлении — до заказа, с пометкой. Своя цена для отдельной позиции — во вкладке «Что доставляем». Самовывоз и зал — без наценки. Заказы, которые касса оформляет по телефону, пока — по ценам зала.</p>
+    </div>
     <h2>Районы</h2>
     <div class="card">
       <p class="small muted" style="margin-top:0">Необязательно. Если районы есть, гость выбирает свой при оформлении. Пустое поле — как базовая цена выше. Старые версии приложения гостя районов не знают — для них базовая цена, её назовут при звонке.</p>
@@ -635,9 +673,48 @@ function dlvPriceHtml(st) {
       <label class="row" style="gap:8px;align-items:center;margin:4px 0"><input type="checkbox" id="f-dl-live" style="width:auto" ${f.liveInTelegram ? 'checked' : ''}> Показывать курьера на карте в чате Telegram</label>
       <p class="small muted" style="margin:4px 0 0">Карта в Telegram передаёт координаты курьера на серверы мессенджера за рубежом — включайте, только если курьер согласен. Карта на странице адреса и в кабинете — на нашем сервере в России.</p>
     </div>
-    ${S.chain ? `<label class="row" style="gap:8px;align-items:center;margin:12px 0"><input type="checkbox" id="f-dl-all" style="width:auto"> Применить ко всем точкам сети (цена, районы, оплата, Telegram)</label>` : ''}
+    ${S.chain ? `<label class="row" style="gap:8px;align-items:center;margin:12px 0"><input type="checkbox" id="f-dl-all" style="width:auto"> Применить ко всем точкам сети (цена, районы, наценка, оплата, Telegram)</label>` : ''}
     <div id="f-dl-price-msg" class="small" style="margin:8px 0"></div>
     <button class="btn btn-primary" id="f-dl-price-save" style="width:auto">Сохранить</button>`;
+}
+
+function dlvServicesHtml(st) {
+  const V = st.services;
+  if (!V) return '<div class="spinner"></div>';
+  if (V.error) return dlvErrorHtml(V.error);
+  const HOW = {
+    yandex: 'Личный кабинет Яндекс Доставки для бизнеса → «Интеграция» → «Получить токен». Нужен договор с Яндекс Доставкой.',
+    dostavista: 'Личный кабинет Достависты для бизнеса → «API» → «Токен». Нужен договор с Доставистой.',
+  };
+  const block = (scope, label) => Object.keys(DLV_PROVIDER).map((p) => {
+    const c = (V[scope] || {})[p] || {};
+    const id = `${scope}-${p}`;
+    return `<div class="card">
+      <div class="row" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <b>${esc(DLV_PROVIDER[p])}${label}</b>
+        ${c.connected ? `<span class="small" style="color:${c.enabled ? 'var(--success, #15803d)' : 'var(--muted)'}">${c.enabled ? '● подключена' : 'выключена'} · ключ ${esc(c.mask)}</span>` : '<span class="small muted">не подключена</span>'}
+      </div>
+      <p class="small muted" style="margin:6px 0">${HOW[p]}</p>
+      <label class="field"><span>${c.connected ? 'Новый ключ (пусто — оставить прежний)' : 'Ключ (токен) API'}</span><input id="f-ds-token-${id}" type="password" autocomplete="off" spellcheck="false" placeholder="${c.connected ? '••••••••' : 'Вставьте токен'}"></label>
+      ${p === 'yandex' ? `<label class="field"><span>Тариф</span><select id="f-ds-class-${id}">
+        <option value="courier" ${c.taxiClass !== 'express' ? 'selected' : ''}>Курьер — пешком или на машине, дешевле</option>
+        <option value="express" ${c.taxiClass === 'express' ? 'selected' : ''}>Экспресс — на машине, быстрее</option></select></label>` : ''}
+      ${c.connected ? `<label class="row small" style="gap:6px;align-items:center;margin:4px 0 8px"><input type="checkbox" id="f-ds-on-${id}" style="width:auto" ${c.enabled ? 'checked' : ''}> Вызывать курьеров этой службы</label>` : ''}
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary f-ds-save" data-p="${p}" data-scope="${scope}" style="width:auto">${c.connected ? 'Сохранить' : 'Подключить'}</button>
+        ${c.connected ? `<button class="btn btn-ghost f-ds-del" data-p="${p}" data-scope="${scope}" style="width:auto">Удалить ключ</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  return `
+    <div class="card small" style="line-height:1.6">
+      Не хватает своих курьеров — вызовите курьера службы прямо из «Сейчас»: кнопка «🚕 Курьер службы» у заказа покажет цену, вызов — одним нажатием.
+      Статус и место курьера службы видят касса, чат-бот, кабинет и гость на карте — как у своего курьера. Курьер службы деньги за еду не берёт: такой заказ гость оплачивает онлайн.
+      Ключ хранится только зашифрованным, его не видно даже в кабинете. Имя, телефон и адрес гостя уходят службе — она в России и везёт заказ по вашему договору с ней.
+    </div>
+    <h2>Для этой точки</h2>
+    ${block('point', '')}
+    ${V.chain ? `<h2>Для всей сети</h2><p class="small muted">Один договор на сеть: адрес забора у каждой точки свой. Ключ точки, если он есть, важнее ключа сети.</p>${block('chain', ' · вся сеть')}` : ''}`;
 }
 
 function dlvMenuHtml(st) {
@@ -649,7 +726,11 @@ function dlvMenuHtml(st) {
   const itemOff = (i) => (i.id in E.items ? E.items[i.id] : i.off);
   const q = st.menuFilter.trim().toLowerCase();
   const cats = [...S.menu.categories, { id: '', name: 'Без категории', off: false, virtual: true }];
-  const changes = Object.keys(E.items).length + Object.keys(E.cats).length;
+  const P = E.prices || (E.prices = {});
+  const ownOf = (i) => (i.id in P ? P[i.id] : i.deliveryPrice);
+  const mk = Number(S.settings && S.settings.markupPct) || 0;
+  const autoPrice = (i) => (mk ? Math.ceil(Math.round(i.price * (100 + mk)) / 100 - 1e-9) : i.price);
+  const changes = Object.keys(E.items).length + Object.keys(E.cats).length + Object.keys(P).length;
   const total = S.menu.items.filter((i) => !i.law).length;
   const yes = S.menu.items.filter((i) => !i.law && !itemOff(i) && !catOff(cats.find((c) => c.id === i.categoryId) || { off: false })).length;
   const blocks = cats.map((c) => {
@@ -664,13 +745,16 @@ function dlvMenuHtml(st) {
       <div style="margin-top:6px">${items.map((i) => `<label class="row" style="gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--border);${off || i.law ? 'opacity:.55' : ''}">
           <input type="checkbox" class="f-dm-item" data-id="${esc(i.id)}" style="width:auto" ${i.law ? 'disabled' : !itemOff(i) ? 'checked' : ''} ${off ? 'disabled' : ''}>
           <span style="flex:1">${esc(i.name)}${i.stop ? ' <span class="small muted">(в стоп-листе)</span>' : ''}</span>
-          <span class="small muted" style="white-space:nowrap">${i.law ? 'нельзя по закону' : `${dlvRub(i.price)}`}</span></label>`).join('')}</div>
+          ${i.law ? '<span class="small muted" style="white-space:nowrap">нельзя по закону</span>' : `<span class="small muted" style="white-space:nowrap">${dlvRub(i.price)}</span>
+          <input class="f-dm-price" data-id="${esc(i.id)}" type="number" min="1" step="1" inputmode="decimal" aria-label="Цена «${esc(i.name)}» в доставке"
+            style="width:96px;padding:6px 8px" value="${ownOf(i) ? ownOf(i) : ''}" placeholder="${dlvRub(autoPrice(i))}" title="Своя цена в доставке; пусто — цена зала${mk ? ` + ${mk} %` : ''}" ${off || itemOff(i) ? 'disabled' : ''}>`}</label>`).join('')}</div>
     </div>`;
   }).join('');
   return `
     <div class="card small" style="line-height:1.6">
       Доставляем <b>${yes}</b> из ${total} позиций. Снимите галочку — гость увидит «Не доставляем» и сможет заказать это только с собой или в зале.
       Табак, кальяны и алкоголь доставлять нельзя по закону (ст. 19 закона № 15-ФЗ, ст. 16 закона № 171-ФЗ) — они выключены всегда.
+      <br>Справа — <b>цена в доставке</b>: пусто — цена зала${mk ? ` + наценка ${String(mk).replace('.', ',')} %` : ''} (серым — какой она будет), число — своя цена позиции.
     </div>
     <label class="field"><span>Поиск по меню</span><input id="f-dm-filter" value="${esc(st.menuFilter)}" placeholder="Название позиции"></label>
     ${blocks || '<p class="small muted">Ничего не нашлось.</p>'}
@@ -740,6 +824,13 @@ function bindDeliveryTab(tenantId, redraw) {
   const needList = ['now', 'couriers'].includes(st.sub) || (st.sub === 'report' && !st.reportDay);
   if (needList && st.list === null) { st.list = undefined; loadList(); }
   if (['price', 'menu'].includes(st.sub) && st.settings === null) { st.settings = undefined; loadSettings(); }
+  if (st.sub === 'services' && !st.services) {
+    st.services = undefined;
+    callSaasGateway('deliveryServices', { tenantId })
+      .then((r) => { st.services = r.data; })
+      .catch((e) => { st.services = { error: e.message || 'Не удалось загрузить' }; })
+      .finally(() => { if (alive()) redraw(); });
+  }
   if (st.sub === 'report' && st.report === null && (st.reportDay || (st.list && st.list.day))) { st.report = undefined; loadReport(); }
   // «Сейчас» — живое: раз в 15 секунд, пока раздел открыт.
   if (!st.timer) {
@@ -769,6 +860,68 @@ function bindDeliveryTab(tenantId, redraw) {
       const ok = await call('courierAdminAssign', { t: sel.dataset.t, s: sel.dataset.s, courierId: sel.value || null }, sel.value ? 'Курьер назначен — заказ у него в приложении' : 'Курьер снят — заказ снова свободен');
       if (!ok) sel.disabled = false;
       loadList(true);
+    };
+  });
+
+  // ----- Сейчас: курьер службы доставки
+  document.querySelectorAll('.f-dx-quote').forEach((b) => {
+    b.onclick = async () => {
+      st.extQuote = { t: b.dataset.t, s: b.dataset.s, no: b.dataset.no, loading: true };
+      redraw();
+      try {
+        const r = await callSaasGateway('deliveryExtQuote', { tenantId: b.dataset.t, sessionId: b.dataset.s });
+        st.extQuote = { ...st.extQuote, loading: false, ...r.data };
+      } catch (e) {
+        st.extQuote = { ...st.extQuote, loading: false, error: e.message || 'Службы не ответили' };
+      }
+      if (alive()) redraw();
+    };
+  });
+  if (document.querySelector('.f-dx-close')) document.querySelector('.f-dx-close').onclick = () => { st.extQuote = null; redraw(); };
+  document.querySelectorAll('.f-dx-call').forEach((b) => {
+    b.onclick = async () => {
+      const Q = st.extQuote;
+      b.disabled = true;
+      const unpaidOk = !!($('f-dx-unpaid') && $('f-dx-unpaid').checked);
+      const ok = await call('deliveryExtCall', { tenantId: Q.t, sessionId: Q.s, provider: b.dataset.p, quoted: Number(b.dataset.price) || 0, unpaidOk }, 'Курьер вызван — статус обновится сам');
+      if (ok) { st.extQuote = null; loadList(true); } else b.disabled = false;
+    };
+  });
+  document.querySelectorAll('.f-dx-approve').forEach((b) => {
+    b.onclick = async () => { b.disabled = true; await call('deliveryExtApprove', { tenantId: b.dataset.t, sessionId: b.dataset.s }, 'Вызов подтверждён'); loadList(true); };
+  });
+  document.querySelectorAll('.f-dx-cancel').forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm('Отменить вызов курьера службы?')) return;
+      b.disabled = true;
+      let r = await call('deliveryExtCancel', { tenantId: b.dataset.t, sessionId: b.dataset.s });
+      if (r && r.paid && confirm(r.message)) r = await call('deliveryExtCancel', { tenantId: b.dataset.t, sessionId: b.dataset.s, confirmPaid: true });
+      if (r && r.ok) toast('Вызов отменён — заказ снова ждёт курьера');
+      loadList(true);
+    };
+  });
+
+  // ----- Службы доставки: ключи
+  document.querySelectorAll('.f-ds-save').forEach((b) => {
+    b.onclick = async () => {
+      const id = `${b.dataset.scope}-${b.dataset.p}`;
+      const token = ($(`f-ds-token-${id}`) || {}).value || '';
+      const cls = $(`f-ds-class-${id}`);
+      const on = $(`f-ds-on-${id}`);
+      b.disabled = true;
+      const ok = await call('deliveryServicesSave', {
+        provider: b.dataset.p, token: token.trim(), forChain: b.dataset.scope === 'chain',
+        ...(cls ? { taxiClass: cls.value } : {}), enabled: on ? on.checked : true,
+      }, token.trim() ? 'Ключ проверен и сохранён' : 'Сохранено');
+      b.disabled = false;
+      if (ok) { st.services = null; st.list = null; redraw(); }
+    };
+  });
+  document.querySelectorAll('.f-ds-del').forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm(`Удалить ключ ${DLV_PROVIDER[b.dataset.p]}?`)) return;
+      const ok = await call('deliveryServicesSave', { provider: b.dataset.p, remove: true, forChain: b.dataset.scope === 'chain' }, 'Ключ удалён');
+      if (ok) { st.services = null; st.list = null; redraw(); }
     };
   });
 
@@ -855,6 +1008,7 @@ function bindDeliveryTab(tenantId, redraw) {
     st.form.payAtDoor = { cash: $('f-dl-cash').checked, card: $('f-dl-card').checked, qr: $('f-dl-qr').checked };
     st.form.courierLink = $('f-dl-link').checked;
     st.form.liveInTelegram = $('f-dl-live').checked;
+    st.form.markupPct = n('f-dl-markup');
     document.querySelectorAll('.f-dz').forEach((inp) => {
       const z = st.form.zones.find((x) => x.id === inp.closest('tr').dataset.z);
       if (!z) return;
@@ -870,6 +1024,12 @@ function bindDeliveryTab(tenantId, redraw) {
       if (el) el.textContent = [f.fee ? `доставка ${dlvRub(f.fee)}` : 'доставка бесплатно', f.freeFrom ? `бесплатно от ${dlvRub(f.freeFrom)}` : '', f.minOrder ? `минимальный заказ ${dlvRub(f.minOrder)}` : '', `привезём за ~${f.etaMin} мин`].filter(Boolean).join(' · ');
     };
     ['f-dl-fee', 'f-dl-free', 'f-dl-min', 'f-dl-eta'].forEach((id) => { $(id).oninput = updatePreview; });
+    if ($('f-dl-markup')) {
+      $('f-dl-markup').oninput = () => {
+        const v = Math.min(100, Math.max(0, Math.round((Number($('f-dl-markup').value) || 0) * 2) / 2));
+        $('f-dl-markup-ex').textContent = v ? `Например, блюдо за 500 ₽ в доставке — ${dlvRub(Math.ceil(500 * (100 + v) / 100 - 1e-9))}` : 'Цены в доставке — как в зале';
+      };
+    }
   }
   if ($('f-dz-add')) $('f-dz-add').onclick = () => { syncForm(); st.form.zones.push({ id: `n${Date.now().toString(36)}${dlvSeq++}`, name: '', fee: null, minOrder: null, freeFrom: null, etaMin: null }); redraw(); };
   document.querySelectorAll('.f-dz-del').forEach((b) => { b.onclick = () => { syncForm(); st.form.zones = st.form.zones.filter((z) => z.id !== b.dataset.z); redraw(); }; });
@@ -898,7 +1058,7 @@ function bindDeliveryTab(tenantId, redraw) {
   // ----- Что доставляем
   if ($('f-dm-filter')) $('f-dm-filter').oninput = (e) => { st.menuFilter = e.target.value; redraw(); };
   const markChanged = () => {
-    const n = Object.keys(st.menuEdits.items).length + Object.keys(st.menuEdits.cats).length;
+    const n = Object.keys(st.menuEdits.items).length + Object.keys(st.menuEdits.cats).length + Object.keys(st.menuEdits.prices || {}).length;
     const b = $('f-dm-save');
     if (b) { b.disabled = !n; b.textContent = n ? `Сохранить изменения (${n})` : 'Изменений нет'; }
   };
@@ -908,6 +1068,17 @@ function bindDeliveryTab(tenantId, redraw) {
       const off = !cb.checked;
       if (off === item.off) delete st.menuEdits.items[item.id];
       else st.menuEdits.items[item.id] = off;
+      markChanged();
+    };
+  });
+  document.querySelectorAll('.f-dm-price').forEach((inp) => {
+    inp.onchange = () => {
+      const item = st.settings.menu.items.find((i) => i.id === inp.dataset.id);
+      const P = st.menuEdits.prices || (st.menuEdits.prices = {});
+      const v = inp.value.trim() === '' ? null : Math.round(Number(inp.value) * 100) / 100;
+      if (v !== null && !(v > 0)) { inp.value = ''; return; }
+      if ((item.deliveryPrice || null) === v) delete P[item.id];
+      else P[item.id] = v;
       markChanged();
     };
   });
@@ -923,8 +1094,8 @@ function bindDeliveryTab(tenantId, redraw) {
   if ($('f-dm-save')) {
     $('f-dm-save').onclick = async () => {
       $('f-dm-save').disabled = true;
-      const r = await call('deliveryMenuSave', { items: st.menuEdits.items, categories: st.menuEdits.cats }, 'Сохранено — гости увидят изменения сразу');
-      if (r) { st.settings.menu = r.menu; st.menuEdits = { items: {}, cats: {} }; redraw(); } else markChanged();
+      const r = await call('deliveryMenuSave', { items: st.menuEdits.items, categories: st.menuEdits.cats, prices: st.menuEdits.prices || {} }, 'Сохранено — гости увидят изменения сразу');
+      if (r) { st.settings.menu = r.menu; st.menuEdits = { items: {}, cats: {}, prices: {} }; redraw(); } else markChanged();
     };
   }
 
@@ -3646,10 +3817,12 @@ function applyLegalMode(status) {
   AUTH_IN_RF = !!since && !Number.isNaN(since.getTime());
   if (AUTH_IN_RF) {
     // № 4 (9 ноября 2026 г.) — отдельное согласие гостей на подарки и
-    // предложения, «Вернуть гостя». Свой вход включили позже — от его даты.
-    const ed4 = new Date('2026-11-09T00:00:00+03:00');
-    const from = since > ed4 ? since : ed4;
-    LEGAL_EDITION = `Редакция № 4 от ${from.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Moscow' })}`;
+    // предложения, «Вернуть гостя». № 5 (11 ноября 2026 г.) — курьеры и
+    // приложение курьера, точка гостя для доставки, службы доставки,
+    // карты. Свой вход включили позже — от его даты.
+    const ed5 = new Date('2026-11-11T00:00:00+03:00');
+    const from = since > ed5 ? since : ed5;
+    LEGAL_EDITION = `Редакция № 5 от ${from.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Moscow' })}`;
   }
 }
 const xborderConsentHtml = () => (AUTH_IN_RF ? '' : ', в том числе на их трансграничную передачу');
@@ -3695,14 +3868,14 @@ function screenLegalOffer() {
       ${legalSection('7. Персональные данные', [
         '<b>7.1. Гости.</b> Оператором персональных данных Гостей, обрабатываемых в Платформе (имя, номер телефона, день и месяц рождения, адрес доставки, сведения о бронированиях, заказах, посещениях, бонусах и отзывах), является Исполнитель: он определяет цели обработки — предоставление Гостям бронирования, заказов, доставки и программы лояльности в заведениях, работающих на Платформе, — состав данных и действия с ними. Заказчик в отношении этих данных оператором не является и не обязан уведомлять Роскомнадзор об их обработке.',
         '<b>7.2. Поручение Заказчику.</b> Исполнитель поручает Заказчику (ч. 3 ст. 6 Федерального закона № 152-ФЗ) обработку персональных данных Гостей только в Платформе и только для обслуживания Гостей в Заведении: просмотр, запись, уточнение, использование (связь с Гостем по брони и заказу, выдача и доставка заказа, начисление и списание бонусов), удаление. Заказчик обязуется: допускать к данным только своих работников, которым они нужны для работы, под их личными PIN-кодами; соблюдать конфиденциальность и не передавать данные третьим лицам; не копировать и не выгружать их из Платформы и не использовать в других целях, в том числе для рекламных рассылок; вносить имена, телефоны и адреса Гостей только в Платформу (первичная запись — в базу данных на территории РФ, ч. 5 ст. 18 Федерального закона № 152-ФЗ); принимать меры по ст. 18.1 и 19 этого закона — ознакомить работников с требованиями к обработке персональных данных, не оставлять кассу без присмотра и не сообщать PIN-коды посторонним; не позднее 24 часов сообщать Исполнителю об инцидентах с данными и о запросах Гостей об их данных. Обрабатывая данные Гостей вне Платформы или в собственных целях, Заказчик становится их самостоятельным оператором и отвечает за такую обработку сам.',
-        '<b>7.3. Работники.</b> Оператором персональных данных работников Заказчика (имя, должность, время смен, сведения для расчёта зарплаты, PIN-код в защищённом виде) является Заказчик как работодатель. Акцептуя оферту, Заказчик поручает Исполнителю их обработку (ч. 3 ст. 6 Федерального закона № 152-ФЗ) в целях исполнения договора: запись, систематизацию, накопление, хранение, уточнение, извлечение, использование, блокирование, удаление и уничтожение.',
+        '<b>7.3. Работники.</b> Оператором персональных данных работников Заказчика (имя, должность, время смен, сведения для расчёта зарплаты, PIN-код в защищённом виде), в том числе курьеров Заказчика (имя, номер телефона, местоположение телефона во время смены в приложении курьера, поездки и принятые у Гостей суммы), является Заказчик как работодатель или заказчик их услуг. Акцептуя оферту, Заказчик поручает Исполнителю их обработку (ч. 3 ст. 6 Федерального закона № 152-ФЗ) в целях исполнения договора: запись, систематизацию, накопление, хранение, уточнение, извлечение, использование, блокирование, удаление и уничтожение.',
         '<b>7.4. Обязанности Исполнителя.</b> Соблюдать конфиденциальность данных, принимать меры защиты по ст. 19 Федерального закона № 152-ФЗ, записывать имена, телефоны и адреса Гостей и имена работников в базу данных на территории РФ и хранить их там, уведомлять Заказчика об инцидентах с данными его работников не позднее 24 часов с момента выявления и по окончании договора удалять данные в сроки раздела 5.',
         (DATA_IN_RF
           ? '<b>7.5. Хранение только в РФ.</b> Имена, телефоны и адреса Гостей и имена работников всех Заведений хранятся только на сервере в РФ; данные Заведений для синхронизации устройств (меню, заказы, суммы, идентификаторы) — на том же сервере Исполнителя в РФ; резервные копии — в зашифрованном виде в хранилище в РФ (ключ шифрования — только у Исполнителя). Персональные данные'
           : '<b>7.5. Хранение только в РФ.</b> Имена, телефоны и адреса Гостей и имена работников всех Заведений хранятся только на сервере в РФ; в зарубежную облачную инфраструктуру, используемую для синхронизации устройств, передаются лишь обезличенные данные (меню, заказы, суммы, идентификаторы). Персональные данные')
           + ' Гостей и работников Заказчика за пределы РФ не передаются.'
           + (LEGACY_GOOGLE ? ' Копии, сохранившиеся в зарубежной инфраструктуре с прежних версий Платформы, Исполнитель сам переносит в РФ и удаляет оттуда.' : ''),
-        '<b>7.6. Роскомнадзор.</b> Об обработке персональных данных Гостей в Платформе Роскомнадзор уведомляет Исполнитель как их оператор. Использование Платформы не требует от Заказчика уведомления о трансграничной передаче: её нет. Обязанность работодателя уведомить Роскомнадзор об обработке персональных данных своих работников (ст. 22 Федерального закона № 152-ФЗ) существует у Заказчика независимо от использования Платформы; памятка с готовым текстом — в личном кабинете.',
+        '<b>7.6. Роскомнадзор.</b> Об обработке персональных данных Гостей в Платформе Роскомнадзор уведомляет Исполнитель как их оператор. Использование Платформы не требует от Заказчика уведомления о трансграничной передаче: её нет, пока Заказчик сам не включит показ своего курьера на карте в чате чат-бота в мессенджере (раздел «Доставка», по умолчанию выключено) — тогда координаты курьера уходят на серверы мессенджера за пределами РФ, и согласие курьера и уведомление Роскомнадзора по ст. 12 Федерального закона № 152-ФЗ — на Заказчике. Обязанность работодателя уведомить Роскомнадзор об обработке персональных данных своих работников (ст. 22 Федерального закона № 152-ФЗ) существует у Заказчика независимо от использования Платформы; памятка с готовым текстом — в личном кабинете.',
         '<b>7.7. ИИ-помощники</b> подключаются Заказчиком по собственному желанию с ключом выбранного им провайдера ИИ; договор с провайдером заключает Заказчик. Исполнитель передаёт провайдеру только сведения, нужные для ответа, без телефонов и email Гостей; имена Гостей — первой буквой, работников — условными обозначениями.',
         '<b>7.8. Подарки и предложения Гостям («Вернуть гостя»).</b> По поручению Заказчика Исполнитель показывает в приложении Заведения сообщения и начисляет бонусы Гостям, которые давно не приходили. Сообщения получают только Гости, давшие Исполнителю отдельное согласие на получение рекламы (ст. 18 Федерального закона «О рекламе»); Гость отказывается от них в профиле приложения, и направление прекращается сразу. Содержание сообщений и размер подарка определяет Заказчик как рекламодатель и отвечает за их соответствие законодательству; Платформа не принимает тексты с упоминанием табачной, никотинсодержащей и алкогольной продукции и ссылок. Исполнитель не передаёт Заказчику сведения о том, кто из Гостей получил сообщение, — только общие цифры.',
         'Обработка персональных данных самого Заказчика и его представителей осуществляется по Политике обработки персональных данных, опубликованной на сайте.',
@@ -3821,8 +3994,9 @@ function screenLegalPrivacy() {
       ${legalSection('2. Субъекты и состав данных', [
         '<b>Пользователи личного кабинета</b> (владельцы и представители заведений): email, имя, роль, сведения об оплатах, журнал действий в кабинете; при оплате по счёту — ФИО индивидуального предпринимателя или наименование организации, ИНН и КПП плательщика.',
         '<b>Работники заведений</b>: имя, должность, PIN-код входа в кассу (в защищённом виде), время смен, сведения для расчёта зарплаты.',
+        '<b>Курьеры заведений</b> (по поручению заведения, как работники): имя, номер телефона, местоположение телефона — только пока курьер на смене в приложении курьера и дал на это согласие, поездки (время, километры, результат), принятые у Гостей суммы и способ оплаты. Последняя точка курьера стирается в конце смены, в заказе — после вручения; в истории поездок остаются только километры, без координат.',
         '<b>Менеджеры партнёрской программы</b>: email, имя, налоговый статус, реквизиты для выплат (номер телефона для СБП, банк, ФИО, ИНН), ссылки на чеки из приложения «Мой налог», сведения о начислениях и выплатах, идентификатор аккаунта в мессенджере (если менеджер подключил чат-бота).',
-        '<b>Гости заведений</b>: имя, номер телефона, день и месяц рождения (если Гость их укажет), адрес доставки, сведения о бронированиях, заказах, посещениях, бонусах и отзывах.',
+        '<b>Гости заведений</b>: имя, номер телефона, день и месяц рождения (если Гость их укажет), адрес доставки и точка на карте для доставки (если Гость сам отметит её кнопкой «Где я» при заказе), сведения о бронированиях, заказах, посещениях, бонусах и отзывах.',
         'Специальные категории и биометрические персональные данные не обрабатываются. Платформа не предназначена для сбора данных лиц младше 14 лет.',
       ])}
       ${legalSection('3. Цели обработки', [
@@ -3840,6 +4014,8 @@ function screenLegalPrivacy() {
         'Доступ к данным Гостей заведения имеют его работники в пределах назначенных ролей и только в Платформе — по поручению Оператора, с обязанностью соблюдать конфиденциальность и не использовать данные в других целях. Персонал Оператора получает доступ только для технической поддержки и в необходимом объёме. Данные разных заведений изолированы друг от друга.',
         'Данные не передаются третьим лицам, кроме случаев, предусмотренных законом, и поставщиков инфраструктуры, указанных в разделе 6, действующих на условиях конфиденциальности.',
         `При оплате тарифа email плательщика и сведения о платеже передаются платёжному сервису ${PAYMENT_SERVICE} для приёма оплаты и отправки чека; данные банковской карты вводятся на странице платёжного сервиса и Оператору не передаются. При оплате по счёту реквизиты плательщика используются для выставления счёта и формирования чека с ИНН покупателя в приложении «Мой налог» (сведения о чеке передаются в ФНС России в силу Федерального закона № 422-ФЗ).`,
+        'Доставку заказа может выполнять курьер заведения или, по выбору заведения, российская служба доставки, с которой у заведения заключён договор (например, Яндекс Доставка, Достависта). Службе доставки передаются только сведения, нужные для доставки: имя и номер телефона Гостя, адрес и точка доставки, комментарий к доставке, номер и стоимость заказа. Пока курьер (заведения или службы) везёт заказ, Гость видит его местоположение на карте.',
+        'Карты и маршруты в приложениях и кабинете показывает сервис «Яндекс Карты» (ООО «Яндекс», Российская Федерация): чтобы нарисовать карту и маршрут, ему передаются координаты или адреса точек (заведение, курьер, место доставки) — без имён и телефонов.',
         'Если заведение подключило ИИ-помощников, запросы к ним обрабатывает провайдер ИИ, выбранный заведением, по договору заведения с этим провайдером. Провайдеру передаются текст вопроса и сведения, нужные для ответа (меню, занятость столов, брони); имена гостей заменяются первой буквой, телефоны и email гостей не передаются. Гостям не следует сообщать в чате ИИ-помощника свои персональные данные.',
       ])}
       ${legalSection('6. Место хранения и трансграничная передача', [
@@ -3852,8 +4028,9 @@ function screenLegalPrivacy() {
         'Для оперативной обработки обращений Оператор вправе осуществлять автоматизированную передачу данных на сторонние технологические платформы, включая сервисы электронной почты и информационные чат-боты в мессенджерах, используемые исключительно для оперативного уведомления Администрации о новых обращениях. Через чат-боты в мессенджерах передаётся только обезличенный текст обращения (без имён, телефонов, адресов электронной почты и иных данных, позволяющих установить личность). Данные не передаются третьим лицам в маркетинговых или иных целях, не связанных с обработкой запроса пользователя.',
         'Чат поддержки на сайте (кнопка в правом нижнем углу) работает и без входа в кабинет. Сообщения посетителя проходят через сервер Оператора в РФ и обезличиваются так же, как обращения из кабинета, до записи и до передачи ИИ-ассистенту и сотрудникам поддержки; указывать имя, телефон и другие контактные данные не нужно. Чтобы продолжить диалог, в браузере посетителя (localStorage) хранятся случайный ключ диалога и случайный ключ браузера; на сервере — только их хеши. По хешу ключа браузера сотрудники поддержки видят условный номер («Гость 4821»), чтобы не путать диалоги разных посетителей; имя, телефон и другие данные, позволяющие установить личность, для этого не используются. IP-адрес используется только для защиты от спама (ограничения частоты сообщений) и вместе с диалогом не сохраняется. Диалоги посетителей сайта удаляются автоматически через 30 дней. На вопросы отвечает ИИ-ассистент; по просьбе посетителя («оператор») подключается сотрудник поддержки.',
         'Мессенджер используется по выбору пользователя: если владелец или менеджер подключил чат-бота Платформы в мессенджере, ему приходят уведомления о работе заведения или о своих клиентах и выплатах — без имён, телефонов и адресов Гостей и работников, без реквизитов и ИНН. Почту владельцев, вопросы в поддержку и ссылки на чеки бот менеджеров не принимает: их вводят в кабинете (в том числе открытом внутри мессенджера), и они сразу записываются на сервер в РФ. Кабинет менеджера внутри мессенджера открывается без пароля по цифровой подписи мессенджера; изменить реквизиты для выплат там нельзя — только после входа по паролю.',
+        'Заведение может само включить показ своего курьера на карте в чате чат-бота в мессенджере (настройка в разделе «Доставка», по умолчанию выключена). Тогда координаты курьера передаются на серверы мессенджера за пределами РФ; заведение как оператор данных своих курьеров включает её только с согласия курьера и само выполняет требования ст. 12 Федерального закона № 152-ФЗ. Данные Гостей при этом не передаются.',
         AUTH_IN_RF
-          ? 'Трансграничная передача персональных данных не осуществляется.'
+          ? 'Трансграничная передача персональных данных Оператором не осуществляется.'
           : 'Трансграничная передача персональных данных — только адреса электронной почты и данных для входа пользователей личного кабинета в сервис авторизации Google LLC (США). Она осуществляется с согласия пользователя, данного при регистрации, и после уведомления Роскомнадзора в порядке ст. 12 Федерального закона № 152-ФЗ; получатель обеспечивает защиту данных (шифрование при хранении и передаче, сертификация ISO/IEC 27001, 27017, 27018).',
       ])}
       ${legalSection('6.1. Партнёрская программа', [

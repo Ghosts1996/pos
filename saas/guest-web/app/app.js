@@ -2288,6 +2288,19 @@ function deliveryQuote(info, subtotal, zoneId) {
 }
 const DELIVERY_ITEM_ID = 'zalpos_delivery';
 
+/// Цена штуки в доставке — та же формула, что на шлюзе
+/// (delivery-pricing.js → deliveryUnit): своя цена позиции заменяет цену
+/// меню, добавки и всё без своей цены — с наценкой, вверх до рубля.
+function deliveryUnit(base, mods, own, markupPct) {
+  const n = Number(markupPct);
+  const pct = !Number.isFinite(n) || n <= 0 ? 0 : Math.min(100, Math.round(n * 2) / 2);
+  const up = (v) => (pct > 0 ? Math.ceil(Math.round(v * (100 + pct)) / 100 - 1e-9) : Math.round(v * 100) / 100);
+  const m = Math.max(0, Number(mods) || 0);
+  const o = Number(own);
+  if (Number.isFinite(o) && o > 0) return Math.round((o + up(m)) * 100) / 100;
+  return up(Math.max(0, Number(base) || 0) + m);
+}
+
 /// Короткий номер заказа — тот же, что видит персонал на кассе и в Telegram.
 /// Номер заказа: порядковый (orderNo — шлюз и касса ведут общий счётчик),
 /// у старых заказов — последние 4 знака id. Как orderNumberLabel в кассе.
@@ -2359,9 +2372,10 @@ async function screenCheckout() {
     const { id, mods } = parseLine(key);
     const it = items.find((i) => i.id === id);
     if (!it) return null;
+    const hall = priceWith(it, mods);
     return {
       key, qty, mods, name: it.name, menuItemId: it.id,
-      price: priceWith(it, mods),
+      price: hall, base: Number(it.price) || 0, modsSum: Math.max(0, hall - (Number(it.price) || 0)),
       banned: remoteSaleBanned(it, catName(it.categoryId)),
     };
   }).filter(Boolean);
@@ -2376,9 +2390,14 @@ async function screenCheckout() {
   let delivery = saved.type !== 'takeaway';
   let payOnline = false;
   let zoneId = info && (info.zones || []).some((z) => z.id === saved.zoneId) ? saved.zoneId : '';
+  // Точка «📍 Где я» — только в этот заказ, в памяти телефона не храним.
+  let geoMark = null;
   // Что уходит в заказ: без запрещённого законом и — в доставку — без того, что заведение не возит.
   const allowedNow = () => lines.filter((l) => !l.banned && !(delivery && isOff(l)));
-  const subtotal = () => allowedNow().reduce((a, l) => a + l.price * l.qty, 0);
+  // Цены доставки (наценка, свои цены позиций) — когда шлюз их прислал.
+  const priced = () => delivery && info && (Number(info.markupPct) > 0 || Object.keys(info.prices || {}).length > 0);
+  const unit = (l) => (delivery && info ? deliveryUnit(l.base, l.modsSum, (info.prices || {})[l.menuItemId], info.markupPct) : l.price);
+  const subtotal = () => Math.round(allowedNow().reduce((a, l) => a + unit(l) * l.qty, 0) * 100) / 100;
   const quoteNow = () => (delivery && info ? deliveryQuote(info, subtotal(), zoneId) : null);
 
   screenEl().innerHTML = `
@@ -2409,6 +2428,8 @@ async function screenCheckout() {
           <label class="field"><span>Этаж</span><input id="dFloor" inputmode="numeric" maxlength="4" value="${esc(saved.floor || '')}"></label>
           <label class="field"><span>Домофон</span><input id="dIntercom" maxlength="12" value="${esc(saved.intercom || '')}"></label>
         </div>
+        <button type="button" class="btn" id="dGeo" style="width:100%;margin:2px 0 4px">📍 Отметить, где я — курьер найдёт быстрее</button>
+        <p class="small muted" id="dGeoHint" style="margin:0 0 12px">Необязательно. Точка нужна только курьеру для маршрута и стирается вместе с заказом.</p>
       </div>
 
       <label class="field"><span id="dCommentLabel">Комментарий</span>
@@ -2465,7 +2486,8 @@ async function screenCheckout() {
     $('billBox').innerHTML = `
       ${list.map((l) => `<div class="bill-line">
         <span class="grow">${esc(l.name)}${l.mods.length ? ` <span class="muted small">(${esc(l.mods.join(', '))})</span>` : ''} ×${l.qty}</span>
-        <span class="muted">${money(l.price * l.qty)}</span></div>`).join('') || '<p class="small muted" style="margin:0">В заказе пока нет позиций.</p>'}
+        <span class="muted">${money(unit(l) * l.qty)}</span></div>`).join('') || '<p class="small muted" style="margin:0">В заказе пока нет позиций.</p>'}
+      ${priced() ? `<p class="small muted" style="margin:4px 0 8px">Цены в доставке${Number(info.markupPct) > 0 ? ` — на ${String(info.markupPct).replace('.', ',')} % выше, чем в зале` : ' — свои у некоторых позиций'}: так решило заведение.</p>` : ''}
       ${q && !q.needZone ? `<div class="bill-line"><span class="grow">Доставка${q.zone ? ` · ${esc(q.zone.name)}` : ''}</span><span class="muted">${fee ? money(fee) : 'бесплатно'}</span></div>` : ''}
       <div class="bill-total"><span>Итого</span><span>${money(sum + (q && !q.needZone ? fee : 0))}</span></div>
       ${q && q.toFree > 0 && q.ok ? `<p class="small" style="margin:8px 0 0;color:var(--gold)">До бесплатной доставки — ещё ${money(q.toFree)}</p>` : ''}
@@ -2486,6 +2508,40 @@ async function screenCheckout() {
     b.onclick = () => { payOnline = b.dataset.pay === 'online'; paint(); };
   });
   screenEl().querySelector('[data-back]').onclick = () => { location.hash = '#/menu'; };
+
+  const geoBtn = $('dGeo');
+  const geoHint = $('dGeoHint');
+  if (geoBtn) {
+    if (!('geolocation' in navigator)) geoBtn.hidden = true;
+    geoBtn.onclick = () => {
+      if (geoMark) {
+        geoMark = null;
+        geoBtn.textContent = '📍 Отметить, где я — курьер найдёт быстрее';
+        geoHint.textContent = 'Точка убрана — курьер поедет по адресу.';
+        return;
+      }
+      geoBtn.disabled = true;
+      geoBtn.textContent = 'Определяем, где вы…';
+      navigator.geolocation.getCurrentPosition((pos) => {
+        geoBtn.disabled = false;
+        const acc = Math.round(pos.coords.accuracy || 0);
+        if (acc > 1500) {
+          geoBtn.textContent = '📍 Отметить, где я — курьер найдёт быстрее';
+          geoHint.textContent = `Телефон определил место неточно (±${acc} м) — курьер поедет по адресу. Включите GPS и попробуйте ещё раз.`;
+          return;
+        }
+        geoMark = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc };
+        geoBtn.textContent = '✓ Точка отмечена — убрать';
+        geoHint.textContent = `Курьер увидит точку на карте (точность ±${Math.max(5, acc)} м). Адрес и квартиру всё равно укажите.`;
+      }, (err) => {
+        geoBtn.disabled = false;
+        geoBtn.textContent = '📍 Отметить, где я — курьер найдёт быстрее';
+        geoHint.textContent = err && err.code === 1
+          ? 'Браузер не дал доступ к геолокации — курьер поедет по адресу. Разрешить можно в настройках сайта.'
+          : 'Не удалось определить место — курьер поедет по адресу.';
+      }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+    };
+  }
 
   const send = $('dSend');
   const consent = bindConsent(send, () => allowedNow().length > 0 && !send.dataset.blocked);
@@ -2510,6 +2566,7 @@ async function screenCheckout() {
       street: val('dStreet'), flat: val('dFlat'), entrance: val('dEntrance'),
       floor: val('dFloor'), intercom: val('dIntercom'),
     };
+    const geo = delivery && geoMark ? { lat: geoMark.lat, lng: geoMark.lng, acc: geoMark.acc } : null;
     send.disabled = true;
     try {
       await commitConsent();
@@ -2518,11 +2575,12 @@ async function screenCheckout() {
         name,
         phone: normalizePhone(phoneRaw),
         ...(delivery ? { address } : {}),
+        ...(geo ? { geo } : {}),
         comment: val('dComment'),
         payMethod: payOnline && online ? 'online' : 'on_receipt',
         items: allowed.map((l) => ({ menuItemId: l.menuItemId, qty: l.qty, ...(l.mods.length ? { mods: l.mods } : {}) })),
-        // Цена доставки, которую гость видел: сервер проверит, что она не изменилась.
-        ...(q ? { delivery: { zoneId, fee: q.fee } } : {}),
+        // Цены, которые гость видел: сервер проверит, что они не изменились.
+        ...(q ? { delivery: { zoneId, fee: q.fee, markupPct: Number(info.markupPct) || 0, itemsTotal: subtotal() } } : {}),
       });
       saveContact({ type: delivery ? 'delivery' : 'takeaway', name, phone: phoneRaw, ...address, ...(zoneId ? { zoneId } : {}) });
       // В корзине остаются только позиции, которые с собой не продаются, —
@@ -2535,7 +2593,7 @@ async function screenCheckout() {
       toast(e.message || 'Не удалось оформить заказ');
       send.disabled = false;
       // Заведение поменяло цену или районы, пока гость оформлял, — показываем новые.
-      if (/Цена доставки изменилась|района больше нет|Выберите район/i.test(e.message || '')) {
+      if (/Цена доставки изменилась|Цены доставки изменились|Цены изменились|района больше нет|Выберите район/i.test(e.message || '')) {
         info = await gatewayPost('/guestDeliveryInfo', {}).catch(() => info);
         paint();
       }

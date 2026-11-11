@@ -12,6 +12,7 @@ const MANAGE_ROLES = ["owner", "admin", "manager"];
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 function createDeliveryAdmin({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole, requireChainRole, onSaved = () => {} }) {
+  const FieldValue = admin.firestore.FieldValue;
   const tenantRef = (t) => db().collection("tenants").doc(t);
 
   async function ctxOf(req, body) {
@@ -44,6 +45,7 @@ function createDeliveryAdmin({ db, admin, verifyAuth, parseJsonBody, sendJson, H
         return {
           id: d.id, name: String(m.name || ""), categoryId: String(m.categoryId || ""), price: Number(m.price) || 0,
           off: m.deliveryOff === true, law, stop: m.available === false,
+          deliveryPrice: Number(m.deliveryPrice) > 0 ? Number(m.deliveryPrice) : null,
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name, "ru"));
@@ -112,6 +114,15 @@ function createDeliveryAdmin({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     const items = body.items && typeof body.items === "object" ? body.items : {};
     const cats = body.categories && typeof body.categories === "object" ? body.categories : {};
     const ids = Object.keys(items).filter((id) => ID_RE.test(id)).slice(0, 2000);
+    // Свои цены в доставке: { id: число ₽ } или null — как в зале с наценкой.
+    const prices = body.prices && typeof body.prices === "object" ? body.prices : {};
+    const priceIds = Object.keys(prices).filter((id) => ID_RE.test(id)).slice(0, 2000);
+    for (const id of priceIds) {
+      const v = prices[id];
+      if (v !== null && v !== "" && !(Number.isFinite(Number(v)) && Number(v) > 0 && Number(v) <= 100000)) {
+        throw new HttpError(400, "Цена в доставке — от 1 до 100 000 ₽ (пусто — цена зала с наценкой)");
+      }
+    }
     const catIds = Object.keys(cats).filter((id) => ID_RE.test(id)).slice(0, 500);
     let changed = 0;
     for (const id of catIds) {
@@ -130,6 +141,17 @@ function createDeliveryAdmin({ db, admin, verifyAuth, parseJsonBody, sendJson, H
       const off = items[id] === true;
       if (((cur.data() || {}).deliveryOff === true) === off) continue;
       await ref.update({ deliveryOff: off });
+      changed++;
+    }
+    for (const id of priceIds) {
+      const ref = t.collection("menuItems").doc(id);
+      const cur = await ref.get();
+      if (!cur.exists) continue;
+      const v = prices[id];
+      const next = v === null || v === "" ? null : Math.round(Number(v) * 100) / 100;
+      const was = Number((cur.data() || {}).deliveryPrice) > 0 ? Number(cur.data().deliveryPrice) : null;
+      if (was === next) continue;
+      await ref.update({ deliveryPrice: next === null ? FieldValue.delete() : next });
       changed++;
     }
     sendJson(res, 200, { ok: true, changed, menu: await menuOf(ctx.tenantId) });

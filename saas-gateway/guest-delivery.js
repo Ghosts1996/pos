@@ -93,7 +93,8 @@ function localNow(date, tz) {
 }
 
 /** Позиции корзины по меню: цена с модификаторами, проверка выбора. */
-function priceItems(lines, menu, categoryNames) {
+/** markup — { pct } для заказа в доставку по ценам доставки, иначе null (цены зала). */
+function priceItems(lines, menu, categoryNames, markup = null) {
   const out = [];
   const banned = [];
   for (const line of lines) {
@@ -117,7 +118,10 @@ function priceItems(lines, menu, categoryNames) {
     }
     const known = new Set(options.map((o) => String(o.name).trim()));
     const mods = chosen.filter((x) => known.has(x));
-    const price = round2((Number(m.price) || 0) + options.reduce((a, o) => a + (Number(o.price) || 0), 0));
+    const modsSum = options.reduce((a, o) => a + (Number(o.price) || 0), 0);
+    const price = markup
+      ? pricing.deliveryUnit(Number(m.price) || 0, modsSum, m.deliveryPrice, markup.pct)
+      : round2((Number(m.price) || 0) + modsSum);
     const qty = Math.floor(Number(line.qty));
     if (!(qty >= 1 && qty <= MAX_QTY)) throw new Error(`«${m.name}»: количество от 1 до ${MAX_QTY}`);
     out.push({ menuItemId: line.menuItemId, name: String(m.name || ""), price, qty, ...(mods.length ? { mods } : {}) });
@@ -188,6 +192,14 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     const address = orderType === "delivery" ? parts.join(", ").slice(0, 300) : "";
     if (orderType === "delivery" && street.length < 5) throw new HttpError(400, "Укажите адрес: улицу и дом");
     const comment = clean(body.comment, 300);
+    // Точка «📍 Где я» из приложения гостя: курьер едет точно к ней (адрес
+    // текстом всё равно обязателен — подъезд, квартира).
+    const g = orderType === "delivery" && body.geo && typeof body.geo === "object" ? body.geo : null;
+    const geo = g && Number.isFinite(Number(g.lat)) && Number.isFinite(Number(g.lng))
+      && Math.abs(Number(g.lat)) <= 90 && Math.abs(Number(g.lng)) <= 180 && !(Number(g.lat) === 0 && Number(g.lng) === 0)
+      && (g.acc === undefined || (Number(g.acc) >= 0 && Number(g.acc) <= 3000))
+      ? { lat: Math.round(Number(g.lat) * 1e6) / 1e6, lng: Math.round(Number(g.lng) * 1e6) / 1e6, ...(Number(g.acc) > 0 ? { acc: Math.round(Number(g.acc)) } : {}) }
+      : null;
     const payMethod = body.payMethod === "online" ? "online" : "on_receipt";
     if (payMethod === "online" && !(await onlinePayReady(tenantId))) {
       throw new HttpError(409, "Онлайн-оплата в заведении сейчас не подключена — выберите оплату при получении");
@@ -206,9 +218,18 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     const cats = await Promise.all(catIds.map((id) => t.collection("menuCategories").doc(String(id)).get()));
     const categoryNames = Object.fromEntries(cats.map((c) => [c.id, String((c.data() || {}).name || "")]));
     const categories = Object.fromEntries(cats.map((c) => [c.id, c.data() || {}]));
+    // Доставка — по ценам доставки (наценка и свои цены позиций), если
+    // приложение гостя их знает и показало: оно присылает delivery {…}.
+    // Старые версии их не показывают — для них цены зала, без сюрпризов.
+    const settings = orderType === "delivery" ? (await t.collection("settings").doc("delivery").get()).data() || {} : {};
+    const asked = orderType === "delivery" && body.delivery && typeof body.delivery === "object" ? body.delivery : null;
+    const markupPct = pricing.normalizeSettings(settings).markupPct;
+    if (asked && asked.markupPct !== undefined && pricing.markupOf(asked.markupPct) !== markupPct) {
+      throw new HttpError(409, `Цены доставки изменились: наценка теперь ${markupPct ? `${String(markupPct).replace(".", ",")} %` : "не действует"} — проверьте заказ и оформите ещё раз`);
+    }
     let priced;
     try {
-      priced = priceItems(lines, menu, categoryNames);
+      priced = priceItems(lines, menu, categoryNames, asked ? { pct: markupPct } : null);
     } catch (e) {
       throw new HttpError(409, e.message);
     }
@@ -216,6 +237,9 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
       throw new HttpError(409, "Табак, кальяны и алкоголь не продаются с собой и с доставкой — добавьте другие позиции");
     }
     const total = round2(priced.items.reduce((a, i) => a + i.price * i.qty, 0));
+    if (asked && asked.itemsTotal !== undefined && asked.itemsTotal !== null && Math.abs(Number(asked.itemsTotal) - total) > 0.009) {
+      throw new HttpError(409, `Цены изменились: сумма заказа теперь ${pricing.fmtRub(total)} — проверьте корзину и оформите ещё раз`);
+    }
 
     // Доставка: что заведение не возит — отказ с названиями (самовывоз можно);
     // цена — по настройкам точки. Клиент, который знает про цену доставки,
@@ -231,8 +255,6 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
         const names = [...new Set(off.map((i) => `«${i.name}»`))].join(", ");
         throw new HttpError(409, `${off.length > 1 ? "Эти позиции" : "Эту позицию"} заведение не доставляет: ${names} — уберите из корзины или выберите самовывоз`);
       }
-      const settings = (await t.collection("settings").doc("delivery").get()).data() || {};
-      const asked = body.delivery && typeof body.delivery === "object" ? body.delivery : null;
       const q = pricing.quote(settings, total, asked ? asked.zoneId : "", { legacy: !asked });
       if (!q.ok) throw new HttpError(409, q.error);
       if (asked && asked.fee !== undefined && asked.fee !== null && Math.round(Number(asked.fee)) !== q.fee) {
@@ -243,6 +265,7 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
         subtotal: total,
         etaMin: q.etaMin,
         ...(q.zone ? { zoneId: q.zone.id, zoneName: q.zone.name } : {}),
+        ...(asked && markupPct ? { markupPct } : {}),
         // Гость цену не видел (старое приложение) — касса и бот напомнят назвать её при звонке.
         ...(!asked && q.fee > 0 ? { feeUnseen: true } : {}),
       };
@@ -271,7 +294,7 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     const rf = !!pii && (await pii.mode(tenantId)) === "rf";
     if (rf) {
       try {
-        await pii.put(tenantId, [{ k: "delivery", id: sessionId, fields: { extra: { ...(comment ? { comment } : {}), guestContact: phone } } }], decoded.uid);
+        await pii.put(tenantId, [{ k: "delivery", id: sessionId, fields: { extra: { ...(comment ? { comment } : {}), ...(geo ? { geo } : {}), guestContact: phone } } }], decoded.uid);
       } catch (_) {
         throw new HttpError(503, "Сервер заказов недоступен — попробуйте через минуту");
       }
@@ -302,6 +325,7 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
         ...(rf ? {} : { customerName: name, customerPhone: phone }),
         ...(!rf && address ? { deliveryAddress: address } : {}),
         ...(!rf && comment ? { deliveryComment: comment } : {}),
+        ...(!rf && geo ? { deliveryGeo: geo } : {}),
         deliveryStatus: "new",
         source: "app",
         clientUid: decoded.uid,
@@ -497,11 +521,19 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
         return pricing.deliveryBlock(m, cat, remoteSaleBanned(m, String(cat.name || ""))) !== "";
       })
       .map((d) => d.id);
+    // Свои цены позиций в доставке — гость видит их до заказа.
+    const prices = {};
+    for (const d of items.docs) {
+      const own = Number((d.data() || {}).deliveryPrice);
+      if (Number.isFinite(own) && own > 0) prices[d.id] = own;
+    }
     sendJson(res, 200, {
       fee: s.fee, freeFrom: s.freeFrom, minOrder: s.minOrder, etaMin: s.etaMin,
       zones: s.zones,
       payAtDoor: s.payAtDoor,
       off,
+      markupPct: s.markupPct,
+      prices,
     });
   }
 

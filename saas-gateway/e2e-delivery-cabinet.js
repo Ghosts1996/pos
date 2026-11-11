@@ -14,6 +14,8 @@ const { chromium } = require("playwright");
 const { createLocalDb } = require("./local-db");
 const { createCourier } = require("./courier");
 const { createDeliveryAdmin } = require("./delivery-admin");
+const { createDeliveryServices } = require("./delivery-services");
+const { encrypt, decrypt } = require("./telegram");
 
 class Timestamp {
   constructor(ms) { this._ms = ms; }
@@ -43,19 +45,31 @@ async function main() {
     requireTenantRole: async () => {},
     requireChainRole: async () => {},
   };
+  // Яндекс Доставка — подставная: цена, заявка, статус.
+  const yaCalls = [];
+  const fetchImpl = async (u, o) => {
+    yaCalls.push(u);
+    const body = /claims\/search/.test(u) ? {} : /check-price/.test(u) ? { price: "289.00", eta: 12, distance_meters: 2100 }
+      : /claims\/create/.test(u) ? { id: "f".repeat(32), version: 1, status: "new" } : {};
+    return { ok: true, status: 200, json: async () => body };
+  };
+  const services = createDeliveryServices({ ...common, encrypt, decrypt, secretKey: () => require("crypto").createHash("sha256").update("e2e").digest(), fetchImpl });
   const courier = createCourier({ ...common, publicUrl: "https://pii.zalpos.ru/saas" });
+  courier.setHooks({ services: async (ids) => Object.fromEntries(await Promise.all(ids.map(async (id) => [id, await services.connected(id)]))) });
   const delivery = createDeliveryAdmin(common);
   const handlers = {
     courierAdminList: courier.handleAdminList, courierAdminSave: courier.handleAdminSave, courierAdminInvite: courier.handleAdminInvite,
     courierAdminEnable: courier.handleAdminEnable, courierAdminCash: courier.handleAdminCash, courierAdminAssign: courier.handleAdminAssign,
     courierAdminRates: courier.handleAdminRates, courierAdminReport: courier.handleAdminReport,
     deliverySettings: delivery.handleGet, deliverySettingsSave: delivery.handleSave, deliveryMenuSave: delivery.handleMenuSave,
+    deliveryServices: services.handleGet, deliveryServicesSave: services.handleSave, deliveryExtQuote: services.handleQuote,
+    deliveryExtCall: services.handleCall, deliveryExtApprove: services.handleApprove, deliveryExtCancel: services.handleCancel,
   };
 
   // Сеть «Лето» из двух точек, меню, заказы, курьер на смене.
   await db.doc("tenants/P1").set({ name: "Лето · Центр", chainId: "C", timezone: "Europe/Moscow", status: "active", createdAt: T(1) });
   await db.doc("tenants/P2").set({ name: "Лето · Север", chainId: "C", timezone: "Europe/Moscow", status: "active", createdAt: T(2) });
-  await db.doc("tenants/P1/meta/venueProfile").set({ address: "Тверская, 1", deliveryEnabled: true });
+  await db.doc("tenants/P1/meta/venueProfile").set({ name: "Лето", address: "Москва, Тверская, 1", phone: "+7 495 000-00-01", deliveryEnabled: true });
   await db.doc("tenants/P1/settings/delivery").set({ fee: 150, freeFrom: 2000, minOrder: 700, venuePos: { lat: 55.7601, lng: 37.6101 } });
   await db.doc("tenants/P1/menuCategories/hot").set({ name: "Горячее", sortOrder: 1 });
   await db.doc("tenants/P1/menuCategories/hookah").set({ name: "Кальяны", sortOrder: 2 });
@@ -68,7 +82,7 @@ async function main() {
     delivery: { fee: 150, zoneName: "Центр" }, deliveryAddress: "ул. Ленина, 5, кв./офис 1", ...over,
   });
   await db.doc("tenants/P1/sessions/o1").set(order(21));
-  await db.doc("tenants/P1/sessions/o2").set(order(22, { deliveryStatus: "accepted", guestPaidTotal: 640 }));
+  await db.doc("tenants/P1/sessions/o2").set(order(22, { deliveryStatus: "accepted", guestPaidTotal: 640, customerName: "Анна", customerPhone: "79001234567" }));
 
   const call = async (name, body) => { const res = {}; await handlers[name]({ body }, res); return res.body; };
   const made = await call("courierAdminSave", { tenantId: "P1", courier: { name: "Николай Петров", phone: "+79000000001" } });
@@ -200,17 +214,48 @@ draw();
     assert.equal(d.liveInTelegram, true);
   }
   assert.deepEqual((await db.doc("tenants/P1/settings/delivery").get()).data().venuePos, { lat: 55.7601, lng: 37.6101 }, "координаты точки не затёрты");
+  // Наценка на доставку.
+  await page.fill("#f-dl-markup", "15");
+  await page.waitForSelector("text=блюдо за 500 ₽ в доставке — 575 ₽");
+  await page.uncheck("#f-dl-all");
+  await page.click("#f-dl-price-save");
+  await page.waitForFunction(() => window.toasts.filter((t) => /^Сохранено$/.test(t)).length >= 1);
+  assert.equal((await db.doc("tenants/P1/settings/delivery").get()).data().markupPct, 15);
 
   // «Что доставляем»: снять позицию, кальян — нельзя по закону.
   await page.click('.f-dl-sub[data-sub="menu"]');
   await page.waitForSelector("text=Доставляем");
   assert.equal(await page.isDisabled('.f-dm-item[data-id="classic"]'), true, "кальян нельзя включить");
+  assert.equal(await page.getAttribute('.f-dm-price[data-id="soup"]', "placeholder"), "736 ₽", "серым — цена зала с наценкой");
+  await page.fill('.f-dm-price[data-id="soup"]', "690");
+  await page.dispatchEvent('.f-dm-price[data-id="soup"]', "change");
   await page.uncheck('.f-dm-item[data-id="steak"]');
-  await page.waitForSelector("text=Сохранить изменения (1)");
+  await page.waitForSelector("text=Сохранить изменения (2)");
   await shot(page, "c4-menu");
   await page.click("#f-dm-save");
   await page.waitForFunction(() => window.toasts.some((t) => /гости увидят/.test(t)));
   assert.equal((await db.doc("tenants/P1/menuItems/steak").get()).data().deliveryOff, true);
+  assert.equal((await db.doc("tenants/P1/menuItems/soup").get()).data().deliveryPrice, 690, "своя цена в доставке");
+
+  // «Службы доставки»: подключить Яндекс, вызвать курьера службы к заказу №22.
+  await page.click('.f-dl-sub[data-sub="services"]');
+  await page.waitForSelector("text=Для этой точки");
+  await page.fill("#f-ds-token-point-yandex", "y0_E2ETOKEN_1234567890abc");
+  await page.click('.f-ds-save[data-p="yandex"][data-scope="point"]');
+  await page.waitForFunction(() => window.toasts.some((t) => /Ключ проверен/.test(t)));
+  await page.waitForSelector("text=● подключена");
+  await shot(page, "c7-services");
+  await page.click('.f-dl-sub[data-sub="now"]');
+  await page.waitForSelector('.f-dx-quote[data-s="o2"]');
+  await page.click('.f-dx-quote[data-s="o2"]');
+  await page.waitForSelector("text=Вызвать за 289 ₽");
+  await shot(page, "c8-ext-quote");
+  await page.click('.f-dx-call[data-p="yandex"]');
+  await page.waitForFunction(() => window.toasts.some((t) => /Курьер вызван/.test(t)));
+  await page.waitForSelector("text=Считаем цену");
+  const o2 = (await db.doc("tenants/P1/sessions/o2").get()).data();
+  assert.deepEqual([o2.ext.provider, o2.ext.quoted, o2.extActive], ["yandex", 289, true]);
+  assert.ok(yaCalls.some((u) => /claims\/create/.test(u)), "заявка в Яндексе создана");
 
   // «Отчёт».
   await page.click('.f-dl-sub[data-sub="report"]');
@@ -220,7 +265,7 @@ draw();
 
   // Телефон: ничего не вылезает за экран.
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const sub of ["now", "couriers", "price", "menu"]) {
+  for (const sub of ["now", "couriers", "price", "menu", "services"]) {
     await page.click(`.f-dl-sub[data-sub="${sub}"]`);
     await page.waitForTimeout(300);
     const wide = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);

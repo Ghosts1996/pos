@@ -36,6 +36,12 @@ const LOST_MS = 15 * 60 * 1000;
 // Смена без связи и без заказов закрывается сама.
 const SHIFT_AUTO_END_MS = 6 * 3600 * 1000;
 const POS_FRESH_MS = 5 * 60 * 1000;
+/** Дорога длиннее прямой линии — средний коэффициент для города. */
+const ROAD_FACTOR = 1.3;
+/** Точка гостя: широта/долгота в разумных пределах. */
+const geoOf = (g) => (g && Number.isFinite(Number(g.lat)) && Number.isFinite(Number(g.lng))
+  && Math.abs(Number(g.lat)) <= 90 && Math.abs(Number(g.lng)) <= 180 && !(Number(g.lat) === 0 && Number(g.lng) === 0)
+  ? { lat: Math.round(Number(g.lat) * 1e6) / 1e6, lng: Math.round(Number(g.lng) * 1e6) / 1e6 } : null);
 const MAX_ACTIVE = 8;
 /** Демо: курьеров на одно демо и входов с одного адреса за час. */
 const DEMO_MAX_COURIERS = 20;
@@ -112,7 +118,8 @@ function odometerStep(last, points) {
 /** Улица и дом без квартиры, подъезда, этажа и домофона — для свободных заказов. */
 function streetOf(address) {
   const a = String(address || "");
-  return a.split(/,\s*(?=кв\.\/офис|подъезд|этаж|домофон)/)[0].trim().slice(0, 160);
+  // Квартира, подъезд, этаж, домофон — только после «Беру».
+  return a.split(/,\s*(?=кв\.\/офис|кв\.?\s|квартира|офис|оф\.|подъезд|под\.|этаж|эт\.|домофон|код\s)/i)[0].trim().slice(0, 160);
 }
 
 /** Начало рабочих суток (06:00 по поясу точки), мс. */
@@ -260,6 +267,7 @@ function createCourier({
         phone: String(r.phone || s.customerPhone || extra.guestContact || s.guestContact || ""),
         name: String(r.name || s.customerName || s.guestTag || ""),
         comment: String(extra.comment || r.comment || s.deliveryComment || ""),
+        geo: geoOf(extra.geo) || geoOf(s.deliveryGeo),
       };
       cache.set(`pd:${t}:${s.id}`, { value: v, until: now() + 60000 });
       out.set(s.id, v);
@@ -301,16 +309,31 @@ function createCourier({
     return d.length > 0 && d.every((i) => (Number(i.ready) || 0) >= (Number(i.qty) || 0));
   };
 
+  /** Оценка пути заведение → гость по дороге (м) и заработка курьера. */
+  function estimateOf(point, dest, r) {
+    const tripM = point.venuePos && dest ? Math.round(distanceM(point.venuePos, dest) * ROAD_FACTOR) : null;
+    const paid = r.ratePerTrip + r.ratePerKm > 0;
+    const payout = !paid ? null : Math.round(r.ratePerTrip + (r.ratePerKm * (tripM || 0)) / 1000);
+    return { tripM, payout, payoutExact: !r.ratePerKm || tripM != null };
+  }
+
   async function freeDto(point, s, contact, courier) {
     const m = await moneyOf(point.id, s);
     const pos = courier.pos && now() - ms(courier.pos.at) < POS_FRESH_MS ? courier.pos : null;
+    const dest = contact.geo || null;
+    const est = estimateOf(point, dest, await rates(courier.root));
     return {
       key: `${point.id}__${s.id}`,
       t: point.id,
       s: s.id,
       no: String(s.orderNo || s.id.slice(-4)),
-      point: { id: point.id, name: point.name, address: point.address },
+      point: { id: point.id, name: point.name, address: point.address, pos: point.venuePos || null },
       street: streetOf(contact.address),
+      dest,
+      tripM: est.tripM,
+      payout: est.payout,
+      payoutExact: est.payoutExact,
+      promisedAt: s.delivery && s.delivery.etaMin ? ms(s.startTime) + s.delivery.etaMin * 60000 : null,
       zone: (s.delivery && s.delivery.zoneName) || "",
       etaMin: (s.delivery && s.delivery.etaMin) || 0,
       ageMin: ageMin(s),
@@ -433,8 +456,10 @@ function createCourier({
     await db().runTransaction(async (tx) => {
       const s = (await tx.get(settingsRef(root))).data() || {};
       no = (Math.trunc(Number(s.lastNo)) || 0) + 1;
-      tx.set(settingsRef(root), { lastNo: no }, { merge: true });
+      // В демо видно, сколько курьер зарабатывает: 120 ₽ за заказ + 18 ₽ за км.
+      tx.set(settingsRef(root), { lastNo: no, ...(s.ratePerTrip === undefined ? { ratePerTrip: 120, ratePerKm: 18 } : {}) }, { merge: true });
     });
+    forget(`rates:${root}`);
     const token = crypto.randomBytes(32).toString("base64url");
     const name = "Демо";
     await couriersCol().doc().set({
@@ -614,8 +639,10 @@ function createCourier({
       me: {
         no: c.no, name: c.name, onShift: c.onShift === true, shiftStartedAt: ms(c.shiftStartedAt),
         consent: !!c.consentAt, cashOnHand: round2(Number(c.cashOnHand) || 0),
-        points: st.points.map((p) => ({ id: p.id, name: p.name, address: p.address })),
+        points: st.points.map((p) => ({ id: p.id, name: p.name, address: p.address, pos: p.venuePos || null })),
         rates: settingsRoot,
+        pos: c.pos && now() - ms(c.pos.at) < POS_FRESH_MS ? { lat: c.pos.lat, lng: c.pos.lng } : null,
+        demo: c.demo === true,
       },
       free: st.free,
       mine: st.mine,
@@ -625,6 +652,42 @@ function createCourier({
     const v = sha(JSON.stringify({ ...out, serverTime: 0, free: out.free.map((f) => ({ ...f, ageMin: 0 })) })).slice(0, 16);
     if (body && body.v === v) return sendJson(res, 200, { same: true, v, serverTime: out.serverTime });
     sendJson(res, 200, { ...out, v });
+  }
+
+  /** Доход: последние 7 дней по дням, поездки за выбранный день, наличные. */
+  async function handleHistory(req, res) {
+    const c = await courierByToken(req);
+    const body = await parseJsonBody(req).catch(() => ({}));
+    const points = await scopeOf(c);
+    const tz = (points[0] && points[0].tz) || "Europe/Moscow";
+    const today = dayStartMs(now(), tz).day;
+    const days = [];
+    for (let i = 6; i >= 0; i--) days.push(dayStartMs(now() - i * 86400000, tz).day);
+    const uniq = [...new Set(days)];
+    const trips = (await couriersCol().doc(c.id).collection("trips").where("day", ">=", uniq[0]).get()).docs.map((d) => d.data());
+    const byDay = uniq.map((day) => {
+      const done = trips.filter((x) => x.day === day && x.result === "done");
+      return {
+        day,
+        trips: done.length,
+        km: round2(done.reduce((a, x) => a + (Number(x.distanceM) || 0), 0) / 1000),
+        earned: Math.round(done.reduce((a, x) => a + (Number(x.earned) || 0), 0)),
+      };
+    });
+    const pick = uniq.includes(String(body.day || "")) ? String(body.day) : today;
+    const list = trips.filter((x) => x.day === pick && x.result !== "active")
+      .sort((a, b) => ms(b.doneAt || b.endedAt || b.takenAt) - ms(a.doneAt || a.endedAt || a.takenAt))
+      .slice(0, 100)
+      .map((x) => ({
+        no: String(x.orderNo || ""), point: String(x.pointName || ""), zone: String(x.zoneName || ""),
+        result: String(x.result || ""), at: ms(x.doneAt || x.endedAt || x.takenAt),
+        takenAt: ms(x.takenAt), pickedAt: ms(x.pickedAt), doneAt: ms(x.doneAt),
+        km: round2((Number(x.distanceM) || 0) / 1000), earned: Number(x.earned) || 0,
+        payment: x.payment ? { method: String(x.payment.method || ""), amount: Number(x.payment.amount) || 0 } : null,
+      }));
+    const cash = (await couriersCol().doc(c.id).collection("cash").orderBy("at", "desc").limit(20).get()).docs
+      .map((d) => d.data()).map((x) => ({ type: x.type, amount: Number(x.amount) || 0, orderNo: String(x.orderNo || ""), at: ms(x.at) }));
+    sendJson(res, 200, { today, day: pick, days: byDay, trips: list, cash, cashOnHand: round2(Number(c.cashOnHand) || 0), rates: await rates(c.root) });
   }
 
   // ------------------------------------------------------------ действия
@@ -690,10 +753,14 @@ function createCourier({
     const x = (await ref.get()).data() || {};
     const point = (await pointsOf(c.root)).find((p) => p.id === t) || {};
     const tz = point.tz || "Europe/Moscow";
+    // Оценка пути по карте: если GPS телефона недосчитает, заработок не меньше её.
+    const geo = ((await contactsOf(t, [{ id: s, ...x }])).get(s) || {}).geo;
+    const estM = point.venuePos && geo ? Math.round(distanceM(point.venuePos, geo) * ROAD_FACTOR) : 0;
     await couriersCol().doc(c.id).update({ [`active.${t}__${s}`]: result });
     await couriersCol().doc(c.id).collection("trips").doc(`${t}__${s}`).set({
       root: c.root, tenantId: t, sessionId: s, orderNo: String(x.orderNo || ""), pointName: point.name || "",
       zoneName: (x.delivery && x.delivery.zoneName) || "", fee: (x.delivery && x.delivery.fee) || 0,
+      ...(estM ? { estM } : {}),
       day: dayStartMs(now(), tz).day, shiftId: c.shiftId || "", takenAt: ts(), result: "active",
       ...(by ? { assignedBy: by } : {}),
     });
@@ -886,7 +953,8 @@ function createCourier({
       case "deliver": {
         const tripData = (await trip.get()).data() || {};
         const fresh = (await me.get()).data() || c;
-        const dist = Math.max(0, (Number(fresh.odometerM) || 0) - (Number(tripData.odoAtPickup) || 0));
+        const odo = Math.max(0, (Number(fresh.odometerM) || 0) - (Number(tripData.odoAtPickup) || 0));
+        const dist = Math.max(odo, Number(tripData.estM) || 0);
         const r = await rates(c.root);
         const earned = Math.round(r.ratePerTrip + (r.ratePerKm * dist) / 1000);
         await trip.set({
@@ -1094,11 +1162,19 @@ function createCourier({
           zone: (s.delivery && s.delivery.zoneName) || "", ageMin: ageMin(s), total: m.total, toCollect: m.toCollect,
           fail: s.courierFail ? FAIL_REASONS[s.courierFail.reason] || "" : "",
           free: isFree(s),
+          // Курьер службы доставки (Яндекс, Достависта) — delivery-services.js.
+          ext: s.ext && s.ext.provider ? {
+            provider: s.ext.provider, step: s.ext.step || "", label: s.ext.label || "", status: s.ext.status || "",
+            price: s.ext.price || s.ext.quoted || null, courier: s.ext.courier || null, track: s.ext.track || "",
+            approve: s.ext.status === "ready_for_approval", error: s.ext.error || "",
+          } : null,
+          pos: s.courierPos && now() - ms(s.courierPos.at) < POS_FRESH_MS * 2 ? { lat: s.courierPos.lat, lng: s.courierPos.lng } : null,
         });
       }
     }
     const r = await rates(ctx.root);
     sendJson(res, 200, {
+      services: hooks.services ? await hooks.services(visible.map((p) => p.id)).catch(() => ({})) : {},
       root: ctx.root, chain: !!ctx.chainId, full: ctx.full,
       points: points.map((p) => ({ id: p.id, name: p.name, venuePos: p.venuePos })),
       couriers, orders, rates: r, day,
@@ -1358,7 +1434,7 @@ function createCourier({
 
   return {
     // приложение курьера
-    handleLogin, handleDemoLogin, handleLogout, handleConsent, handleState, handleShift, handleAct, handlePing, handlePay,
+    handleLogin, handleDemoLogin, handleLogout, handleConsent, handleHistory, handleState, handleShift, handleAct, handlePing, handlePay,
     // кабинет
     handleAdminList, handleAdminSave, handleAdminInvite, handleAdminEnable, handleAdminCash, handleAdminAssign,
     handleAdminRates, handleAdminReport, handleAdminForget,

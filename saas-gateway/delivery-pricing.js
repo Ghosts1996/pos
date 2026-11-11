@@ -11,12 +11,15 @@
  *     поле района (null) — берётся базовое значение;
  *   payAtDoor {cash, card, qr} — что курьер может принять при вручении;
  *   liveInTelegram — живая точка курьера в чате (координаты уходят за рубеж);
- *   courierLink — кнопка «Ссылка курьеру» в карточке для курьеров без приложения.
+ *   courierLink — кнопка «Ссылка курьеру» в карточке для курьеров без приложения;
+ *   markupPct — наценка на блюда в доставке, % (0 — цены как в зале);
+ *     у позиции может быть своя цена в доставке — menuItems.deliveryPrice.
  */
 
 /** id «позиции» доставки в строке чека: по нему касса узнаёт услугу. */
 const DELIVERY_ITEM_ID = "zalpos_delivery";
 const MAX_ZONES = 30;
+const MAX_MARKUP_PCT = 100;
 const MAX_RUB = 100000;
 const DEFAULT_ETA_MIN = 60;
 
@@ -29,7 +32,15 @@ const DEFAULTS = Object.freeze({
   payAtDoor: { cash: true, card: false, qr: true },
   liveInTelegram: false,
   courierLink: true,
+  markupPct: 0,
 });
+
+/** Наценка 0…100 % с шагом 0,5. */
+function markupOf(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(MAX_MARKUP_PCT, Math.round(n * 2) / 2);
+}
 
 const clean = (v, max) => String(v == null ? "" : v).replace(/[\u0000-\u001f<>]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 
@@ -92,7 +103,24 @@ function normalizeSettings(raw) {
     },
     liveInTelegram: r.liveInTelegram === true,
     courierLink: r.courierLink !== false,
+    markupPct: markupOf(r.markupPct),
   };
+}
+
+/**
+ * Цена одной штуки в доставке. Своя цена позиции (deliveryPrice) заменяет
+ * цену из меню, добавки — с наценкой; без своей цены — вся сумма с
+ * наценкой. Округление — вверх до рубля, чтобы цены были ровные.
+ *  base — цена позиции из меню, mods — сумма добавок, own — deliveryPrice.
+ * Та же функция — в веб-версии гостя (deliveryUnit), проверяется тестом.
+ */
+function deliveryUnit(base, mods, own, markupPct) {
+  const pct = markupOf(markupPct);
+  const up = (v) => (pct > 0 ? Math.ceil(Math.round(v * (100 + pct)) / 100 - 1e-9) : Math.round(v * 100) / 100);
+  const m = Math.max(0, Number(mods) || 0);
+  const o = Number(own);
+  if (Number.isFinite(o) && o > 0) return Math.round((o + up(m)) * 100) / 100;
+  return up(Math.max(0, Number(base) || 0) + m);
 }
 
 /**
@@ -107,6 +135,10 @@ function settingsProblem(input) {
   if (bad(r.minOrder)) return "Минимальный заказ — от 0 до 100 000 ₽";
   const eta = r.etaMin;
   if (eta !== undefined && eta !== null && eta !== "" && !(Number(eta) >= 10 && Number(eta) <= 600)) return "Время доставки — от 10 до 600 минут";
+  const mk = r.markupPct;
+  if (mk !== undefined && mk !== null && mk !== "" && !(Number.isFinite(Number(mk)) && Number(mk) >= 0 && Number(mk) <= MAX_MARKUP_PCT)) {
+    return `Наценка на доставку — от 0 до ${MAX_MARKUP_PCT} %`;
+  }
   const zones = Array.isArray(r.zones) ? r.zones : [];
   if (zones.length > MAX_ZONES) return `Районов — не больше ${MAX_ZONES}`;
   const names = new Set();
@@ -206,6 +238,6 @@ function deliveryBlock(item, category, banned) {
 }
 
 module.exports = {
-  DELIVERY_ITEM_ID, DEFAULTS, MAX_ZONES,
-  normalizeSettings, settingsProblem, quote, feeLine, isFeeLine, deliveryBlock, fmtRub,
+  DELIVERY_ITEM_ID, DEFAULTS, MAX_ZONES, MAX_MARKUP_PCT,
+  normalizeSettings, settingsProblem, quote, feeLine, isFeeLine, deliveryBlock, fmtRub, deliveryUnit, markupOf,
 };

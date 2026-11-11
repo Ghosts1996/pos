@@ -388,6 +388,56 @@ test("цена в веб-версии гостя считается так же,
   assert.equal(webQuote({ zones: [{ id: "a", name: "А" }] }, 100, "").needZone, true);
 });
 
+test("наценка на доставку: цены доставки, своя цена позиции, проверка того, что видел гость; старому клиенту — цены зала", async () => {
+  const { api, store } = feeSetup({ fee: 150, markupPct: 15 });
+  store.set("tenants/t1/menuItems/tea", { ...store.get("tenants/t1/menuItems/tea"), deliveryPrice: 333 });
+  // суп 590 + «Огонь» 50 = 640 → ×1,15 = 736; чай — своя цена 333.
+  const ok = await call(api.handleCreate, order({ delivery: { fee: 150, markupPct: 15, itemsTotal: 736 * 2 + 333 } }));
+  assert.equal(ok.status, 200);
+  assert.deepEqual([ok.body.itemsTotal, ok.body.total], [1805, 1955]);
+  const s = store.get(`tenants/t1/sessions/${ok.body.sessionId}`);
+  assert.equal(s.delivery.markupPct, 15);
+  // Позиции заявки (то, что встанет в чек) — по ценам доставки.
+  const g = [...store.keys()].filter((k) => k.startsWith("tenants/t1/guestOrders/")).map((k) => store.get(k)).find((x) => x.sessionId === ok.body.sessionId);
+  if (g) assert.deepEqual(g.items.map((i) => i.price), [736, 333]);
+  // Гость видел другую наценку или сумму — отказ с понятным текстом.
+  await assert.rejects(call(api.handleCreate, order({ delivery: { fee: 150, markupPct: 10 } })), (e) => e.status === 409 && /наценка теперь 15 %/.test(e.message));
+  await assert.rejects(call(api.handleCreate, order({ delivery: { fee: 150, markupPct: 15, itemsTotal: 1580 } })), (e) => e.status === 409 && /сумма заказа теперь 1.805.₽/.test(e.message));
+  // Старое приложение наценку не показывает — берём цены зала.
+  const close = (sid) => store.set(`tenants/t1/sessions/${sid}`, { ...store.get(`tenants/t1/sessions/${sid}`), status: "closed" });
+  close(ok.body.sessionId);
+  const legacy = await call(api.handleCreate, order());
+  close(legacy.body.sessionId);
+  assert.equal(legacy.body.itemsTotal, 1580);
+  // Самовывоз — всегда цены зала.
+  const take = await call(api.handleCreate, order({ orderType: "takeaway", delivery: { markupPct: 15 } }));
+  assert.equal(take.body.itemsTotal, 1580);
+  // Гостю: наценка и свои цены — до заказа.
+  const info = await call(api.handleInfo, { tenantId: "t1" });
+  assert.deepEqual([info.body.markupPct, info.body.prices], [15, { tea: 333 }]);
+});
+
+test("наценка: веб-версия гостя считает цену штуки так же, как сервер", () => {
+  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "saas", "guest-web", "app", "app.js"), "utf8");
+  const m = /function deliveryUnit\(base, mods, own, markupPct\) \{[\s\S]*?\n\}\n/.exec(src);
+  assert.ok(m, "deliveryUnit есть в app.js");
+  const web = new Function(`${m[0]}; return deliveryUnit;`)();
+  let seed = 11;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  for (let i = 0; i < 3000; i++) {
+    const base = rnd(5) === 0 ? rnd(100000) / 100 : rnd(3000);
+    const mods = rnd(3) ? 0 : rnd(200);
+    const own = rnd(4) === 0 ? 1 + rnd(2000) : rnd(5) === 0 ? null : undefined;
+    const pct = rnd(3) === 0 ? 0 : rnd(4) === 0 ? rnd(200) / 2 : rnd(40);
+    assert.equal(web(base, mods, own, pct), pricing.deliveryUnit(base, mods, own, pct), `набор ${i}: ${base} ${mods} ${own} ${pct}`);
+  }
+  assert.equal(pricing.deliveryUnit(100, 0, null, 0), 100);
+  assert.equal(pricing.deliveryUnit(99.99, 0, null, 10), 110);
+  assert.equal(pricing.deliveryUnit(100, 50, 200, 10), 255);
+  assert.equal(pricing.deliveryUnit(100, 0, null, 250), 200, "наценка не больше 100 %");
+  assert.equal(pricing.settingsProblem({ markupPct: 120 }), "Наценка на доставку — от 0 до 100 %");
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try {
