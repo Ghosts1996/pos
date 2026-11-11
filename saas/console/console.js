@@ -394,6 +394,544 @@ function bindGuestsTab(tenantId, redraw) {
   };
 }
 
+// ---------- Доставка: курьеры, цена и районы, что доставляем, отчёт
+// (saas-gateway/courier.js, delivery-admin.js; docs/delivery.md). Данные
+// гостей сюда не попадают: в заказах — номер, точка, статус и сумма.
+const deliveryState = new Map(); // tenantId → состояние раздела
+const DLV_SUBS = [
+  ['now', 'Сейчас'], ['couriers', 'Курьеры'], ['price', 'Цена и районы'], ['menu', 'Что доставляем'], ['report', 'Отчёт'],
+];
+const dlvRub = (n) => `${(Math.round(Number(n) || 0)).toLocaleString('ru-RU')} ₽`;
+const dlvAgo = (ms) => {
+  if (!ms) return '—';
+  const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  return m < 1 ? 'только что' : m < 60 ? `${m} мин назад` : `${Math.floor(m / 60)} ч назад`;
+};
+const dlvTime = (ms) => (ms ? new Date(ms).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '—');
+let dlvSeq = 0;
+
+function dlvStateOf(tenantId) {
+  if (!deliveryState.has(tenantId)) deliveryState.set(tenantId, { sub: 'now', list: null, settings: null, form: null, menuEdits: { items: {}, cats: {} }, menuFilter: '', report: null, reportDay: '', fresh: null, editing: null });
+  return deliveryState.get(tenantId);
+}
+
+/** Карта Яндекса: точки — красные, курьеры — с номером (зелёный — свободен, синий — везёт). */
+function dlvMapHtml(points, couriers) {
+  const marks = [];
+  for (const p of points || []) if (p.venuePos) marks.push([p.venuePos.lng, p.venuePos.lat, 'pm2rdl']);
+  for (const c of couriers || []) if (c.pos) marks.push([c.pos.lng, c.pos.lat, `pm2${c.orders ? 'bl' : 'gn'}m${Math.min(99, Number(c.no) || 1)}`]);
+  if (!marks.length) return '<p class="small muted" style="margin:0">Карта появится, когда курьеры начнут смену в приложении и разрешат геолокацию. Точка заведения отметится сама после первых заборов заказов.</p>';
+  const lngs = marks.map((m) => m[0]);
+  const lats = marks.map((m) => m[1]);
+  const lng = (Math.min(...lngs) + Math.max(...lngs)) / 2;
+  const lat = (Math.min(...lats) + Math.max(...lats)) / 2;
+  const spread = Math.max(Math.max(...lngs) - Math.min(...lngs), (Math.max(...lats) - Math.min(...lats)) * 1.8, 0.005);
+  const z = Math.max(9, Math.min(16, Math.round(Math.log2(360 / (spread * 2.2)))));
+  const pt = marks.map((m) => `${m[0].toFixed(6)},${m[1].toFixed(6)},${m[2]}`).join('~');
+  return `<iframe title="Курьеры на карте" loading="lazy" style="width:100%;height:340px;border:0;border-radius:12px"
+    src="https://yandex.ru/map-widget/v1/?ll=${lng.toFixed(6)},${lat.toFixed(6)}&z=${z}&pt=${pt}"></iframe>
+    <p class="small muted" style="margin:6px 0 0">Красная метка — заведение, зелёная с номером — свободный курьер, синяя — везёт заказ. Обновляется раз в 15 секунд.</p>`;
+}
+
+function deliveryTabHtml(tenantId) {
+  const st = dlvStateOf(tenantId);
+  const head = `<h1>Доставка</h1>
+    <p class="muted" style="margin-top:-6px">Курьеры в приложении, цена доставки, что везём — и всё, что происходит с заказами прямо сейчас.</p>
+    <div class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0 14px">${DLV_SUBS.map(([id, label]) =>
+      `<button class="btn ${st.sub === id ? 'btn-primary' : 'btn-ghost'} f-dl-sub" data-sub="${id}" style="width:auto;padding:8px 14px">${label}</button>`).join('')}</div>`;
+  const body = st.sub === 'now' ? dlvNowHtml(st)
+    : st.sub === 'couriers' ? dlvCouriersHtml(st)
+      : st.sub === 'price' ? dlvPriceHtml(st)
+        : st.sub === 'menu' ? dlvMenuHtml(st)
+          : dlvReportHtml(st);
+  return `<div id="f-dl-root">${head}${body}</div>`;
+}
+
+function dlvErrorHtml(err) {
+  return `<div class="card"><p style="color:var(--danger);margin-top:0">${esc(err)}</p>
+    <button class="btn btn-ghost f-dl-retry" style="width:auto">Повторить</button></div>`;
+}
+
+function dlvNowHtml(st) {
+  const L = st.list;
+  if (!L) return '<div class="spinner"></div>';
+  if (L.error) return dlvErrorHtml(L.error);
+  const on = L.couriers.filter((c) => c.onShift);
+  const free = L.orders.filter((o) => o.free);
+  const moving = L.orders.filter((o) => o.courierId && ['onWay', 'arrived'].includes(o.stage));
+  const cash = L.couriers.reduce((a, c) => a + (Number(c.cashOnHand) || 0), 0);
+  const failed = L.orders.filter((o) => o.stage === 'failed');
+  const pointName = (o) => (L.chain ? `<div class="small muted">${esc(o.point)}</div>` : '');
+  const canTake = (o) => on.filter((c) => c.enabled && (!c.points.length || c.points.includes(o.t)));
+  const orderRow = (o) => {
+    let who;
+    if (o.courierId) who = `<b>№${esc(o.courierNo)}</b> · ${esc(o.stageLabel || '')}`;
+    else if (o.external) who = '<span class="muted">курьер без приложения</span>';
+    else if (o.stage === 'returned') who = '<span style="color:var(--danger)">вернули в заведение</span>';
+    else who = '<span class="muted">свободен</span>';
+    const assignable = !o.external && (o.free || o.stage === 'toVenue');
+    const opts = canTake(o);
+    const assign = assignable
+      ? `<select class="f-dl-assign" data-t="${esc(o.t)}" data-s="${esc(o.s)}" style="min-width:150px">
+          <option value="">${o.courierId ? 'Снять курьера' : 'Назначить…'}</option>
+          ${opts.map((c) => `<option value="${esc(c.id)}" ${c.id === o.courierId ? 'selected' : ''}>№${c.no} · ${esc(c.name.split(' ')[0])}${c.orders ? ` (везёт ${c.orders})` : ' (свободен)'}</option>`).join('')}
+        </select>${opts.length ? '' : '<div class="small muted">нет курьеров на смене</div>'}` : '';
+    return `<tr>
+      <td><b>№${esc(o.no)}</b>${pointName(o)}${o.zone ? `<div class="small muted">${esc(o.zone)}</div>` : ''}</td>
+      <td>${esc(o.status)}<div class="small muted">${o.ageMin} мин</div>${o.fail ? `<div class="small" style="color:var(--danger)">⚠️ ${esc(o.fail)}</div>` : ''}</td>
+      <td>${who}</td>
+      <td style="white-space:nowrap">${o.toCollect > 0 ? dlvRub(o.toCollect) : '<span class="muted">оплачен</span>'}</td>
+      <td>${assign}</td></tr>`;
+  };
+  return `
+    <div class="admin-stat-grid">
+      <div class="card" style="text-align:center;padding:14px 8px"><div style="font-size:22px;font-weight:700">${on.length}</div><div class="small muted">курьеров на смене</div></div>
+      <div class="card" style="text-align:center;padding:14px 8px"><div style="font-size:22px;font-weight:700;${free.length ? 'color:var(--danger)' : ''}">${free.length}</div><div class="small muted">заказов без курьера</div></div>
+      <div class="card" style="text-align:center;padding:14px 8px"><div style="font-size:22px;font-weight:700">${moving.length}</div><div class="small muted">в пути</div></div>
+      <div class="card" style="text-align:center;padding:14px 8px"><div style="font-size:22px;font-weight:700">${dlvRub(cash)}</div><div class="small muted">наличные у курьеров</div></div>
+    </div>
+    ${failed.length ? `<div class="card" style="border-left:4px solid var(--danger)"><b>Не удалось вручить: ${failed.length}</b><div class="small muted">Позвоните гостю или курьеру: курьер попробует ещё раз или вернёт заказ.</div></div>` : ''}
+    <div class="card">${dlvMapHtml(L.points, on)}</div>
+    <h2>Заказы в работе</h2>
+    ${L.orders.length ? `<div class="card" style="padding:6px 8px"><div style="overflow-x:auto"><table class="table">
+      <thead><tr><th>Заказ</th><th>Статус</th><th>Курьер</th><th>К оплате</th><th></th></tr></thead>
+      <tbody>${L.orders.map(orderRow).join('')}</tbody></table></div></div>`
+    : '<div class="card"><p class="small muted" style="margin:0">Заказов доставки в работе нет. Новые появятся здесь, как только их подтвердят на кассе.</p></div>'}
+    <h2>Курьеры на смене</h2>
+    ${on.length ? `<div class="card" style="padding:6px 8px"><div style="overflow-x:auto"><table class="table">
+      <thead><tr><th>Курьер</th><th>Заказов</th><th>На связи</th><th>Сегодня</th><th>Наличные</th></tr></thead>
+      <tbody>${on.map((c) => `<tr><td><b>№${c.no}</b> · ${esc(c.name)}${c.phone ? `<div class="small"><a href="tel:+${esc(c.phone)}">+${esc(c.phone)}</a></div>` : ''}</td>
+        <td>${c.orders || '—'}</td><td class="small">${dlvAgo(c.lastSeenAt)}${c.pos ? '' : '<div class="muted">без геолокации</div>'}</td>
+        <td class="small">${c.today.trips} дост. · ${String(c.today.km).replace('.', ',')} км</td><td>${dlvRub(c.cashOnHand)}</td></tr>`).join('')}</tbody></table></div></div>`
+    : `<div class="card"><p class="small muted" style="margin:0">Сейчас никто не на смене. Курьеры начинают смену в своём приложении — добавьте их во вкладке «Курьеры».</p></div>`}`;
+}
+
+function dlvCouriersHtml(st) {
+  const L = st.list;
+  if (!L) return '<div class="spinner"></div>';
+  if (L.error) return dlvErrorHtml(L.error);
+  const pointsName = (ids) => (!ids.length ? (L.chain ? 'все точки сети' : '') : ids.map((id) => (L.points.find((p) => p.id === id) || {}).name || id).join(', '));
+  const fresh = st.fresh;
+  const editing = st.editing ? (st.editing === 'new' ? { id: '', name: '', phone: '', points: [] } : L.couriers.find((c) => c.id === st.editing)) : null;
+  const form = editing ? `
+    <div class="card" id="f-dl-form">
+      <h3 style="margin-top:0">${editing.id ? `Курьер №${editing.no}` : 'Новый курьер'}</h3>
+      <div class="row" style="gap:12px;flex-wrap:wrap">
+        <label class="field" style="flex:1 1 200px"><span>Имя</span><input id="f-dl-name" maxlength="60" value="${esc(editing.name)}" placeholder="Николай Петров"></label>
+        <label class="field" style="flex:1 1 200px"><span>Рабочий телефон</span><input id="f-dl-phone" inputmode="tel" maxlength="20" value="${editing.phone ? `+${esc(editing.phone)}` : ''}" placeholder="+7 900 000-00-00"></label>
+      </div>
+      <p class="small muted" style="margin:0 0 8px">Гость увидит имя и сможет позвонить курьеру, пока заказ в пути. В Telegram курьер виден только номером.</p>
+      ${L.chain && L.full ? `<div class="small" style="margin:6px 0"><b>Точки</b> <span class="muted">— ни одной не отмечено: все точки сети</span></div>
+        <div class="row" style="gap:12px;flex-wrap:wrap">${L.points.map((p) => `<label class="row" style="gap:6px;align-items:center"><input type="checkbox" class="f-dl-pt" value="${esc(p.id)}" style="width:auto" ${editing.points.includes(p.id) ? 'checked' : ''}> ${esc(p.name)}</label>`).join('')}</div>` : ''}
+      <div id="f-dl-form-msg" class="small" style="margin-top:8px"></div>
+      <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-primary" id="f-dl-save" style="width:auto">${editing.id ? 'Сохранить' : 'Добавить и получить ссылку'}</button>
+        <button class="btn btn-ghost" id="f-dl-cancel" style="width:auto">Отмена</button></div>
+    </div>` : '';
+  const freshBox = fresh ? `
+    <div class="card" style="border:2px solid var(--primary)">
+      <b>Ссылка для курьера №${esc(fresh.no)} · ${esc(fresh.name)}</b>
+      <div style="font-family:var(--mono, monospace);word-break:break-all;margin:8px 0;user-select:all">${esc(fresh.url)}</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" id="f-dl-copy" style="width:auto">Скопировать ссылку</button>
+        ${navigator.share ? '<button class="btn btn-ghost" id="f-dl-share" style="width:auto">Отправить…</button>' : ''}
+        <button class="btn btn-ghost" id="f-dl-fresh-hide" style="width:auto">Готово</button>
+      </div>
+      <p class="small muted" style="margin:8px 0 0">Отправьте курьеру в мессенджер или СМС. Ссылка одноразовая и действует 72 часа: по ней курьер сразу попадает в своё приложение, без пароля.
+        Вход с новой ссылки выключает старый телефон.</p>
+    </div>` : '';
+  const row = (c) => {
+    const status = !c.enabled ? '<span style="color:var(--danger)">отключён</span>'
+      : c.onShift ? '<span style="color:var(--primary)">на смене</span>'
+        : c.linked ? 'не на смене' : c.invitePending ? '<span class="muted">ссылка ждёт входа</span>' : '<span class="muted">ещё не входил</span>';
+    return `<div class="card">
+      <div class="row" style="gap:10px;align-items:flex-start;flex-wrap:wrap">
+        <div style="flex:1 1 220px">
+          <div><b>№${c.no} · ${esc(c.name)}</b> — ${status}</div>
+          <div class="small muted">${c.phone ? `+${esc(c.phone)} · ` : ''}${esc(pointsName(c.points))}</div>
+          <div class="small" style="margin-top:4px">Сегодня: ${c.today.trips} дост., ${String(c.today.km).replace('.', ',')} км${L.rates.ratePerTrip || L.rates.ratePerKm ? `, заработал ${dlvRub(c.today.earned)}` : ''}${c.cashOnHand > 0 ? ` · <b>наличные на руках ${dlvRub(c.cashOnHand)}</b>` : ''}</div>
+        </div>
+        <div class="row" style="gap:6px;flex-wrap:wrap">
+          ${c.cashOnHand > 0 ? `<button class="btn btn-primary f-dl-cash" data-id="${esc(c.id)}" data-amount="${c.cashOnHand}" style="width:auto">Принять ${dlvRub(c.cashOnHand)}</button>` : ''}
+          ${c.editable && c.enabled ? `<button class="btn btn-ghost f-dl-invite" data-id="${esc(c.id)}" style="width:auto">${c.linked ? 'Новая ссылка' : 'Ссылка для входа'}</button>` : ''}
+          ${c.editable ? `<button class="btn btn-ghost f-dl-edit" data-id="${esc(c.id)}" style="width:auto">Изменить</button>` : ''}
+          ${c.editable && !c.forgotten ? `<button class="btn btn-ghost f-dl-enable" data-id="${esc(c.id)}" data-on="${c.enabled ? '0' : '1'}" style="width:auto;${c.enabled ? 'color:var(--danger)' : ''}">${c.enabled ? 'Отключить' : 'Включить'}</button>` : ''}
+          ${c.editable && !c.enabled && !c.forgotten ? `<button class="btn btn-ghost f-dl-forget" data-id="${esc(c.id)}" style="width:auto;color:var(--danger)">Удалить данные</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+  };
+  return `
+    ${freshBox}
+    ${form || '<button class="btn btn-primary" id="f-dl-new" style="width:auto;margin-bottom:12px">+ Добавить курьера</button>'}
+    ${L.couriers.length ? L.couriers.map(row).join('') : '<div class="card"><p class="small muted" style="margin:0">Курьеров пока нет. Добавьте курьера — он получит ссылку и сразу начнёт работать в своём приложении на телефоне (Android и iPhone, ничего ставить не нужно).</p></div>'}
+    ${L.full ? `<h2>Оплата курьерам</h2>
+      <div class="card">
+        <p class="small muted" style="margin-top:0">Курьер видит заработок за смену в приложении, вы — в отчёте. 0 — не считать.${L.chain ? ' Ставки — одни на всю сеть.' : ''}</p>
+        <div class="row" style="gap:12px;flex-wrap:wrap">
+          <label class="field" style="flex:1 1 160px"><span>За доставку, ₽</span><input id="f-dl-rate-trip" type="number" min="0" step="10" value="${L.rates.ratePerTrip}"></label>
+          <label class="field" style="flex:1 1 160px"><span>За километр с заказом, ₽</span><input id="f-dl-rate-km" type="number" min="0" step="1" value="${L.rates.ratePerKm}"></label>
+        </div>
+        <button class="btn btn-ghost" id="f-dl-rates" style="width:auto">Сохранить ставки</button>
+      </div>` : ''}
+    <p class="small muted">Приложение курьера: <b>pii.zalpos.ru/saas/courier</b> — открывается по личной ссылке. Работает на любом телефоне, можно поставить на экран как приложение.</p>`;
+}
+
+function dlvPriceHtml(st) {
+  const S = st.settings;
+  if (!S) return '<div class="spinner"></div>';
+  if (S.error) return dlvErrorHtml(S.error);
+  const f = st.form;
+  const num = (v) => (v === null || v === undefined ? '' : v);
+  const zoneRow = (z) => `<tr data-z="${esc(z.id)}">
+      <td><input class="f-dz" data-k="name" id="f-dz-${esc(z.id)}-name" maxlength="40" value="${esc(z.name)}" placeholder="Центр"></td>
+      <td><input class="f-dz" data-k="fee" id="f-dz-${esc(z.id)}-fee" type="number" min="0" step="10" value="${num(z.fee)}" placeholder="${f.fee}"></td>
+      <td><input class="f-dz" data-k="minOrder" id="f-dz-${esc(z.id)}-minOrder" type="number" min="0" step="50" value="${num(z.minOrder)}" placeholder="${f.minOrder}"></td>
+      <td><input class="f-dz" data-k="freeFrom" id="f-dz-${esc(z.id)}-freeFrom" type="number" min="0" step="100" value="${num(z.freeFrom)}" placeholder="${f.freeFrom || '—'}"></td>
+      <td><input class="f-dz" data-k="etaMin" id="f-dz-${esc(z.id)}-etaMin" type="number" min="10" max="600" step="5" value="${num(z.etaMin)}" placeholder="${f.etaMin}"></td>
+      <td><button class="btn btn-ghost f-dz-del" data-z="${esc(z.id)}" style="width:auto;color:var(--danger)" aria-label="Удалить район">✕</button></td></tr>`;
+  const pay = f.payAtDoor;
+  const preview = [
+    f.fee ? `доставка ${dlvRub(f.fee)}` : 'доставка бесплатно',
+    f.freeFrom ? `бесплатно от ${dlvRub(f.freeFrom)}` : '',
+    f.minOrder ? `минимальный заказ ${dlvRub(f.minOrder)}` : '',
+    `привезём за ~${f.etaMin} мин`,
+  ].filter(Boolean).join(' · ');
+  return `
+    <div class="card">
+      <label class="row" style="gap:8px;align-items:center;margin:0 0 6px"><input type="checkbox" id="f-dl-enabled" style="width:auto" ${S.deliveryEnabled ? 'checked' : ''}>
+        <span><b>Принимаем доставку и самовывоз из приложения гостя</b></span></label>
+      <p class="small muted" style="margin:0">Выключено — гость не сможет оформить заказ на доставку в приложении.</p>
+    </div>
+    <h2>Цена доставки</h2>
+    <div class="card">
+      <div class="row" style="gap:12px;flex-wrap:wrap">
+        <label class="field" style="flex:1 1 150px"><span>Стоимость доставки, ₽</span><input id="f-dl-fee" type="number" min="0" step="10" value="${f.fee}"></label>
+        <label class="field" style="flex:1 1 150px"><span>Бесплатно от суммы, ₽</span><input id="f-dl-free" type="number" min="0" step="100" value="${f.freeFrom || ''}" placeholder="никогда"></label>
+        <label class="field" style="flex:1 1 150px"><span>Минимальный заказ, ₽</span><input id="f-dl-min" type="number" min="0" step="50" value="${f.minOrder || ''}" placeholder="без минимума"></label>
+        <label class="field" style="flex:1 1 150px"><span>Время доставки, мин</span><input id="f-dl-eta" type="number" min="10" max="600" step="5" value="${f.etaMin}"></label>
+      </div>
+      <div class="small" style="margin-top:4px">Гость увидит: <b id="f-dl-preview">${esc(preview)}</b></div>
+    </div>
+    <h2>Районы</h2>
+    <div class="card">
+      <p class="small muted" style="margin-top:0">Необязательно. Если районы есть, гость выбирает свой при оформлении. Пустое поле — как базовая цена выше. Старые версии приложения гостя районов не знают — для них базовая цена, её назовут при звонке.</p>
+      ${f.zones.length ? `<div style="overflow-x:auto"><table class="table"><thead><tr><th>Район</th><th>Цена, ₽</th><th>Мин. заказ</th><th>Бесплатно от</th><th>Время, мин</th><th></th></tr></thead>
+        <tbody>${f.zones.map(zoneRow).join('')}</tbody></table></div>` : ''}
+      <button class="btn btn-ghost" id="f-dz-add" style="width:auto">+ Добавить район</button>
+    </div>
+    <h2>Оплата при получении</h2>
+    <div class="card">
+      <label class="row" style="gap:8px;align-items:center;margin:4px 0"><input type="checkbox" id="f-dl-cash" style="width:auto" ${pay.cash ? 'checked' : ''}> Наличными курьеру</label>
+      <label class="row" style="gap:8px;align-items:center;margin:4px 0"><input type="checkbox" id="f-dl-card" style="width:auto" ${pay.card ? 'checked' : ''}> Картой — у курьера свой терминал</label>
+      <label class="row" style="gap:8px;align-items:center;margin:4px 0"><input type="checkbox" id="f-dl-qr" style="width:auto" ${pay.qr && S.bankConnected ? 'checked' : ''} ${S.bankConnected ? '' : 'disabled'}> По QR с телефона курьера (СБП, банк заведения)${S.bankConnected ? '' : ' — <span class="muted">подключите банк: Настройки → Интеграции</span>'}</label>
+      <p class="small" style="border-left:3px solid var(--primary);padding-left:10px;line-height:1.55;margin-bottom:0">
+        <b>Чек (54-ФЗ).</b> «Доставка» встаёт в чек отдельной позицией — услуга, без скидок. При оплате курьеру чек нужен <b>в момент оплаты</b>:
+        курьер отмечает оплату — касса сразу получает сигнал «пробейте чек», гостю уходит электронный чек. Распечатать чек заранее нельзя.
+        Оплаченный онлайн заказ: чек «предоплата 100%» при оплате и «полный расчёт» при вручении.</p>
+    </div>
+    <h2>Telegram</h2>
+    <div class="card">
+      <label class="row" style="gap:8px;align-items:center;margin:4px 0"><input type="checkbox" id="f-dl-link" style="width:auto" ${f.courierLink ? 'checked' : ''}> Кнопка «Ссылка курьеру» в карточке — для курьеров без приложения</label>
+      <label class="row" style="gap:8px;align-items:center;margin:4px 0"><input type="checkbox" id="f-dl-live" style="width:auto" ${f.liveInTelegram ? 'checked' : ''}> Показывать курьера на карте в чате Telegram</label>
+      <p class="small muted" style="margin:4px 0 0">Карта в Telegram передаёт координаты курьера на серверы мессенджера за рубежом — включайте, только если курьер согласен. Карта на странице адреса и в кабинете — на нашем сервере в России.</p>
+    </div>
+    ${S.chain ? `<label class="row" style="gap:8px;align-items:center;margin:12px 0"><input type="checkbox" id="f-dl-all" style="width:auto"> Применить ко всем точкам сети (цена, районы, оплата, Telegram)</label>` : ''}
+    <div id="f-dl-price-msg" class="small" style="margin:8px 0"></div>
+    <button class="btn btn-primary" id="f-dl-price-save" style="width:auto">Сохранить</button>`;
+}
+
+function dlvMenuHtml(st) {
+  const S = st.settings;
+  if (!S) return '<div class="spinner"></div>';
+  if (S.error) return dlvErrorHtml(S.error);
+  const E = st.menuEdits;
+  const catOff = (c) => (c.id in E.cats ? E.cats[c.id] : c.off);
+  const itemOff = (i) => (i.id in E.items ? E.items[i.id] : i.off);
+  const q = st.menuFilter.trim().toLowerCase();
+  const cats = [...S.menu.categories, { id: '', name: 'Без категории', off: false, virtual: true }];
+  const changes = Object.keys(E.items).length + Object.keys(E.cats).length;
+  const total = S.menu.items.filter((i) => !i.law).length;
+  const yes = S.menu.items.filter((i) => !i.law && !itemOff(i) && !catOff(cats.find((c) => c.id === i.categoryId) || { off: false })).length;
+  const blocks = cats.map((c) => {
+    const items = S.menu.items.filter((i) => (c.virtual ? !S.menu.categories.some((x) => x.id === i.categoryId) : i.categoryId === c.id) && (!q || i.name.toLowerCase().includes(q)));
+    if (!items.length) return '';
+    const off = !c.virtual && catOff(c);
+    return `<div class="card">
+      <div class="row" style="gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+        <b>${esc(c.name)}</b>
+        ${c.virtual ? '' : `<label class="row small" style="gap:6px;align-items:center"><input type="checkbox" class="f-dm-cat" data-id="${esc(c.id)}" style="width:auto" ${off ? '' : 'checked'}> доставляем категорию</label>`}
+      </div>
+      <div style="margin-top:6px">${items.map((i) => `<label class="row" style="gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--border);${off || i.law ? 'opacity:.55' : ''}">
+          <input type="checkbox" class="f-dm-item" data-id="${esc(i.id)}" style="width:auto" ${i.law ? 'disabled' : !itemOff(i) ? 'checked' : ''} ${off ? 'disabled' : ''}>
+          <span style="flex:1">${esc(i.name)}${i.stop ? ' <span class="small muted">(в стоп-листе)</span>' : ''}</span>
+          <span class="small muted" style="white-space:nowrap">${i.law ? 'нельзя по закону' : `${dlvRub(i.price)}`}</span></label>`).join('')}</div>
+    </div>`;
+  }).join('');
+  return `
+    <div class="card small" style="line-height:1.6">
+      Доставляем <b>${yes}</b> из ${total} позиций. Снимите галочку — гость увидит «Не доставляем» и сможет заказать это только с собой или в зале.
+      Табак, кальяны и алкоголь доставлять нельзя по закону (ст. 19 закона № 15-ФЗ, ст. 16 закона № 171-ФЗ) — они выключены всегда.
+    </div>
+    <label class="field"><span>Поиск по меню</span><input id="f-dm-filter" value="${esc(st.menuFilter)}" placeholder="Название позиции"></label>
+    ${blocks || '<p class="small muted">Ничего не нашлось.</p>'}
+    <div style="position:sticky;bottom:12px;margin-top:10px">
+      <button class="btn btn-primary" id="f-dm-save" style="width:auto" ${changes ? '' : 'disabled'}>${changes ? `Сохранить изменения (${changes})` : 'Изменений нет'}</button>
+    </div>`;
+}
+
+function dlvReportHtml(st) {
+  const R = st.report;
+  const day = st.reportDay || (st.list && st.list.day) || '';
+  const head = `<div class="card row" style="gap:12px;align-items:flex-end;flex-wrap:wrap">
+      <label class="field" style="margin:0"><span>Рабочие сутки (с 06:00)</span><input id="f-dr-day" type="date" value="${esc(day)}"></label>
+      <button class="btn btn-ghost" id="f-dr-load" style="width:auto">Показать</button></div>`;
+  if (!R) return `${head}<div class="spinner"></div>`;
+  if (R.error) return head + dlvErrorHtml(R.error);
+  if (!R.rows.length) return `${head}<div class="card"><p class="small muted" style="margin:0">В этот день доставок курьерами приложения не было.</p></div>`;
+  const sum = (k) => R.rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  const RES = { done: 'вручён', returned: 'вернул', cancelled: 'отменён', active: 'в работе' };
+  return `${head}
+    <div class="card" style="padding:6px 8px"><div style="overflow-x:auto"><table class="table">
+      <thead><tr><th>Курьер</th><th>Доставок</th><th>Не удалось</th><th>Км</th><th>Среднее время</th><th>Заработок</th><th>Наличные</th></tr></thead>
+      <tbody>${R.rows.map((r) => `<tr><td><b>№${r.no}</b> · ${esc(r.name)}</td><td>${r.trips}</td><td>${r.failed || '—'}</td>
+        <td>${String(r.km).replace('.', ',')}</td><td>${r.avgMin ? `${r.avgMin} мин` : '—'}</td><td>${dlvRub(r.earned)}</td><td>${dlvRub(r.cash)}</td></tr>`).join('')}
+        <tr><td><b>Итого</b></td><td><b>${sum('trips')}</b></td><td>${sum('failed') || '—'}</td><td>${String(Math.round(sum('km') * 100) / 100).replace('.', ',')}</td><td></td><td><b>${dlvRub(sum('earned'))}</b></td><td><b>${dlvRub(sum('cash'))}</b></td></tr></tbody>
+    </table></div></div>
+    ${R.rows.map((r) => `<details class="card"><summary><b>№${r.no} · ${esc(r.name)}</b> — поездки (${r.list.length})</summary>
+      <div style="overflow-x:auto;margin-top:8px"><table class="table"><thead><tr><th>Заказ</th><th>Взял</th><th>Забрал</th><th>Вручил</th><th>Км</th><th>Оплата</th><th>Итог</th></tr></thead>
+      <tbody>${r.list.map((x) => `<tr><td>№${esc(x.orderNo)}${x.point ? `<div class="small muted">${esc(x.point)}</div>` : ''}</td><td>${dlvTime(x.takenAt)}</td><td>${dlvTime(x.pickedAt)}</td><td>${dlvTime(x.doneAt)}</td>
+        <td>${String(x.km).replace('.', ',')}</td><td class="small">${x.payment ? `${{ cash: 'наличные', card: 'карта', online: 'онлайн', prepaid: 'оплачен' }[x.payment.method] || x.payment.method}${x.payment.amount ? ` ${dlvRub(x.payment.amount)}` : ''}` : '—'}</td>
+        <td class="small">${RES[x.result] || esc(x.result)}${x.fail ? ` · ${esc(x.fail)}` : ''}</td></tr>`).join('')}</tbody></table></div></details>`).join('')}`;
+}
+
+function bindDeliveryTab(tenantId, redraw) {
+  const st = dlvStateOf(tenantId);
+  const alive = () => !!$('f-dl-root');
+  const loadList = async (quiet) => {
+    try {
+      const r = await callSaasGateway('courierAdminList', { tenantId });
+      st.list = r.data;
+    } catch (e) {
+      if (!quiet || !st.list) st.list = { error: e.message || 'Не удалось загрузить курьеров' };
+    }
+    if (alive()) redraw();
+  };
+  const loadSettings = async () => {
+    try {
+      const r = await callSaasGateway('deliverySettings', { tenantId });
+      st.settings = r.data;
+      st.form = JSON.parse(JSON.stringify(r.data.settings));
+      st.menuEdits = { items: {}, cats: {} };
+    } catch (e) {
+      st.settings = { error: e.message || 'Не удалось загрузить настройки доставки' };
+    }
+    if (alive()) redraw();
+  };
+  const loadReport = async () => {
+    try {
+      const r = await callSaasGateway('courierAdminReport', { tenantId, day: st.reportDay });
+      st.report = r.data;
+      st.reportDay = r.data.day;
+    } catch (e) {
+      st.report = { error: e.message || 'Не удалось загрузить отчёт' };
+    }
+    if (alive()) redraw();
+  };
+  const needList = ['now', 'couriers'].includes(st.sub) || (st.sub === 'report' && !st.reportDay);
+  if (needList && st.list === null) { st.list = undefined; loadList(); }
+  if (['price', 'menu'].includes(st.sub) && st.settings === null) { st.settings = undefined; loadSettings(); }
+  if (st.sub === 'report' && st.report === null && (st.reportDay || (st.list && st.list.day))) { st.report = undefined; loadReport(); }
+  // «Сейчас» — живое: раз в 15 секунд, пока раздел открыт.
+  if (!st.timer) {
+    st.timer = setInterval(() => {
+      if (!alive()) { clearInterval(st.timer); st.timer = null; return; }
+      if (document.visibilityState === 'visible' && st.sub === 'now' && !document.querySelector('.f-dl-assign:focus')) loadList(true);
+    }, 15000);
+  }
+
+  document.querySelectorAll('.f-dl-sub').forEach((b) => { b.onclick = () => { st.sub = b.dataset.sub; st.editing = null; redraw(); }; });
+  document.querySelectorAll('.f-dl-retry').forEach((b) => { b.onclick = () => { st.list = null; st.settings = null; st.report = null; redraw(); }; });
+  const call = async (name, data, okText) => {
+    try {
+      const r = await callSaasGateway(name, { tenantId, ...data });
+      if (okText) toast(okText);
+      return r.data;
+    } catch (e) {
+      toast(e.message || 'Не получилось');
+      return null;
+    }
+  };
+
+  // ----- Сейчас: назначить / снять курьера
+  document.querySelectorAll('.f-dl-assign').forEach((sel) => {
+    sel.onchange = async () => {
+      sel.disabled = true;
+      const ok = await call('courierAdminAssign', { t: sel.dataset.t, s: sel.dataset.s, courierId: sel.value || null }, sel.value ? 'Курьер назначен — заказ у него в приложении' : 'Курьер снят — заказ снова свободен');
+      if (!ok) sel.disabled = false;
+      loadList(true);
+    };
+  });
+
+  // ----- Курьеры
+  if ($('f-dl-new')) $('f-dl-new').onclick = () => { st.editing = 'new'; st.fresh = null; redraw(); };
+  if ($('f-dl-cancel')) $('f-dl-cancel').onclick = () => { st.editing = null; redraw(); };
+  document.querySelectorAll('.f-dl-edit').forEach((b) => { b.onclick = () => { st.editing = b.dataset.id; redraw(); }; });
+  if ($('f-dl-save')) {
+    $('f-dl-save').onclick = async () => {
+      const msg = $('f-dl-form-msg');
+      const editing = st.editing === 'new' ? null : st.editing;
+      const courier = {
+        ...(editing ? { id: editing } : {}),
+        name: $('f-dl-name').value.trim(),
+        phone: $('f-dl-phone').value.trim(),
+        points: [...document.querySelectorAll('.f-dl-pt:checked')].map((x) => x.value),
+      };
+      $('f-dl-save').disabled = true;
+      try {
+        const r = await callSaasGateway('courierAdminSave', { tenantId, courier });
+        if (!editing) {
+          const inv = await callSaasGateway('courierAdminInvite', { tenantId, courierId: r.data.id });
+          st.fresh = { url: inv.data.url, no: r.data.no, name: courier.name };
+        }
+        st.editing = null;
+        toast(editing ? 'Сохранено' : 'Курьер добавлен — отправьте ему ссылку');
+        await loadList(true);
+      } catch (e) {
+        msg.textContent = e.message || 'Не удалось сохранить';
+        msg.style.color = 'var(--danger)';
+        $('f-dl-save').disabled = false;
+      }
+    };
+  }
+  document.querySelectorAll('.f-dl-invite').forEach((b) => {
+    b.onclick = async () => {
+      const c = st.list.couriers.find((x) => x.id === b.dataset.id);
+      if (c.linked && !confirm(`Выдать курьеру №${c.no} новую ссылку? Когда он войдёт по ней, старый телефон выйдет из приложения.`)) return;
+      const r = await call('courierAdminInvite', { courierId: c.id });
+      if (r) { st.fresh = { url: r.url, no: c.no, name: c.name }; redraw(); window.scrollTo(0, 0); }
+    };
+  });
+  if ($('f-dl-copy')) $('f-dl-copy').onclick = () => copyToClipboard(st.fresh.url);
+  if ($('f-dl-share')) $('f-dl-share').onclick = () => navigator.share({ title: 'Приложение курьера', text: `Ваш вход в приложение курьера (ссылка одноразовая, 72 часа):`, url: st.fresh.url }).catch(() => {});
+  if ($('f-dl-fresh-hide')) $('f-dl-fresh-hide').onclick = () => { st.fresh = null; redraw(); };
+  document.querySelectorAll('.f-dl-enable').forEach((b) => {
+    b.onclick = async () => {
+      const c = st.list.couriers.find((x) => x.id === b.dataset.id);
+      const on = b.dataset.on === '1';
+      if (!on && !confirm(`Отключить курьера №${c.no}? Он сразу выйдет из приложения, а заказы, которые он ещё не забрал, снова станут свободными.`)) return;
+      if (await call('courierAdminEnable', { courierId: c.id, enabled: on }, on ? 'Курьер включён — выдайте ему новую ссылку' : 'Курьер отключён')) loadList(true);
+    };
+  });
+  document.querySelectorAll('.f-dl-forget').forEach((b) => {
+    b.onclick = async () => {
+      const c = st.list.couriers.find((x) => x.id === b.dataset.id);
+      if (!confirm(`Удалить имя и телефон курьера №${c.no}? Это нельзя отменить. Поездки в отчётах останутся за номером курьера.`)) return;
+      if (await call('courierAdminForget', { courierId: c.id }, 'Данные курьера удалены')) loadList(true);
+    };
+  });
+  document.querySelectorAll('.f-dl-cash').forEach((b) => {
+    b.onclick = async () => {
+      const c = st.list.couriers.find((x) => x.id === b.dataset.id);
+      const raw = prompt(`Сколько наличных сдал курьер №${c.no}? На руках: ${dlvRub(c.cashOnHand)}`, String(c.cashOnHand));
+      if (raw === null) return;
+      const amount = Number(String(raw).replace(',', '.').replace(/[^\d.]/g, ''));
+      if (await call('courierAdminCash', { courierId: c.id, amount }, `Принято ${dlvRub(amount)}`)) loadList(true);
+    };
+  });
+  if ($('f-dl-rates')) {
+    $('f-dl-rates').onclick = async () => {
+      if (await call('courierAdminRates', { ratePerTrip: Number($('f-dl-rate-trip').value) || 0, ratePerKm: Number($('f-dl-rate-km').value) || 0 }, 'Ставки сохранены')) loadList(true);
+    };
+  }
+
+  // ----- Цена и районы: форма живёт в st.form, поля — по id района (строки не путаются при удалении)
+  const syncForm = () => {
+    if (!st.form || !$('f-dl-fee')) return;
+    const n = (id) => { const v = $(id).value.trim(); return v === '' ? 0 : Number(v); };
+    st.form.fee = n('f-dl-fee');
+    st.form.freeFrom = n('f-dl-free');
+    st.form.minOrder = n('f-dl-min');
+    st.form.etaMin = n('f-dl-eta') || 60;
+    st.form.payAtDoor = { cash: $('f-dl-cash').checked, card: $('f-dl-card').checked, qr: $('f-dl-qr').checked };
+    st.form.courierLink = $('f-dl-link').checked;
+    st.form.liveInTelegram = $('f-dl-live').checked;
+    document.querySelectorAll('.f-dz').forEach((inp) => {
+      const z = st.form.zones.find((x) => x.id === inp.closest('tr').dataset.z);
+      if (!z) return;
+      const v = inp.value.trim();
+      z[inp.dataset.k] = inp.dataset.k === 'name' ? v : v === '' ? null : Number(v);
+    });
+  };
+  if ($('f-dl-fee')) {
+    const updatePreview = () => {
+      syncForm();
+      const f = st.form;
+      const el = $('f-dl-preview');
+      if (el) el.textContent = [f.fee ? `доставка ${dlvRub(f.fee)}` : 'доставка бесплатно', f.freeFrom ? `бесплатно от ${dlvRub(f.freeFrom)}` : '', f.minOrder ? `минимальный заказ ${dlvRub(f.minOrder)}` : '', `привезём за ~${f.etaMin} мин`].filter(Boolean).join(' · ');
+    };
+    ['f-dl-fee', 'f-dl-free', 'f-dl-min', 'f-dl-eta'].forEach((id) => { $(id).oninput = updatePreview; });
+  }
+  if ($('f-dz-add')) $('f-dz-add').onclick = () => { syncForm(); st.form.zones.push({ id: `n${Date.now().toString(36)}${dlvSeq++}`, name: '', fee: null, minOrder: null, freeFrom: null, etaMin: null }); redraw(); };
+  document.querySelectorAll('.f-dz-del').forEach((b) => { b.onclick = () => { syncForm(); st.form.zones = st.form.zones.filter((z) => z.id !== b.dataset.z); redraw(); }; });
+  if ($('f-dl-price-save')) {
+    $('f-dl-price-save').onclick = async () => {
+      syncForm();
+      const msg = $('f-dl-price-msg');
+      const all = !!($('f-dl-all') && $('f-dl-all').checked);
+      if (all && !confirm('Применить цену, районы и способы оплаты ко всем точкам сети?')) return;
+      $('f-dl-price-save').disabled = true;
+      try {
+        const r = await callSaasGateway('deliverySettingsSave', { tenantId, settings: st.form, applyToChain: all, deliveryEnabled: $('f-dl-enabled').checked });
+        st.form = JSON.parse(JSON.stringify(r.data.settings));
+        st.settings.settings = r.data.settings;
+        st.settings.deliveryEnabled = $('f-dl-enabled').checked;
+        toast(r.data.points > 1 ? `Сохранено для ${r.data.points} точек` : 'Сохранено');
+        redraw();
+      } catch (e) {
+        msg.textContent = e.message || 'Не удалось сохранить';
+        msg.style.color = 'var(--danger)';
+        $('f-dl-price-save').disabled = false;
+      }
+    };
+  }
+
+  // ----- Что доставляем
+  if ($('f-dm-filter')) $('f-dm-filter').oninput = (e) => { st.menuFilter = e.target.value; redraw(); };
+  const markChanged = () => {
+    const n = Object.keys(st.menuEdits.items).length + Object.keys(st.menuEdits.cats).length;
+    const b = $('f-dm-save');
+    if (b) { b.disabled = !n; b.textContent = n ? `Сохранить изменения (${n})` : 'Изменений нет'; }
+  };
+  document.querySelectorAll('.f-dm-item').forEach((cb) => {
+    cb.onchange = () => {
+      const item = st.settings.menu.items.find((i) => i.id === cb.dataset.id);
+      const off = !cb.checked;
+      if (off === item.off) delete st.menuEdits.items[item.id];
+      else st.menuEdits.items[item.id] = off;
+      markChanged();
+    };
+  });
+  document.querySelectorAll('.f-dm-cat').forEach((cb) => {
+    cb.onchange = () => {
+      const cat = st.settings.menu.categories.find((c) => c.id === cb.dataset.id);
+      const off = !cb.checked;
+      if (off === cat.off) delete st.menuEdits.cats[cat.id];
+      else st.menuEdits.cats[cat.id] = off;
+      redraw();
+    };
+  });
+  if ($('f-dm-save')) {
+    $('f-dm-save').onclick = async () => {
+      $('f-dm-save').disabled = true;
+      const r = await call('deliveryMenuSave', { items: st.menuEdits.items, categories: st.menuEdits.cats }, 'Сохранено — гости увидят изменения сразу');
+      if (r) { st.settings.menu = r.menu; st.menuEdits = { items: {}, cats: {} }; redraw(); } else markChanged();
+    };
+  }
+
+  // ----- Отчёт
+  if ($('f-dr-load')) $('f-dr-load').onclick = () => { st.reportDay = $('f-dr-day').value; st.report = undefined; redraw(); loadReport(); };
+}
+
 function bindApiKeysBox(tenantId, redraw) {
   const load = async () => {
     try {
@@ -4156,6 +4694,7 @@ const NAV_ICON_PATHS = {
   upload: '<path d="M4.5 14.5v3.3a2.2 2.2 0 0 0 2.2 2.2h10.6a2.2 2.2 0 0 0 2.2-2.2v-3.3"/><path d="M7.5 9 12 4.5 16.5 9"/><path class="ac" d="M12 4.8v10"/>',
   heart: '<path d="M12 19.6s-7.5-4.4-7.5-9.9A4.1 4.1 0 0 1 12 7.4a4.1 4.1 0 0 1 7.5 2.3c0 5.5-7.5 9.9-7.5 9.9Z"/><path class="ac" d="M8.4 10.6h2.1l1-1.6 1.4 3.2 1-1.6h1.7"/>',
   box: '<path d="M4 8.2 12 4.4l8 3.8v7.6L12 19.6 4 15.8Z"/><path d="M4 8.2l8 3.8 8-3.8M12 12v7.6"/><path class="ac" d="M8 6.3l8 3.8"/>',
+  scooter: '<circle cx="6.5" cy="16.5" r="2.4"/><circle cx="17.5" cy="16.5" r="2.4"/><path d="M8.9 16.5h6.2l-1.6-6.3h-3.2M13.5 10.2l1.1-3.7h2.1"/><path class="ac" d="M3.5 9.2h4.6M2.8 12.2h3.6"/>',
 };
 
 function navIconHtml(name, color) {
@@ -4205,6 +4744,7 @@ const DASHBOARD_NAV = [
   { id: 'devices', icon: 'device', color: '#0EA5E9', label: 'Устройства' },
   { id: 'stock', icon: 'box', color: '#22C55E', label: 'Склад' },
   { id: 'guests', icon: 'heart', color: '#E11D48', label: 'Гости' },
+  { id: 'delivery', icon: 'scooter', color: '#16A34A', label: 'Доставка' },
   { id: 'billing', icon: 'card', color: '#F59E0B', label: 'Оплата' },
   { id: 'plans', icon: 'gem', color: '#8B5CF6', label: 'Тарифы' },
   { id: 'branding', icon: 'palette', color: '#EC4899', label: 'Брендинг' },
@@ -6030,6 +6570,7 @@ function watchDashboardData(tenantId) {
       overview: overviewHtml, guide: guideTabHtml, devices: devicesHtml, billing: billingHtml, plans: plansHtml,
       branding: brandingHtml, team: teamHtml, ai: aiHtml, profile: profileHtml, settings: settingsHtml,
       faq: faqHtml, support: supportHtml, import: importHtml, stock: stockHtml, guests: () => guestsTabHtml(tenantId),
+      delivery: () => deliveryTabHtml(tenantId),
     };
     renderKeepingInputs(body, (TAB_RENDERERS[activeTab] || overviewHtml)() + dashboardNavHtml(activeTab, daysLeft !== null, tenant.name, tenant.chainId));
     // В кабинете кнопки чата нет: у него есть раздел «Поддержка».
@@ -6046,6 +6587,7 @@ function watchDashboardData(tenantId) {
       };
     });
     if (activeTab === 'guests') bindGuestsTab(tenantId, draw);
+    if (activeTab === 'delivery') bindDeliveryTab(tenantId, draw);
     if (activeTab === 'stock') {
       if (!stockWatching) {
         stockWatching = true;

@@ -2268,6 +2268,26 @@ function remoteSaleBanned(item, catName = '') {
   return ALCOHOL_RE.test(name) || ALCOHOL_RE.test(catName);
 }
 
+/// Цена доставки — та же формула, что на шлюзе (saas-gateway/delivery-pricing.js
+/// → quote): гость видит цену до заказа, а при заказе сервер считает заново.
+function deliveryQuote(info, subtotal, zoneId) {
+  const zones = (info && info.zones) || [];
+  let zone = null;
+  if (zones.length) {
+    zone = zones.find((z) => z.id === zoneId) || null;
+    if (!zone) return { ok: false, needZone: true, fee: 0, toFree: 0, short: 0, etaMin: info.etaMin };
+  }
+  const pick = (k) => (zone && zone[k] !== null && zone[k] !== undefined ? zone[k] : Number(info[k]) || 0);
+  const minOrder = pick('minOrder');
+  const freeFrom = pick('freeFrom');
+  const base = pick('fee');
+  const short = minOrder > 0 && subtotal < minOrder ? Math.ceil(minOrder - subtotal) : 0;
+  const free = freeFrom > 0 && subtotal >= freeFrom;
+  const fee = free ? 0 : base;
+  return { ok: !short, fee, zone, minOrder, freeFrom, etaMin: pick('etaMin'), short, toFree: !free && freeFrom > 0 && base > 0 ? Math.ceil(freeFrom - subtotal) : 0 };
+}
+const DELIVERY_ITEM_ID = 'zalpos_delivery';
+
 /// Короткий номер заказа — тот же, что видит персонал на кассе и в Telegram.
 /// Номер заказа: порядковый (orderNo — шлюз и касса ведут общий счётчик),
 /// у старых заказов — последние 4 знака id. Как orderNumberLabel в кассе.
@@ -2328,6 +2348,9 @@ async function screenCheckout() {
       <a class="btn btn-ghost" href="#/menu">${ic('back')}В меню</a>`;
     return;
   }
+  // Условия доставки: цена, районы, что заведение не возит. Шлюз ещё не
+  // обновился или недоступен — оформляем как раньше (цену назовут при звонке).
+  let info = await gatewayPost('/guestDeliveryInfo', {}).catch(() => null);
   // Пока грузили, гость мог уйти на другой экран.
   if (location.hash !== '#/checkout') return;
 
@@ -2342,9 +2365,8 @@ async function screenCheckout() {
       banned: remoteSaleBanned(it, catName(it.categoryId)),
     };
   }).filter(Boolean);
-  const allowed = lines.filter((l) => !l.banned);
+  const isOff = (l) => !!info && (info.off || []).includes(l.menuItemId);
   const skipped = lines.filter((l) => l.banned);
-  const total = allowed.reduce((a, l) => a + l.price * l.qty, 0);
 
   const v = state.venue || {};
   const p = state.profile || {};
@@ -2353,6 +2375,11 @@ async function screenCheckout() {
   const sbpOnly = SBP_ONLY.includes(v.onlinePay);
   let delivery = saved.type !== 'takeaway';
   let payOnline = false;
+  let zoneId = info && (info.zones || []).some((z) => z.id === saved.zoneId) ? saved.zoneId : '';
+  // Что уходит в заказ: без запрещённого законом и — в доставку — без того, что заведение не возит.
+  const allowedNow = () => lines.filter((l) => !l.banned && !(delivery && isOff(l)));
+  const subtotal = () => allowedNow().reduce((a, l) => a + l.price * l.qty, 0);
+  const quoteNow = () => (delivery && info ? deliveryQuote(info, subtotal(), zoneId) : null);
 
   screenEl().innerHTML = `
     <div class="backbar"><button data-back aria-label="В меню">${ic('back')}</button><h1 style="margin:0">Оформление заказа</h1></div>
@@ -2388,6 +2415,8 @@ async function screenCheckout() {
         <textarea id="dComment" rows="2" maxlength="300" placeholder="Например: без лука, позвонить за 10 минут"></textarea></label>
     </div>
 
+    <div id="zoneBox"></div>
+
     <h2>Оплата</h2>
     <div class="chips">
       <button class="chip" data-pay="receipt" id="payReceipt">При получении</button>
@@ -2395,21 +2424,15 @@ async function screenCheckout() {
     </div>
     <p class="small muted" id="payHint" style="margin:0 0 12px"></p>
 
-    <div class="card">
-      ${allowed.map((l) => `
-        <div class="bill-line">
-          <span class="grow">${esc(l.name)}${l.mods.length ? ` <span class="muted small">(${esc(l.mods.join(', '))})</span>` : ''} ×${l.qty}</span>
-          <span class="muted">${money(l.price * l.qty)}</span>
-        </div>`).join('')}
-      <div class="bill-total"><span>Итого</span><span>${money(total)}</span></div>
-    </div>
+    <div class="card" id="billBox"></div>
+    <div id="offBox"></div>
     ${skipped.length ? `<div class="card warn small">
       Не продаются с собой и с доставкой: ${esc(skipped.map((l) => l.name).join(', '))}.
       Табак, кальяны и алкоголь — только в заведении (законы № 15-ФЗ и № 171-ФЗ).</div>` : ''}
 
     <div>
       ${consentHtml()}
-      <button class="btn-primary" id="dSend" ${allowed.length ? '' : 'disabled'}>Оформить заказ · ${money(total)}</button>
+      <button class="btn-primary" id="dSend">Оформить заказ</button>
     </div>
     ${sellerHtml()}
     <p class="small muted center" style="margin:12px 0 0">Имя, телефон и адрес нужны заведению, чтобы подтвердить
@@ -2422,11 +2445,40 @@ async function screenCheckout() {
     $('addrBox').style.display = delivery ? '' : 'none';
     $('pickupHint').style.display = !delivery && v.address ? '' : 'none';
     $('dCommentLabel').textContent = delivery ? 'Комментарий курьеру и кухне' : 'Комментарий к заказу';
+    const pay = (info && info.payAtDoor) || { cash: true, card: true };
+    const doorWays = [pay.cash && 'наличными', pay.card && 'картой', pay.qr && 'по QR'].filter(Boolean);
     $('payHint').textContent = payOnline
       ? 'Кнопка оплаты появится после того, как заведение подтвердит заказ.'
-      : delivery ? 'Наличными или картой курьеру.' : 'На кассе заведения.';
+      : delivery ? `Курьеру при получении${doorWays.length ? ': ' + doorWays.join(', ') : ''}.` : 'На кассе заведения.';
+    // Район доставки — если заведение их задало.
+    const zones = delivery && info ? info.zones || [] : [];
+    $('zoneBox').innerHTML = zones.length ? `<h2>Район доставки</h2><div class="chips">${zones.map((z) => {
+      const q = deliveryQuote(info, subtotal(), z.id);
+      return `<button class="chip${z.id === zoneId ? ' on' : ''}" data-zone="${esc(z.id)}">${esc(z.name)} · ${q.fee ? money(q.fee) : 'бесплатно'}</button>`;
+    }).join('')}</div>${zoneId ? '' : '<p class="small muted" style="margin:0 0 12px">Выберите район — от него зависят цена и время доставки.</p>'}` : '';
+    $('zoneBox').querySelectorAll('[data-zone]').forEach((b) => { b.onclick = () => { zoneId = b.dataset.zone; paint(); }; });
+    // Счёт: блюда, доставка, итог, подсказки.
+    const list = allowedNow();
+    const sum = subtotal();
+    const q = quoteNow();
+    const fee = q ? q.fee : 0;
+    $('billBox').innerHTML = `
+      ${list.map((l) => `<div class="bill-line">
+        <span class="grow">${esc(l.name)}${l.mods.length ? ` <span class="muted small">(${esc(l.mods.join(', '))})</span>` : ''} ×${l.qty}</span>
+        <span class="muted">${money(l.price * l.qty)}</span></div>`).join('') || '<p class="small muted" style="margin:0">В заказе пока нет позиций.</p>'}
+      ${q && !q.needZone ? `<div class="bill-line"><span class="grow">Доставка${q.zone ? ` · ${esc(q.zone.name)}` : ''}</span><span class="muted">${fee ? money(fee) : 'бесплатно'}</span></div>` : ''}
+      <div class="bill-total"><span>Итого</span><span>${money(sum + (q && !q.needZone ? fee : 0))}</span></div>
+      ${q && q.toFree > 0 && q.ok ? `<p class="small" style="margin:8px 0 0;color:var(--gold)">До бесплатной доставки — ещё ${money(q.toFree)}</p>` : ''}
+      ${q && q.short ? `<p class="small" style="margin:8px 0 0;color:var(--danger)">Минимальный заказ на доставку — ${money(q.minOrder)}: добавьте ещё на ${money(q.short)}</p>` : ''}
+      ${q && !q.needZone && q.etaMin ? `<p class="small muted" style="margin:6px 0 0">Привезём примерно за ${q.etaMin} мин после подтверждения</p>` : ''}`;
+    const off = delivery ? lines.filter((l) => !l.banned && isOff(l)) : [];
+    $('offBox').innerHTML = off.length ? `<div class="card warn small">Не доставляем: ${esc(off.map((l) => l.name).join(', '))}.
+      Их можно взять с собой — выберите «Заберу сам», или заказать в заведении. Остальное привезём.</div>` : '';
+    const blocked = !list.length || (q && (q.needZone || q.short > 0));
+    send.disabled = blocked || !consent.ready();
+    send.dataset.blocked = blocked ? '1' : '';
+    send.textContent = `Оформить заказ · ${money(sum + (q && !q.needZone ? fee : 0))}`;
   };
-  paint();
   screenEl().querySelectorAll('[data-type]').forEach((b) => {
     b.onclick = () => { delivery = b.dataset.type === 'delivery'; paint(); };
   });
@@ -2436,9 +2488,15 @@ async function screenCheckout() {
   screenEl().querySelector('[data-back]').onclick = () => { location.hash = '#/menu'; };
 
   const send = $('dSend');
-  const consent = bindConsent(send, () => allowed.length > 0);
+  const consent = bindConsent(send, () => allowedNow().length > 0 && !send.dataset.blocked);
+  paint();
   send.onclick = async () => {
     if (!consent.ready()) return toast(consentToast());
+    const q = quoteNow();
+    if (q && q.needZone) { $('zoneBox').scrollIntoView({ behavior: 'smooth', block: 'center' }); return toast('Выберите район доставки'); }
+    if (q && q.short) return toast(`Минимальный заказ на доставку — ${money(q.minOrder)}: добавьте ещё на ${money(q.short)}`);
+    const allowed = allowedNow();
+    if (!allowed.length) return toast('В заказе нет позиций');
     const val = (id) => $(id).value.trim();
     const name = val('dName');
     const phoneRaw = val('dPhone');
@@ -2463,8 +2521,10 @@ async function screenCheckout() {
         comment: val('dComment'),
         payMethod: payOnline && online ? 'online' : 'on_receipt',
         items: allowed.map((l) => ({ menuItemId: l.menuItemId, qty: l.qty, ...(l.mods.length ? { mods: l.mods } : {}) })),
+        // Цена доставки, которую гость видел: сервер проверит, что она не изменилась.
+        ...(q ? { delivery: { zoneId, fee: q.fee } } : {}),
       });
-      saveContact({ type: delivery ? 'delivery' : 'takeaway', name, phone: phoneRaw, ...address });
+      saveContact({ type: delivery ? 'delivery' : 'takeaway', name, phone: phoneRaw, ...address, ...(zoneId ? { zoneId } : {}) });
       // В корзине остаются только позиции, которые с собой не продаются, —
       // их можно заказать, когда гость придёт в заведение.
       allowed.forEach((l) => { delete state.cart[l.key]; });
@@ -2474,6 +2534,11 @@ async function screenCheckout() {
     } catch (e) {
       toast(e.message || 'Не удалось оформить заказ');
       send.disabled = false;
+      // Заведение поменяло цену или районы, пока гость оформлял, — показываем новые.
+      if (/Цена доставки изменилась|района больше нет|Выберите район/i.test(e.message || '')) {
+        info = await gatewayPost('/guestDeliveryInfo', {}).catch(() => info);
+        paint();
+      }
     }
   };
 }
@@ -2496,10 +2561,23 @@ function screenOrder(id) {
     const v = state.venue || {};
     const lines = (s.orderItems || []).length ? s.orderItems
       : pending.filter((o) => o.status !== 'rejected').flatMap((o) => o.items || []);
-    const sum = (s.orderItems || []).length && Number(s.totalWithDiscount) > 0
+    let sum = (s.orderItems || []).length && Number(s.totalWithDiscount) > 0
       ? Number(s.totalWithDiscount)
       : lines.reduce((a, i) => a + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
+    // Доставка: строка в чеке появляется после подтверждения — до этого цена из заказа.
+    const dlv = type === 'delivery' && s.delivery ? s.delivery : null;
+    const fee = dlv && Number(dlv.fee) > 0 ? Number(dlv.fee) : 0;
+    const showFee = !!dlv && !lines.some((i) => i.menuItemId === DELIVERY_ITEM_ID);
+    if (showFee) sum += fee;
     const courier = courierOf(s, draw);
+    // Курьер приложения: стадия и точка на карте (свежая — до 10 минут).
+    const stage = !cancelled && st !== 'done' ? s.courierStage || '' : '';
+    const pos = s.courierPos && Number.isFinite(Number(s.courierPos.lat)) ? s.courierPos : null;
+    const posAt = pos ? toDate(pos.at) : null;
+    const posFresh = pos && posAt && Date.now() - posAt.getTime() < 10 * 60 * 1000 && (stage === 'onWay' || stage === 'arrived');
+    const start = toDate(s.startTime);
+    const promised = dlv && dlv.etaMin && start && !cancelled && st !== 'done' && st !== 'new'
+      ? new Date(start.getTime() + dlv.etaMin * 60000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
     const hint = {
       new: `Заказ получен. Заведение позвонит вам, чтобы подтвердить состав${type === 'delivery' ? ' и адрес' : ''} — держите телефон рядом.`,
       accepted: 'Заказ подтверждён и скоро начнут готовить.',
@@ -2509,6 +2587,12 @@ function screenOrder(id) {
       done: type === 'delivery' ? 'Заказ доставлен. Приятного аппетита!' : 'Заказ выдан. Приятного аппетита!',
       cancelled: `Заказ отменён${s.cancelReason ? ': ' + esc(s.cancelReason) : ''}.`,
     }[st];
+    const stageHint = {
+      toVenue: 'Курьер уже едет в заведение за вашим заказом.',
+      onWay: `Курьер ${courier.name ? esc(courier.name) + ' ' : ''}везёт ваш заказ.`,
+      arrived: 'Курьер у двери — встречайте!',
+      failed: 'Курьер не смог передать заказ. Позвоните ему или в заведение.',
+    }[stage];
     const fullyPaid = paid > 0 && sum > 0 && paid + 0.01 >= sum;
     let payBlock = '';
     if (!cancelled && st !== 'done') {
@@ -2520,7 +2604,7 @@ function screenOrder(id) {
               : '<p class="small muted" style="margin:0">Онлайн-оплата сейчас недоступна — оплатите при получении.</p>';
       } else {
         payBlock = `<p class="small muted" style="margin:0">${type === 'delivery'
-          ? 'Оплата при получении — наличными или картой курьеру.'
+          ? 'Оплата при получении — курьеру. Чек придёт на ваш телефон.'
           : 'Оплата при получении — на кассе заведения.'}</p>`;
       }
     }
@@ -2528,8 +2612,12 @@ function screenOrder(id) {
     screenEl().innerHTML = `
       <div class="overline">Заказ №${esc(orderNo(s.id, s.orderNo))}</div>
       <h1 style="margin-top:4px">${type === 'delivery' ? 'Доставка' : 'С собой'}</h1>
-      <p class="${cancelled ? '' : 'muted'}" style="${cancelled ? 'color:var(--danger)' : ''}">${hint}</p>
-      ${st === 'courier' && /^\d{11}$/.test(courier.phone) ? `<a class="btn btn-ghost" href="tel:+${esc(courier.phone)}"
+      <p class="${cancelled ? '' : 'muted'}" style="${cancelled ? 'color:var(--danger)' : stage === 'arrived' ? 'color:var(--gold);font-weight:700;font-size:18px' : ''}">${stageHint || hint}</p>
+      ${promised ? `<p class="small muted" style="margin:-6px 0 12px">Обещали привезти к ${esc(promised)}</p>` : ''}
+      ${posFresh ? `<div class="card" style="padding:8px"><iframe title="Курьер на карте" loading="lazy" style="width:100%;height:260px;border:0;border-radius:12px"
+        src="https://yandex.ru/map-widget/v1/?ll=${Number(pos.lng).toFixed(6)},${Number(pos.lat).toFixed(6)}&z=15&pt=${Number(pos.lng).toFixed(6)},${Number(pos.lat).toFixed(6)},pm2gnl"></iframe>
+        <p class="small muted" style="margin:6px 4px 0">Курьер на карте · ${esc(posAt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }))}</p></div>` : ''}
+      ${(st === 'courier' || stage) && /^\d{11}$/.test(courier.phone) ? `<a class="btn btn-ghost" href="tel:+${esc(courier.phone)}"
         style="margin:0 0 14px">${ic('phone')}Позвонить курьеру${courier.name ? ' · ' + esc(courier.name) : ''}</a>` : ''}
       ${cancelled ? '' : `<div class="card dsteps">${path.map((x, i) => {
         const done = i < cur || st === 'done';
@@ -2540,6 +2628,7 @@ function screenOrder(id) {
         ${lines.map((i) => `<div class="bill-line">
           <span class="grow">${esc(i.name)}${(i.mods || []).length ? ` <span class="muted small">(${esc(i.mods.join(', '))})</span>` : ''} ×${Number(i.qty) || 0}</span>
           <span class="muted">${money((Number(i.price) || 0) * (Number(i.qty) || 0))}</span></div>`).join('')}
+        ${showFee ? `<div class="bill-line"><span class="grow">Доставка${dlv.zoneName ? ' · ' + esc(dlv.zoneName) : ''}</span><span class="muted">${fee ? money(fee) : 'бесплатно'}</span></div>` : ''}
         <div class="bill-total"><span>Итого</span><span>${money(sum)}</span></div>
         ${paid > 0 ? `<div class="bill-line" style="color:var(--gold)"><span class="grow">Оплачено онлайн</span><span>${money(paid)}</span></div>` : ''}
       </div>

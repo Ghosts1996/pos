@@ -374,6 +374,51 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   assert.equal(store.get("tenants/A/sessions/s2zzzz").courierSet, true, "отметка «курьер назначен»");
   assert.ok(sent.some((m) => /Курьер назначен/.test(m.body.text || "")), "карточка: курьер назначен");
   assert.ok(sent.every((m) => !JSON.stringify(m.body).includes("Анна")), "имени курьера в Telegram нет");
+  // ================= Курьеры приложения и цена доставки в карточке
+  {
+    const assigned = [];
+    tg.setCourierApi({
+      onShiftFor: async () => [{ id: "cr1", no: 3, busy: 1 }],
+      assignFromBot: async (t, sid, cid) => {
+        assigned.push([t, sid, cid]);
+        store.set(`tenants/${t}/sessions/${sid}`, { ...store.get(`tenants/${t}/sessions/${sid}`), courierId: cid, courierNo: 3, courierStage: "toVenue", courierSet: true });
+      },
+    });
+    store.set("tenants/A/sessions/s3cour", { tableId: "takeaway", status: "active", orderType: "delivery", deliveryStatus: "cooking", orderNo: 31,
+      orderItems: [{ name: "Суп", price: 300, qty: 2 }, { menuItemId: "zalpos_delivery", name: "Доставка · Центр", price: 150, qty: 1, noPromo: true, kind: "kitchen", ready: 1 }],
+      delivery: { fee: 150, zoneName: "Центр", etaMin: 45 }, startTime: new Date() });
+    sent.length = 0;
+    fire(); await tick(); await tick();
+    const card = sent.find((m) => m.method === "sendMessage" && /№31/.test(m.body.text || ""));
+    assert.ok(card, "карточка заказа с доставкой");
+    assert.match(card.body.text, /Позиций: 2 · 750/, "доставка в сумме один раз, но не в числе позиций");
+    assert.match(card.body.text, /🛵 Доставка: 150.₽ · Центр · обещали за 45 мин/);
+    assert.ok(!/• Доставка/.test(card.body.text), "строка доставки — не блюдо в списке");
+    sent.length = 0;
+    await hookA({ callback_query: { id: "a1", from: { id: 601, first_name: "Повар" }, data: "c:s3cour", message: { chat: { id: -900 }, message_id: 106 } } });
+    const kb = sent.find((m) => m.method === "editMessageReplyMarkup");
+    const btn = kb.body.reply_markup.inline_keyboard.flat().find((b) => /Курьер №3/.test(b.text));
+    assert.ok(btn && btn.text === "🛵 Курьер №3 · везёт 1" && btn.callback_data === "a:s3cour:cr1", "курьер приложения — номером, первым");
+    sent.length = 0;
+    await hookA({ callback_query: { id: "a2", from: { id: 601, first_name: "Повар" }, data: "a:s3cour:cr1", message: { chat: { id: -900 }, message_id: 106 } } });
+    await tick(); await tick();
+    assert.deepEqual(assigned, [["A", "s3cour", "cr1"]]);
+    assert.ok(sent.some((m) => /🛵 Курьер №3 · едет в заведение/.test(m.body.text || "")), "карточка: номер курьера и стадия");
+    assert.ok(sent.some((m) => m.method === "answerCallbackQuery" && /в приложении/.test(m.body.text)), "ответ на нажатие");
+    // Событие курьера — ответом на карточку в той же группе.
+    const cardRec = store.get("telegramBots/A/cards/s3cour");
+    sent.length = 0;
+    await tg.deliveryEvent("A", "s3cour", "📦 Курьер №3 забрал заказ — в пути");
+    const ev = sent.find((m) => m.method === "sendMessage");
+    assert.ok(ev && ev.body.chat_id === cardRec.chatId && ev.body.reply_to_message_id === cardRec.messageId, "событие — ответом на карточку");
+    // Ссылка курьеру без приложения — только если курьер не из приложения.
+    const kbApp = tgmod.deliveryKeyboard({ id: "x", orderType: "delivery", deliveryStatus: "courier", courierSet: true, courierId: "cr1" }, "https://a", "https://c");
+    assert.ok(!kbApp.inline_keyboard.flat().some((b) => b.text === "🛵 Ссылка курьеру"));
+    // Гость заказал в старом приложении и цену не видел — напоминание при звонке.
+    const legacyText = tgmod.deliveryCardText({ id: "y", orderType: "delivery", deliveryStatus: "new", source: "app", delivery: { fee: 200, feeUnseen: true } }, "Europe/Moscow", [{ name: "Суп", price: 300, qty: 1 }]);
+    assert.match(legacyText, /Позиций: 1 · 500/);
+    assert.match(legacyText, /не видел цену доставки — назовите её при звонке/);
+  }
   // Управляющий из списка подключается без ссылки: открыл бота — «Запустить»
   await tg.handleAccess(mkReq({ tenantId: "A", allowed: [{ id: 501, name: "Олег", role: "owner" }, { id: 601, name: "Повар", role: "staff" }, { id: 503, name: "Ира", role: "owner" }] }), mkRes());
   await tick();
@@ -411,6 +456,9 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
 
   // ================= Геолокация курьера: ссылка, страница, живая точка, карта
   {
+    // Живая точка курьера в чате — только по настройке заведения (координаты уходят за рубеж).
+    store.set("tenants/A/settings/delivery", { liveInTelegram: true });
+    tg.forgetDeliverySettings(["A"]);
     // Свой заказ курьера: в работе, курьер назначен, карточка уже в группе доставок
     store.set("tenants/A/sessions/s2dlvr", { tableId: "takeaway", status: "active", orderType: "delivery", deliveryStatus: "courier", courierSet: true,
       courierName: "Николай", guestTag: "Пётр", deliveryAddress: "ул. Пушкина 2", orderItems: [{ name: "Кальян", price: 900, qty: 1 }], startTime: new Date() });

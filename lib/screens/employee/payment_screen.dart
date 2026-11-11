@@ -17,6 +17,8 @@ import '../../services/chestny_znak_service.dart';
 import '../../services/venue_service.dart';
 import '../../services/app_scope.dart';
 import '../../models/fiscal_receipt.dart';
+import '../../build_info.dart';
+import '../../models/delivery_status.dart';
 import '../../utils/adaptive.dart';
 import '../../utils/promo_policy.dart';
 import '../../utils/constants.dart';
@@ -802,8 +804,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
         return own.isEmpty ? kassaDefaultVat : FiscalVatRateX.fromId(own, fallback: kassaDefaultVat);
       }
 
-      FiscalPaymentObject subjectOf(OrderItem line) =>
-          FiscalPaymentObjectX.fromId(menu[line.menuItemId]?.fiscalSubject);
+      // Строка «Доставка» (SaaS, добавляет сервер) — услуга, в меню её нет.
+      FiscalPaymentObject subjectOf(OrderItem line) => kSaasMode && line.menuItemId == kDeliveryFeeItemId
+          ? FiscalPaymentObject.service
+          : FiscalPaymentObjectX.fromId(menu[line.menuItemId]?.fiscalSubject);
 
       // Цены позиций в фискальном чеке — уже со скидкой, иначе итог позиций
       // не сойдётся с платежами и касса чек отклонит. Скидка процентная —

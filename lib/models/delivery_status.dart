@@ -7,6 +7,12 @@
 /// Отменить (cancelled) можно на любом шаге до последнего.
 ///
 /// Те же правила — в saas-gateway/delivery-flow.js (кнопки Telegram).
+
+/// id строки «Доставка» в чеке: её добавляет сервер, когда заказ из
+/// приложения подтвердили (saas-gateway/delivery-pricing.js). В чеке это
+/// услуга, в Z-отчёте — отдельный вид продаж. В меню такой позиции нет.
+const kDeliveryFeeItemId = 'zalpos_delivery';
+
 class DeliveryFlow {
   DeliveryFlow._();
 

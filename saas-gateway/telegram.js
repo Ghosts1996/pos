@@ -49,6 +49,7 @@ const fs = require("fs");
 const path = require("path");
 const { sessionBill } = require("./guest-pay");
 const flow = require("./delivery-flow");
+const pricing = require("./delivery-pricing");
 
 // Адрес Bot API. С серверов в РФ api.telegram.org бывает недоступен —
 // тогда сюда ставится свой ретранслятор (TELEGRAM_API_BASE в
@@ -101,7 +102,7 @@ function saleOf(id, d) {
   const s = { id, closedAt: msOf(d.closedAt), refundedAt: msOf(d.refundedAt) };
   for (const k of SALE_FIELDS) if (d[k] !== undefined && d[k] !== null) s[k] = d[k];
   s.orderItems = (Array.isArray(d.orderItems) ? d.orderItems : [])
-    .map((i) => ({ name: i.name, price: i.price, qty: i.qty, kind: i.kind, noPromo: i.noPromo === true }));
+    .map((i) => ({ name: i.name, price: i.price, qty: i.qty, kind: i.kind, noPromo: i.noPromo === true, ...(pricing.isFeeLine(i) ? { fee: true } : {}) }));
   return s;
 }
 
@@ -379,6 +380,8 @@ function salesStats(sessions, excludeTobacco = true, period = sessions && sessio
       full += sum;
       // Топ и доли — что действительно продали: возвращённый чек не в них.
       if (s.refunded) continue;
+      // Плата за доставку — в выручке, но не блюдо: не в топе и не в долях цехов.
+      if (i.fee || pricing.isFeeLine(i)) continue;
       const kind = i.kind === "hookah" || i.kind === "bar" ? i.kind : "kitchen";
       st.kinds[kind] += sum;
       const name = i.name || "—";
@@ -529,12 +532,17 @@ function alertText(venueName, a) {
  */
 function deliveryCardText(s, tz, pendingItems = [], pointName = "") {
   const type = s.orderType === "delivery" ? "delivery" : "takeaway";
-  const confirmed = s.orderItems || [];
+  // Строка «Доставка» — отдельно от блюд: до подтверждения её в чеке нет,
+  // цена — в s.delivery (delivery-pricing.js).
+  const inBill = s.orderItems || [];
+  const confirmed = inBill.filter((i) => !pricing.isFeeLine(i));
   const items = confirmed.length ? confirmed : pendingItems;
   const qty = items.reduce((a, i) => a + (Number(i.qty) || 0), 0);
+  const fee = type === "delivery" && s.delivery && Number(s.delivery.fee) > 0 ? Number(s.delivery.fee) : 0;
+  const feeInBill = inBill.some(pricing.isFeeLine);
   const total = confirmed.length
-    ? sessionBill(s)
-    : Math.round(items.reduce((a, i) => a + (Number(i.price) || 0) * (Number(i.qty) || 0), 0) * 100) / 100;
+    ? sessionBill(s) + (feeInBill ? 0 : fee)
+    : Math.round((items.reduce((a, i) => a + (Number(i.price) || 0) * (Number(i.qty) || 0), 0) + fee) * 100) / 100;
   const app = s.source === "app";
   const lines = [
     ...(pointName ? [`${POINT_MARK} ${pointName}`] : []),
@@ -542,6 +550,14 @@ function deliveryCardText(s, tz, pendingItems = [], pointName = "") {
     `Статус: ${flow.label(type, s.deliveryStatus)}`,
     `Позиций: ${qty} · ${rub(total)}`,
   ];
+  if (type === "delivery" && s.delivery) {
+    const zone = s.delivery.zoneName ? ` · ${s.delivery.zoneName}` : "";
+    const eta = Number(s.delivery.etaMin) > 0 ? ` · обещали за ${s.delivery.etaMin} мин` : "";
+    lines.push(`🛵 Доставка: ${fee ? rub(fee) : "бесплатно"}${zone}${eta}`);
+    if (s.delivery.feeUnseen && flow.normalize(type, s.deliveryStatus) === "new") {
+      lines.push("☎️ Гость оформил в старой версии приложения и не видел цену доставки — назовите её при звонке");
+    }
+  }
   const paid = Number(s.guestPaidTotal) || 0;
   if (paid > 0) lines.push(`💳 Оплачено онлайн: ${rub(paid)}`);
   else if (s.payMethod === "online") lines.push("Оплата: онлайн после подтверждения");
@@ -553,7 +569,11 @@ function deliveryCardText(s, tz, pendingItems = [], pointName = "") {
     lines.push(items.slice(0, 15).map((i) => `• ${i.name}${i.mods && i.mods.length ? ` (${i.mods.join(", ")})` : ""} ×${i.qty}`).join("\n"));
     if (items.length > 15) lines.push(`…и ещё ${items.length - 15}`);
   }
-  if (s.courierName || s.courierSet) lines.push("🚴 Курьер назначен");
+  // Курьер приложения — номером (имена в Telegram не отправляем).
+  const stage = { toVenue: "едет в заведение", onWay: "в пути", arrived: "у двери", failed: "не удалось вручить" }[s.courierStage];
+  if (s.courierId && s.courierNo) lines.push(`🛵 Курьер №${s.courierNo}${stage ? ` · ${stage}` : ""}`);
+  else if (s.courierName || s.courierSet) lines.push("🚴 Курьер назначен");
+  if (s.courierStage === "returned" && !s.courierId) lines.push("↩️ Заказ вернули в заведение — свободен для курьеров");
   const start = toDate(s.startTime);
   if (start) lines.push(`Принят в ${hhmm(start, tz)}`);
   return lines.join("\n");
@@ -573,7 +593,8 @@ function deliveryKeyboard(s, addressUrl, courierUrl = null) {
     if (row.length) rows.push(row);
     // Ссылка курьеру — когда он назначен и заказ ещё в работе.
     const working = !flow.isFinal(type, s.deliveryStatus);
-    if (courierUrl && working && (s.courierSet || s.courierName)) rows.push([{ text: "🛵 Ссылка курьеру", url: courierUrl }]);
+    // Курьеру без приложения — ссылка для геолокации (у курьера приложения она своя).
+    if (courierUrl && working && !s.courierId && (s.courierSet || s.courierName)) rows.push([{ text: "🛵 Ссылка курьеру", url: courierUrl }]);
   }
   return { inline_keyboard: rows };
 }
@@ -1084,7 +1105,7 @@ ${courierMap}`);
     const nonce = crypto.randomBytes(16).toString("base64");
     page(200, `<h2 style="margin:0 0 12px">Доставка №${escHtml(orderNo(link.s, ses.orderNo))}</h2>
 <p id="st">Определяем вашу геолокацию…</p>
-<p style="color:#666;font-size:15px">Держите страницу открытой, пока едете. Геолокация нужна только для карты доставки и не передаётся гостю.</p>
+<p style="color:#666;font-size:15px">Держите страницу открытой, пока едете. Геолокацию видят заведение и гость этого заказа, пока заказ в пути; после вручения она стирается.</p>
 <p><button id="stop" style="font:inherit;padding:10px 16px">Остановить передачу</button></p>
 <script nonce="${nonce}">
 (function () {
@@ -1145,7 +1166,7 @@ ${courierMap}`);
     });
     sendJson(res, 200, { ok: true });
     // Живая точка в чате — отдельно: ошибка Telegram не должна ломать ответ курьеру.
-    updateLivePoint(t, s, lat, lng).catch((e) => console.error(`telegram courier point (${t}): ${e.message}`));
+    courierMoved(t, s, lat, lng).catch((e) => console.error(`telegram courier point (${t}): ${e.message}`));
   }
 
   /** Бот, который ведёт карточки этой точки (у сети — один бот на все точки). */
@@ -1177,6 +1198,40 @@ ${courierMap}`);
     });
     await cardRef.update({ liveMessageId: m.message_id, liveAt: Date.now() });
   }
+
+  /**
+   * Курьер сдвинулся: живая точка в чате — только если заведение включило
+   * «Курьер на карте в Telegram» (координаты человека уходят за рубеж).
+   */
+  async function courierMoved(tid, sid, lat, lng) {
+    if (!(await deliverySettings(tid)).liveInTelegram) return;
+    await updateLivePoint(tid, sid, lat, lng);
+  }
+
+  /** Событие доставки — ответом на карточку заказа в топике «Доставки». */
+  async function deliveryEvent(tid, sid, text) {
+    const bot = botForPoint(tid);
+    if (!bot) return;
+    const card = (await botsCol().doc(bot.tenantId).collection("cards").doc(sid).get()).data();
+    if (!card || !card.chatId) return;
+    await api(bot.token, "sendMessage", {
+      chat_id: card.chatId, text, reply_to_message_id: card.messageId, disable_notification: !/⚠️|✅/.test(text),
+      ...(card.threadId ? { message_thread_id: card.threadId } : {}),
+    }).catch((e) => console.error(`telegram delivery event (${tid}): ${e.message}`));
+  }
+
+  const dsetCache = new Map();
+  /** Настройки доставки точки (delivery-pricing.js), кэш минута. */
+  async function deliverySettings(tid) {
+    const hit = dsetCache.get(tid);
+    if (hit && hit.until > Date.now()) return hit.value;
+    const raw = (await tenantRef(tid).collection("settings").doc("delivery").get().catch(() => null));
+    const value = pricing.normalizeSettings(raw && raw.data ? raw.data() : {});
+    dsetCache.set(tid, { value, until: Date.now() + 60000 });
+    return value;
+  }
+
+  let courierApi = null;
 
   // ------------------------------------------------------------ «кто» без имён в Telegram
 
@@ -1535,12 +1590,31 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     if (kind === "c") {
       const team = (await onShiftStaff(tid)).filter((m) => m.id);
       const tz = (await venueOf(tid).catch(() => ({}))).timezone;
+      // Курьеры приложения на смене — номером; заказ уйдёт им в приложение.
+      const apps = courierApi ? await courierApi.onShiftFor(tid).catch(() => []) : [];
+      const rows = apps.slice(0, 8).map((c) => [{
+        text: `🛵 Курьер №${c.no} · ${c.busy ? `везёт ${c.busy}` : "свободен"}`,
+        callback_data: `a:${sessionId}:${c.id}`.slice(0, 64),
+      }]);
       // Без имён: должность и время начала смены отличают людей друг от друга.
-      const rows = team.slice(0, 8).map((m) => [{ text: `${m.role}${m.since ? ` · с ${hhmm(m.since, tz)}` : ""}`, callback_data: `k:${sessionId}:${m.id}`.slice(0, 64) }]);
+      rows.push(...team.slice(0, 8).map((m) => [{ text: `${m.role}${m.since ? ` · с ${hhmm(m.since, tz)}` : ""}`, callback_data: `k:${sessionId}:${m.id}`.slice(0, 64) }]));
       rows.push([{ text: "🙋 Я везу", callback_data: `k:${sessionId}:me` }]);
       rows.push([{ text: "← Назад", callback_data: `b:${sessionId}` }]);
       await api(bot.token, "editMessageReplyMarkup", { chat_id: chatId, message_id: q.message.message_id, reply_markup: { inline_keyboard: rows } }).catch(() => {});
       return answer("Кто везёт?");
+    }
+
+    if (kind === "a") {
+      if (!courierApi || !/^[A-Za-z0-9_-]{1,64}$/.test(arg || "")) return answer();
+      let text = "";
+      try {
+        await courierApi.assignFromBot(tid, sessionId, arg);
+      } catch (e) {
+        text = e && e.message ? e.message : "Не получилось назначить";
+      }
+      const s = (await sesRef.get()).data();
+      if (s) await refreshCard(bot, tid, { id: sessionId, ...s }, true);
+      return answer(text || "Курьер назначен — заказ у него в приложении", !!text);
     }
 
     if (kind === "k" || kind === "b") {
@@ -2362,8 +2436,9 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     }
     const text = deliveryCardText(s, venue.timezone, pending, multi(bot) ? pointName(bot, tid) : "");
     const isDelivery = s.orderType === "delivery";
-    const markup = deliveryKeyboard(s, isDelivery ? addressUrl(tid, s.id) : null, isDelivery ? courierUrl(tid, s.id) : null);
-    const sig = `${s.deliveryStatus || "new"}|${s.courierName || ""}|${s.courierSet ? 1 : 0}|${(s.orderItems || []).length}|${sessionBill(s)}|${pending.length}|${Number(s.guestPaidTotal) || 0}|${s.status}`;
+    const dset = isDelivery ? await deliverySettings(tid) : null;
+    const markup = deliveryKeyboard(s, isDelivery ? addressUrl(tid, s.id) : null, isDelivery && dset.courierLink ? courierUrl(tid, s.id) : null);
+    const sig = `${s.deliveryStatus || "new"}|${s.courierName || ""}|${s.courierSet ? 1 : 0}|${(s.orderItems || []).length}|${sessionBill(s)}|${pending.length}|${Number(s.guestPaidTotal) || 0}|${s.status}|${s.courierId || ""}|${s.courierStage || ""}|${s.delivery ? s.delivery.fee : ""}`;
     if (!card || card.chatId !== staff.id) {
       const where = inThread(staff, s.orderType === "delivery" ? "delivery" : "pickup");
       const m = await apiHtml(bot.token, "sendMessage", { chat_id: staff.id, text, reply_markup: markup, ...where }).catch((e) => {
@@ -2459,7 +2534,8 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         const next = new Map();
         const added = { kitchen: [], bar: [], hookah: [] };
         for (const it of Array.isArray(s.orderItems) ? s.orderItems : []) {
-          if (!it || !it.menuItemId || it.menuItemId === "timecafe") continue;
+          // Время в тайм-кафе и строка «Доставка» — не блюда для цеха.
+          if (!it || !it.menuItemId || it.menuItemId === "timecafe" || pricing.isFeeLine(it)) continue;
           const mods = Array.isArray(it.mods) ? it.mods : [];
           const key = mods.length ? `${it.menuItemId}|${mods.join("|")}` : it.menuItemId;
           const qty = Number(it.qty) || 0;
@@ -2698,6 +2774,9 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
   return {
     handleSetup, handleStatus, handleLinkCode, handleAccess, handleNotify, handleUnlink, handleJoinChain, handleAddress, handleWho, handleHook,
     handleCourierPage, handleCourierPing, start,
+    deliveryEvent, courierMoved, setCourierApi: (api_) => { courierApi = api_; },
+    // Кабинет сохранил настройки доставки — бот берёт их сразу, а не через минуту.
+    forgetDeliverySettings: (ids) => { for (const id of ids || []) dsetCache.delete(id); },
   };
 }
 

@@ -16,6 +16,10 @@ const files = [];
     else if (/\.(m?js|html)$/.test(e.name)) files.push(p);
   }
 })(root);
+// Приложение курьера — его отдаёт сам шлюз (courier-web/).
+for (const e of fs.readdirSync(path.join(__dirname, "courier-web"))) {
+  if (/\.(m?js|html)$/.test(e)) files.push(path.join(__dirname, "courier-web", e));
+}
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "websyntax-"));
 let failed = 0;

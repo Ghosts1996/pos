@@ -215,6 +215,179 @@ test("отмена гостем: пока «новый» и не оплачен;
   await assert.rejects(call(api.handleCancel, { tenantId: "t1", sessionId: sid2 }, { uid: "other" }), (e) => e.status === 404);
 });
 
+// ================= Цена доставки и «что доставляем» (delivery-pricing.js)
+const pricing = require("./delivery-pricing");
+
+test("цена: базовая, бесплатно от суммы, минимальный заказ, сколько до бесплатной", () => {
+  const st = { fee: 150, freeFrom: 2000, minOrder: 700, etaMin: 50 };
+  let q = pricing.quote(st, 1200);
+  assert.equal(q.ok, true);
+  assert.equal(q.fee, 150);
+  assert.equal(q.toFree, 800);
+  assert.equal(q.etaMin, 50);
+  q = pricing.quote(st, 2000);
+  assert.equal(q.fee, 0, "ровно «бесплатно от» — уже бесплатно");
+  assert.equal(q.toFree, 0);
+  q = pricing.quote(st, 650.4);
+  assert.equal(q.ok, false);
+  assert.equal(q.short, 50);
+  assert.match(q.error, /Минимальный заказ на доставку — 700.₽: добавьте ещё на 50.₽/);
+  q = pricing.quote({}, 100);
+  assert.deepEqual([q.ok, q.fee, q.toFree, q.etaMin], [true, 0, 0, 60], "без настроек — бесплатно, 60 минут");
+});
+
+test("цена: районы — обязателен выбор, своё значение или базовое; старый клиент — базовая цена", () => {
+  const st = { fee: 150, minOrder: 500, freeFrom: 3000, zones: [
+    { id: "c", name: "Центр", fee: 100, minOrder: null, freeFrom: 1500 },
+    { id: "n", name: "Северный", fee: 300, minOrder: 1000, etaMin: 90 },
+  ] };
+  assert.equal(pricing.quote(st, 1200).error, "Выберите район доставки");
+  assert.match(pricing.quote(st, 1200, "x").error, /больше нет/);
+  let q = pricing.quote(st, 1200, "c");
+  assert.deepEqual([q.fee, q.minOrder, q.freeFrom, q.zone.name, q.toFree], [100, 500, 1500, "Центр", 300]);
+  q = pricing.quote(st, 1600, "c");
+  assert.equal(q.fee, 0);
+  q = pricing.quote(st, 900, "n");
+  assert.equal(q.ok, false, "у Северного минимальный заказ свой — 1000 ₽");
+  q = pricing.quote(st, 1200, "n");
+  assert.deepEqual([q.fee, q.etaMin, q.freeFrom], [300, 90, 3000]);
+  q = pricing.quote(st, 1200, "", { legacy: true });
+  assert.deepEqual([q.ok, q.fee, q.zone], [true, 150, null]);
+});
+
+test("настройки: мусор отбрасывается, ошибки ввода — понятным текстом", () => {
+  const s = pricing.normalizeSettings({ fee: "149.6", freeFrom: -5, etaMin: 3, zones: [{ name: "  Центр<script> " }, { name: "" }, { id: "bad id!", name: "Юг", fee: "" }], payAtDoor: { card: true } });
+  assert.equal(s.fee, 150);
+  assert.equal(s.freeFrom, 0);
+  assert.equal(s.etaMin, 10);
+  assert.deepEqual(s.zones.map((z) => [z.id, z.name, z.fee]), [["z1", "Центр script", null], ["z3", "Юг", null]]);
+  assert.deepEqual(s.payAtDoor, { cash: true, card: true, qr: true });
+  assert.equal(s.liveInTelegram, false, "координаты курьера в Telegram — только по явному выбору");
+  assert.equal(pricing.settingsProblem({ fee: -1 }), "Стоимость доставки — от 0 до 100 000 ₽");
+  assert.equal(pricing.settingsProblem({ etaMin: 5 }), "Время доставки — от 10 до 600 минут");
+  assert.equal(pricing.settingsProblem({ zones: [{ name: "А" }, { name: "а" }] }), "Район «а» указан дважды");
+  assert.equal(pricing.settingsProblem({ zones: [{ name: "" }] }), "У каждого района должно быть название");
+  assert.equal(pricing.settingsProblem({ fee: 100, zones: [{ name: "Центр", fee: null }] }), "");
+});
+
+test("строка «Доставка»: услуга без скидки, не уходит на кухню; бесплатная — без строки", () => {
+  assert.deepEqual(pricing.feeLine(150, "Центр"), {
+    menuItemId: "zalpos_delivery", name: "Доставка · Центр", price: 150, qty: 1,
+    noPromo: true, kind: "kitchen", ready: 1, accepted: 1, served: 1, sent: 1,
+  });
+  assert.equal(pricing.feeLine(0), null);
+  assert.equal(pricing.deliveryBlock({ name: "Суп" }, { deliveryOff: true }, false), "venue");
+  assert.equal(pricing.deliveryBlock({ name: "Суп", deliveryOff: true }, {}, false), "venue");
+  assert.equal(pricing.deliveryBlock({ name: "Табак" }, {}, true), "law");
+  assert.equal(pricing.deliveryBlock({ name: "Суп" }, {}, false), "");
+});
+
+const feeSetup = (settings = { fee: 150, freeFrom: 3000, minOrder: 500 }) => {
+  const env = setup();
+  env.store.set("tenants/t1/settings/delivery", settings);
+  return env;
+};
+
+test("заказ с ценой доставки: строка в чек — после подтверждения, сумма и время — сразу", async () => {
+  const { api, store } = feeSetup();
+  const res = await call(api.handleCreate, order({ delivery: { fee: 150 } }));
+  assert.equal(res.status, 200);
+  assert.deepEqual([res.body.total, res.body.itemsTotal, res.body.deliveryFee, res.body.etaMin], [1730, 1580, 150, 60]);
+  const sid = res.body.sessionId;
+  let s = store.get(`tenants/t1/sessions/${sid}`);
+  assert.deepEqual(s.orderItems, [], "до подтверждения чек пуст — касса и гость видят позиции заявки");
+  assert.equal(s.deliveryFeePending, true);
+  assert.equal(s.appTotal, 1730);
+  assert.deepEqual(s.delivery, { fee: 150, subtotal: 1580, etaMin: 60 });
+  assert.equal(await api.ensureFee("t1", sid), false, "«Новый» — строки ещё нет");
+  // Касса подтвердила: позиции заявки встали в чек, статус «Принят».
+  store.set(`tenants/t1/sessions/${sid}`, { ...s, deliveryStatus: "accepted", orderItems: [{ menuItemId: "tea", name: "Чай улун", price: 300, qty: 1 }] });
+  assert.equal(await api.ensureFee("t1", sid), true);
+  assert.equal(await api.ensureFee("t1", sid), false, "второй раз строку не добавляем");
+  s = store.get(`tenants/t1/sessions/${sid}`);
+  assert.deepEqual(s.orderItems.map((i) => [i.menuItemId, i.price]), [["tea", 300], ["zalpos_delivery", 150]]);
+  assert.equal("deliveryFeePending" in s, false);
+});
+
+test("заказ: отменён до подтверждения — строки доставки нет; бесплатная доставка — без строки", async () => {
+  const { api, store } = feeSetup();
+  const sid = (await call(api.handleCreate, order({ delivery: { fee: 150 } }))).body.sessionId;
+  store.set(`tenants/t1/sessions/${sid}`, { ...store.get(`tenants/t1/sessions/${sid}`), deliveryStatus: "cancelled" });
+  assert.equal(await api.ensureFee("t1", sid), false);
+  const s = store.get(`tenants/t1/sessions/${sid}`);
+  assert.deepEqual(s.orderItems, []);
+  assert.equal("deliveryFeePending" in s, false);
+  const big = await call(api.handleCreate, order({ items: [{ menuItemId: "tea", qty: 10 }], delivery: { fee: 0 } }));
+  assert.equal(big.body.deliveryFee, 0, "3000 ₽ и больше — бесплатно");
+  assert.equal("deliveryFeePending" in store.get(`tenants/t1/sessions/${big.body.sessionId}`), false);
+});
+
+test("заказ: цена изменилась, пока гость оформлял, — отказ с новой ценой; минимальный заказ; район", async () => {
+  const { api, store } = feeSetup();
+  await assert.rejects(call(api.handleCreate, order({ delivery: { fee: 100 } })),
+    (e) => e.status === 409 && /Цена доставки изменилась: теперь 150.₽/.test(e.message));
+  await assert.rejects(call(api.handleCreate, order({ items: [{ menuItemId: "tea", qty: 1 }], delivery: { fee: 150 } })),
+    (e) => e.status === 409 && /добавьте ещё на 200.₽/.test(e.message));
+  store.set("tenants/t1/settings/delivery", { fee: 150, zones: [{ id: "c", name: "Центр", fee: 90 }] });
+  await assert.rejects(call(api.handleCreate, order({ delivery: { fee: 90 } })), (e) => e.status === 409 && e.message === "Выберите район доставки");
+  const res = await call(api.handleCreate, order({ delivery: { zoneId: "c", fee: 90 } }));
+  assert.equal(res.status, 200);
+  assert.deepEqual(store.get(`tenants/t1/sessions/${res.body.sessionId}`).delivery, { fee: 90, subtotal: 1580, etaMin: 60, zoneId: "c", zoneName: "Центр" });
+});
+
+test("заказ старой версией приложения: базовая цена и пометка «назовите цену при звонке»", async () => {
+  const { api, store } = feeSetup({ fee: 150, zones: [{ id: "c", name: "Центр", fee: 90 }] });
+  const res = await call(api.handleCreate, order());
+  assert.equal(res.status, 200);
+  assert.deepEqual(store.get(`tenants/t1/sessions/${res.body.sessionId}`).delivery, { fee: 150, subtotal: 1580, etaMin: 60, feeUnseen: true });
+});
+
+test("что доставляем: выключенные позиция и категория — отказ с названиями; самовывоз можно", async () => {
+  const { api, store } = feeSetup({});
+  store.set("tenants/t1/menuItems/tea", { ...store.get("tenants/t1/menuItems/tea"), deliveryOff: true });
+  await assert.rejects(call(api.handleCreate, order({ delivery: { fee: 0 } })),
+    (e) => e.status === 409 && e.message === "Эту позицию заведение не доставляет: «Чай улун» — уберите из корзины или выберите самовывоз");
+  const pick = await call(api.handleCreate, order({ orderType: "takeaway" }));
+  assert.equal(pick.status, 200, "с собой — можно");
+  assert.equal("delivery" in store.get(`tenants/t1/sessions/${pick.body.sessionId}`), false);
+  store.set("tenants/t1/menuItems/tea", { ...store.get("tenants/t1/menuItems/tea"), deliveryOff: false });
+  store.set("tenants/t1/menuCategories/food", { name: "Горячее", deliveryOff: true });
+  await assert.rejects(call(api.handleCreate, order({ delivery: { fee: 0 } }, { uid: "g1" })),
+    (e) => e.status === 409 && /Эти позиции заведение не доставляет: «Том ям», «Чай улун»/.test(e.message));
+});
+
+test("условия доставки гостю: цены, районы, оплата при получении, что не доставляем (закон и выбор)", async () => {
+  const { api, store } = feeSetup({ fee: 150, minOrder: 500, zones: [{ id: "c", name: "Центр", fee: 90 }], payAtDoor: { cash: false } });
+  store.set("tenants/t1/menuItems/tea", { ...store.get("tenants/t1/menuItems/tea"), deliveryOff: true });
+  const res = await call(api.handleInfo, { tenantId: "t1" });
+  assert.deepEqual([res.body.fee, res.body.minOrder, res.body.zones.length, res.body.payAtDoor.cash], [150, 500, 1, false]);
+  assert.deepEqual(res.body.off.sort(), ["beer", "hookah", "tea"]);
+  await assert.rejects(call(api.handleInfo, { tenantId: "t1" }, { uid: "stranger" }), (e) => e.status === 403);
+});
+
+test("цена в веб-версии гостя считается так же, как на сервере (2000 случайных наборов)", () => {
+  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "saas", "guest-web", "app", "app.js"), "utf8");
+  const m = /function deliveryQuote\(info, subtotal, zoneId\) \{[\s\S]*?\n\}\n/.exec(src);
+  assert.ok(m, "deliveryQuote есть в app.js");
+  const webQuote = new Function(`${m[0]}; return deliveryQuote;`)();
+  let seed = 7;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  const maybe = (v) => (rnd(3) === 0 ? null : v);
+  for (let i = 0; i < 2000; i++) {
+    const zones = rnd(2) ? [] : Array.from({ length: 1 + rnd(3) }, (_, k) => ({
+      id: `z${k}`, name: `Р${k}`, fee: maybe(rnd(400)), minOrder: maybe(rnd(3) * 500), freeFrom: maybe(rnd(4) * 1000), etaMin: maybe(30 + rnd(90)),
+    }));
+    const raw = { fee: rnd(400), freeFrom: rnd(3) * 1000, minOrder: rnd(3) * 400, etaMin: 30 + rnd(60), zones };
+    const info = pricing.normalizeSettings(raw); // то, что гостю отдаёт /guestDeliveryInfo
+    const sub = rnd(4000);
+    const zid = zones.length ? `z${rnd(zones.length)}` : "";
+    const a = pricing.quote(raw, sub, zid);
+    const b = webQuote(info, sub, zid);
+    assert.deepEqual([b.ok, b.fee, b.toFree, b.short, b.etaMin], [a.ok, a.fee, a.toFree, a.short, a.etaMin], `набор ${i}: ${JSON.stringify(raw)} сумма ${sub}`);
+  }
+  assert.equal(webQuote({ zones: [{ id: "a", name: "А" }] }, 100, "").needZone, true);
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try {

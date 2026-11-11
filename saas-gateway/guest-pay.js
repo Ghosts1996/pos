@@ -310,7 +310,7 @@ function xmlCode(xml, block) {
   return m ? Number(m[1]) : null;
 }
 
-function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJson, HttpError, requireTenantRole, publicUrl, httpImpl }) {
+function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJson, HttpError, requireTenantRole, publicUrl, httpImpl, beforeBill = null }) {
   const http = httpImpl || bankHttp;
   const tenantRef = (t) => db().collection("tenants").doc(t);
   const pendingCol = () => db().collection("pendingGuestPayments");
@@ -576,6 +576,8 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       }
       const where = ses?.orderType ? " — пробейте чек: заказ оплачен заранее" : "";
       const bank = p.provider === "demo" ? "демо, деньги не списаны" : PROVIDERS[p.provider] || "банк";
+      // Оплата по QR у двери (приложение курьера): чек — сейчас, гость его ждёт.
+      const byCourier = p.courierNo ? `Оплачено по QR у курьера №${p.courierNo} (${bank}): ${p.amount} ₽ — пробейте чек сейчас, гостю уйдёт электронный чек` : "";
       notice = {
         tableId: p.tableId || "",
         tableName: p.tableName || "",
@@ -583,7 +585,7 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
         clientUid: p.clientUid || "",
         guestName: "",
         type: "paid",
-        comment: `Оплачено онлайн (${bank}): ${p.amount} ₽${ses?.status === "active" ? where : " — счёт уже был закрыт, проверьте"}`,
+        comment: byCourier || `Оплачено онлайн (${bank}): ${p.amount} ₽${ses?.status === "active" ? where : " — счёт уже был закрыт, проверьте"}`,
         status: "new",
         createdAt: now,
       };
@@ -621,8 +623,14 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     const t = tenantRef(tenantId);
     const claim = (await t.collection("sessionClaims").doc(sessionId).get()).data();
     if (!claim || claim.uid !== decoded.uid) throw new HttpError(403, "Это не ваш счёт");
-    const session = (await t.collection("sessions").doc(sessionId).get()).data();
+    let session = (await t.collection("sessions").doc(sessionId).get()).data();
     if (!session || session.status !== "active") throw new HttpError(409, "Счёт уже закрыт");
+    // Подтверждённая доставка: строка «Доставка» должна быть в чеке раньше,
+    // чем считаем сумму (guest-delivery.js, ensureFee).
+    if (session.deliveryFeePending === true && beforeBill) {
+      await beforeBill(tenantId, sessionId).catch((e) => console.error(`guest pay fee (${tenantId}): ${e.message}`));
+      session = (await t.collection("sessions").doc(sessionId).get()).data() || session;
+    }
     if (session.orderType && ["new", "cancelled"].includes(session.deliveryStatus || "new")) {
       throw new HttpError(409, session.deliveryStatus === "cancelled"
         ? "Заказ отменён — оплачивать его не нужно"
@@ -704,6 +712,73 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     await pendingCol().doc(`${tenantId}__${paymentId}`).set({ tenantId, paymentId, createdAt: now });
     pendingMaybe = true;
     sendJson(res, 200, { paymentId, payload: made.url, url: made.url, amount: due, provider: creds.provider });
+  }
+
+  // ------------------------------------------------------------ курьер у двери
+
+  /**
+   * Оплата по QR у двери: курьер показывает QR на своём телефоне, гость
+   * платит своим банком. Деньги — в счёт заказа (guestPaidTotal), как
+   * онлайн-оплата гостя: касса видит «Оплачено…» и пробивает чек. Права
+   * курьера на заказ проверяет courier.js.
+   */
+  async function courierPayStart(tenantId, sessionId, { courierId, courierNo }) {
+    const t = tenantRef(tenantId);
+    let session = (await t.collection("sessions").doc(sessionId).get()).data();
+    if (!session) throw new HttpError(404, "Заказ не найден");
+    if (session.deliveryFeePending === true && beforeBill) {
+      await beforeBill(tenantId, sessionId).catch(() => {});
+      session = (await t.collection("sessions").doc(sessionId).get()).data() || session;
+    }
+    if (session.status !== "active") throw new HttpError(409, "Чек заказа уже закрыт на кассе — оплачивать не нужно");
+    const demo = (await t.get()).data()?.demo === true;
+    const { creds, verified, seller } = demo ? { creds: { provider: "demo" }, verified: true, seller: true } : await venueSettings(tenantId);
+    if (!creds || !verified) throw new HttpError(409, "Банк заведения не подключён — примите оплату другим способом");
+    if (!seller) throw new HttpError(409, "Заведение не указало реквизиты продавца — примите оплату другим способом");
+    const loyalty = (await t.collection("settings").doc("loyalty").get()).data() || {};
+    const excludeTobacco = typeof loyalty.excludeTobaccoFromPromo === "boolean" ? loyalty.excludeTobaccoFromPromo : true;
+    const due = amountDue({ bill: sessionBill(session, excludeTobacco), tips: 0, paid: Number(session.guestPaidTotal) || 0 });
+    if (due < 1) throw new HttpError(409, "По заказу нечего оплачивать");
+    // Повторное нажатие — тот же QR, а не второй платёж.
+    const fresh = Date.now() - 10 * 60 * 1000;
+    const prev = (await t.collection("guestPayments").where("sessionId", "==", sessionId).get()).docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .find((p) => p.status === "pending" && p.courierId === courierId && Math.abs((p.amount || 0) - due) < 0.005 &&
+        p.provider === creds.provider && p.url && (p.createdAt?.toMillis?.() || 0) > fresh);
+    if (prev) return { paymentId: prev.id, url: prev.url, amount: due, status: "pending" };
+    const orderId = `c${Date.now().toString(36)}${crypto.randomBytes(4).toString("hex")}`;
+    const base = {
+      sessionId, tableId: session.tableId || "", tableName: session.tableName || "", orderType: session.orderType || "",
+      clientUid: session.clientUid || "", amount: due, bill: due, tips: 0, orderId, courierId, courierNo,
+    };
+    if (demo) {
+      const paymentId = `p_${orderId}`;
+      const url = `${publicUrl}/guestPayDemo?a=${encodeURIComponent(String(due))}`;
+      await t.collection("guestPayments").doc(paymentId).set({ ...base, provider: "demo", providerId: "", url, test: true, status: "pending", createdAt: admin.firestore.Timestamp.now() });
+      await markPaid(tenantId, paymentId);
+      return { paymentId, url, amount: due, status: "paid" };
+    }
+    const made = await createPayment(creds, { tenantId, amount: due, orderId, description: "Доставка" });
+    const paymentId = made.docId || `p_${orderId}`;
+    const now = admin.firestore.Timestamp.now();
+    await t.collection("guestPayments").doc(paymentId).set({
+      ...base, provider: creds.provider, providerId: made.providerId, url: made.url,
+      test: HAS_TEST.has(creds.provider) && creds.test === true, status: "pending", createdAt: now,
+    });
+    await pendingCol().doc(`${tenantId}__${paymentId}`).set({ tenantId, paymentId, createdAt: now });
+    pendingMaybe = true;
+    return { paymentId, url: made.url, amount: due, bank: bankName(creds), sbp: SBP_ONLY.has(creds.provider), status: "pending" };
+  }
+
+  /** Статус оплаты по QR у двери: 'paid' | 'pending' | 'failed'. */
+  async function courierPayStatus(tenantId, paymentId) {
+    if (typeof paymentId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(paymentId)) throw new HttpError(400, "Не указан платёж");
+    const p = (await tenantRef(tenantId).collection("guestPayments").doc(paymentId).get()).data();
+    if (!p || !p.courierId) throw new HttpError(404, "Платёж не найден");
+    if (p.status === "paid") return { status: "paid" };
+    if (p.status !== "pending") return { status: "failed" };
+    const st = await resolvePayment(tenantId, paymentId, p).catch(() => "pending");
+    return { status: st };
   }
 
   async function handleStatus(req, res) {
@@ -1116,6 +1191,7 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   return {
     handleStart, handleStatus, handleNotify, handleRobokassaResult, handleDone, handleDemoPage, handleCheck,
     handleKassaStart, handleKassaStatus, handleKassaCancel,
+    courierPayStart, courierPayStatus,
     markPaid, sweep, startSweeper, createPayment, bankStatus, cancelPayment, checkCreds,
   };
 }

@@ -14,8 +14,15 @@
  * сотрудник звонит гостю, подтверждает — и тогда позиции встают в чек
  * (accept на кассе). Оплата онлайн — после подтверждения (guest-pay.js),
  * поэтому за отклонённый заказ деньги не списываются.
+ *
+ * Доставка: позиции, которые заведение не доставляет (deliveryOff у позиции
+ * или категории), не пропускаем; цена — по настройкам точки
+ * (delivery-pricing.js, docs/delivery.md). Строка «Доставка» встаёт в чек,
+ * когда заведение подтвердило заказ (startFeeWatcher): до этого касса и
+ * приложение гостя показывают позиции заявки, а не одну доставку.
  */
 const flow = require("./delivery-flow");
+const pricing = require("./delivery-pricing");
 const { sellerReady } = require("./guest-pay");
 
 const TAKEAWAY_TABLE = "takeaway";
@@ -198,6 +205,7 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     const catIds = [...new Set(Object.values(menu).map((m) => m.categoryId).filter(Boolean))];
     const cats = await Promise.all(catIds.map((id) => t.collection("menuCategories").doc(String(id)).get()));
     const categoryNames = Object.fromEntries(cats.map((c) => [c.id, String((c.data() || {}).name || "")]));
+    const categories = Object.fromEntries(cats.map((c) => [c.id, c.data() || {}]));
     let priced;
     try {
       priced = priceItems(lines, menu, categoryNames);
@@ -208,6 +216,38 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
       throw new HttpError(409, "Табак, кальяны и алкоголь не продаются с собой и с доставкой — добавьте другие позиции");
     }
     const total = round2(priced.items.reduce((a, i) => a + i.price * i.qty, 0));
+
+    // Доставка: что заведение не возит — отказ с названиями (самовывоз можно);
+    // цена — по настройкам точки. Клиент, который знает про цену доставки,
+    // присылает delivery {zoneId, fee} — то, что гость видел; старые версии
+    // не присылают — для них базовая цена, её называют при звонке.
+    let delivery = null;
+    if (orderType === "delivery") {
+      const off = priced.items.filter((i) => {
+        const m = menu[i.menuItemId] || {};
+        return pricing.deliveryBlock(m, categories[m.categoryId], false) === "venue";
+      });
+      if (off.length) {
+        const names = [...new Set(off.map((i) => `«${i.name}»`))].join(", ");
+        throw new HttpError(409, `${off.length > 1 ? "Эти позиции" : "Эту позицию"} заведение не доставляет: ${names} — уберите из корзины или выберите самовывоз`);
+      }
+      const settings = (await t.collection("settings").doc("delivery").get()).data() || {};
+      const asked = body.delivery && typeof body.delivery === "object" ? body.delivery : null;
+      const q = pricing.quote(settings, total, asked ? asked.zoneId : "", { legacy: !asked });
+      if (!q.ok) throw new HttpError(409, q.error);
+      if (asked && asked.fee !== undefined && asked.fee !== null && Math.round(Number(asked.fee)) !== q.fee) {
+        throw new HttpError(409, `Цена доставки изменилась: теперь ${q.fee ? pricing.fmtRub(q.fee) : "бесплатно"} — проверьте заказ и оформите ещё раз`);
+      }
+      delivery = {
+        fee: q.fee,
+        subtotal: total,
+        etaMin: q.etaMin,
+        ...(q.zone ? { zoneId: q.zone.id, zoneName: q.zone.name } : {}),
+        // Гость цену не видел (старое приложение) — касса и бот напомнят назвать её при звонке.
+        ...(!asked && q.fee > 0 ? { feeUnseen: true } : {}),
+      };
+    }
+    const fee = delivery ? delivery.fee : 0;
 
     // Не больше двух незавершённых заказов и пяти в час с одного профиля —
     // защита от розыгрышей с чужими адресами.
@@ -266,7 +306,10 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
         source: "app",
         clientUid: decoded.uid,
         payMethod,
-        appTotal: total,
+        appTotal: round2(total + fee),
+        ...(delivery ? { delivery } : {}),
+        // Строку «Доставка» сервер добавит в чек после подтверждения (startFeeWatcher).
+        ...(fee > 0 ? { deliveryFeePending: true } : {}),
         startTime: nowTs,
         plannedEnd: ts.fromMillis(nowTs.toMillis() + 3 * 3600 * 1000),
         refillCount: 0,
@@ -316,7 +359,10 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     sendJson(res, 200, {
       sessionId,
       orderNo: String(orderNo),
-      total,
+      total: round2(total + fee),
+      itemsTotal: total,
+      deliveryFee: fee,
+      ...(delivery ? { etaMin: delivery.etaMin } : {}),
       skipped: priced.banned,
     });
   }
@@ -359,7 +405,107 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     sendJson(res, 200, { ok: true });
   }
 
-  return { handleCreate, handleCancel };
+  // ------------------------------------------------------------ строка «Доставка»
+
+  /**
+   * Заказ подтверждён — строка «Доставка» встаёт в чек (один раз). Пока
+   * заказ «Новый», её нет: касса и приложение гостя показывают позиции
+   * заявки, пока чек пуст. Отменён — строка не нужна. → true, если добавили.
+   */
+  async function ensureFee(tenantId, sessionId) {
+    const ref = tenantRef(tenantId).collection("sessions").doc(sessionId);
+    let added = false;
+    await db().runTransaction(async (tx) => {
+      const s = (await tx.get(ref)).data();
+      if (!s || s.deliveryFeePending !== true) return;
+      const st = flow.normalize("delivery", s.deliveryStatus);
+      if (st === "new") return;
+      const patch = { deliveryFeePending: admin.firestore.FieldValue.delete() };
+      const items = Array.isArray(s.orderItems) ? s.orderItems.slice() : [];
+      const line = st === "cancelled" ? null : pricing.feeLine(s.delivery && s.delivery.fee, s.delivery && s.delivery.zoneName);
+      if (line && !items.some(pricing.isFeeLine)) {
+        items.push(line);
+        patch.orderItems = items;
+        added = true;
+      }
+      tx.update(ref, patch);
+    });
+    return added;
+  }
+
+  /**
+   * Следим за заказами со строкой доставки «в ожидании»: касса подтвердила
+   * (статус ушёл с «Новый») — добавляем строку. Подписка на общий запрос по
+   * всем заведениям; плюс проверка раз в минуту — на случай пропущенного
+   * события (перезапуск шлюза ровно в момент подтверждения).
+   */
+  function startFeeWatcher() {
+    const busy = new Set();
+    const handle = (docs) => {
+      for (const d of docs) {
+        const data = d.data() || {};
+        if (flow.normalize("delivery", data.deliveryStatus) === "new") continue;
+        const tenantId = d.ref.parent && d.ref.parent.parent ? d.ref.parent.parent.id : "";
+        if (!tenantId) continue;
+        const key = `${tenantId}/${d.id}`;
+        if (busy.has(key)) continue;
+        busy.add(key);
+        ensureFee(tenantId, d.id)
+          .catch((e) => console.error(`delivery fee (${key}): ${e.message}`))
+          .finally(() => busy.delete(key));
+      }
+    };
+    const q = () => db().collectionGroup("sessions").where("deliveryFeePending", "==", true);
+    let unsub = null;
+    try {
+      unsub = q().onSnapshot((snap) => handle(snap.docs), (e) => console.error(`delivery fee watch: ${e.message}`));
+    } catch (e) {
+      console.error(`delivery fee watch: ${e.message}`);
+    }
+    const timer = setInterval(() => {
+      q().get().then((snap) => handle(snap.docs)).catch(() => {});
+    }, 60 * 1000);
+    if (timer.unref) timer.unref();
+    return () => { clearInterval(timer); if (unsub) unsub(); };
+  }
+
+  // ------------------------------------------------------------ гостю до заказа
+
+  /**
+   * Условия доставки для оформления: цены, районы, время, способы оплаты
+   * при получении и id позиций, которые заведение не доставляет. Цена
+   * считается на телефоне той же формулой (delivery-pricing.quote), а при
+   * заказе — заново на сервере.
+   */
+  async function handleInfo(req, res) {
+    const decoded = await verifyAuth(req);
+    const { tenantId } = await parseJsonBody(req);
+    checkTenantId(tenantId);
+    await guestOf(tenantId, decoded.uid);
+    const t = tenantRef(tenantId);
+    const [settingsDoc, cats, items] = await Promise.all([
+      t.collection("settings").doc("delivery").get(),
+      t.collection("menuCategories").get(),
+      t.collection("menuItems").get(),
+    ]);
+    const s = pricing.normalizeSettings(settingsDoc.data());
+    const catById = Object.fromEntries(cats.docs.map((c) => [c.id, c.data() || {}]));
+    const off = items.docs
+      .filter((d) => {
+        const m = d.data() || {};
+        const cat = catById[m.categoryId] || {};
+        return pricing.deliveryBlock(m, cat, remoteSaleBanned(m, String(cat.name || ""))) !== "";
+      })
+      .map((d) => d.id);
+    sendJson(res, 200, {
+      fee: s.fee, freeFrom: s.freeFrom, minOrder: s.minOrder, etaMin: s.etaMin,
+      zones: s.zones,
+      payAtDoor: s.payAtDoor,
+      off,
+    });
+  }
+
+  return { handleCreate, handleCancel, handleInfo, ensureFee, startFeeWatcher };
 }
 
 module.exports = { createGuestDelivery, remoteSaleBanned, priceItems, openNow, windowOf, localNow, normalizePhone };

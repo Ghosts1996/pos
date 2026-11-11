@@ -1,4 +1,6 @@
+import '../build_info.dart';
 import '../models/cash_op.dart';
+import '../models/delivery_status.dart';
 import '../models/session_model.dart';
 import '../models/shift_model.dart';
 import 'money.dart';
@@ -248,7 +250,8 @@ class ZReport {
       // Скидка делится на строки пропорционально, чтобы виды сходились с итогом.
       final k = s.orderTotal <= 0 ? 0.0 : sum / s.orderTotal;
       for (final i in s.orderItems) {
-        final kind = SaleKind.label(i.effectiveKind);
+        // Плата за доставку (SaaS) — отдельной строкой, не «Кухня».
+        final kind = kSaasMode && i.menuItemId == kDeliveryFeeItemId ? 'Доставка' : SaleKind.label(i.effectiveKind);
         kinds[kind] = (kinds[kind] ?? 0) + i.total * k;
         final key = '${i.menuItemId.isNotEmpty ? i.menuItemId : i.name}_${i.price}';
         final it = items[key] ?? ZItemLine(name: i.name, price: i.price);

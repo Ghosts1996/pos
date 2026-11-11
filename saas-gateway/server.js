@@ -45,6 +45,9 @@ const { createGuestPay, onlinePaySettings, credsPrint, sellerReady } = require("
 const requisites = require("./requisites");
 const aiKeys = require("./ai-keys");
 const { createGuestDelivery } = require("./guest-delivery");
+const { createCourier } = require("./courier");
+const { createCourierWeb } = require("./courier-web");
+const { createDeliveryAdmin } = require("./delivery-admin");
 const { createTelegram, encrypt: tgEncrypt, decrypt: tgDecrypt, secretKey: tgSecretKey } = require("./telegram");
 const { createSupportBot } = require("./support-bot");
 const { createLocalDb } = require("./local-db");
@@ -7959,6 +7962,8 @@ const guestPay = createGuestPay({
   HttpError,
   requireTenantRole,
   publicUrl: (process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, ""),
+  // Строка «Доставка» — в чек до расчёта суммы (guestDelivery объявлен ниже).
+  beforeBill: (tenantId, sessionId) => guestDelivery.ensureFee(tenantId, sessionId),
 });
 
 /** Контакт гостя (имя, телефон, адрес) — в базу в РФ его же токеном, до заказа. */
@@ -8156,6 +8161,41 @@ const telegram = createTelegram({
   publicUrl: (process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, ""),
   pii,
 });
+
+// Курьеры и приложение курьера, кабинет «Доставка» — см. courier.js,
+// delivery-admin.js и docs/delivery.md.
+const courier = createCourier({
+  db,
+  admin,
+  verifyAuth,
+  parseJsonBody,
+  sendJson,
+  HttpError,
+  requireTenantRole,
+  requireChainRole,
+  pii,
+  publicUrl: (process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, ""),
+  // Неверная ссылка или ключ курьера — как неверный пароль для щита (shield объявлен ниже).
+  authFailed: (req) => shield.authFailed(req),
+  guestPay,
+});
+courier.setHooks({ event: telegram.deliveryEvent, moved: telegram.courierMoved });
+telegram.setCourierApi(courier);
+const courierWeb = createCourierWeb();
+const deliveryAdmin = createDeliveryAdmin({
+  db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole, requireChainRole,
+  onSaved: (ids) => { telegram.forgetDeliverySettings(ids); courier.forgetCache(); },
+});
+const COURIER_API = {
+  login: courier.handleLogin,
+  logout: courier.handleLogout,
+  consent: courier.handleConsent,
+  state: courier.handleState,
+  shift: courier.handleShift,
+  act: courier.handleAct,
+  ping: courier.handlePing,
+  pay: courier.handlePay,
+};
 
 // ИИ-бот поддержки платформы в Telegram — см. support-bot.js.
 const SUPPORT_STARTED_AT = Date.now();
@@ -9288,6 +9328,21 @@ const ROUTES = {
   // Заказ доставки/с собой из приложения гостя и его отмена гостем.
   "/guestDeliveryOrder": guestDelivery.handleCreate,
   "/guestDeliveryCancel": guestDelivery.handleCancel,
+  // Условия доставки до заказа: цены, районы, что не доставляем.
+  "/guestDeliveryInfo": guestDelivery.handleInfo,
+  // Кабинет → «Доставка»: курьеры, цена и районы, что доставляем.
+  "/courierAdminList": courier.handleAdminList,
+  "/courierAdminSave": courier.handleAdminSave,
+  "/courierAdminInvite": courier.handleAdminInvite,
+  "/courierAdminEnable": courier.handleAdminEnable,
+  "/courierAdminCash": courier.handleAdminCash,
+  "/courierAdminAssign": courier.handleAdminAssign,
+  "/courierAdminRates": courier.handleAdminRates,
+  "/courierAdminReport": courier.handleAdminReport,
+  "/courierAdminForget": courier.handleAdminForget,
+  "/deliverySettings": deliveryAdmin.handleGet,
+  "/deliverySettingsSave": deliveryAdmin.handleSave,
+  "/deliveryMenuSave": deliveryAdmin.handleMenuSave,
   "/resolveTenantBySlug": handleResolveTenantBySlug,
   "/resolveChainBySlug": handleResolveChainBySlug,
   "/createTenant": handleCreateTenant,
@@ -9493,6 +9548,19 @@ const server = http.createServer((req, res) => {
   if (urlPath === "/api/v1" || urlPath.startsWith("/api/v1/")) {
     return runHandler((rq, rs) => openApi.handleApi(rq, rs, urlPath), req, res);
   }
+  // Приложение курьера: файлы и его API (вход — ключ курьера, не Firebase).
+  if (urlPath === "/courier" && (req.method === "GET" || req.method === "HEAD")) {
+    res.writeHead(301, { Location: `${(process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, "")}/courier/` });
+    return res.end();
+  }
+  if (req.method === "POST" && urlPath.startsWith("/courier/api/")) {
+    const h = COURIER_API[urlPath.slice("/courier/api/".length)];
+    if (!h) return sendJson(res, 404, { error: "адрес не найден" });
+    return runHandler(h, req, res);
+  }
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/courier/")) {
+    return courierWeb.serve(req, res, urlPath.slice("/courier/".length));
+  }
   if (req.method !== "POST") return sendJson(res, 405, { error: "метод не поддерживается" });
 
   const handler = ROUTES[urlPath];
@@ -9522,6 +9590,8 @@ scheduleDailyJob("guestWinback", 60 * 60 * 1000, () => guestMarketing.runAll(), 
 if (process.env.PORT !== "8099") {
   telegram.start();
   guestPay.startSweeper();
+  guestDelivery.startFeeWatcher();
+  courier.start();
   startSupportBot().catch((e) => console.error("support-bot: запуск:", e.message || e));
   partners.start();
 }
