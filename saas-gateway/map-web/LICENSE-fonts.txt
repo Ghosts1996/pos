@@ -1,0 +1,7 @@
+Шрифты Noto Sans (fonts/) — Google, лицензия SIL Open Font License 1.1
+(https://openfontlicense.org). Набор глифов в формате PBF взят из проекта
+protomaps/basemaps-assets.
+
+Данные карты — © участники OpenStreetMap (ODbL, https://www.openstreetmap.org/copyright),
+тайлы собраны Protomaps (https://protomaps.com). Подпись «© OpenStreetMap» показывается
+на карте всегда.

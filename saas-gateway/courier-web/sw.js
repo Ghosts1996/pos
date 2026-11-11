@@ -2,7 +2,11 @@
  * Сначала сеть (обновления приходят сразу), кэш — запасной путь.
  * Запросы к серверу (api/) не кэшируются никогда: заказы — только свежие. */
 "use strict";
-const CACHE = "zalpos-courier-v2";
+const CACHE = "zalpos-courier-v3";
+// Тайлы своей карты — отдельно и «сначала из памяти»: адрес тайла меняется
+// с каждой новой сборкой карты (?v=…), старые вытесняются по количеству.
+const TILES = "zalpos-map-tiles-v1";
+const TILES_MAX = 3000;
 const SHELL = ["./", "index.html", "app.js", "app.css", "qr.js", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -11,13 +15,28 @@ self.addEventListener("install", (e) => {
 
 self.addEventListener("activate", (e) => {
   e.waitUntil(caches.keys()
-    .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+    .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k !== TILES).map((k) => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
+
+let tilesPut = 0;
+function trimTiles(cache) {
+  return cache.keys().then((keys) => (keys.length > TILES_MAX ? Promise.all(keys.slice(0, keys.length - TILES_MAX + 300).map((k) => cache.delete(k))) : null));
+}
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== self.location.origin || url.pathname.includes("/api/")) return;
+  if (url.pathname.includes("/map/tiles/")) {
+    e.respondWith(caches.open(TILES).then((cache) => cache.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
+      if (res.ok && res.status === 200) {
+        cache.put(e.request, res.clone()).catch(() => {});
+        if (++tilesPut % 200 === 0) trimTiles(cache).catch(() => {});
+      }
+      return res;
+    }))));
+    return;
+  }
   e.respondWith(fetch(e.request).then((res) => {
     if (res.ok) {
       const copy = res.clone();

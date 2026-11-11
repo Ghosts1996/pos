@@ -47,6 +47,7 @@ const aiKeys = require("./ai-keys");
 const { createGuestDelivery } = require("./guest-delivery");
 const { createCourier } = require("./courier");
 const { createCourierWeb } = require("./courier-web");
+const { createMap } = require("./map");
 const { createDeliveryAdmin } = require("./delivery-admin");
 const { createTelegram, encrypt: tgEncrypt, decrypt: tgDecrypt, secretKey: tgSecretKey } = require("./telegram");
 const { createDeliveryServices } = require("./delivery-services");
@@ -8223,6 +8224,27 @@ const courier = createCourier({
 courier.setHooks({ event: telegram.deliveryEvent, moved: telegram.courierMoved });
 telegram.setCourierApi(courier);
 const courierWeb = createCourierWeb();
+// Своя карта: тайлы, шрифты, движок карты и маршруты (map.js). Файлы карты
+// собирает map-build.js на сервере; в тестах папки карт нет — карта «выключена».
+const zalMap = createMap({
+  regionsFile: require.main === module ? path.join(__dirname, "state", "map-regions.json") : null,
+  log: (s) => console.log(s),
+});
+/** Точки заведений с доставкой — чтобы map-build.js собрал карту вокруг них. */
+async function refreshMapRegions() {
+  try {
+    const tenants = await db.collection("tenants").get();
+    const points = [];
+    for (const d of tenants.docs) {
+      const s = await d.ref.collection("settings").doc("delivery").get();
+      const v = (s.exists && s.data()) || {};
+      if (v.venuePos && Number.isFinite(v.venuePos.lat) && Number.isFinite(v.venuePos.lng)) points.push(v.venuePos);
+    }
+    if (zalMap.saveRegions(points)) console.log(`карта: районов для сборки — ${points.length} точек`);
+  } catch (e) {
+    console.warn("карта: точки заведений не собраны:", e && e.message);
+  }
+}
 const deliveryAdmin = createDeliveryAdmin({
   db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole, requireChainRole,
   onSaved: (ids) => { telegram.forgetDeliverySettings(ids); courier.forgetCache(); },
@@ -8238,6 +8260,7 @@ courier.setHooks({
   event: telegram.deliveryEvent,
   moved: telegram.courierMoved,
   services: async (ids) => Object.fromEntries(await Promise.all(ids.map(async (id) => [id, await deliveryServices.connected(id)]))),
+  route: (body) => zalMap.route(body),
 });
 const COURIER_API = {
   login: courier.handleLogin,
@@ -8250,6 +8273,7 @@ const COURIER_API = {
   ping: courier.handlePing,
   pay: courier.handlePay,
   history: courier.handleHistory,
+  route: courier.handleRoute,
 };
 
 // ИИ-бот поддержки платформы в Telegram — см. support-bot.js.
@@ -9622,6 +9646,10 @@ const server = http.createServer((req, res) => {
   if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/courier/")) {
     return courierWeb.serve(req, res, urlPath.slice("/courier/".length));
   }
+  // Своя карта: тайлы, шрифты, движок карты (map.js).
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/map/")) {
+    return zalMap.serve(req, res, urlPath.slice("/map/".length), (req.url || "").split("?")[1] || "");
+  }
   if (req.method !== "POST") return sendJson(res, 405, { error: "метод не поддерживается" });
 
   const handler = ROUTES[urlPath];
@@ -9654,6 +9682,9 @@ if (process.env.PORT !== "8099") {
   guestDelivery.startFeeWatcher();
   courier.start();
   deliveryServices.start();
+  // Районы своей карты: через минуту после запуска и раз в 6 часов.
+  setTimeout(refreshMapRegions, 60000).unref();
+  setInterval(refreshMapRegions, 6 * 3600 * 1000).unref();
   startSupportBot().catch((e) => console.error("support-bot: запуск:", e.message || e));
   partners.start();
 }

@@ -1025,6 +1025,22 @@ function createCourier({
 
   const lastSessionPos = new Map();
 
+  /** Маршрут по своей карте (map.js): только курьеру, не чаще 40 раз в минуту. */
+  const routeHits = new Map();
+  async function handleRoute(req, res) {
+    const c = await courierByToken(req);
+    const body = await parseJsonBody(req);
+    const minute = Math.floor(now() / 60000);
+    const hit = routeHits.get(c.id);
+    const n = hit && hit.minute === minute ? hit.n + 1 : 1;
+    routeHits.set(c.id, { minute, n });
+    if (routeHits.size > 5000) routeHits.clear();
+    if (n > 40) throw new HttpError(429, "Слишком часто — маршрут обновится через минуту");
+    if (!hooks.route) return sendJson(res, 200, { ok: false, reason: "nomap" });
+    const out = await hooks.route({ points: body.points, mode: body.mode });
+    sendJson(res, 200, out || { ok: false, reason: "nomap" });
+  }
+
   async function handlePing(req, res) {
     const c = await courierByToken(req);
     const body = await parseJsonBody(req);
@@ -1434,7 +1450,7 @@ function createCourier({
 
   return {
     // приложение курьера
-    handleLogin, handleDemoLogin, handleLogout, handleConsent, handleHistory, handleState, handleShift, handleAct, handlePing, handlePay,
+    handleLogin, handleDemoLogin, handleLogout, handleConsent, handleHistory, handleState, handleShift, handleAct, handlePing, handlePay, handleRoute,
     // кабинет
     handleAdminList, handleAdminSave, handleAdminInvite, handleAdminEnable, handleAdminCash, handleAdminAssign,
     handleAdminRates, handleAdminReport, handleAdminForget,

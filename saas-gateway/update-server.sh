@@ -217,6 +217,20 @@ say "Сторож сервера"
 timer zalpos-heal "*:0/2" "/bin/bash $REPO/saas-gateway/self-heal.sh >> /var/log/zalpos-heal.log 2>&1" "Сторож ZalPOS: службы, сайт, сертификаты, диск" 5min
 echo "журнал: /var/log/zalpos-heal.log (пишет только о сделанном)"
 
+# Своя карта для курьеров (map-build.js): тайлы OpenStreetMap и граф дорог
+# вокруг точек заведений, всё на этом сервере. Раз в сутки ночью, работа идёт
+# только при изменениях; тяжёлые шаги — с пределом памяти и низким
+# приоритетом. Если карты ещё нет — первая сборка сразу, в фоне (обновление
+# её не ждёт). nginx не трогает: карту отдаёт сам шлюз (/saas/map/).
+say "Своя карта"
+NODE_BIN="$(command -v node || echo /usr/bin/node)"
+timer zalpos-map "*-*-* 04:40:00 Europe/Moscow" "nice -n 15 $NODE_BIN $REPO/saas-gateway/map-build.js >> /var/log/zalpos-map.log 2>&1" "Своя карта ZalPOS: тайлы и дороги" 4h
+if [[ ! -f /opt/zalpos-maps/tiles.pmtiles ]] || ! compgen -G "/opt/zalpos-maps/roads-*.graph" >/dev/null; then
+  systemctl start --no-block zalpos-map.service && echo "первая сборка карты запущена в фоне, журнал: /var/log/zalpos-map.log"
+else
+  echo "карта есть: $(du -sh /opt/zalpos-maps 2>/dev/null | cut -f1), журнал: /var/log/zalpos-map.log"
+fi
+
 # Защита самой машины: fail2ban для SSH, обновления безопасности, настройки
 # ядра, права на папки с данными, закрытые наружу порты баз (server-shield.sh).
 # nginx, Docker и вход по SSH не трогает; не вышло — обновление идёт дальше.

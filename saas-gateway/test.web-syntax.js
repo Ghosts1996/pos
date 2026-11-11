@@ -20,6 +20,8 @@ const files = [];
 for (const e of fs.readdirSync(path.join(__dirname, "courier-web"))) {
   if (/\.(m?js|html)$/.test(e)) files.push(path.join(__dirname, "courier-web", e));
 }
+// Своя карта: наша обёртка (движок MapLibre — готовая сборка, его не проверяем).
+files.push(path.join(__dirname, "map-web", "zal-map.js"));
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "websyntax-"));
 let failed = 0;

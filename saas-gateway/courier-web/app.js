@@ -137,6 +137,8 @@
     reg: null,
     audio: null,
     map: { url: "", key: "", at: 0, from: null },
+    // Своя карта (сервер /map/): состояние, маршрут, кэш расстояний по дорогам.
+    zm: { state: "idle", api: null, info: null, follow: false, key: "", fitKey: "", at: 0, from: null, route: null, busy: false, legs: new Map() },
     hist: null,
     histDay: "",
     histAt: 0,
@@ -392,7 +394,11 @@
   }
 
   function onPos(p) {
-    const fix = { lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy || 9999), at: Date.now() };
+    const hd = Number(p.coords.heading);
+    const fix = {
+      lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy || 9999), at: Date.now(),
+      heading: Number.isFinite(hd) && (Number(p.coords.speed) || 0) > 0.7 ? hd : null,
+    };
     const hadError = S.geo.error;
     const first = !S.geo.fix;
     S.geo.error = 0;
@@ -419,6 +425,9 @@
   /** Путь по дороге от a до b (м) и время в пути (мин) — для выбранного транспорта. */
   function leg(a, b) {
     if (!a || !b) return null;
+    // Посчитано по дорогам своей карты — берём точные метры и минуты.
+    const c = S.zm.legs.get(legKey(b));
+    if (c && dist(c.from, a) < 150 && Date.now() - c.at < 180000) return { m: c.m, min: Math.max(1, Math.round(c.s / 60)), exact: true };
     const m = Math.round(dist(a, b) * ROAD_FACTOR);
     return { m, min: Math.max(1, Math.round(m / TRANSPORT[S.transport].mPerMin)) };
   }
@@ -563,7 +572,9 @@
         if (me) marks.push({ p: me, k: "me", t: "Вы" });
         if (a.point.pos) marks.push({ p: a.point.pos, k: "venue", t: a.point.name });
         if (a.dest) marks.push({ p: a.dest, k: "guest", t: `№${a.no}` });
+        const routePts = t.pos ? [me, t.pos, t.venue && !a.cancelled && a.dest ? a.dest : null].filter(Boolean) : [];
         return {
+          routePts: me && routePts.length >= 2 ? routePts : [],
           key: `r:${a.key}:${a.stage}:${S.transport}`,
           url: `${base}mode=routes&rtt=${tr.rtt}&ruri=${"~".repeat(pts.length - 1)}&rtext=${pts.map(enc).join("~")}`,
           from: me, marks, note: t.pos ? "" : "Точки на схеме нет: маршрут — по адресу",
@@ -629,12 +640,14 @@
     if (!frame || !schema) return;
     fitMap();
     const spec = mapSpec();
+    ensureOwnMap(spec);
+    if (S.zm.state === "on") return ownMapUpdate(spec, force);
     const box = $("map");
     schema.innerHTML = schemaSvg(spec.marks, box.clientWidth, box.clientHeight);
     const showNote = !S.online ? "Нет связи — показываем схему" : spec.note;
     noteEl.hidden = !showNote;
     noteEl.textContent = showNote || "";
-    if (!S.online || !spec.url) { frame.hidden = true; return; }
+    if (!S.online || !spec.url || S.zm.state === "loading") { frame.hidden = true; return; }
     frame.hidden = false;
     const m = S.map;
     if (!force && spec.key === m.key) {
@@ -646,6 +659,154 @@
     S.map = { url: spec.url, key: spec.key, at: Date.now(), from: spec.from };
     frame.classList.remove("ready");
     frame.src = spec.url;
+  }
+
+  // ---------------------------------------------------------------- своя карта
+
+  const MAP_BASE = new URL("../map", location.href).href;
+  const legKey = (b) => `${b.lat.toFixed(5)},${b.lng.toFixed(5)}:${S.transport}`;
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const el = document.createElement("script");
+      el.src = src;
+      el.onload = resolve;
+      el.onerror = () => reject(new Error(src));
+      document.head.appendChild(el);
+    });
+  }
+
+  /** Движок карты грузится после первого экрана — приложение открывается сразу. */
+  function ensureOwnMap(spec) {
+    const z = S.zm;
+    // Район не был покрыт, а курьер теперь далеко оттуда — проверим ещё раз.
+    if (z.state === "off" && z.offRef && S.geo.fix && dist(z.offRef, S.geo.fix) > 20000) z.state = "idle";
+    if (z.state !== "idle" || !$("zmap") || Date.now() < (z.retryAt || 0)) return;
+    const ref = S.geo.fix || ((S.data.me.points || []).find((p) => p.pos) || {}).pos || here() || (spec.marks[0] || {}).p;
+    if (!ref) return; // где показывать, пока неизвестно — спросим позже
+    z.state = "loading";
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = `${MAP_BASE}/maplibre-gl.css`;
+    document.head.appendChild(css);
+    const css2 = document.createElement("link");
+    css2.rel = "stylesheet";
+    css2.href = `${MAP_BASE}/zal-map.css`;
+    document.head.appendChild(css2);
+    (window.ZalMap ? Promise.resolve() : loadScript(`${MAP_BASE}/maplibre-gl-csp.js`).then(() => loadScript(`${MAP_BASE}/map-style.js`)).then(() => loadScript(`${MAP_BASE}/zal-map.js`)))
+      .then(() => window.ZalMap.load(MAP_BASE))
+      .then((info) => {
+        // Нет ответа сервера карты — попробуем позже; нет тайлов или район не наш — схема Яндекса.
+        if (!info) { z.state = "idle"; z.retryAt = Date.now() + 120000; return updateMap(true); }
+        const covered = info && ref.lng >= info.tiles.bounds[0] && ref.lng <= info.tiles.bounds[2] && ref.lat >= info.tiles.bounds[1] && ref.lat <= info.tiles.bounds[3];
+        if (!covered) { z.state = "off"; z.offRef = ref; return updateMap(true); }
+        const box = $("zmap");
+        if (!box) { z.state = "idle"; return; }
+        box.hidden = false;
+        z.info = info;
+        z.api = window.ZalMap.create(box, {
+          base: MAP_BASE, info, center: ref, zoom: 14,
+          onFollow: (on) => { z.follow = on; paintMapButtons(); },
+        });
+        if (!z.api) { box.hidden = true; z.state = "off"; return updateMap(true); }
+        z.state = "on";
+        updateMap(true);
+      })
+      .catch(() => { z.state = "idle"; z.retryAt = Date.now() + 120000; updateMap(true); });
+  }
+
+  function paintMapButtons() {
+    const b = $("zmloc");
+    if (b) {
+      b.hidden = S.zm.state !== "on" || !here();
+      b.classList.toggle("on", S.zm.follow);
+      b.setAttribute("aria-pressed", S.zm.follow ? "true" : "false");
+    }
+    const eta = $("zmeta");
+    if (eta) {
+      const r = S.zm.route;
+      const show = S.zm.state === "on" && r && r.key === S.zm.key;
+      eta.hidden = !show;
+      if (show) eta.innerHTML = `<b>${minText(Math.max(1, Math.round(r.s / 60)))}</b><span>${kmText(r.m)}</span>`;
+    }
+  }
+
+  function ownMapUpdate(spec, force) {
+    const z = S.zm;
+    const api = z.api;
+    $("mapframe").hidden = true;
+    $("schema").innerHTML = "";
+    const noteEl = $("mapnote");
+    const note = !S.online ? "Нет связи — карта из памяти телефона" : spec.note;
+    noteEl.hidden = !note;
+    noteEl.textContent = note || "";
+    const me = here();
+    const a = listMode() === "mine" ? activeOrder() : null;
+    const marks = spec.marks.map((m, i) => ({
+      id: m.k === "me" ? "me" : `${m.k}:${m.t}:${i}`,
+      lat: m.p.lat, lng: m.p.lng, kind: m.k, label: m.k === "me" ? "" : m.t,
+      heading: m.k === "me" && S.geo.fix ? S.geo.fix.heading : null,
+      stale: m.k === "me" && !S.geo.fix,
+      active: !!(a && m.k === "guest" && m.t === `№${a.no}`),
+    }));
+    api.setMarkers(marks);
+    setTimeout(() => api.resize(), 330);
+    const keyChanged = spec.key !== z.key;
+    z.key = spec.key;
+    if (!spec.routePts || !spec.routePts.length) {
+      if (keyChanged) { z.route = null; api.setRoute(null); }
+      // Обзор: все точки на виду — один раз на набор точек.
+      if ((keyChanged || force) && z.fitKey !== spec.key && !z.follow) {
+        z.fitKey = spec.key;
+        api.fit(marks.map((m) => ({ lat: m.lat, lng: m.lng })), { padding: mapPadding() });
+      }
+      paintMapButtons();
+      return;
+    }
+    if (keyChanged) { z.route = null; api.setRoute(null); }
+    const moved = z.from && me ? dist(z.from, me) : 1e9;
+    const stale = Date.now() - z.at > 90000;
+    if (!z.busy && S.online && (keyChanged || force || stale || (moved > 120 && Date.now() - z.at > 15000))) requestRoute(spec);
+    if (keyChanged && !z.follow) api.fit(spec.routePts, { padding: mapPadding() });
+    paintMapButtons();
+  }
+
+  function mapPadding() {
+    const box = $("map");
+    const h = box ? box.clientHeight : 600;
+    // Сверху — «пилюли» статуса, снизу — время в пути и кнопка «за мной».
+    const pills = $("hud") ? [...$("hud").children].map((el) => el.getBoundingClientRect().bottom) : [];
+    const hud = pills.length ? Math.max(...pills) : 120;
+    // По бокам — половина ширины подписи точки («Демо · Центр»), чтобы она не обрезалась.
+    const side = Math.min(90, Math.round((box ? box.clientWidth : 400) * 0.22));
+    return { top: Math.min(Math.round(h * 0.35), Math.round(hud) + 24), bottom: Math.min(Math.round(h * 0.3), 110), left: side, right: side };
+  }
+
+  async function requestRoute(spec) {
+    const z = S.zm;
+    z.busy = true;
+    const key = spec.key;
+    const pts = spec.routePts.map((p) => ({ lat: p.lat, lng: p.lng }));
+    z.at = Date.now();
+    z.from = pts[0];
+    try {
+      const r = await api("route", { points: pts, mode: S.transport });
+      if (z.key !== key || !z.api) return;
+      if (!r || !r.ok) { z.route = null; z.api.setRoute(null); return; }
+      z.route = { key, m: r.m, s: r.s, at: Date.now() };
+      z.api.setRoute(r.line);
+      (r.legs || []).forEach((l, i) => z.legs.set(legKey(pts[i + 1]), { from: pts[i], m: l.m, s: l.s, at: Date.now() }));
+      if (z.fitKey !== key && !z.follow) {
+        z.fitKey = key;
+        z.api.fit(r.line.map(([lat, lng]) => ({ lat, lng })), { padding: mapPadding() });
+      }
+      renderSheet();
+    } catch (_) {
+      /* нет связи — маршрут обновится позже */
+    } finally {
+      z.busy = false;
+      paintMapButtons();
+    }
   }
 
   /** Карта занимает видимую часть экрана над шторкой: маршрут целиком на виду. */
@@ -697,6 +858,9 @@
         <div class="map" id="map">
           <div class="schema" id="schema"></div>
           <iframe id="mapframe" title="Карта с маршрутом" referrerpolicy="strict-origin-when-cross-origin" allow="geolocation" hidden></iframe>
+          <div class="zmap" id="zmap" hidden></div>
+          <div class="zm-eta" id="zmeta" hidden></div>
+          <button class="zm-btn" id="zmloc" type="button" aria-label="Следовать за мной" aria-pressed="false" hidden>${I.locate("s")}</button>
           <div class="schema-note" id="mapnote" hidden></div>
         </div>
         <div id="hud"></div>
@@ -709,6 +873,10 @@
         <nav class="bnav" id="bnav" aria-label="Разделы"></nav>
       </div>`;
     $("mapframe").addEventListener("load", (e) => e.target.classList.add("ready"));
+    $("zmloc").addEventListener("click", () => { if (S.zm.api) S.zm.api.follow(!S.zm.follow); });
+    // Новая оболочка — карта создаётся заново.
+    if (S.zm.api) { try { S.zm.api.destroy(); } catch (_) { /* уже снята */ } }
+    S.zm = { ...S.zm, state: S.zm.state === "off" ? "off" : "idle", api: null, key: "", fitKey: "", route: null, busy: false };
     bindSheetDrag();
     S.map = { url: "", key: "", at: 0, from: null };
   }

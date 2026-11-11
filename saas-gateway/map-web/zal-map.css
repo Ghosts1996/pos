@@ -1,0 +1,27 @@
+/* Точки на своей карте ZalPOS: курьер, заведение, гость. */
+.zm-pin { position: relative; pointer-events: none; font: 700 13px/1.15 -apple-system, "Segoe UI", Roboto, sans-serif; }
+.zm-me, .zm-courier { width: 22px; height: 22px; }
+.zm-dot { position: absolute; inset: 2px; border-radius: 50%; background: #2B6BF3; border: 3px solid #fff; box-shadow: 0 1px 6px rgba(10, 20, 40, .35); }
+.zm-courier .zm-dot { background: #12A150; }
+.zm-halo { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; background: rgba(43, 107, 243, .16); animation: zm-pulse 2.4s ease-out infinite; }
+.zm-courier .zm-halo { background: rgba(18, 161, 80, .16); }
+.zm-stale .zm-dot { background: #8A93A3; }
+.zm-stale .zm-halo { display: none; }
+.zm-arrow { position: absolute; left: 50%; top: 50%; width: 0; height: 0; margin: -27px 0 0 -9px; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 16px solid rgba(43, 107, 243, .55); transform-origin: 9px 27px; }
+.zm-courier .zm-arrow { border-bottom-color: rgba(18, 161, 80, .55); }
+.zm-tag { position: absolute; left: 50%; top: 26px; transform: translateX(-50%); white-space: nowrap; background: #fff; color: #0E1116; padding: 3px 8px; border-radius: 999px; font-size: 12px; box-shadow: 0 1px 6px rgba(10, 20, 40, .25); }
+.zm-venue, .zm-guest { display: flex; flex-direction: column; align-items: center; }
+.zm-badge { display: block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 10px; border-radius: 12px; color: #fff; background: #0E1116; border: 2px solid #fff; box-shadow: 0 2px 10px rgba(10, 20, 40, .3); }
+.zm-venue .zm-badge { background: #12A150; }
+.zm-active .zm-badge { transform: scale(1.12); }
+.zm-stem { display: block; width: 3px; height: 9px; background: #fff; box-shadow: 0 1px 2px rgba(10, 20, 40, .3); border-radius: 0 0 2px 2px; }
+.maplibregl-ctrl-attrib { font-size: 10px; }
+@keyframes zm-pulse { 0% { transform: scale(.4); opacity: .9; } 80%, 100% { transform: scale(1); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .zm-halo { animation: none; opacity: .5; } }
+@media (prefers-color-scheme: dark) {
+  .zm-dot { border-color: #0E1116; }
+  .zm-badge { border-color: #0E1116; }
+  .zm-guest .zm-badge { background: #E6EAF0; color: #0E1116; }
+  .zm-stem { background: #0E1116; }
+  .zm-tag { background: #1B2029; color: #E6EAF0; }
+}
