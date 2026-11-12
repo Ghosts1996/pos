@@ -40,8 +40,8 @@ const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
 // Что ещё хранится у контакта, кроме имени, телефона и адреса.
 const EXTRA_KEYS = {
-  delivery: ["comment", "courierName", "courierPhone", "guestTag", "guestContact"],
-  session: ["comment", "courierName", "courierPhone", "guestTag", "guestContact"],
+  delivery: ["comment", "courierName", "courierPhone", "guestTag", "guestContact", "geo"],
+  session: ["comment", "courierName", "courierPhone", "guestTag", "guestContact", "geo"],
   card: ["notes"],
   reservation: [],
   waitlist: [],
@@ -99,9 +99,20 @@ function cleanExtra(kind, raw, guest) {
   const out = {};
   for (const [k, v] of Object.entries(raw)) {
     if (!allowed.includes(k)) throw new VaultError(400, `поле ${k} нельзя записать`);
-    out[k] = v === null ? null : String(v).trim().slice(0, LIMITS.extra);
+    out[k] = v === null ? null : k === "geo" ? cleanGeo(v) : String(v).trim().slice(0, LIMITS.extra);
   }
   return Object.keys(out).length ? out : null;
+}
+
+/** Точка доставки на карте: { lat, lng, acc? } — числа в пределах Земли. */
+function cleanGeo(v) {
+  const lat = Number(v && v.lat);
+  const lng = Number(v && v.lng);
+  if (typeof v !== "object" || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180 || (lat === 0 && lng === 0)) {
+    throw new VaultError(400, "geo — точка { lat, lng }");
+  }
+  const acc = Number(v.acc);
+  return { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6, ...(Number.isFinite(acc) && acc > 0 && acc <= 100000 ? { acc: Math.round(acc) } : {}) };
 }
 
 function micros(row) {

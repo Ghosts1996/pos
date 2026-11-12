@@ -84,6 +84,21 @@ function createMap({
     return tiles;
   }
 
+  /** Итог последней сборки карты (map-build.js): когда, получилось ли, ошибки. */
+  function buildStatus() {
+    try {
+      const st = JSON.parse(fs.readFileSync(path.join(dir, "status.json"), "utf8"));
+      return {
+        at: String(st.finishedAt || st.startedAt || ""),
+        ok: st.ok === true,
+        regions: Array.isArray(st.regions) ? st.regions.length : 0,
+        errors: (Array.isArray(st.errors) ? st.errors : []).map((e) => String(e).slice(0, 300)).slice(0, 5),
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
   function info() {
     const t = currentTiles();
     const r = router.info();
@@ -98,6 +113,7 @@ function createMap({
         center: [h.centerLon, h.centerLat, h.centerZoom],
       } : null,
       route: router.available() ? { modes: [...MODES], regions: r.regions } : null,
+      build: buildStatus(),
       attribution: "© OpenStreetMap",
     };
   }

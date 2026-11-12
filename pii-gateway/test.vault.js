@@ -168,6 +168,28 @@ const test = (name, fn) => tests.push([name, fn]);
     assert.equal((await staff({ tenantId: "t1", kind: "pii_put", k: "card", id: "c1", fields: { name: "Постоянный", extra: { notes: "скидка" } } })).status, 200);
   });
 
+  test("доставка: точка на карте (geo) — числами, одной записью с адресом; гость сам её не ставит", async () => {
+    // Сервер пишет заказ гостя пачкой (демо, заказ из приложения): точка не должна ронять запись.
+    let r = await internal({ tenantId: "t1", kind: "pii_put", items: [
+      { k: "delivery", id: "s-geo", fields: { name: "Анна", phone: "+7 900 000-00-05", address: "Малая Садовая, 3", extra: { guestContact: "79000000005", comment: "у двери", geo: { lat: 59.9347123456, lng: 30.3373, acc: 12.4 } } } },
+      { k: "staff", id: "e-geo", fields: { name: "Курьер" } },
+    ] });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    r = await internal({ tenantId: "t1", kind: "pii_lookup", refs: [{ k: "delivery", id: "s-geo" }] });
+    const c = r.json.contacts[0];
+    assert.deepEqual([c.name, c.phone, c.address], ["Анна", "79000000005", "Малая Садовая, 3"]);
+    assert.deepEqual(c.extra.geo, { lat: 59.934712, lng: 30.3373, acc: 12 });
+    assert.equal(c.extra.comment, "у двери");
+    // Курьер — дописывается, точка остаётся.
+    await internal({ tenantId: "t1", kind: "pii_put", items: [{ k: "delivery", id: "s-geo", fields: { extra: { courierName: "Пётр" } } }] });
+    r = await internal({ tenantId: "t1", kind: "pii_lookup", refs: [{ k: "delivery", id: "s-geo" }] });
+    assert.deepEqual(r.json.contacts[0].extra.geo, { lat: 59.934712, lng: 30.3373, acc: 12 });
+    for (const geo of [{ lat: "x", lng: 1 }, { lat: 91, lng: 0 }, { lat: 0, lng: 0 }, "59,30"]) {
+      assert.equal((await internal({ tenantId: "t1", kind: "pii_put", items: [{ k: "delivery", id: "s-geo2", fields: { extra: { geo } } }] })).status, 400, JSON.stringify(geo));
+    }
+    assert.equal((await guest({ tenantId: "t1", kind: "pii_put", k: "delivery", id: "s-g", fields: { extra: { geo: { lat: 59.9, lng: 30.3 } } } })).status, 400, "гость точку напрямую не пишет — только через сервер заказов");
+  });
+
   test("синхронизация страницами без потерь и повторов по курсору", async () => {
     const items = [];
     for (let i = 0; i < 1500; i++) items.push({ k: "session", id: `bulk${String(i).padStart(4, "0")}`, fields: { extra: { guestTag: `Стол ${i}` } } });
