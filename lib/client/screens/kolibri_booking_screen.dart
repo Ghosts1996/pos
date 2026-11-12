@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../build_info.dart';
 import '../widgets/booking_soon_card.dart';
 import '../../utils/phone_utils.dart';
 import '../../models/reservation_model.dart';
@@ -46,6 +47,9 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
   String? _phoneError;
 
   DateTime _day = DateTime.now();
+  /// Первый день в списке дат: после полуночи, пока идёт ночная смена, —
+  /// вчерашний (SaaS, [_initFirstDay]).
+  DateTime _firstDay = DateTime.now();
   int _guests = 2;
   int _duration = 90;
   DateTime? _slot;
@@ -74,6 +78,25 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
     _prefill();
     _loadVenue();
     _loadSlots();
+    if (kSaasMode) _initFirstDay();
+  }
+
+  /// В 00:30 пятницы при работе 16:00–02:00 ещё идёт ночь четверга: первым
+  /// днём показываем четверг, и бронь на 01:00 возможна.
+  Future<void> _initFirstDay() async {
+    try {
+      final d = await _service.currentWorkDay();
+      final now = DateTime.now();
+      if (!mounted || d.day == now.day) return;
+      final untouched = _day.day == now.day && _day.month == now.month;
+      setState(() {
+        _firstDay = d;
+        if (untouched) _day = d;
+      });
+      if (untouched) _loadSlots();
+    } catch (_) {
+      // Не узнали часы работы — список с сегодняшнего дня, как раньше.
+    }
   }
 
   @override
@@ -281,7 +304,7 @@ class _KolibriBookingScreenState extends State<KolibriBookingScreen> {
             itemCount: 14,
             separatorBuilder: (_, __) => const SizedBox(width: 10),
             itemBuilder: (_, i) {
-              final d = DateTime.now().add(Duration(days: i));
+              final d = DateTime(_firstDay.year, _firstDay.month, _firstDay.day + i, 12);
               final selected = d.day == _day.day && d.month == _day.month;
               return InkWell(
                 onTap: () {

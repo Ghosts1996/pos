@@ -3006,15 +3006,14 @@ function workingWindow(day) {
 function screenBooking() {
   const p = state.profile || {};
 
-  if (!bookingDraft.date) {
-    const today = new Date();
-    bookingDraft.date = localDate(today);
+  if (!bookingDraft.date || bookingDraft.date < localDate(currentWorkDay())) {
+    bookingDraft.date = localDate(currentWorkDay());
   }
   if (!bookingDraft.duration) bookingDraft.duration = 90;
 
   const day = dayFromDraft();
   const win = workingWindow(day);
-  const todayHours = workingWindow(new Date());
+  const todayHours = workingWindow(currentWorkDay());
 
   screenEl().innerHTML = `
     <h1>Бронь стола</h1>
@@ -3119,9 +3118,21 @@ function localDate(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/// Рабочий день «сейчас»: после полуночи, пока идёт ночная смена
+/// вчерашнего дня (16:00–02:00), — вчерашний: на его ночь ещё можно
+/// забронировать. Иначе сегодняшний. Как currentWorkDay в приложении.
+function currentWorkDay() {
+  const now = new Date();
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const win = workingWindow(yesterday);
+  // 15 минут на подготовку стола + хотя бы полчаса брони.
+  if (win && now.getTime() + 45 * 60 * 1000 < win.close.getTime()) return yesterday;
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
 function dateOptions() {
   const out = [];
-  const base = new Date();
+  const base = currentWorkDay();
   for (let i = 0; i < 14; i++) {
     out.push(new Date(base.getFullYear(), base.getMonth(), base.getDate() + i));
   }
@@ -5170,6 +5181,11 @@ let bookingDraft = { date: '', time: '', guests: 2, duration: 90 };
 function bookingStart() {
   if (!bookingDraft.date || !bookingDraft.time) return null;
   const d = new Date(`${bookingDraft.date}T${bookingDraft.time}:00`);
-  return isNaN(d) ? null : d;
+  if (isNaN(d)) return null;
+  // Время после полуночи относится к ночи выбранного дня: заведение
+  // 16:00–02:00, четверг, 00:30 — это 00:30 пятницы, а не утро четверга.
+  const win = workingWindow(dayFromDraft());
+  if (win && d < win.open) return new Date(d.getTime() + 24 * 60 * 60 * 1000);
+  return d;
 }
 function bookingGuests() { return Number(bookingDraft.guests) || 2; }

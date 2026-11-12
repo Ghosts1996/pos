@@ -402,6 +402,20 @@ class ReservationService {
     return (open: open, close: close);
   }
 
+  /// Рабочий день «сейчас» для брони: после полуночи, пока ещё идёт ночная
+  /// смена вчерашнего дня (16:00–02:00), — вчерашний день (на его ночь ещё
+  /// можно забронировать), иначе сегодняшний. Только дата, без времени.
+  Future<DateTime> currentWorkDay() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = DateTime(now.year, now.month, now.day - 1);
+    final profile = await VenueService.instance.load();
+    final window = _workingWindow(profile, yesterday);
+    // 15 минут на подготовку стола + хотя бы полчаса брони.
+    if (window != null && now.add(const Duration(minutes: 45)).isBefore(window.close)) return yesterday;
+    return today;
+  }
+
   /// Работает ли заведение в это время — проверка перед созданием брони.
   Future<bool> isOpenAt(DateTime moment) async {
     final profile = await VenueService.instance.load();
