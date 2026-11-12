@@ -46,6 +46,7 @@ const requisites = require("./requisites");
 const aiKeys = require("./ai-keys");
 const { createGuestDelivery } = require("./guest-delivery");
 const { createCourier } = require("./courier");
+const { createNpdCheck } = require("./npd-check");
 const { createCourierWeb } = require("./courier-web");
 const { createMap } = require("./map");
 const deliveryPricing = require("./delivery-pricing");
@@ -8268,6 +8269,8 @@ const courier = createCourier({
   // Неверная ссылка или ключ курьера — как неверный пароль для щита (shield объявлен ниже).
   authFailed: (req) => shield.authFailed(req),
   guestPay,
+  // Свободные курьеры: статус самозанятого по ИНН — открытый сервис ФНС.
+  npd: createNpdCheck(),
 });
 courier.setHooks({ event: telegram.deliveryEvent, moved: telegram.courierMoved });
 telegram.setCourierApi(courier);
@@ -8309,8 +8312,25 @@ courier.setHooks({
   moved: telegram.courierMoved,
   services: async (ids) => Object.fromEntries(await Promise.all(ids.map(async (id) => [id, await deliveryServices.connected(id)]))),
   route: (body) => zalMap.route(body),
+  // Свободные курьеры: код для нового пароля — почтой; удалил учётку — акт
+  // владельцу; место заведения отметили в кабинете — карте нужен этот район.
+  mailer: () => getAuthMailer(),
+  papers: { destruction: (items, opts) => legalPapers.destruction(items, opts) },
+  posChanged: () => refreshMapRegions(),
 });
 const COURIER_API = {
+  register: courier.free.handleRegister,
+  signin: courier.free.handleSignin,
+  reset: courier.free.handleReset,
+  "reset-confirm": courier.free.handleResetConfirm,
+  "free/profile": courier.free.handleProfile,
+  "free/update": courier.free.handleUpdate,
+  "free/recheck": courier.free.handleRecheck,
+  "free/nearby": courier.free.handleNearby,
+  "free/venue": courier.free.handleVenue,
+  "free/apply": courier.free.handleApply,
+  "free/leave": courier.free.handleLeave,
+  "free/delete": courier.free.handleDelete,
   login: courier.handleLogin,
   demo: courier.handleDemoLogin,
   logout: courier.handleLogout,
@@ -9485,6 +9505,11 @@ const ROUTES = {
   "/courierAdminRates": courier.handleAdminRates,
   "/courierAdminReport": courier.handleAdminReport,
   "/courierAdminForget": courier.handleAdminForget,
+  "/courierFreeGet": courier.free.handleAdminGet,
+  "/courierFreeSave": courier.free.handleAdminSave,
+  "/courierFreePos": courier.free.handleAdminPos,
+  "/courierFreeDecide": courier.free.handleAdminDecide,
+  "/courierFreePaid": courier.free.handleAdminPaid,
   "/deliverySettings": deliveryAdmin.handleGet,
   "/deliverySettingsSave": deliveryAdmin.handleSave,
   "/deliveryMenuSave": deliveryAdmin.handleMenuSave,

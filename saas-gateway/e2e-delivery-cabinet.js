@@ -54,13 +54,15 @@ async function main() {
     return { ok: true, status: 200, json: async () => body };
   };
   const services = createDeliveryServices({ ...common, encrypt, decrypt, secretKey: () => require("crypto").createHash("sha256").update("e2e").digest(), fetchImpl, hooks: { changed: (t) => courier.invalidate(t) } });
-  const courier = createCourier({ ...common, publicUrl: "https://pii.zalpos.ru/saas" });
+  const courier = createCourier({ ...common, publicUrl: "https://pii.zalpos.ru/saas", npd: { check: async () => ({ ok: true, message: "самозанятый", at: Date.now() }) } });
   courier.setHooks({ services: async (ids) => Object.fromEntries(await Promise.all(ids.map(async (id) => [id, await services.connected(id)]))) });
   const delivery = createDeliveryAdmin(common);
   const handlers = {
     courierAdminList: courier.handleAdminList, courierAdminSave: courier.handleAdminSave, courierAdminInvite: courier.handleAdminInvite,
     courierAdminEnable: courier.handleAdminEnable, courierAdminCash: courier.handleAdminCash, courierAdminAssign: courier.handleAdminAssign,
     courierAdminRates: courier.handleAdminRates, courierAdminReport: courier.handleAdminReport,
+    courierFreeGet: courier.free.handleAdminGet, courierFreeSave: courier.free.handleAdminSave, courierFreePos: courier.free.handleAdminPos,
+    courierFreeDecide: courier.free.handleAdminDecide, courierFreePaid: courier.free.handleAdminPaid,
     deliverySettings: delivery.handleGet, deliverySettingsSave: delivery.handleSave, deliveryMenuSave: delivery.handleMenuSave,
     deliveryServices: services.handleGet, deliveryServicesSave: services.handleSave, deliveryExtQuote: services.handleQuote,
     deliveryExtCall: services.handleCall, deliveryExtApprove: services.handleApprove, deliveryExtCancel: services.handleCancel,
@@ -259,6 +261,78 @@ draw();
   assert.ok(yaCalls.some((u) => /claims\/create/.test(u)), "заявка в Яндексе создана");
 
   // «Отчёт».
+  // «Свободные курьеры»: включить, принять заявку, заказ, выплата.
+  const toasted = (re) => page.waitForFunction((src) => window.toasts.some((t) => new RegExp(src).test(t)), re.source);
+  await page.click('.f-dl-sub[data-sub="free"]');
+  await page.waitForSelector("#f-df-save");
+  assert.ok((await page.textContent("#f-dl-root")).includes("Как это по закону"));
+  await page.check("#f-df-on");
+  await page.click("#f-df-save");
+  await page.waitForFunction(() => /сколько платите/.test(document.getElementById("f-df-msg").textContent));
+  await page.fill("#f-df-trip", "250");
+  await page.click("#f-df-save");
+  await page.waitForFunction(() => /условия/.test(document.getElementById("f-df-msg").textContent));
+  assert.equal(await page.inputValue("#f-df-trip"), "250", "форма не сбросилась после ошибки");
+  await page.check("#f-df-agree");
+  await page.click("#f-df-save");
+  await toasted(/Свободные курьеры включены/);
+  await page.waitForSelector("text=Ссылка для курьеров");
+  assert.ok((await page.textContent("#f-dl-root")).includes("https://pii.zalpos.ru/saas/courier/#v=c_C"));
+  // Место второй точки — координатами (широта и долгота перепутаны → подсказка).
+  await page.fill('.f-df-coord[data-t="P2"]', "37.62, 55.77");
+  await page.click('.f-df-pos[data-t="P2"]');
+  await toasted(/Проверьте координаты/);
+  await page.fill('.f-df-coord[data-t="P2"]', "55.77, 37.62");
+  await page.click('.f-df-pos[data-t="P2"]');
+  await toasted(/Место заведения сохранено/);
+  await page.waitForSelector("text=на карте: 55.77000, 37.62000");
+  await shot(page, "c7-free-settings");
+  // Курьер регистрируется сам и подаёт заявку.
+  const F = courier.free;
+  const direct = async (fn, body, token) => { const res = {}; await fn({ body, headers: { "x-real-ip": "203.0.113.9", ...(token ? { authorization: `Bearer ${token}` } : {}) } }, res); return res.body; };
+  const inn = (() => { const d = "7707123456".split("").map(Number); const k = (w) => w.reduce((a, x, i) => a + x * d[i], 0) % 11 % 10; d.push(k([7, 2, 4, 10, 3, 5, 9, 4, 6, 8])); d.push(k([3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8])); return d.join(""); })();
+  const reg = await direct(F.handleRegister, { name: "Иванов Пётр Сергеевич", phone: "+7 911 000-00-01", email: "p@example.ru", password: "Kurier-2026", taxStatus: "npd", inn, transport: "bike", medBook: true, adult: true, rules: true, pd: true });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal((await direct(F.handleApply, { root: "c_C" }, reg.token)).st, "pending");
+  courier.forgetCache();
+  await page.click('.f-dl-sub[data-sub="now"]');
+  await page.click('.f-dl-sub[data-sub="free"]');
+  await page.click(".f-dl-retry").catch(() => {});
+  await page.evaluate(() => { deliveryState.get("P1").free = null; draw(); });
+  await page.waitForSelector("text=Заявки · 1");
+  const card = await page.textContent("#f-dl-root");
+  assert.ok(card.includes("Иванов Пётр Сергеевич") && card.includes(`ИНН ${inn}`) && card.includes("ФНС подтвердила"), "заявка: кто, ИНН, статус");
+  await shot(page, "c8-free-request");
+  await page.click('.f-df-decide[data-d="approve"]');
+  await toasted(/Курьер принят/);
+  await page.waitForSelector("text=Работают с вами");
+  // Курьер берёт оплаченный заказ №22 и вручает; в «Сейчас» видно, кто везёт.
+  await db.doc("tenants/P1/sessions/o3").set(order(23, { guestPaidTotal: 640 }));
+  await db.doc("tenants/P1/sessions/o4").set(order(24)); // не оплачен, банка нет — свободному не предлагаем
+  courier.forgetCache();
+  await direct(courier.handleShift, { on: true }, reg.token);
+  await direct(courier.handlePing, { points: [{ lat: 55.7603, lng: 37.6105, acc: 10, at: Date.now() }] }, reg.token);
+  const offered = (await direct(courier.handleState, {}, reg.token)).free.map((f) => f.s);
+  assert.deepEqual(offered, ["o3"], "свободному — только оплаченный заказ");
+  await direct(courier.handleAct, { op: "take", t: "P1", s: "o3" }, reg.token);
+  await page.click('.f-dl-sub[data-sub="now"]');
+  await page.evaluate(() => { deliveryState.get("P1").list = null; draw(); });
+  await page.waitForSelector("text=Свободный №1001");
+  assert.ok((await page.textContent("#f-dl-root")).includes("Иванов Пётр Сергеевич"));
+  await shot(page, "c9-free-now");
+  await direct(courier.handleAct, { op: "pickup", t: "P1", s: "o3" }, reg.token);
+  await direct(courier.handleAct, { op: "deliver", t: "P1", s: "o3" }, reg.token);
+  await page.click('.f-dl-sub[data-sub="free"]');
+  await page.evaluate(() => { deliveryState.get("P1").free = null; draw(); });
+  await page.waitForSelector("text=к выплате 250 ₽");
+  await shot(page, "c10-free-owed");
+  await page.click(".f-df-paid");
+  await toasted(/Выплата 250 ₽ отмечена/);
+  await page.waitForFunction(() => !/к выплате/.test(document.getElementById("f-dl-root").innerText));
+  await page.click('.f-df-decide[data-d="block"]');
+  await toasted(/Доступ закрыт/);
+  await page.waitForSelector("text=Отклонены и закрыты");
+
   await page.click('.f-dl-sub[data-sub="report"]');
   await page.waitForSelector("text=Рабочие сутки");
   await page.waitForSelector("text=/доставок курьерами приложения не было|Итого/");
@@ -266,7 +340,7 @@ draw();
 
   // Телефон: ничего не вылезает за экран.
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const sub of ["now", "couriers", "price", "menu", "services"]) {
+  for (const sub of ["now", "couriers", "free", "price", "menu", "services"]) {
     await page.click(`.f-dl-sub[data-sub="${sub}"]`);
     await page.waitForTimeout(300);
     const wide = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);

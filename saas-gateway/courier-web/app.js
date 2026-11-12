@@ -25,6 +25,7 @@
   const KEY = {
     token: "zc_token", queue: "zc_queue", pings: "zc_pings", order: "zc_order", nav: "zc_nav",
     sound: "zc_sound", seen: "zc_seen", transport: "zc_transport", sheet: "zc_sheet", installSkip: "zc_install_skip",
+    venue: "zc_venue",
   };
   const load = (k, def) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? def : v; } catch (_) { return def; } };
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* память переполнена — не страшно */ } };
@@ -142,6 +143,14 @@
     hist: null,
     histDay: "",
     histAt: 0,
+    // Свободный курьер: экран входа, профиль с сервера, заведения рядом, ссылка заведения.
+    auth: "home",
+    fp: null,
+    fpAt: 0,
+    near: null,
+    linked: null,
+    resetPhone: "",
+    venueLink: load(KEY.venue, ""),
   };
   if (!NAVS[S.nav]) S.nav = "yandexmaps";
   if (!TRANSPORT[S.transport]) S.transport = "auto";
@@ -189,6 +198,10 @@
   function signedOut(message) {
     S.token = "";
     S.data = null;
+    S.fp = null;
+    S.near = null;
+    S.linked = null;
+    S.auth = "home";
     S.fatal = message || "";
     S.map = { url: "", key: "", at: 0, from: null };
     drop(KEY.token);
@@ -867,7 +880,7 @@
       $("hud").hidden = true;
       page.hidden = false;
       const top = page.scrollTop;
-      page.innerHTML = S.view === "income" ? incomeHtml() : profileHtml();
+      page.innerHTML = S.view === "income" ? incomeHtml() : S.view === "venues" ? venuesHtml() : profileHtml();
       page.scrollTop = top;
     }
     $("bnav").innerHTML = navHtml();
@@ -909,12 +922,13 @@
     const d = S.data;
     const me = d.me;
     const r = me.rates || {};
-    const paid = (r.ratePerTrip || 0) + (r.ratePerKm || 0) > 0;
+    const paid = me.free || (r.ratePerTrip || 0) + (r.ratePerKm || 0) > 0;
     const st = d.stats;
     const net = !S.online
       ? `<div class="netbar bad">${I.warn("s")}Нет связи${S.queue.length ? ` · ждут ${S.queue.length}` : ""}</div>`
       : S.queue.length ? `<div class="netbar">${I.refresh("s")}Отправляем ${S.queue.length}…</div>`
-        : me.onShift && S.geo.error === 1 ? `<div class="netbar bad">${I.locate("s")}Нет доступа к геолокации</div>` : "";
+        : me.onShift && S.geo.error === 1 ? `<div class="netbar bad">${I.locate("s")}Нет доступа к геолокации</div>`
+          : me.free && me.needPos ? `<div class="netbar">${I.locate("s")}Ищем вас на карте — заказы появятся, когда найдём</div>` : "";
     return `
       <div class="hud">
         <button class="pill ${me.onShift ? "on" : ""}" data-a="shift" aria-label="${me.onShift ? "Вы на линии. Закончить смену" : "Выйти на линию"}"><span class="dot"></span>${me.onShift ? "На линии" : "Не на линии"}</button>
@@ -931,7 +945,8 @@
   function navHtml() {
     const fresh = S.data.me.onShift ? S.data.free.length : 0;
     const tab = (id, label, icon, badge = 0) => `<button data-a="view" data-view="${id}" ${S.view === id ? 'aria-current="page"' : ""}>${icon()}${label}${badge ? `<span class="badge hot">${badge}</span>` : ""}</button>`;
-    return tab("orders", "Заказы", I.box, fresh) + tab("income", "Доход", I.wallet) + tab("profile", "Профиль", I.user);
+    return tab("orders", "Заказы", I.box, fresh) + tab("income", "Доход", I.wallet)
+      + (S.data.me.free ? tab("venues", "Заведения", I.store, S.venueLink ? 1 : 0) : "") + tab("profile", "Профиль", I.user);
   }
 
   function renderSheet() {
@@ -971,9 +986,24 @@
     </div>`;
   }
 
+  /** Свободному курьеру: что мешает получать заказы. */
+  function freeHints() {
+    const me = S.data.me;
+    if (!me.free) return "";
+    if (me.shiftProblem) return `<div class="box bad">${esc(me.shiftProblem)}</div><button class="btn line wide" data-a="view" data-view="profile">Открыть профиль</button>`;
+    if (!me.links) {
+      return `<div class="online-card"><div class="row">${I.store("l")}<b style="font-size:18px">${me.pending ? "Заявка отправлена" : "Выберите заведения"}</b></div>
+        <p>${me.pending ? `Заведение рассмотрит заявку${me.pending > 1 ? ` (заявок: ${me.pending})` : ""} — заказы появятся здесь, как только её примут. Можно подать заявки и в другие заведения.` : "Заказы приходят от заведений, которые вас приняли. Найдите заведения рядом и нажмите «Хочу возить» — условия и оплата видны сразу."}</p>
+        <button class="btn huge wide" data-a="view" data-view="venues">Заведения рядом</button></div>`;
+    }
+    return "";
+  }
+
   function freeHtml() {
     const d = S.data;
-    const top = d.me.onShift ? "" : offShiftCard();
+    const hints = freeHints();
+    const top = (d.me.onShift || hints ? "" : offShiftCard()) + hints;
+    if (!d.free.length && hints) return top;
     if (!d.free.length) {
       return `${top}<div class="empty"><div class="art">${I.box("l")}</div><b>Свободных заказов нет</b>
         <p class="small">Новые появятся здесь со звуком и вибрацией${d.me.onShift ? "" : " — когда вы на линии"}.${d.mine.length ? "" : " Карта покажет их на карте."}</p></div>`;
@@ -995,7 +1025,9 @@
     const right = total != null
       ? `<div class="offer-dist">${kmText(total)}<span>~${minText(minutes)} весь путь</span></div>`
       : toVenue ? `<div class="offer-dist">${kmText(toVenue.m)}<span>до заведения</span></div>` : "";
-    const money = f.toCollect > 0 ? `<span class="chip amber">${I.cash("s")}Взять ${rub(f.toCollect)}</span>` : `<span class="chip green">${I.check("s")}Оплачен</span>`;
+    const money = f.toCollect > 0
+      ? d.me.free ? `<span class="chip amber">${I.qr("s")}Оплата по QR ${rub(f.toCollect)}</span>` : `<span class="chip amber">${I.cash("s")}Взять ${rub(f.toCollect)}</span>`
+      : `<span class="chip green">${I.check("s")}Оплачен</span>`;
     return `
       <article class="offer${S.newFree.has(f.key) ? " new" : ""}">
         <div class="offer-top">${pay}${right}</div>
@@ -1020,7 +1052,7 @@
     const d = S.data;
     if (!list.length) {
       return `${d.me.onShift ? "" : offShiftCard()}<div class="empty"><div class="art">${I.route("l")}</div><b>У вас нет заказов</b>
-        <p class="small">Возьмите заказ в «Свободных» — или заведение назначит его вам.</p>
+        <p class="small">${d.me.free ? "Возьмите заказ в «Свободных»: цена доставки видна до «Беру»." : "Возьмите заказ в «Свободных» — или заведение назначит его вам."}</p>
         ${d.free.length ? `<button class="btn go wide" data-a="list" data-list="free">Свободные заказы · ${d.free.length}</button>` : ""}</div>`;
     }
     const a = activeOrder();
@@ -1104,7 +1136,7 @@
     const d = S.data;
     const h = S.hist;
     const r = d.me.rates || {};
-    const paid = (r.ratePerTrip || 0) + (r.ratePerKm || 0) > 0;
+    const paid = d.me.free || (r.ratePerTrip || 0) + (r.ratePerKm || 0) > 0;
     const st = d.stats;
     const shiftMin = d.me.onShift && d.me.shiftStartedAt ? Math.floor((Date.now() - d.me.shiftStartedAt) / 60000) : 0;
     const sel = h ? h.days.find((x) => x.day === (S.histDay || h.today)) || h.days[h.days.length - 1] : null;
@@ -1137,6 +1169,23 @@
             <span class="small muted">${x.result === "done" ? `${Number(x.km).toFixed(1).replace(".", ",")} км${x.pickedAt && x.doneAt ? ` · ${minText(Math.max(1, Math.round((x.doneAt - x.pickedAt) / 60000)))} в пути` : ""}${x.payment && x.payment.amount ? ` · ${rub(x.payment.amount)} ${METHOD[x.payment.method] || ""}` : ""}` : x.result === "cancelled" ? "отменён" : x.result === "returned" ? "возвращён в заведение" : x.result === "released" ? "отказался" : esc(x.result)}</span></span>
             ${x.result === "done" && paid ? `<span class="e">+${rub(x.earned)}</span>` : ""}</div>`).join("")}</div>`;
     const cashOn = d.me.cashOnHand;
+    if (d.me.free) {
+      const owed = h && h.owed ? h.owed : [];
+      const pays = h && h.payouts ? h.payouts : [];
+      return `
+      <h1>Доход</h1>
+      ${hero}
+      ${week}
+      <div class="sec">К выплате от заведений</div>
+      ${owed.length ? `<div class="list">${owed.map((x) => `<div class="lrow">${I.store()}<span class="grow"><b>${esc(x.venue)}</b></span><b class="nowrap">${rub(x.owed)}</b></div>`).join("")}</div>`
+        : `<div class="card muted small">${!h && d.me.owed > 0 ? "Загружаем…" : "Заведения вам ничего не должны."}</div>`}
+      ${pays.length ? `<div class="sec">Выплаты</div><div class="list">${pays.map((x) => `<div class="trip"><span class="t">${new Date(x.at).toLocaleDateString("ru-RU", { day: "numeric", month: "short" })}</span><span class="grow"><b>${esc(x.venue)}</b><br><span class="small muted">заведение отметило выплату</span></span><span class="e">${rub(x.amount)}</span></div>`).join("")}</div>` : ""}
+      <div class="sec">${isToday ? "Доставки сегодня" : `Доставки · ${dayLabel(sel.day)}`}</div>
+      ${trips}
+      <div class="sec">Как считается</div>
+      <div class="card small">Цена каждой доставки видна до «Беру» и после не меняется. Платит заведение напрямую — переводом или наличными, как договоритесь; ZalPOS денег не принимает и комиссию не берёт.<br><br>
+        <b>Получили деньги — выдайте заведению чек</b> в приложении «Мой налог» (ИП — свой документ): без чека заведение не сможет учесть расход, а вы — подтвердить доход.</div>`;
+    }
     return `
       <h1>Доход</h1>
       ${hero}
@@ -1176,8 +1225,9 @@
     return `
       <h1>Профиль</h1>
       <div class="card me"><div class="avatar">${esc(first.slice(0, 1).toUpperCase())}</div>
-        <div class="grow"><b style="font-size:19px">Курьер №${esc(me.no)} · ${esc(first.split(" ")[0])}</b><br>
-        <span class="small muted">${me.onShift ? `На линии с ${hhmm(me.shiftStartedAt)}` : "Не на линии"}${me.demo ? " · демо" : ""}</span></div></div>
+        <div class="grow"><b style="font-size:19px">Курьер №${esc(me.no)} · ${esc(me.free ? first.split(" ").slice(0, 2).join(" ") : first.split(" ")[0])}</b><br>
+        <span class="small muted">${me.onShift ? `На линии с ${hhmm(me.shiftStartedAt)}` : "Не на линии"}${me.demo ? " · демо" : ""}${me.free ? " · работаю на себя" : ""}</span></div></div>
+      ${me.free ? freeProfileHtml() : ""}
 
       <div class="sec">Как езжу</div>
       <div class="seg" role="group" aria-label="Транспорт">${Object.entries(TRANSPORT).map(([id, t]) => `<button data-a="transport" data-v="${id}" aria-pressed="${S.transport === id}">${t.label}</button>`).join("")}</div>
@@ -1200,8 +1250,8 @@
               : `<div class="lrow">${I.download()}<span class="grow small">Установить на Android: меню браузера ⋮ → «Добавить на главный экран»</span></div>`}
       </div>
 
-      <div class="sec">Где работаю</div>
-      <div class="list">${(me.points || []).map((p) => `<div class="lrow">${I.store()}<span class="grow"><b>${esc(p.name)}</b><br><span class="small muted">${esc(p.address || "")}</span></span></div>`).join("")}</div>
+      ${me.free ? "" : `<div class="sec">Где работаю</div>`}
+      <div class="list" ${me.free ? "hidden" : ""}>${(me.points || []).map((p) => `<div class="lrow">${I.store()}<span class="grow"><b>${esc(p.name)}</b><br><span class="small muted">${esc(p.address || "")}</span></span></div>`).join("")}</div>
 
       <div class="sec">Данные</div>
       <div class="list">
@@ -1212,19 +1262,285 @@
       <div style="display:grid;gap:8px;margin-top:18px">
         ${me.onShift ? `<button class="btn line wide" data-a="shift-end">Закончить смену</button>` : `<button class="btn go wide" data-a="shift">Выйти на линию</button>`}
         <button class="btn link" data-a="refresh">${I.refresh("s")}Обновить данные</button>
+        ${me.free ? `<button class="btn link" data-a="pass">Сменить пароль</button>
+        <button class="btn link" data-a="rules">Условия для курьеров и согласие</button>` : ""}
         <button class="btn danger" data-a="logout">${I.logout("s")}Выйти из приложения</button>
+        ${me.free ? `<button class="btn link" style="color:var(--red)" data-a="delete">Удалить учётную запись</button>` : ""}
       </div>`;
+  }
+
+  // -------- свободный курьер: статус, заведения
+
+  const FREE_TRANSPORT = { foot: "Пешком", bike: "Вело / самокат", auto: "Авто / мото" };
+  const LINK = { approved: ["green", "Работаю"], pending: ["amber", "Заявка ждёт ответа"], declined: ["red", "Заявка отклонена"], blocked: ["red", "Доступ закрыт"] };
+
+  async function loadFreeProfile(force = false) {
+    if (!S.token || !S.data || !S.data.me.free) return;
+    if (!force && S.fp && Date.now() - S.fpAt < 20000) return;
+    S.fpAt = Date.now();
+    try {
+      S.fp = await api("free/profile");
+      // «Как езжу» при первом входе — то, что указано при регистрации.
+      if (localStorage.getItem(KEY.transport) == null && TRANSPORT[S.fp.transport]) { S.transport = S.fp.transport; save(KEY.transport, S.transport); }
+      if (S.view === "profile" || S.view === "venues") render();
+    } catch (e) {
+      if (e.status === 401 || e.status === 403) signedOut(e.message);
+    }
+  }
+
+  function taxHtml(tax) {
+    if (!tax) return "";
+    if (tax.status === "ip") return `<div class="lrow">${I.shield()}<span class="grow"><b>Индивидуальный предприниматель</b><br><span class="small muted">Статус ИП заведение проверяет само — по ИНН в реестре ФНС</span></span></div>`;
+    const chip = tax.ok === true ? `<span class="chip green">Подтверждён</span>` : tax.ok === false ? `<span class="chip red">Не подтверждён</span>` : `<span class="chip amber">Проверяем</span>`;
+    return `<div class="lrow">${I.shield()}<span class="grow"><b>Самозанятый</b><br><span class="small muted">${tax.ok === true ? `ФНС подтвердила${tax.at ? ` ${new Date(tax.at).toLocaleDateString("ru-RU")}` : ""}` : tax.ok === false ? "ФНС не видит вас среди самозанятых. Встаньте на учёт в «Мой налог» — это бесплатно и занимает 10 минут" : "Спрашиваем ФНС — обычно до пары минут"}</span></span>${chip}</div>
+      ${tax.ok === true ? "" : `<button class="btn line wide" style="margin:8px 0" data-a="recheck">Проверить ещё раз</button>`}`;
+  }
+
+  function freeProfileHtml() {
+    const p = S.fp;
+    const me = S.data.me;
+    const venues = p ? p.venues : null;
+    return `
+      ${me.shiftProblem ? `<div class="box bad">${esc(me.shiftProblem)}</div>` : ""}
+      <div class="sec">Мой статус</div>
+      <div class="list">${taxHtml(p ? p.tax : me.tax)}
+        ${p ? `<div class="lrow">${I.user()}<span class="grow small"><b>${esc(p.name)}</b><br><span class="muted">${esc(phoneText(p.phone))} · ИНН ${esc(p.inn)}${p.email ? ` · ${esc(p.email)}` : ""}</span></span></div>
+        <div class="lrow">${I.check()}<span class="grow">Есть медицинская книжка</span><button class="switch" role="switch" aria-checked="${p.medBook}" data-a="medbook" aria-label="Переключить"></button></div>` : ""}
+      </div>
+      <div class="sec">Мои заведения</div>
+      ${!venues ? `<div class="card muted small">Загружаем…</div>`
+        : !venues.length ? `<div class="card small muted">Пока ни одного. Найдите заведения рядом и нажмите «Хочу возить».</div>`
+          : `<div class="list">${venues.map((v) => {
+            const [color, label] = LINK[v.st] || ["", ""];
+            return `<div class="lrow">${I.store()}<span class="grow"><b>${esc(v.title)}</b><br><span class="small muted">${payText(v)}${v.owed > 0 ? ` · к выплате ${rub(v.owed)}` : ""}${v.on ? "" : " · сейчас не принимает курьеров"}</span></span><span class="chip ${color}">${label}</span></div>`;
+          }).join("")}</div>`}
+      <button class="btn go wide" style="margin-top:10px" data-a="view" data-view="venues">${I.store()}Заведения рядом</button>`;
+  }
+
+  const payText = (v) => [v.ratePerTrip ? `${rub(v.ratePerTrip)} за доставку` : "", v.ratePerKm ? `${rub(v.ratePerKm)} за км` : ""].filter(Boolean).join(" + ") || "оплата не указана";
+
+  /** Заведения рядом: одна попытка узнать, где телефон, потом список с сервера. */
+  function loadNearby() {
+    S.near = { loading: true };
+    render();
+    const done = async (pos) => {
+      try {
+        const r = await api("free/nearby", pos);
+        S.near = { list: r.venues, at: Date.now() };
+      } catch (e) {
+        S.near = { error: e.message };
+      }
+      if (S.view === "venues") render();
+    };
+    const known = here();
+    if (known) return done({ lat: known.lat, lng: known.lng });
+    if (!navigator.geolocation) { S.near = { error: "Телефон не даёт геолокацию — откройте ссылку заведения, чтобы подать заявку" }; return render(); }
+    navigator.geolocation.getCurrentPosition(
+      (p) => done({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      () => { S.near = { error: "Разрешите приложению геолокацию — так мы найдём заведения рядом. Или откройте ссылку, которую дало заведение" }; if (S.view === "venues") render(); },
+      { enableHighAccuracy: false, timeout: 15000, maximumAge: 120000 },
+    );
+  }
+
+  async function loadVenueLink() {
+    if (!S.venueLink || !S.token || !S.data || !S.data.me.free) return;
+    const root = S.venueLink;
+    S.venueLink = "";
+    drop(KEY.venue);
+    try {
+      const r = await api("free/venue", { root });
+      S.linked = r.venue;
+    } catch (e) {
+      S.linked = null;
+      toast(e.message, "bad");
+    }
+    if (S.view === "venues") render();
+  }
+
+  function venueCard(v) {
+    const [color, label] = LINK[v.st] || ["", ""];
+    const points = v.points.length > 1 ? `${v.points.length} ${plural(v.points.length, "точка", "точки", "точек")}` : esc((v.points[0] || {}).address || "");
+    const action = v.st === "approved" ? `<button class="btn line wide" data-a="leave" data-root="${esc(v.root)}">Больше не возить отсюда</button>`
+      : v.st === "pending" ? `<button class="btn line wide" data-a="leave" data-root="${esc(v.root)}">Отозвать заявку</button>`
+        : v.st === "blocked" ? ""
+          : v.on === false ? `<p class="small muted" style="margin:0">Сейчас заведение не принимает курьеров.</p>`
+            : `<button class="btn go huge wide" data-a="apply" data-root="${esc(v.root)}">Хочу возить</button>`;
+    return `<article class="offer">
+      <div class="offer-top"><div class="offer-pay" style="font-size:22px">${esc(v.title)}</div>${v.distM != null ? `<div class="offer-dist">${kmText(v.distM)}<span>от вас</span></div>` : ""}</div>
+      <p class="small muted" style="margin:6px 0">${points}</p>
+      <div class="chips">
+        <span class="chip green">${I.wallet("s")}${payText(v)}</span>
+        <span class="chip">заказы в ${String(v.radiusKm).replace(".", ",")} км от заведения</span>
+        ${v.mode === "all" ? `<span class="chip">принимает сразу</span>` : `<span class="chip">по заявке</span>`}
+        ${label ? `<span class="chip ${color}">${label}</span>` : ""}
+      </div>
+      ${v.distM != null && !v.inRadius && !v.st ? `<p class="small muted" style="margin:8px 0 0">Вы дальше, чем заведение ищет курьеров, — заказы увидите, когда будете ближе.</p>` : ""}
+      <div style="margin-top:12px">${action}</div>
+    </article>`;
+  }
+
+  function venuesHtml() {
+    const n = S.near;
+    const mine = S.fp ? S.fp.venues : [];
+    const shown = new Set();
+    const linked = S.linked ? (shown.add(S.linked.root), `<div class="sec">По ссылке заведения</div>${venueCard(S.linked)}`) : "";
+    let near = "";
+    if (!n) near = `<div class="card small muted">Покажем заведения в 30 км от вас, которым нужны курьеры.</div><button class="btn go huge wide" style="margin-top:10px" data-a="near">${I.locate()}Найти рядом</button>`;
+    else if (n.loading) near = `<div class="card small muted" style="display:flex;gap:12px;align-items:center"><div class="spinner" aria-hidden="true"></div>Ищем заведения рядом…</div>`;
+    else if (n.error) near = `<div class="box bad">${esc(n.error)}</div><button class="btn line wide" data-a="near">Попробовать ещё раз</button>`;
+    else {
+      const list = n.list.filter((v) => !shown.has(v.root));
+      list.forEach((v) => shown.add(v.root));
+      near = list.length ? list.map(venueCard).join("") + `<button class="btn link" data-a="near">${I.refresh("s")}Обновить список</button>`
+        : `<div class="empty"><div class="art">${I.store("l")}</div><b>Рядом пока никого</b><p class="small">Заведения в вашем районе ещё не включили свободных курьеров. Знакомое заведение работает в ZalPOS? Попросите у него ссылку: Кабинет → «Доставка» → «Свободные курьеры».</p></div><button class="btn link" data-a="near">${I.refresh("s")}Обновить</button>`;
+    }
+    const rest = mine.filter((v) => !shown.has(v.root));
+    return `
+      <h1>Заведения</h1>
+      <p class="muted" style="margin-top:-4px">Вы работаете на себя: сами выбираете заведения, время и заказы. «Хочу возить» — значит, вы согласны с оплатой этого заведения.</p>
+      ${linked}
+      <div class="sec">Рядом со мной</div>
+      ${near}
+      ${rest.length ? `<div class="sec">Мои заведения</div>${rest.map((v) => venueCard({ ...v, distM: null, inRadius: true })).join("")}` : ""}`;
+  }
+
+  // -------- вход, регистрация
+
+  const val = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
+  const raw = (id) => { const el = document.getElementById(id); return el ? el.value : ""; };
+  const checked = (id) => { const el = document.getElementById(id); return !!(el && el.checked); };
+  const radio = (name) => { const el = document.querySelector(`input[name="${name}"]:checked`); return el ? el.value : ""; };
+  function authError(text) {
+    const box = document.getElementById("auth-err");
+    if (!box) { if (text) toast(text, "bad"); return; }
+    box.textContent = text;
+    box.hidden = !text;
+    if (text && box.scrollIntoView) box.scrollIntoView({ block: "center" });
+  }
+  async function authSend(op, body, hello) {
+    const btn = document.getElementById("auth-go");
+    if (btn) btn.disabled = true;
+    authError("");
+    try {
+      const r = await api(op, { ...body, device: deviceName() });
+      if (r.token) {
+        S.token = r.token;
+        save(KEY.token, r.token);
+        S.fatal = "";
+        S.auth = "home";
+        S.data = null;
+        S.v = "";
+        S.view = "orders";
+        toast(hello(r), "ok");
+        render();
+        await refresh(true);
+        if (S.data && S.data.me.free && (S.venueLink || !S.data.me.links)) {
+          S.view = "venues";
+          render();
+          loadFreeProfile(true);
+          if (S.venueLink) loadVenueLink();
+        }
+      }
+      return r;
+    } catch (e) {
+      authError(e.message);
+      return null;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  /** Условия и согласие — поверх экрана, чтобы заполненная форма не потерялась. */
+  async function openRules(anchor) {
+    openModal({ kind: "rules", html: "", anchor });
+    let html = "";
+    try {
+      const text = await (await fetch("rules.html", { cache: "no-cache" })).text();
+      const m = /<div class="inner">([\s\S]*?)<\/div><\/div>\s*<\/body>/.exec(text);
+      html = m ? m[1].replace(/<img[^>]*>/g, "") : "";
+    } catch (_) { /* нет связи */ }
+    if (!S.modal || S.modal.kind !== "rules") return;
+    S.modal.html = html;
+    S.modal.failed = !html;
+    drawModal();
+    const target = anchor ? $modal.querySelector(`#${anchor}`) : null;
+    const sheet = $modal.querySelector(".msheet");
+    if (target && target.scrollIntoView) target.scrollIntoView();
+    else if (sheet) sheet.scrollTop = 0;
+  }
+
+  const backBtn = `<button class="btn link" style="margin:0 0 6px -8px" data-a="auth" data-mode="home">← Назад</button>`;
+  const errBox = `<div class="box bad" id="auth-err" role="alert" hidden></div>`;
+  const pick = (name, list, cur) => `<div class="reasons">${list.map(([id, label, note]) => `<label><input type="radio" name="${name}" value="${id}" ${cur === id ? "checked" : ""}><span>${label}${note ? `<br><small class="muted" style="font-weight:500">${note}</small>` : ""}</span></label>`).join("")}</div>`;
+  const tick = (id, html) => `<label class="tick"><input type="checkbox" id="${id}"><span>${html}</span></label>`;
+
+  function registerHtml() {
+    return `<div class="screen"><div class="inner auth">
+      ${backBtn}
+      <h1>Регистрация курьера</h1>
+      <p class="muted">Работаете на себя: сами выбираете заведения, время и заказы. Нужен статус самозанятого или ИП.</p>
+      <div class="field"><label for="r-name">Фамилия, имя, отчество</label><input id="r-name" autocomplete="name" maxlength="80" placeholder="Иванов Пётр Сергеевич"></div>
+      <div class="field"><label for="r-phone">Телефон</label><input id="r-phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="+7 900 000-00-00"></div>
+      <div class="field"><label for="r-email">Почта — для восстановления пароля</label><input id="r-email" type="email" inputmode="email" autocomplete="email" autocapitalize="none" maxlength="120" placeholder="name@mail.ru"></div>
+      <div class="field"><label for="r-pass">Пароль — не короче 8 символов</label><input id="r-pass" type="password" autocomplete="new-password" maxlength="100"></div>
+      <div class="sec">Налоговый статус</div>
+      ${pick("r-tax", [["npd", "Самозанятый", "плательщик налога на профессиональный доход — проверим в ФНС по ИНН"], ["ip", "Индивидуальный предприниматель", ""]], "npd")}
+      <div class="field"><label for="r-inn">ИНН — 12 цифр</label><input id="r-inn" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="как в «Мой налог»"></div>
+      <div class="sec">На чём возите</div>
+      ${pick("r-tr", Object.entries(FREE_TRANSPORT).map(([id, label]) => [id, label, ""]), "")}
+      <div class="sec">Подтверждения</div>
+      ${tick("r-adult", "Мне есть 18 лет")}
+      ${tick("r-med", `У меня есть действующая медицинская книжка <small class="muted">(необязательно; многие заведения берут только с ней)</small>`)}
+      ${tick("r-rules", `Принимаю <button type="button" class="alink" data-a="rules">условия для курьеров</button>`)}
+      ${tick("r-pd", `Согласен на <button type="button" class="alink" data-a="rules" data-anchor="pd">обработку персональных данных</button>, в том числе геолокации на линии и передачу моих ФИО, телефона и ИНН заведениям, чьи заказы я беру`)}
+      ${errBox}
+      <button class="btn go huge wide" id="auth-go" data-a="register">Зарегистрироваться</button>
+      <p class="small muted">Не самозанятый? Статус оформляется бесплатно за 10 минут в приложении «Мой налог».</p>
+    </div></div>`;
+  }
+
+  function signinHtml() {
+    return `<div class="screen"><div class="inner auth">
+      ${backBtn}
+      <h1>Вход</h1>
+      <div class="field"><label for="s-phone">Телефон</label><input id="s-phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="+7 900 000-00-00"></div>
+      <div class="field"><label for="s-pass">Пароль</label><input id="s-pass" type="password" autocomplete="current-password" maxlength="100" enterkeyhint="go"></div>
+      ${errBox}
+      <button class="btn go huge wide" id="auth-go" data-a="signin">Войти</button>
+      <button class="btn link" data-a="auth" data-mode="reset">Забыли пароль?</button>
+    </div></div>`;
+  }
+
+  function resetHtml(step2) {
+    return `<div class="screen"><div class="inner auth">
+      ${backBtn}
+      <h1>Новый пароль</h1>
+      ${step2 ? `<p class="muted">Код отправлен на почту из вашей учётной записи. Действует 15 минут. Нет письма — проверьте «Спам».</p>
+        <div class="field"><label for="p-code">Код из письма</label><input id="p-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div>
+        <div class="field"><label for="p-pass">Новый пароль — не короче 8 символов</label><input id="p-pass" type="password" autocomplete="new-password" maxlength="100"></div>`
+        : `<p class="muted">Пришлём код на почту, которую вы указали при регистрации.</p>
+        <div class="field"><label for="p-phone">Телефон</label><input id="p-phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="+7 900 000-00-00"></div>`}
+      ${errBox}
+      <button class="btn go huge wide" id="auth-go" data-a="${step2 ? "reset-confirm" : "reset"}">${step2 ? "Сохранить пароль и войти" : "Прислать код"}</button>
+    </div></div>`;
   }
 
   // -------- вход и согласие
 
   function renderSignedOut() {
+    if (S.auth === "register") { $app.innerHTML = registerHtml(); return; }
+    if (S.auth === "signin") { $app.innerHTML = signinHtml(); return; }
+    if (S.auth === "reset" || S.auth === "reset2") { $app.innerHTML = resetHtml(S.auth === "reset2"); return; }
     $app.innerHTML = `
       <div class="screen"><div class="inner">
         <img class="logo" src="icon-192.png" alt="">
         <h1>Курьер ZalPOS</h1>
         ${S.fatal ? `<div class="box bad">${esc(S.fatal)}</div>` : ""}
-        <p>Войдите по <b>личной ссылке-приглашению</b> от заведения — пароль не нужен.</p>
+        <button class="btn go huge wide" data-a="auth" data-mode="register">Стать курьером</button>
+        <button class="btn line huge wide" style="margin-top:8px" data-a="auth" data-mode="signin">Войти по телефону и паролю</button>
+        <p class="small muted" style="margin:8px 4px 18px">Работайте на себя: выбирайте заведения рядом и заказы, цена доставки видна заранее.${S.venueLink ? " <b>После входа откроется заведение, которое дало вам ссылку.</b>" : ""}</p>
+        <div class="sec">Курьер заведения</div>
+        <p>Работаете в заведении — войдите по <b>личной ссылке-приглашению</b> от него, пароль не нужен.</p>
         <div class="feat"><div class="ic">${I.route()}</div><div><b>Маршрут прямо на карте</b><span>от вас до заведения и гостя, с пробками; голосом — в навигаторе</span></div></div>
         <div class="feat"><div class="ic">${I.wallet()}</div><div><b>Доход виден сразу</b><span>за каждый заказ, за день и неделю; наличные на руках</span></div></div>
         <div class="feat"><div class="ic">${I.qr()}</div><div><b>Оплата у двери</b><span>наличные со сдачей, карта или QR через банк заведения</span></div></div>
@@ -1334,8 +1650,23 @@
       const busy = S.data && S.data.mine.length;
       html = `<h2>Закончить смену?</h2><p class="muted">${busy ? `<b>У вас ${busy} ${plural(busy, "заказ", "заказа", "заказов")}.</b> Сначала вручите или верните их. ` : ""}Заказы перестанут приходить, передача геолокации остановится.</p>
         <div class="actions"><button class="btn ink huge wide" data-m="shift-off">Закончить смену</button><button class="btn link" data-m="close">Остаться на линии</button></div>`;
+    } else if (m.kind === "rules") {
+      html = `<div class="doc">${m.html || (m.failed ? `<div class="box bad">Не удалось загрузить условия — проверьте связь и откройте ещё раз.</div>` : `<div class="card small muted" style="display:flex;gap:12px;align-items:center"><div class="spinner" aria-hidden="true"></div>Загружаем…</div>`)}</div>
+        <div class="actions"><button class="btn ink huge wide" data-m="close">Закрыть</button></div>`;
+    } else if (m.kind === "pass") {
+      html = `<h2>Сменить пароль</h2>
+        <div class="field"><label for="m-old">Текущий пароль</label><input id="m-old" type="password" autocomplete="current-password" maxlength="100"></div>
+        <div class="field"><label for="m-new">Новый пароль — не короче 8 символов</label><input id="m-new" type="password" autocomplete="new-password" maxlength="100"></div>
+        <div class="actions"><button class="btn go huge wide" data-m="pass-save">Сохранить</button><button class="btn link" data-m="close">Отмена</button></div>`;
+    } else if (m.kind === "delete") {
+      html = `<h2>Удалить учётную запись?</h2><p class="muted">Имя, телефон, почта, ИНН и пароль сотрутся сразу и без возврата. Поездки останутся за номером курьера — заведениям они нужны для учёта. <b>Заведения должны вам деньги? Сначала получите их.</b></p>
+        <div class="field"><label for="m-del">Пароль — для подтверждения</label><input id="m-del" type="password" autocomplete="current-password" maxlength="100"></div>
+        <div class="actions"><button class="btn danger huge wide" style="background:var(--red-soft)" data-m="delete-yes">Удалить навсегда</button><button class="btn link" data-m="close">Отмена</button></div>`;
+    } else if (m.kind === "leave") {
+      html = `<h2>${m.pending ? "Отозвать заявку?" : "Больше не возить отсюда?"}</h2><p class="muted">${m.pending ? "Заведение её не увидит." : "Заказы этого заведения перестанут приходить. Вернуться можно новой заявкой. Заработанное остаётся к выплате."}</p>
+        <div class="actions"><button class="btn ink huge wide" data-m="leave-yes">${m.pending ? "Отозвать" : "Уйти из заведения"}</button><button class="btn link" data-m="close">Отмена</button></div>`;
     } else if (m.kind === "logout") {
-      html = `<h2>Выйти из приложения?</h2><p class="muted">${S.queue.length ? "<b>Не все нажатия ушли на сервер.</b> " : ""}Чтобы войти снова, понадобится новая ссылка от заведения.</p>
+      html = `<h2>Выйти из приложения?</h2><p class="muted">${S.queue.length ? "<b>Не все нажатия ушли на сервер.</b> " : ""}${S.data && S.data.me.free ? "Чтобы войти снова, понадобятся телефон и пароль." : "Чтобы войти снова, понадобится новая ссылка от заведения."}</p>
         <div class="actions"><button class="btn danger huge wide" style="background:var(--red-soft)" data-m="logout">Выйти</button><button class="btn link" data-m="close">Отмена</button></div>`;
     } else if (!o) {
       return closeModal();
@@ -1467,6 +1798,31 @@
       try { await api("consent"); S.v = ""; await refresh(true); } catch (e) { toast(e.message, "bad"); }
       return;
     }
+    if (a === "rules") return openRules(el.dataset.anchor || "");
+    if (a === "auth") { S.auth = el.dataset.mode || "home"; S.fatal = ""; render(); const sc = $app.querySelector(".screen"); if (sc) sc.scrollTop = 0; return; }
+    if (a === "register") {
+      await authSend("register", {
+        name: val("r-name"), phone: val("r-phone"), email: val("r-email"), password: raw("r-pass"),
+        taxStatus: radio("r-tax"), inn: val("r-inn"), transport: radio("r-tr"),
+        adult: checked("r-adult"), medBook: checked("r-med"), rules: checked("r-rules"), pd: checked("r-pd"),
+      }, (r) => `Вы зарегистрированы — курьер №${r.courier.no}`);
+      return;
+    }
+    if (a === "signin") {
+      await authSend("signin", { phone: val("s-phone"), password: raw("s-pass") }, (r) => `С возвращением, курьер №${r.courier.no}!`);
+      return;
+    }
+    if (a === "reset") {
+      S.resetPhone = val("p-phone");
+      if (!S.resetPhone) return authError("Введите телефон");
+      const r = await authSend("reset", { phone: S.resetPhone }, () => "");
+      if (r) { S.auth = "reset2"; render(); }
+      return;
+    }
+    if (a === "reset-confirm") {
+      await authSend("reset-confirm", { phone: S.resetPhone, code: val("p-code"), password: raw("p-pass") }, () => "Пароль изменён — вы вошли");
+      return;
+    }
     if (!S.data) return;
     const o = el.dataset.key ? byKey(el.dataset.key) : null;
     switch (a) {
@@ -1476,7 +1832,45 @@
         if (S.view === "income") { S.histDay = ""; loadHistory(true); }
         render();
         if (S.view === "orders") updateMap(true);
+        // Свободный курьер: заявку могли принять только что — свежие данные сразу.
+        if (S.data.me.free && S.view === "orders") refresh(true);
+        if (S.data.me.free && (S.view === "profile" || S.view === "venues")) {
+          loadFreeProfile(true);
+          if (S.view === "venues") { if (S.venueLink) loadVenueLink(); if (!S.near) loadNearby(); }
+        }
         return;
+      case "near": loadNearby(); return;
+      case "apply":
+        try {
+          const root = el.dataset.root;
+          const r = await api("free/apply", { root });
+          toast(r.st === "approved" ? "Вы приняты — выходите на линию, заказы придут сюда" : "Заявка отправлена — заведение её рассмотрит", "ok");
+          const mark = (v) => { if (v && v.root === root) v.st = r.st; };
+          mark(S.linked);
+          ((S.near && S.near.list) || []).forEach(mark);
+          S.v = "";
+          await refresh(true);
+          await loadFreeProfile(true);
+          render();
+        } catch (e) { toast(e.message, "bad"); }
+        return;
+      case "leave": {
+        const v = [S.linked, ...((S.near && S.near.list) || []), ...((S.fp && S.fp.venues) || [])].find((x) => x && x.root === el.dataset.root);
+        return openModal({ kind: "leave", root: el.dataset.root, pending: !!v && v.st === "pending" });
+      }
+      case "recheck":
+        try {
+          await api("free/recheck");
+          toast("Спрашиваем ФНС — обновится через минуту", "ok");
+          await loadFreeProfile(true);
+          setTimeout(() => { loadFreeProfile(true); S.v = ""; refresh(true); }, 5000);
+        } catch (e) { toast(e.message, "bad"); }
+        return;
+      case "medbook":
+        try { await api("free/update", { medBook: !(S.fp && S.fp.medBook) }); await loadFreeProfile(true); } catch (e) { toast(e.message, "bad"); }
+        return;
+      case "pass": return openModal({ kind: "pass" });
+      case "delete": return openModal({ kind: "delete" });
       case "list":
         S.list = el.dataset.list;
         if (S.list === "free") S.newFree.clear();
@@ -1520,7 +1914,12 @@
         refresh(true);
         return;
       case "hday": S.histDay = el.dataset.day; render(); loadHistory(true); return;
-      case "transport": S.transport = el.dataset.v; save(KEY.transport, S.transport); render(); return;
+      case "transport":
+        S.transport = el.dataset.v;
+        save(KEY.transport, S.transport);
+        render();
+        if (S.data.me.free) api("free/update", { transport: S.transport }).catch(() => {});
+        return;
       case "nav": S.nav = el.dataset.v; save(KEY.nav, S.nav); render(); return;
       case "sound": S.sound = !S.sound; save(KEY.sound, S.sound); if (S.sound) beep(); render(); return;
       case "notify":
@@ -1571,7 +1970,39 @@
         closeModal();
         S.queue = [];
         save(KEY.queue, []);
-        return signedOut("Вы вышли. Для входа попросите у заведения новую ссылку.");
+        return signedOut(S.data && S.data.me.free ? "" : "Вы вышли. Для входа попросите у заведения новую ссылку.");
+      case "pass-save":
+        try {
+          await api("free/update", { oldPassword: raw("m-old"), password: raw("m-new") });
+          closeModal();
+          toast("Пароль изменён", "ok");
+        } catch (e) { toast(e.message, "bad"); }
+        return;
+      case "delete-yes":
+        try {
+          await api("free/delete", { password: raw("m-del") });
+          closeModal();
+          S.queue = [];
+          save(KEY.queue, []);
+          signedOut("Учётная запись удалена. Спасибо за работу!");
+        } catch (e) { toast(e.message, "bad"); }
+        return;
+      case "leave-yes": {
+        const root = m.root;
+        closeModal();
+        try {
+          await api("free/leave", { root });
+          const mark = (v) => { if (v && v.root === root) v.st = ""; };
+          mark(S.linked);
+          ((S.near && S.near.list) || []).forEach(mark);
+          S.v = "";
+          await refresh(true);
+          await loadFreeProfile(true);
+          render();
+          toast("Готово", "ok");
+        } catch (e) { toast(e.message, "bad"); }
+        return;
+      }
       case "release": return openModal({ kind: "release", key: m.key });
       case "release-yes": closeModal(); if (o) act("release", o); return;
       case "fail-open": return openModal({ kind: "fail", key: m.key });
@@ -1657,6 +2088,7 @@
   window.addEventListener("hashchange", async () => {
     const m = /[#&]i=([A-Za-z0-9_-]{16,64})/.exec(location.hash || "");
     const demo = /[#&]demo=(demo-[A-Za-z0-9]{4,32})/.exec(location.hash || "");
+    if (takeVenueLink()) { if (S.token) openVenueLink(); else render(); return; }
     if (!m && !demo) return;
     if (S.queue.length) { history.replaceState(null, "", location.pathname + location.search); return toast("Сначала дождитесь отправки нажатий, потом откройте ссылку снова", "bad"); }
     if (demo && S.token) { history.replaceState(null, "", location.pathname + location.search); return; }
@@ -1681,17 +2113,37 @@
     updateLive();
   }
 
+  /** Ссылка заведения для свободных курьеров (#v=<заведение>): запоминаем до входа. */
+  function takeVenueLink() {
+    const v = /[#&]v=([tc]_[A-Za-z0-9_-]{1,64})/.exec(location.hash || "");
+    if (!v) return false;
+    S.venueLink = v[1];
+    save(KEY.venue, S.venueLink);
+    history.replaceState(null, "", location.pathname + location.search);
+    return true;
+  }
+  function openVenueLink() {
+    if (!S.venueLink || !S.data) return;
+    if (!S.data.me.free) { S.venueLink = ""; drop(KEY.venue); return toast("Эта ссылка — для курьеров, которые работают на себя", "bad"); }
+    S.view = "venues";
+    render();
+    loadFreeProfile(true);
+    loadVenueLink();
+  }
+
   async function boot() {
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("sw.js").then((r) => { S.reg = r; }).catch(() => {});
     }
     const m = /[#&]i=([A-Za-z0-9_-]{16,64})/.exec(location.hash || "");
     const demo = /[#&]demo=(demo-[A-Za-z0-9]{4,32})/.exec(location.hash || "");
+    takeVenueLink();
     if (m) await login(m[1]);
     else if (demo && !S.token) await login(demo[1], true);
     else if (demo) history.replaceState(null, "", location.pathname + location.search);
     render();
     if (S.token) await refresh(true);
+    openVenueLink();
     flush();
     setInterval(loop, 1000);
   }

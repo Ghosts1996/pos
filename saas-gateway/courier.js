@@ -28,6 +28,7 @@ const crypto = require("crypto");
 const flow = require("./delivery-flow");
 const pricing = require("./delivery-pricing");
 const { sessionBill } = require("./guest-pay");
+const { createFreeCouriers, FREE_ROOT, FREE_MAX_ACTIVE } = require("./courier-free");
 
 const INVITE_TTL_MS = 72 * 3600 * 1000;
 const TOKEN_IDLE_MS = 30 * 24 * 3600 * 1000;
@@ -148,7 +149,7 @@ function zonedMs(day, hour, tz) {
 function createCourier({
   db, admin, verifyAuth, parseJsonBody, sendJson, HttpError,
   requireTenantRole, requireChainRole, pii = null, publicUrl = "",
-  authFailed = () => {}, guestPay = null, now = () => Date.now(),
+  authFailed = () => {}, guestPay = null, now = () => Date.now(), npd = null,
 }) {
   const Timestamp = admin.firestore.Timestamp;
   const FieldValue = admin.firestore.FieldValue;
@@ -174,6 +175,21 @@ function createCourier({
   const forget = (prefix) => { for (const k of cache.keys()) if (k.startsWith(prefix)) cache.delete(k); };
 
   const rfMode = (t) => cached(`rf:${t}`, 60000, async () => !!pii && (await pii.mode(t).catch(() => "mirror")) === "rf");
+
+  // Свободные курьеры — отдельный модуль; общие части получает отсюда
+  // (функции ниже объявлены как function — доступны и до своего места).
+  const fc = createFreeCouriers({
+    db, couriersCol, settingsRef, tenantRef, HttpError, parseJsonBody, sendJson, now, ts, del, ms, sha, clean,
+    cached, forget, FieldValue, normalizePhone, distanceM, dayStartMs, npd, publicUrl, posFreshMs: POS_FRESH_MS,
+    pointsOf: (root) => pointsOf(root),
+    staffCtx: (req, body) => staffCtx(req, body),
+    courierByToken: (req) => courierByToken(req),
+    activeOf: (c) => activeOf(c),
+    systemRelease: (c, t, s, note) => systemRelease(c, t, s, note),
+    shiftEndPatch: (c) => shiftEndPatch(c),
+    authFailed,
+    hooks: () => hooks,
+  });
 
   /** Корень учёток для точки: сеть или само заведение. */
   const rootOf = (tenantId) => cached(`root:${tenantId}`, 60000, async () => {
@@ -206,6 +222,7 @@ function createCourier({
       const bank = !!(integ.data() || {}).onlinePayVerified || (d.data() || {}).demo === true;
       return {
         id: d.id,
+        root,
         name: String(d.data().name || v.name || "Заведение"),
         address: String(v.address || ""),
         tz: String(d.data().timezone || "Europe/Moscow"),
@@ -215,17 +232,23 @@ function createCourier({
     }));
   });
 
-  /** Точки, где работает курьер. */
+  /** Точки, где работает курьер. Свободный — заведения, которые его приняли. */
   async function scopeOf(courier) {
+    if (fc.isFree(courier)) return fc.scope(courier);
     const all = await pointsOf(courier.root);
     const only = Array.isArray(courier.points) ? courier.points : [];
     return only.length ? all.filter((p) => only.includes(p.id)) : all;
   }
 
   const rates = (root) => cached(`rates:${root}`, 30000, async () => {
+    if (root === FREE_ROOT) return { ratePerTrip: 0, ratePerKm: 0 };
     const s = (await settingsRef(root).get()).data() || {};
     return { ratePerTrip: Math.max(0, Number(s.ratePerTrip) || 0), ratePerKm: Math.max(0, Number(s.ratePerKm) || 0) };
   });
+  /** Ставки за заказ точки: свободному курьеру — условия заведения для свободных. */
+  const payRates = async (courier, point) => (point && point.free
+    ? { ratePerTrip: point.free.ratePerTrip, ratePerKm: point.free.ratePerKm }
+    : rates(courier.root));
 
   const excludeTobaccoOf = (t) => cached(`loy:${t}`, 60000, async () => {
     const l = (await tenantRef(t).collection("settings").doc("loyalty").get()).data() || {};
@@ -344,7 +367,7 @@ function createCourier({
     const m = await moneyOf(point.id, s);
     const pos = courier.pos && now() - ms(courier.pos.at) < POS_FRESH_MS ? courier.pos : null;
     const dest = contact.geo || null;
-    const est = await estimateOf(point, dest, await rates(courier.root));
+    const est = await estimateOf(point, dest, await payRates(courier, point));
     return {
       key: `${point.id}__${s.id}`,
       t: point.id,
@@ -408,11 +431,11 @@ function createCourier({
     if (!c || c.tokenHash !== h) {
       authFailed(req);
       forget(`tok:${h}`);
-      throw new HttpError(401, "Вход устарел — попросите у заведения новую ссылку");
+      throw new HttpError(401, "Вход устарел — войдите заново: по телефону и паролю или по новой ссылке от заведения");
     }
-    if (c.enabled === false) throw new HttpError(403, "Доступ закрыт заведением");
+    if (c.enabled === false) throw new HttpError(403, c.root === FREE_ROOT ? "Учётная запись закрыта" : "Доступ закрыт заведением");
     if (now() - Math.max(ms(c.lastSeenAt), ms(c.tokenAt)) > TOKEN_IDLE_MS) {
-      throw new HttpError(401, "Вы долго не заходили — попросите у заведения новую ссылку");
+      throw new HttpError(401, c.root === FREE_ROOT ? "Вы долго не заходили — войдите заново по телефону и паролю" : "Вы долго не заходили — попросите у заведения новую ссылку");
     }
     return { id, ...c };
   }
@@ -535,8 +558,7 @@ function createCourier({
         distanceM: Math.max(0, (Number(c.odometerM) || 0) - (Number(c.shiftOdo) || 0)),
         earned: done.reduce((a, x) => a + (Number(x.earned) || 0), 0),
         cash: done.reduce((a, x) => a + (x.payment && x.payment.method === "cash" ? Number(x.payment.amount) || 0 : 0), 0),
-        ratePerTrip: r.ratePerTrip,
-        ratePerKm: r.ratePerKm,
+        ...(fc.isFree(c) ? {} : { ratePerTrip: r.ratePerTrip, ratePerKm: r.ratePerKm }),
       }, { merge: true });
     }
     // Геолокация вне смены не нужна — стираем.
@@ -548,6 +570,10 @@ function createCourier({
     const { on } = await parseJsonBody(req);
     if (on === true) {
       if (!c.consentAt) throw new HttpError(409, "Сначала подтвердите согласие на передачу геолокации");
+      if (fc.isFree(c)) {
+        const problem = fc.shiftProblem(c);
+        if (problem) throw new HttpError(409, problem);
+      }
       if (!c.onShift) {
         const shift = couriersCol().doc(c.id).collection("shifts").doc();
         await shift.set({ startAt: ts(), root: c.root });
@@ -582,9 +608,18 @@ function createCourier({
     const free = [];
     const mine = [];
     const stale = [];
+    const isFreeCourier = fc.isFree(c);
     for (const p of points) {
       const open = await openDeliveries(p.id);
-      const take = open.filter((s) => isFree(s) || s.courierId === c.id);
+      let take = open.filter((s) => isFree(s) || s.courierId === c.id);
+      if (isFreeCourier) {
+        // Свободному курьеру — только на линии, рядом и без чужих наличных.
+        const ok = [];
+        for (const s of take) {
+          if (s.courierId === c.id || (c.onShift && !fc.offerProblem(c, p, s, await moneyOf(p.id, s)))) ok.push(s);
+        }
+        take = ok;
+      }
       const contacts = await contactsOf(p.id, take);
       for (const s of take) {
         const contact = contacts.get(s.id) || {};
@@ -658,8 +693,16 @@ function createCourier({
     if (now() - ms(c.lastSeenAt) > 30000) await couriersCol().doc(c.id).update({ lastSeenAt: ts() }).catch(() => {});
     const st = await stateOf(c);
     const settingsRoot = await rates(c.root);
+    const isFreeCourier = fc.isFree(c);
     const out = {
       me: {
+        ...(isFreeCourier ? {
+          free: true, tax: fc.npdDto(c), shiftProblem: fc.shiftProblem(c),
+          needPos: c.onShift === true && !(c.pos && now() - ms(c.pos.at) < POS_FRESH_MS),
+          links: Object.values(c.roots || {}).filter((l) => l && l.st === "approved").length,
+          pending: Object.values(c.roots || {}).filter((l) => l && l.st === "pending").length,
+          owed: Math.round(Object.values(c.owed || {}).reduce((a, v) => a + (Number(v) || 0), 0)),
+        } : {}),
         no: c.no, name: c.name, onShift: c.onShift === true, shiftStartedAt: ms(c.shiftStartedAt),
         consent: !!c.consentAt, cashOnHand: round2(Number(c.cashOnHand) || 0),
         points: st.points.map((p) => ({ id: p.id, name: p.name, address: p.address, pos: p.venuePos || null })),
@@ -710,7 +753,8 @@ function createCourier({
       }));
     const cash = (await couriersCol().doc(c.id).collection("cash").orderBy("at", "desc").limit(20).get()).docs
       .map((d) => d.data()).map((x) => ({ type: x.type, amount: Number(x.amount) || 0, orderNo: String(x.orderNo || ""), at: ms(x.at) }));
-    sendJson(res, 200, { today, day: pick, days: byDay, trips: list, cash, cashOnHand: round2(Number(c.cashOnHand) || 0), rates: await rates(c.root) });
+    const freeExtra = fc.isFree(c) ? { free: true, owed: (await fc.profileOf(c)).venues.filter((v) => v.owed > 0).map((v) => ({ venue: v.title, owed: v.owed })), payouts: await fc.payoutsOf(c) } : {};
+    sendJson(res, 200, { today, day: pick, days: byDay, trips: list, cash, cashOnHand: round2(Number(c.cashOnHand) || 0), rates: await rates(c.root), ...freeExtra });
   }
 
   // ------------------------------------------------------------ действия
@@ -718,12 +762,14 @@ function createCourier({
   const clearCourierPatch = () => ({
     courierId: del(), courierNo: del(), courierStage: del(), courierStageAt: del(),
     courierTakenAt: del(), courierPickedAt: del(), courierArrivedAt: del(),
-    courierSet: false, courierName: del(), courierPhone: del(), courierPos: del(), courierFail: del(),
+    courierSet: false, courierName: del(), courierPhone: del(), courierPos: del(), courierFail: del(), courierFree: del(),
   });
 
   /** Имя и телефон курьера — гостю (кнопка «Позвонить курьеру»): в РФ-справочник или в заказ. */
   async function publishCourierContact(t, s, c, clear = false) {
-    const name = clear ? "" : String(c.name || "").split(" ")[0];
+    // У свободного курьера записано «Фамилия Имя Отчество» — гостю хватит имени.
+    const words = String(c.name || "").split(" ").filter(Boolean);
+    const name = clear ? "" : (fc.isFree(c) && words.length > 1 ? words[1] : words[0]) || "";
     const phone = clear ? "" : String(c.phone || "");
     if (await rfMode(t)) {
       await pii.put(t, [{ k: "delivery", id: s, fields: { extra: { courierName: name, courierPhone: phone } } }])
@@ -766,6 +812,7 @@ function createCourier({
         courierTakenAt: ts(),
         courierSet: true,
         courierFail: del(),
+        courierFree: fc.isFree(c) ? true : del(),
         ...(by ? { courierAssignedBy: by } : { courierAssignedBy: del() }),
       });
       result = "toVenue";
@@ -774,21 +821,24 @@ function createCourier({
     if (rf) await publishCourierContact(t, s, c);
     forget(`open:${t}`);
     const x = (await ref.get()).data() || {};
-    const point = (await pointsOf(c.root)).find((p) => p.id === t) || {};
+    const point = (await scopeOf(c)).find((p) => p.id === t) || {};
     const tz = point.tz || "Europe/Moscow";
+    // Свободный курьер: цена поездки — та, что он видел, когда брал заказ.
+    const agreed = fc.isFree(c) ? await payRates(c, point) : null;
     // Оценка пути по карте: если GPS телефона недосчитает, заработок не меньше её.
     const geo = ((await contactsOf(t, [{ id: s, ...x }])).get(s) || {}).geo;
     const estM = point.venuePos && geo ? (await roadM(point.venuePos, geo)) || 0 : 0;
     await couriersCol().doc(c.id).update({ [`active.${t}__${s}`]: result });
     await couriersCol().doc(c.id).collection("trips").doc(`${t}__${s}`).set({
-      root: c.root, tenantId: t, sessionId: s, orderNo: String(x.orderNo || ""), pointName: point.name || "",
+      root: agreed ? point.root || "" : c.root, tenantId: t, sessionId: s, orderNo: String(x.orderNo || ""), pointName: point.name || "",
+      ...(agreed ? { free: true, rate: agreed } : {}),
       zoneName: (x.delivery && x.delivery.zoneName) || "", fee: (x.delivery && x.delivery.fee) || 0,
       ...(estM ? { estM } : {}),
       day: dayStartMs(now(), tz).day, shiftId: c.shiftId || "", takenAt: ts(), result: "active",
       ...(by ? { assignedBy: by } : {}),
     });
     if (prev) await releaseTrip(prev, t, s, "reassigned");
-    await hooks.event(t, s, by ? `🛵 Назначен курьер №${c.no}` : `🛵 Курьер №${c.no} взял заказ`).catch(() => {});
+    await hooks.event(t, s, by ? `🛵 Назначен курьер №${c.no}` : `🛵 ${fc.label(c)} взял заказ`).catch(() => {});
     return result;
   }
 
@@ -807,7 +857,16 @@ function createCourier({
     if (!point) throw new HttpError(403, "Этот заказ не из ваших точек");
     if (op === "take") {
       if (!c.onShift) throw new HttpError(409, "Начните смену, чтобы брать заказы");
-      if (Object.keys(c.active || {}).length >= MAX_ACTIVE) throw new HttpError(409, `На руках уже ${MAX_ACTIVE} заказов — сначала доставьте их`);
+      const max = fc.isFree(c) ? FREE_MAX_ACTIVE : MAX_ACTIVE;
+      if (Object.keys(c.active || {}).length >= max) throw new HttpError(409, `На руках уже ${max} ${max < 5 ? "заказа" : "заказов"} — сначала доставьте их`);
+      if (fc.isFree(c)) {
+        const x = (await tenantRef(t).collection("sessions").doc(s).get()).data();
+        if (!x || x.orderType !== "delivery") throw new HttpError(404, "Заказ не найден");
+        if (x.courierId !== c.id) {
+          const problem = fc.offerProblem(c, point, x, await moneyOf(t, { id: s, ...x }));
+          if (problem) throw new HttpError(409, problem);
+        }
+      }
       return assignTo(c, t, s);
     }
     const ref = tenantRef(t).collection("sessions").doc(s);
@@ -939,7 +998,7 @@ function createCourier({
     const me = couriersCol().doc(c.id);
     const trip = me.collection("trips").doc(`${t}__${s}`);
     const key = `active.${t}__${s}`;
-    const no = `Курьер №${c.no}`;
+    const no = fc.label(c);
     switch (e.kind) {
       case "release":
         await publishCourierContact(t, s, c, true);
@@ -978,15 +1037,19 @@ function createCourier({
         const fresh = (await me.get()).data() || c;
         const odo = Math.max(0, (Number(fresh.odometerM) || 0) - (Number(tripData.odoAtPickup) || 0));
         const dist = Math.max(odo, Number(tripData.estM) || 0);
-        const r = await rates(c.root);
-        const earned = Math.round(r.ratePerTrip + (r.ratePerKm * dist) / 1000);
+        const isFreeCourier = fc.isFree(c);
+        const r = isFreeCourier ? tripData.rate || await payRates(c, point) : await rates(c.root);
+        const earned = Math.round((Number(r.ratePerTrip) || 0) + ((Number(r.ratePerKm) || 0) * dist) / 1000);
         await trip.set({
           doneAt: ts(), result: "done", distanceM: dist, earned,
           payment: { method: e.method === "qr_or_online" ? "online" : e.method, amount: e.collected },
         }, { merge: true });
         const patch = { [key]: del() };
+        // Свободному курьеру заведение платит само — копим, сколько оно должно.
+        if (isFreeCourier && earned > 0 && point.root) patch[`owed.${point.root}`] = FieldValue.increment(earned);
         if (e.method === "cash" && e.collected > 0) patch.cashOnHand = FieldValue.increment(e.collected);
         await me.update(patch);
+        if (isFreeCourier) forget("fall"); // кабинет заведения сразу видит новый долг
         if (e.method === "cash" && e.collected > 0) {
           await me.collection("cash").add({ type: "collect", amount: e.collected, tenantId: t, sessionId: s, orderNo: e.orderNo, at: ts() });
         }
@@ -1028,13 +1091,14 @@ function createCourier({
     const ref = tenantRef(t).collection("settings").doc("delivery");
     await db().runTransaction(async (tx) => {
       const cur = (await tx.get(ref)).data() || {};
+      if (cur.venuePosManual === true) return; // место отмечено в кабинете — не двигаем
       const list = (Array.isArray(cur.pickupPoints) ? cur.pickupPoints : []).slice(-14);
       list.push({ lat: Math.round(pos.lat * 1e5) / 1e5, lng: Math.round(pos.lng * 1e5) / 1e5 });
       const med = (arr) => { const a = arr.slice().sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
       const venuePos = { lat: med(list.map((p) => p.lat)), lng: med(list.map((p) => p.lng)) };
       tx.set(ref, { pickupPoints: list, ...(list.length >= 3 ? { venuePos } : {}) }, { merge: true });
     });
-    forget(`points:${c.root}`);
+    forget("points:");
   }
 
   async function handleAct(req, res) {
@@ -1092,7 +1156,9 @@ function createCourier({
       lastSessionPos.set(key, latest);
       const [t, s] = key.split("__");
       await tenantRef(t).collection("sessions").doc(s).update({ courierPos: { lat: pos.lat, lng: pos.lng, acc: pos.acc, at: pos.at } }).catch(() => {});
-      await hooks.moved(t, s, pos.lat, pos.lng).catch(() => {});
+      // Живая точка в чате мессенджера (серверы за рубежом) — только для курьеров
+      // заведения, по его настройке; свободный курьер на это согласия не давал.
+      if (!fc.isFree(c)) await hooks.moved(t, s, pos.lat, pos.lng).catch(() => {});
     }
     if (lastSessionPos.size > 5000) lastSessionPos.clear();
     sendJson(res, 200, { ok: true });
@@ -1193,7 +1259,9 @@ function createCourier({
         const st = flow.normalize("delivery", s.deliveryStatus);
         if (st === "new" || st === "done" || (st === "cancelled" && !s.courierId)) continue;
         const m = await moneyOf(p.id, s);
+        const freeBy = s.courierFree === true && s.courierId ? await fc.brief(s.courierId).catch(() => null) : null;
         orders.push({
+          ...(s.courierFree === true ? { courierFree: true, courierName: (freeBy && freeBy.name) || "", courierPhone: (freeBy && freeBy.phone) || "" } : {}),
           t: p.id, s: s.id, no: String(s.orderNo || ""), point: p.name,
           status: flow.label("delivery", s.deliveryStatus), stage: s.courierStage || "",
           stageLabel: STAGE_LABEL[s.courierStage] || "",
@@ -1215,6 +1283,8 @@ function createCourier({
     sendJson(res, 200, {
       services: hooks.services ? await hooks.services(visible.map((p) => p.id)).catch(() => ({})) : {},
       root: ctx.root, chain: !!ctx.chainId, full: ctx.full,
+      // Заявки свободных курьеров — число на вкладке кабинета.
+      freePending: await fc.pendingCount(ctx.root).catch(() => 0),
       points: points.map((p) => ({ id: p.id, name: p.name, venuePos: p.venuePos })),
       couriers, orders, rates: r, day,
     });
@@ -1397,17 +1467,21 @@ function createCourier({
     const body = await parseJsonBody(req);
     const ctx = await staffCtx(req, body);
     const day = /^\d{4}-\d{2}-\d{2}$/.test(String(body.day || "")) ? String(body.day) : dayStartMs(now(), "Europe/Moscow").day;
-    const couriers = (await couriersCol().where("root", "==", ctx.root).get()).docs.map((d) => ({ id: d.id, ...d.data() }));
+    const own = (await couriersCol().where("root", "==", ctx.root).get()).docs.map((d) => ({ id: d.id, ...d.data() }));
+    // Свободные курьеры, которые возили заказы этого заведения.
+    const outside = (await couriersCol().where("root", "==", FREE_ROOT).get()).docs.map((d) => ({ id: d.id, ...d.data() }))
+      .filter((c) => c.roots && c.roots[ctx.root]);
     const rows = [];
-    for (const c of couriers) {
+    for (const c of [...own, ...outside]) {
+      const isFreeCourier = fc.isFree(c);
       const trips = (await couriersCol().doc(c.id).collection("trips").where("day", "==", day).get()).docs
         .map((d) => d.data())
-        .filter((x) => ctx.full || x.tenantId === ctx.tenantId);
+        .filter((x) => (!isFreeCourier || x.root === ctx.root) && (ctx.full || x.tenantId === ctx.tenantId));
       if (!trips.length) continue;
       const done = trips.filter((x) => x.result === "done");
       const mins = done.filter((x) => ms(x.pickedAt) && ms(x.doneAt)).map((x) => (ms(x.doneAt) - ms(x.pickedAt)) / 60000);
       rows.push({
-        id: c.id, no: c.no, name: c.name || "",
+        id: c.id, no: c.no, name: c.name || "", ...(isFreeCourier ? { free: true } : {}),
         trips: done.length,
         failed: trips.filter((x) => x.result === "returned" || x.failReason).length,
         km: round2(done.reduce((a, x) => a + (Number(x.distanceM) || 0), 0) / 1000),
@@ -1455,7 +1529,7 @@ function createCourier({
         for (const key of Object.keys(c.active || {})) {
           if (c.active[key] !== "toVenue") continue;
           const [t, s] = key.split("__");
-          await systemRelease(c, t, s, `↩️ Курьер №${c.no} не на связи ${Math.round(silent / 60000)} мин — заказ снова свободен`).catch(() => {});
+          await systemRelease(c, t, s, `↩️ ${fc.label(c)} не на связи ${Math.round(silent / 60000)} мин — заказ снова свободен`).catch(() => {});
         }
       }
       if (silent > SHIFT_AUTO_END_MS) {
@@ -1466,12 +1540,19 @@ function createCourier({
   }
 
   function start() {
-    const timer = setInterval(() => { sweep().catch((e) => console.error(`courier sweep: ${e.message}`)); }, 60 * 1000);
+    let tick = 0;
+    const timer = setInterval(() => {
+      sweep().catch((e) => console.error(`courier sweep: ${e.message}`));
+      tick += 1;
+      if (tick % 5 === 0) fc.sweep().catch((e) => console.error(`free courier sweep: ${e.message}`));
+    }, 60 * 1000);
     if (timer.unref) timer.unref();
     return () => clearInterval(timer);
   }
 
   return {
+    // свободные курьеры (courier-free.js)
+    free: fc,
     // приложение курьера
     invalidate: (t) => forget(`open:${t}`),
     handleLogin, handleDemoLogin, handleLogout, handleConsent, handleHistory, handleState, handleShift, handleAct, handlePing, handlePay, handleRoute,

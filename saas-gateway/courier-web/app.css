@@ -161,7 +161,7 @@ a { color: inherit; text-decoration: none; }
 .badge.hot { background: var(--brand); color: var(--brand-ink); }
 
 /* ------------------------------------------------------------ нижнее меню */
-.bnav { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; height: var(--nav-h); padding-bottom: env(safe-area-inset-bottom); background: var(--card); border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, 1fr); }
+.bnav { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; height: var(--nav-h); padding-bottom: env(safe-area-inset-bottom); background: var(--card); border-top: 1px solid var(--line); display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
 .bnav button { position: relative; display: grid; place-content: center; justify-items: center; gap: 2px; font-size: 12px; font-weight: 600; color: var(--faint); }
 .bnav button[aria-current="page"] { color: var(--text); }
 .bnav button[aria-current="page"] .ico { color: var(--brand); }
@@ -344,3 +344,16 @@ details.items li { margin: 3px 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Регистрация и вход свободного курьера, страница условий. */
+.auth .field input { font-size: 18px; font-weight: 600; }
+.auth .sec { margin-top: 22px; }
+.msheet .field input { font-size: 18px; font-weight: 600; }
+.tick { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; font-size: 15.5px; line-height: 1.35; }
+.tick input { flex: none; width: 24px; height: 24px; margin-top: 1px; accent-color: var(--brand); }
+.tick a, .doc a { color: var(--blue); text-decoration: underline; }
+.doc h2 { font-size: 20px; margin: 26px 0 8px; }
+.doc p, .doc li { font-size: 15.5px; line-height: 1.5; }
+.alink { display: inline; padding: 0; font: inherit; color: var(--blue); text-decoration: underline; text-align: left; }
+.msheet .only-page { display: none; }
+.msheet .doc h1 { font-size: 22px; line-height: 1.2; margin: 6px 0; }
