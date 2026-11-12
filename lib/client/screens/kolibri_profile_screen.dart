@@ -356,6 +356,13 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     final p = widget.profile;
     final tier = p?.tier ?? 'Бронза';
     final tierColor = KolibriColors.tierColor(tier);
+    // SaaS: карточка бонусов — цвета металла уровня (бронза, серебро, золото,
+    // платина), а не цвета заведения: уровень видно с первого взгляда.
+    final metal = kSaasMode
+        ? KolibriColors.tierMetal(tier, index: ClientProfile.tiers.indexWhere((t) => t.name == tier))
+        : null;
+    final cardAccent = metal?.ink ?? tierColor;
+    final cardMuted = metal?.inkMuted ?? KolibriColors.textMuted;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 120),
@@ -446,9 +453,9 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: tierColor.withValues(alpha: 0.5)),
+            border: Border.all(color: metal?.dark ?? tierColor.withValues(alpha: 0.5)),
             gradient: LinearGradient(
-              colors: [tierColor.withValues(alpha: 0.16), KolibriColors.surface],
+              colors: metal?.gradient ?? [tierColor.withValues(alpha: 0.16), KolibriColors.surface],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -457,15 +464,15 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('Уровень «$tier»',
-                  style: TextStyle(color: tierColor, fontWeight: FontWeight.w600)),
+                  style: TextStyle(color: cardAccent, fontWeight: FontWeight.w600)),
               const SizedBox(height: 10),
-              Text(bonusesLabel(p?.bonusBalance ?? 0), style: KolibriFonts.display(40)),
+              Text(bonusesLabel(p?.bonusBalance ?? 0), style: KolibriFonts.display(40, color: metal?.ink)),
               const SizedBox(height: 6),
               Text(
                 'Визитов: ${p?.visits ?? 0} · потрачено '
                 '${rub((p?.totalSpent ?? 0))} · кешбэк '
                 '${(p?.cashbackPercent ?? 3).toStringAsFixed(0)}%',
-                style: TextStyle(color: KolibriColors.textMuted, fontSize: 13),
+                style: TextStyle(color: cardMuted, fontSize: 13),
               ),
               // Прогресс до следующего уровня: без него гость видит только
               // текущий статус и не понимает, что до следующего осталось
@@ -477,8 +484,8 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                   child: LinearProgressIndicator(
                     value: p.tierProgress,
                     minHeight: 6,
-                    backgroundColor: KolibriColors.surfaceElevated,
-                    valueColor: AlwaysStoppedAnimation(tierColor),
+                    backgroundColor: metal == null ? KolibriColors.surfaceElevated : metal.ink.withValues(alpha: 0.18),
+                    valueColor: AlwaysStoppedAnimation(cardAccent),
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -488,14 +495,14 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
                       : 'До уровня «${p.nextTier!.name}» осталось '
                           '${rub(p.toNextTier)} '
                           '(кешбэк вырастет до ${p.nextTier!.cashback.toStringAsFixed(0)}%)',
-                  style: TextStyle(color: KolibriColors.textMuted, fontSize: 12),
+                  style: TextStyle(color: cardMuted, fontSize: 12),
                 ),
               ],
               if ((p?.discountPercent ?? 0) > 0)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Text('Дисконтная карта: −${p!.discountPercent.toStringAsFixed(0)}%',
-                      style: TextStyle(color: tierColor, fontSize: 13)),
+                      style: TextStyle(color: cardAccent, fontSize: 13)),
                 ),
             ],
           ),

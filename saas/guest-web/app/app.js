@@ -954,6 +954,20 @@ function tierOf(spent) {
 function nextTier(spent) {
   return TIERS.find((x) => x.from > spent) || null;
 }
+/// Металл карточки бонусов под уровень: бронза, серебро, золото, платина,
+/// алмаз — по названию уровня, а если заведение назвало уровни по-своему —
+/// по порядку. Те же цвета, что в приложении (TierMetal, kolibri_theme.dart).
+const TIER_METALS = ['bronze', 'silver', 'gold', 'platinum', 'diamond'];
+function tierMetal(tier) {
+  const t = String((tier && tier.name) || '').toLowerCase();
+  if (/бронз|bronze/.test(t)) return 'bronze';
+  if (/сереб|silver/.test(t)) return 'silver';
+  if (/золот|gold/.test(t)) return 'gold';
+  if (/платин|platin/.test(t)) return 'platinum';
+  if (/алмаз|бриллиант|diamond/.test(t)) return 'diamond';
+  const i = TIERS.indexOf(tier);
+  return TIER_METALS[Math.max(0, Math.min(TIER_METALS.length - 1, i))];
+}
 
 // ---------- МАРШРУТЫ ----------
 
@@ -1013,7 +1027,7 @@ function screenHome() {
     <div class="overline">${esc(brandDisplayName())}</div>
     <h1 class="display">${esc(hello)}${name ? ',<br><em>' + esc(name) + '</em>' : ''}</h1>
 
-    <div class="card tier">
+    <div class="card tier metal-${tierMetal(tier)}">
       <div class="overline">Бонусный счёт</div>
       <div class="bonus">${money(p.bonusBalance)}</div>
       <div class="small muted">Уровень «${esc(tier.name)}» · кешбэк ${tier.cashback}%</div>
@@ -3694,7 +3708,7 @@ function screenProfile() {
   screenEl().innerHTML = `
     <h1>Профиль</h1>
 
-    <div class="card tier">
+    <div class="card tier metal-${tierMetal(tier)}">
       <div class="muted small">Уровень «${esc(tier.name)}»</div>
       <div class="bonus">${money(p.bonusBalance)}</div>
       <div class="small muted">кешбэк ${tier.cashback}% · визитов: ${Number(p.visits) || 0}</div>

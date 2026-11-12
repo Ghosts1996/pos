@@ -223,6 +223,21 @@ label.field span { display: block; font-size: 12.5px; color: var(--muted); margi
 }
 .bar { height: 3px; border-radius: 2px; background: var(--border); overflow: hidden; margin: 14px 0 8px; }
 .bar > i { display: block; height: 100%; background: var(--gold); }
+/* Карточка бонусов — металл уровня гостя (бронза, серебро, золото, платина,
+   алмаз), а не цвет заведения: уровень видно с первого взгляда. Цвета — как в
+   приложении (TierMetal в lib/client/theme/kolibri_theme.dart); текст тёмный,
+   контраст на всём переходе не ниже 4.5:1. */
+.tier[class*="metal-"] { background: linear-gradient(135deg, var(--m-light), var(--m-base) 55%, var(--m-dark)); border-color: var(--m-dark); color: var(--m-ink); }
+.tier[class*="metal-"] .bonus, .tier[class*="metal-"] .overline { color: var(--m-ink); }
+.tier[class*="metal-"]::after { border-color: color-mix(in srgb, var(--m-ink) 22%, transparent); }
+.tier[class*="metal-"] .muted { color: var(--m-ink); opacity: .86; }
+.tier[class*="metal-"] .bar { height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--m-ink) 18%, transparent); }
+.tier[class*="metal-"] .bar > i { background: var(--m-ink); }
+.tier.metal-bronze { --m-light: #F0C9A0; --m-base: #D9995C; --m-dark: #C4844A; --m-ink: #2A1606; }
+.tier.metal-silver { --m-light: #F4F6F8; --m-base: #C9CED3; --m-dark: #9EA5AC; --m-ink: #1C2126; }
+.tier.metal-gold { --m-light: #FBE9A6; --m-base: #E3BC4B; --m-dark: #C2962A; --m-ink: #2A1E00; }
+.tier.metal-platinum { --m-light: #F3F7FB; --m-base: #C3D0DD; --m-dark: #8FA3B8; --m-ink: #101B26; }
+.tier.metal-diamond { --m-light: #E9FAFF; --m-base: #A6DDF2; --m-dark: #5FB4D6; --m-ink: #06222E; }
 
 .chip {
   display: inline-flex; align-items: center; gap: 6px;

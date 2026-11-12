@@ -6,6 +6,36 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/tenant_models.dart';
 import '../../theme/boxed_input_border.dart';
 
+/// Цвета «металла» карточки бонусов в приложении гостя: бронза, серебро,
+/// золото, платина, алмаз. Карточка — как настоящая карта лояльности: по ней
+/// сразу видно уровень, поэтому её цвет не зависит от брендинга заведения.
+/// Текст поверх — тёмный [ink]: читается на всём переходе (контраст от 4.5:1).
+class TierMetal {
+  const TierMetal(this.light, this.base, this.dark, this.ink);
+
+  final Color light;
+  final Color base;
+  final Color dark;
+
+  /// Текст и значки поверх металла.
+  final Color ink;
+
+  /// Подписи поверх металла.
+  Color get inkMuted => ink.withValues(alpha: 0.86);
+
+  /// Переход от блика к тени — слева сверху направо вниз.
+  List<Color> get gradient => [light, base, dark];
+
+  static const bronze = TierMetal(Color(0xFFF0C9A0), Color(0xFFD9995C), Color(0xFFC4844A), Color(0xFF2A1606));
+  static const silver = TierMetal(Color(0xFFF4F6F8), Color(0xFFC9CED3), Color(0xFF9EA5AC), Color(0xFF1C2126));
+  static const gold = TierMetal(Color(0xFFFBE9A6), Color(0xFFE3BC4B), Color(0xFFC2962A), Color(0xFF2A1E00));
+  static const platinum = TierMetal(Color(0xFFF3F7FB), Color(0xFFC3D0DD), Color(0xFF8FA3B8), Color(0xFF101B26));
+  static const diamond = TierMetal(Color(0xFFE9FAFF), Color(0xFFA6DDF2), Color(0xFF5FB4D6), Color(0xFF06222E));
+
+  /// По порядку уровней — для своих названий («Новичок», «Друг», «VIP»).
+  static const byRank = [bronze, silver, gold, platinum, diamond];
+}
+
 /// Палитра приложения гостя — только цвета заведения (раздел «Брендинг»
 /// в личном кабинете). Цветов ZalPOS здесь нет: пока брендинг не
 /// загружен или владелец какой-то цвет не задал, палитра нейтральная
@@ -95,6 +125,19 @@ class KolibriColors {
       default:
         return tierBronze;
     }
+  }
+
+  /// Металл карточки бонусов под уровень гостя: по названию уровня, а если
+  /// владелец назвал уровни по-своему — по порядку ([index] в списке уровней).
+  static TierMetal tierMetal(String tier, {int index = -1}) {
+    final t = tier.toLowerCase();
+    if (t.contains('бронз') || t.contains('bronze')) return TierMetal.bronze;
+    if (t.contains('сереб') || t.contains('silver')) return TierMetal.silver;
+    if (t.contains('золот') || t.contains('gold')) return TierMetal.gold;
+    if (t.contains('платин') || t.contains('platin')) return TierMetal.platinum;
+    if (t.contains('алмаз') || t.contains('бриллиант') || t.contains('diamond')) return TierMetal.diamond;
+    final i = index < 0 ? 0 : (index >= TierMetal.byRank.length ? TierMetal.byRank.length - 1 : index);
+    return TierMetal.byRank[i];
   }
 
   static const _cacheKey = 'kolibri.branding.v1';

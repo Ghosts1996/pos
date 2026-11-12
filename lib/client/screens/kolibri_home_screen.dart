@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../build_info.dart';
 import '../../utils/constants.dart';
 import '../../services/venue_service.dart';
 import '../../models/venue_models.dart';
@@ -251,17 +252,22 @@ class KolibriHomeScreen extends StatelessWidget {
     final tier = profile?.tier ?? 'Бронза';
     final cashback = profile?.cashbackPercent ?? 3;
     final tierColor = KolibriColors.tierColor(tier);
+    // SaaS: карточка — цвета металла уровня (бронза, серебро, золото, платина).
+    final metal = kSaasMode
+        ? KolibriColors.tierMetal(tier, index: ClientProfile.tiers.indexWhere((t) => t.name == tier))
+        : null;
+    final cardAccent = metal?.ink ?? tierColor;
 
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         gradient: LinearGradient(
-          colors: [Color.lerp(KolibriColors.surface, tierColor, 0.10)!, KolibriColors.surface],
+          colors: metal?.gradient ?? [Color.lerp(KolibriColors.surface, tierColor, 0.10)!, KolibriColors.surface],
           begin: Alignment.topLeft,
-          end: Alignment.center,
+          end: metal == null ? Alignment.center : Alignment.bottomRight,
         ),
-        border: Border.all(color: tierColor.withValues(alpha: 0.38)),
+        border: Border.all(color: metal?.dark ?? tierColor.withValues(alpha: 0.38)),
       ),
       child: Row(
         children: [
@@ -271,21 +277,21 @@ class KolibriHomeScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('БОНУСНЫЙ СЧЁТ', style: KolibriFonts.overline(color: tierColor)),
+                Text('БОНУСНЫЙ СЧЁТ', style: KolibriFonts.overline(color: cardAccent)),
                 const SizedBox(height: 10),
                 FittedBox(
                   fit: BoxFit.scaleDown,
                   alignment: Alignment.centerLeft,
-                  child: Text(rub(bonus), style: KolibriFonts.display(48, color: tierColor)),
+                  child: Text(rub(bonus), style: KolibriFonts.display(48, color: cardAccent)),
                 ),
                 const SizedBox(height: 4),
                 Text('Уровень «$tier» · кешбэк ${cashback.toStringAsFixed(0)}%',
-                    style: TextStyle(color: KolibriColors.textMuted, fontSize: 12)),
+                    style: TextStyle(color: metal?.inkMuted ?? KolibriColors.textMuted, fontSize: 12)),
               ],
             ),
           ),
           const SizedBox(width: 12),
-          Icon(Icons.card_giftcard_outlined, color: tierColor.withValues(alpha: 0.7), size: 30),
+          Icon(Icons.card_giftcard_outlined, color: cardAccent.withValues(alpha: 0.7), size: 30),
         ],
       ),
     );

@@ -102,6 +102,26 @@ void main() {
     expect(KolibriColors.accent, const Color(0xFF7A4FB0));
   });
 
+  test('карточка бонусов — металл уровня: свой цвет у каждого, текст читается', () {
+    // Не зависит от брендинга заведения.
+    KolibriColors.applyBranding(_presets['amethyst']!);
+    final names = ['Бронза', 'Серебро', 'Золото', 'Платина', 'Алмаз'];
+    final metals = names.map((n) => KolibriColors.tierMetal(n)).toList();
+    expect(metals, [TierMetal.bronze, TierMetal.silver, TierMetal.gold, TierMetal.platinum, TierMetal.diamond]);
+    expect(metals.map((m) => m.base).toSet().length, 5, reason: 'у каждого уровня свой цвет');
+    for (var i = 0; i < metals.length; i++) {
+      for (final c in metals[i].gradient) {
+        expect(_contrast(metals[i].ink, c), greaterThanOrEqualTo(4.5), reason: names[i]);
+      }
+    }
+    // Свои названия уровней — по порядку; название важнее порядка.
+    expect(KolibriColors.tierMetal('Новичок', index: 0), TierMetal.bronze);
+    expect(KolibriColors.tierMetal('Друг', index: 2), TierMetal.gold);
+    expect(KolibriColors.tierMetal('VIP', index: 9), TierMetal.diamond);
+    expect(KolibriColors.tierMetal('Неизвестно'), TierMetal.bronze);
+    expect(KolibriColors.tierMetal('золотой гость', index: 0), TierMetal.gold);
+  });
+
   test('уровни лояльности — оттенки цветов заведения и читаются', () {
     KolibriColors.applyBranding(_presets['amethyst']!);
     final surfaces = [KolibriColors.background, KolibriColors.surface, KolibriColors.surfaceElevated];
