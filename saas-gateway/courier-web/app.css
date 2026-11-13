@@ -4,65 +4,82 @@
  * цели нажатия от 48 px, крупные цифры денег, контраст от 4.5:1, тёмная
  * тема по настройке телефона, без анимаций — если они выключены в системе. */
 :root {
-  --bg: #F2F4F7;
+  /* Премиум: графит и шампань. Светлая тема — чёрные кнопки с золотом,
+   * тёплый фон; тёмная — графит и золотые кнопки. «На линии» и деньги —
+   * изумруд. Контраст текста — от 4.5:1 в обеих темах. */
+  --bg: #F3F0EA;
   --card: #FFFFFF;
-  --card-2: #F6F7F9;
-  --text: #0E1116;
-  --muted: #5D6675;
-  --faint: #8A93A3;
-  --line: #E4E7EC;
-  --ink: #0E1116;
+  --card-2: #F4F0E9;
+  --text: #121212;
+  --muted: #5C574F;
+  --faint: #8A847A;
+  --line: #E6E0D5;
+  --ink: #121212;
   --ink-text: #FFFFFF;
-  --brand: #12A150;
-  --brand-ink: #FFFFFF;
-  --brand-soft: #E3F7EA;
-  --money: #0B8A43;
-  --blue: #1D5BD8;
-  --blue-soft: #E5EDFD;
-  --amber: #B45309;
-  --amber-soft: #FEF3C7;
-  --red: #C62828;
-  --red-soft: #FDE8E8;
-  --violet: #6D28D9;
-  --violet-soft: #EFE9FE;
-  --glass: rgba(255, 255, 255, .92);
-  --shadow-1: 0 1px 2px rgba(14, 17, 22, .06), 0 2px 8px rgba(14, 17, 22, .06);
-  --shadow-2: 0 -6px 30px rgba(14, 17, 22, .14), 0 -1px 2px rgba(14, 17, 22, .06);
-  --shadow-pill: 0 2px 10px rgba(14, 17, 22, .16);
-  --r-sheet: 26px;
-  --r-card: 20px;
+  --brand: #141414;
+  --brand-ink: #F2DDA4;
+  --brand-soft: #F2EBDD;
+  --gold: #8C6420;
+  --gold-hi: #C9A25A;
+  --gold-soft: #F6EEDC;
+  --online: #0E7A4E;
+  --online-ink: #FFFFFF;
+  --online-soft: #E2F1E9;
+  --money: #0E7A4E;
+  --blue: #1D55C8;
+  --blue-soft: #E7EDFB;
+  --amber: #A4560A;
+  --amber-soft: #FBF0D9;
+  --red: #B42318;
+  --red-soft: #FCE9E7;
+  --violet: #6A3FC4;
+  --violet-soft: #EFE9FD;
+  --glass: rgba(255, 255, 255, .86);
+  --glass-line: rgba(18, 18, 18, .06);
+  --shadow-1: 0 1px 1px rgba(20, 16, 8, .04), 0 6px 18px -8px rgba(20, 16, 8, .14);
+  --shadow-2: 0 -10px 40px rgba(20, 16, 8, .16), 0 -1px 0 rgba(20, 16, 8, .04);
+  --shadow-pill: 0 6px 20px -6px rgba(20, 16, 8, .28), 0 1px 2px rgba(20, 16, 8, .08);
+  --r-sheet: 28px;
+  --r-card: 22px;
   --r-btn: 16px;
-  --nav-h: calc(62px + env(safe-area-inset-bottom));
+  --nav-h: calc(66px + env(safe-area-inset-bottom));
   --top: env(safe-area-inset-top);
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0A0D12;
-    --card: #141921;
-    --card-2: #1B212B;
-    --text: #F2F4F7;
-    --muted: #A6AFBD;
-    --faint: #7C8696;
-    --line: #262E3A;
-    --ink: #F2F4F7;
-    --ink-text: #0A0D12;
-    --brand: #2BD46E;
-    --brand-ink: #062611;
-    --brand-soft: #0E2A19;
-    --money: #3DDC84;
-    --blue: #6EA2FF;
-    --blue-soft: #13223D;
-    --amber: #FBBF24;
-    --amber-soft: #33270A;
-    --red: #FF7A7A;
-    --red-soft: #3A1515;
-    --violet: #B49BFF;
+    --bg: #0B0B0C;
+    --card: #151517;
+    --card-2: #1E1E21;
+    --text: #F4F0E8;
+    --muted: #ABA498;
+    --faint: #827C72;
+    --line: #2C2A27;
+    --ink: #F4F0E8;
+    --ink-text: #0B0B0C;
+    --brand: #D9B66C;
+    --brand-ink: #17120A;
+    --brand-soft: #2A2417;
+    --gold: #E2C384;
+    --gold-hi: #D9B66C;
+    --gold-soft: #262013;
+    --online: #2FBF7F;
+    --online-ink: #04150D;
+    --online-soft: #10261B;
+    --money: #4CD99A;
+    --blue: #79A6FF;
+    --blue-soft: #15213A;
+    --amber: #F5B94A;
+    --amber-soft: #2E2310;
+    --red: #FF7F73;
+    --red-soft: #351716;
+    --violet: #B9A0FF;
     --violet-soft: #241B3D;
-    --glass: rgba(20, 25, 33, .9);
-    --shadow-1: none;
-    --shadow-2: 0 -6px 30px rgba(0, 0, 0, .5);
-    --shadow-pill: 0 2px 12px rgba(0, 0, 0, .5);
+    --glass: rgba(24, 24, 26, .84);
+    --glass-line: rgba(255, 255, 255, .06);
+    --shadow-1: 0 0 0 1px rgba(255, 255, 255, .04);
+    --shadow-2: 0 -10px 40px rgba(0, 0, 0, .6), 0 -1px 0 rgba(255, 255, 255, .05);
+    --shadow-pill: 0 8px 24px -8px rgba(0, 0, 0, .7), 0 0 0 1px rgba(255, 255, 255, .06);
   }
 }
 
@@ -116,7 +133,7 @@ a { color: inherit; text-decoration: none; }
 .schema { position: absolute; inset: 0; }
 .schema svg { width: 100%; height: 100%; display: block; }
 .schema .grid { stroke: var(--line); stroke-width: 1; }
-.schema .road { stroke: var(--blue); stroke-width: 4; stroke-linecap: round; fill: none; opacity: .85; stroke-dasharray: 1 9; }
+.schema .road { stroke: var(--gold-hi); stroke-width: 4; stroke-linecap: round; fill: none; opacity: .85; stroke-dasharray: 1 9; }
 .schema .lbl { font: 700 13px -apple-system, Roboto, sans-serif; fill: var(--text); paint-order: stroke; stroke: var(--card-2); stroke-width: 4px; }
 .schema-note { position: absolute; left: 50%; transform: translateX(-50%); bottom: 34px; background: var(--glass); color: var(--muted); font-size: 13px; padding: 6px 12px; border-radius: 999px; box-shadow: var(--shadow-pill); white-space: nowrap; }
 
@@ -420,3 +437,100 @@ details.items li { margin: 3px 0; }
 .doc-table tr:last-child th, .doc-table tr:last-child td { border-bottom: 0; }
 .doc-table th { width: 32%; color: var(--muted); font-weight: 700; }
 @media (max-width: 480px) { .doc-table th, .doc-table td { display: block; width: auto; } .doc-table th { padding-bottom: 0; border-bottom: 0; } }
+
+/* ================================================================ премиум-слой
+ * Тонкие золотые акценты, стекло над картой, мягкие тени, изумруд для
+ * «на линии» и денег. Всё через токены — тёмная тема меняется сама. */
+body { font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; letter-spacing: -.005em; }
+h1, .dest, .offer-pay, .hero .big { font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif; }
+
+/* над картой — стекло с волосяной линией */
+.pill, .round, .zm-btn, .zm-eta, .schema-note { border: 1px solid var(--glass-line); }
+.pill { background: var(--glass); }
+.pill.on { background: var(--online); color: var(--online-ink); border-color: transparent; }
+.pill.on .dot { box-shadow: 0 0 0 4px rgba(255, 255, 255, .22); }
+.pill.earn small { letter-spacing: .02em; text-transform: uppercase; font-size: 10.5px; font-weight: 700; color: var(--faint); }
+.pill.earn b { font-size: 19px; letter-spacing: -.01em; }
+.zm-btn { background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+.zm-btn.on { background: var(--brand); color: var(--brand-ink); }
+.zm-eta { background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); padding: 10px 16px; }
+.zm-eta b { font-size: 18px; letter-spacing: -.01em; }
+
+/* шторка */
+.sheet { border-top: 1px solid var(--glass-line); }
+.grab i { width: 40px; height: 5px; background: linear-gradient(90deg, var(--line), var(--gold-hi), var(--line)); opacity: .9; }
+.seg2 { background: var(--card-2); border: 1px solid var(--glass-line); border-radius: 16px; }
+.seg2 button { border-radius: 12px; }
+.seg2 button[aria-pressed="true"] { background: var(--card); color: var(--text); box-shadow: var(--shadow-pill); }
+.badge.hot { background: var(--gold-hi); color: #17120A; }
+.venue-line .ico { color: var(--gold); }
+.venue-line b { letter-spacing: -.005em; }
+
+/* нижнее меню: золотая черта у активной вкладки */
+/* без размытия: меню всегда поверх шторки или страницы, а размытие поверх карты
+ * на недорогих Android съедает кадры */
+.bnav { background: var(--card); border-top: 1px solid var(--glass-line); }
+.bnav button { font-size: 11.5px; letter-spacing: .01em; }
+.bnav button[aria-current="page"] .ico { color: var(--text); }
+.bnav button[aria-current="page"]::before { content: ""; position: absolute; top: 0; left: 50%; width: 28px; height: 3px; margin-left: -14px; border-radius: 0 0 3px 3px; background: var(--gold-hi); }
+.bnav .badge { background: var(--gold-hi); color: #17120A; }
+
+/* карточки заказов */
+.offer { border: 1px solid var(--line); box-shadow: var(--shadow-1); border-radius: 22px; padding: 16px 16px 14px; }
+.offer.new { border-color: var(--gold-hi); box-shadow: 0 0 0 4px var(--gold-soft), var(--shadow-1); }
+.offer-pay { font-size: 30px; }
+.stop::before { border-color: var(--gold-hi); }
+.stop.to::before { border-color: var(--ink); }
+.route::before { border-left-color: var(--line); }
+.chip { font-weight: 650; }
+.chip.green { background: var(--online-soft); color: var(--online); }
+.box.ok, .paid-ok { background: var(--online-soft); color: var(--online); }
+.quick > * { background: var(--card-2); border: 1px solid var(--glass-line); border-radius: 18px; }
+.quick .ico { color: var(--gold); }
+.steps div.done { background: var(--gold-hi); }
+.steps div.now { background: linear-gradient(90deg, var(--gold-hi) 50%, var(--line) 50%); background-size: 200% 100%; }
+.dest { font-size: 23px; letter-spacing: -.015em; }
+.other { border: 1px solid var(--glass-line); }
+.empty .art { background: var(--gold-soft); color: var(--gold); border: 1px solid var(--glass-line); }
+
+/* главные кнопки: чёрная с шампанью (светлая) / золотая (тёмная) */
+.btn.go { background: var(--brand); color: var(--brand-ink); box-shadow: 0 10px 24px -12px rgba(20, 16, 8, .55); }
+.btn.go .ico { color: var(--gold-hi); }
+@media (prefers-color-scheme: dark) { .btn.go .ico { color: var(--brand-ink); } .btn.go { box-shadow: 0 10px 28px -14px rgba(217, 182, 108, .55); } }
+.btn.huge { border-radius: 20px; letter-spacing: -.005em; }
+.btn.line { box-shadow: inset 0 0 0 1.5px var(--line); }
+.online-card { background: linear-gradient(135deg, #17171A 0%, #232018 100%); color: #F4F0E8; border: 1px solid rgba(217, 182, 108, .25); }
+.online-card .btn { background: linear-gradient(180deg, #E4C47F, #CFA75A); color: #17120A; }
+.online-card .ico { color: #D9B66C; }
+
+/* «Мои поездки» */
+.hero { position: relative; overflow: hidden; background: linear-gradient(140deg, #141416 0%, #1F1C16 60%, #2B2416 100%); color: #F4F0E8; border: 1px solid rgba(217, 182, 108, .22); }
+.hero::after { content: ""; position: absolute; right: -60px; top: -60px; width: 200px; height: 200px; border-radius: 50%; background: radial-gradient(closest-side, rgba(217, 182, 108, .28), transparent); pointer-events: none; }
+.hero small { color: #D9B66C; opacity: 1; letter-spacing: .04em; text-transform: uppercase; font-size: 12px; font-weight: 700; }
+.hero .big { color: #F7EBCB; }
+.hero .stats3 div { background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .06); }
+@media (prefers-color-scheme: dark) { .hero .stats3 div { background: rgba(255, 255, 255, .05); } }
+.week .bar { background: var(--line); }
+.week button[aria-pressed="true"] .bar { background: linear-gradient(180deg, var(--gold-hi), var(--gold)); }
+.trip .e { color: var(--money); }
+.list, .card { border: 1px solid var(--glass-line); }
+.switch[aria-checked="true"] { background: var(--online); }
+.avatar { background: linear-gradient(140deg, #1A1A1C, #2E281A); color: #E8CB8C; border: 1px solid rgba(217, 182, 108, .35); }
+.sec { color: var(--faint); letter-spacing: .08em; font-size: 12px; }
+.page h1 { font-size: 30px; letter-spacing: -.02em; }
+.venue-tag { background: var(--gold-soft); color: var(--gold); }
+#toast.ok { background: var(--ink); color: var(--ink-text); }
+
+/* вход */
+.screen.auth { background:
+  radial-gradient(110% 55% at 100% 0%, var(--gold-soft) 0%, transparent 62%),
+  radial-gradient(80% 45% at 0% 100%, var(--brand-soft) 0%, transparent 55%), var(--bg); }
+.auth-kicker { color: var(--gold); letter-spacing: .12em; font-size: 12px; }
+.auth-card { border: 1px solid var(--glass-line); border-radius: 26px; }
+.auth-hero .logo { box-shadow: 0 10px 30px -12px rgba(20, 16, 8, .45); }
+.check.on { background: var(--gold-soft); box-shadow: inset 0 0 0 1.5px var(--gold-hi); }
+.check.on .box-ic { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.feat .ic, .venue-btn .vi { background: var(--gold-soft); color: var(--gold); }
+.field input:focus, .field textarea:focus { border-color: var(--gold-hi); box-shadow: 0 0 0 4px var(--gold-soft); }
+.spinner { border-top-color: var(--gold-hi); }
+.doc-card { background: var(--gold-soft); }

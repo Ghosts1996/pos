@@ -66,8 +66,12 @@
     const w = ["interpolate", ["exponential", 1.5], ["zoom"], 10, 3, 14, 6, 17, 11, 19, 18];
     const wc = ["interpolate", ["exponential", 1.5], ["zoom"], 10, 5, 14, 9, 17, 15, 19, 24];
     if (!map.getLayer("zal-route-case")) {
-      map.addLayer({ id: "zal-route-case", type: "line", source: "zal-route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": dark ? "#0B1E45" : "#FFFFFF", "line-width": wc, "line-opacity": 0.95 } }, "roads_labels");
-      map.addLayer({ id: "zal-route", type: "line", source: "zal-route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": dark ? "#5B8CFF" : "#2B6BF3", "line-width": w } }, "roads_labels");
+      // Маршрут: светлая тема — чёрная линия с золотой сердцевиной на белой
+      // обводке; тёмная — золотая линия на чёрной обводке.
+      const core = ["interpolate", ["exponential", 1.5], ["zoom"], 10, 1, 14, 2, 17, 3.5, 19, 6];
+      map.addLayer({ id: "zal-route-case", type: "line", source: "zal-route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": dark ? "#050506" : "#FFFFFF", "line-width": wc, "line-opacity": 0.96 } }, "roads_labels");
+      map.addLayer({ id: "zal-route", type: "line", source: "zal-route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": dark ? "#D9B66C" : "#141414", "line-width": w } }, "roads_labels");
+      map.addLayer({ id: "zal-route-core", type: "line", source: "zal-route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": dark ? "#F7E2AE" : "#D9B66C", "line-width": core, "line-opacity": 0.9 } }, "roads_labels");
     }
   }
 

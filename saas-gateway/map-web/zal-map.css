@@ -1,27 +1,27 @@
-/* Точки на своей карте ZalPOS: курьер, заведение, гость. */
-.zm-pin { position: relative; pointer-events: none; font: 700 13px/1.15 -apple-system, "Segoe UI", Roboto, sans-serif; }
-.zm-me, .zm-courier { width: 22px; height: 22px; }
-.zm-dot { position: absolute; inset: 2px; border-radius: 50%; background: #2B6BF3; border: 3px solid #fff; box-shadow: 0 1px 6px rgba(10, 20, 40, .35); }
-.zm-courier .zm-dot { background: #12A150; }
-.zm-halo { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; background: rgba(43, 107, 243, .16); animation: zm-pulse 2.4s ease-out infinite; }
-.zm-courier .zm-halo { background: rgba(18, 161, 80, .16); }
-.zm-stale .zm-dot { background: #8A93A3; }
+/* Точки на своей карте ZalPOS: курьер, заведение, гость. Премиум: графит и шампань. */
+.zm-pin { position: relative; pointer-events: none; font: 700 13px/1.15 "SF Pro Text", -apple-system, "Segoe UI", Roboto, sans-serif; letter-spacing: -.005em; }
+.zm-me, .zm-courier { width: 24px; height: 24px; }
+.zm-dot { position: absolute; inset: 2px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #3A3A3E, #121214 70%); border: 3px solid #fff; box-shadow: 0 0 0 1.5px rgba(201, 162, 90, .9), 0 4px 12px rgba(10, 8, 4, .45); }
+.zm-courier .zm-dot { background: radial-gradient(circle at 35% 30%, #34C98B, #0E7A4E 70%); box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .6), 0 4px 12px rgba(10, 8, 4, .4); }
+.zm-halo { position: absolute; left: 50%; top: 50%; width: 60px; height: 60px; margin: -30px 0 0 -30px; border-radius: 50%; background: rgba(201, 162, 90, .22); animation: zm-pulse 2.4s ease-out infinite; }
+.zm-courier .zm-halo { background: rgba(14, 122, 78, .18); }
+.zm-stale .zm-dot { background: #8A847A; box-shadow: 0 2px 6px rgba(10, 8, 4, .3); }
 .zm-stale .zm-halo { display: none; }
-.zm-arrow { position: absolute; left: 50%; top: 50%; width: 0; height: 0; margin: -27px 0 0 -9px; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 16px solid rgba(43, 107, 243, .55); transform-origin: 9px 27px; }
-.zm-courier .zm-arrow { border-bottom-color: rgba(18, 161, 80, .55); }
-.zm-tag { position: absolute; left: 50%; top: 26px; transform: translateX(-50%); white-space: nowrap; background: #fff; color: #0E1116; padding: 3px 8px; border-radius: 999px; font-size: 12px; box-shadow: 0 1px 6px rgba(10, 20, 40, .25); }
+.zm-arrow { position: absolute; left: 50%; top: 50%; width: 0; height: 0; margin: -28px 0 0 -9px; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 17px solid rgba(201, 162, 90, .75); transform-origin: 9px 28px; }
+.zm-courier .zm-arrow { border-bottom-color: rgba(14, 122, 78, .6); }
+.zm-tag { position: absolute; left: 50%; top: 28px; transform: translateX(-50%); white-space: nowrap; background: #141414; color: #F2DDA4; padding: 4px 9px; border-radius: 999px; font-size: 12px; box-shadow: 0 4px 12px rgba(10, 8, 4, .35); }
 .zm-venue, .zm-guest { display: flex; flex-direction: column; align-items: center; }
-.zm-badge { display: block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 10px; border-radius: 12px; color: #fff; background: #0E1116; border: 2px solid #fff; box-shadow: 0 2px 10px rgba(10, 20, 40, .3); }
-.zm-venue .zm-badge { background: #12A150; }
-.zm-active .zm-badge { transform: scale(1.12); }
-.zm-stem { display: block; width: 3px; height: 9px; background: #fff; box-shadow: 0 1px 2px rgba(10, 20, 40, .3); border-radius: 0 0 2px 2px; }
+.zm-badge { display: block; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 7px 12px; border-radius: 14px; color: #141414; background: linear-gradient(180deg, #F3DCA2, #D9B66C); border: 2px solid #fff; box-shadow: 0 6px 16px -4px rgba(10, 8, 4, .45); }
+.zm-venue .zm-badge { color: #F2DDA4; background: linear-gradient(180deg, #2A2A2E, #121214); }
+.zm-active .zm-badge { transform: scale(1.12); box-shadow: 0 0 0 3px rgba(217, 182, 108, .45), 0 8px 20px -4px rgba(10, 8, 4, .5); }
+.zm-stem { display: block; width: 3px; height: 10px; background: #fff; box-shadow: 0 1px 2px rgba(10, 8, 4, .3); border-radius: 0 0 2px 2px; }
 .maplibregl-ctrl-attrib { font-size: 10px; }
 @keyframes zm-pulse { 0% { transform: scale(.4); opacity: .9; } 80%, 100% { transform: scale(1); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .zm-halo { animation: none; opacity: .5; } }
 @media (prefers-color-scheme: dark) {
-  .zm-dot { border-color: #0E1116; }
-  .zm-badge { border-color: #0E1116; }
-  .zm-guest .zm-badge { background: #E6EAF0; color: #0E1116; }
-  .zm-stem { background: #0E1116; }
-  .zm-tag { background: #1B2029; color: #E6EAF0; }
+  .zm-dot { border-color: #0B0B0C; background: radial-gradient(circle at 35% 30%, #F3DCA2, #C9A25A 70%); }
+  .zm-badge, .zm-stem { border-color: #0B0B0C; }
+  .zm-stem { background: #0B0B0C; }
+  .zm-venue .zm-badge { background: linear-gradient(180deg, #2E2E33, #18181B); border-color: rgba(217, 182, 108, .7); }
+  .zm-tag { background: #1E1E21; color: #E2C384; box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 4px 12px rgba(0, 0, 0, .6); }
 }

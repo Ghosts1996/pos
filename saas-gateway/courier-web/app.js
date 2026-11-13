@@ -752,7 +752,7 @@
     }
     const dots = marks.map((m) => {
       const [x, y] = P(m.p);
-      const fill = m.k === "me" ? "var(--blue)" : m.k === "venue" ? "var(--brand)" : "var(--ink)";
+      const fill = m.k === "me" ? "var(--ink)" : m.k === "venue" ? "var(--gold-hi)" : "var(--ink)";
       return `<circle cx="${x}" cy="${y}" r="${m.k === "me" ? 11 : 9}" fill="${fill}" stroke="var(--card)" stroke-width="4"/><text class="lbl" x="${x + 15}" y="${y + 5}">${esc(String(m.t).slice(0, 22))}</text>`;
     }).join("");
     let grid = "";
@@ -1164,7 +1164,7 @@
       : `${I.pin("s")}${o.stage === "arrived" ? "У двери" : "Гостю"}${o.guestName ? ` · ${esc(o.guestName)}` : ""}`;
     const meta = [];
     if (l) meta.push(`<span><b>${kmText(l.m)}</b> · ~${minText(l.min)}</span>`);
-    if (t.venue && !o.cancelled) meta.push(o.ready ? `<span style="color:var(--brand)">✓ Заказ готов</span>` : `<span>⏳ ${esc(o.status || "Готовится")}</span>`);
+    if (t.venue && !o.cancelled) meta.push(o.ready ? `<span style="color:var(--online)">✓ Заказ готов</span>` : `<span>⏳ ${esc(o.status || "Готовится")}</span>`);
     if (!t.venue && o.promisedAt) meta.push(`<span${o.promisedAt < Date.now() ? ' style="color:var(--red)"' : ""}>обещали к <b>${hhmm(o.promisedAt)}</b></span>`);
     meta.push(`<span>${esc(st.label)} <span class="timer" data-since="${o.stageAt}">00:00</span></span>`);
     const phone = !t.venue && o.phone;

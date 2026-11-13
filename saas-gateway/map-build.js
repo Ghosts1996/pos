@@ -8,7 +8,8 @@
  *   2. Тайлы — вырезка из свежей сборки Protomaps (данные OpenStreetMap)
  *      только по нашим районам: pmtiles extract → tiles.pmtiles.
  *   3. Дороги — выгрузка OpenStreetMap федерального округа (Geofabrik) →
- *      osmium (вырезать район, оставить дороги) → граф roads-<район>.graph.
+ *      osmconvert/osmfilter (вырезать район, оставить дороги; ~0,5 ГБ памяти) →
+ *      osmium add-locations-to-ways → граф roads-<район>.graph.
  *
  * Тяжёлые шаги — с пониженным приоритетом и пределом памяти (systemd-run),
  * чтобы касса, кабинет и база не замедлялись. Скачанные выгрузки удаляются.
@@ -206,6 +207,17 @@ function ensureOsmium() {
   return "osmium";
 }
 
+/** osmconvert и osmfilter (пакет osmctools): режут район и дороги в ~0,5 ГБ
+ *  памяти. osmium extract/tags-filter для этого не годятся: их наборы номеров
+ *  узлов по всей России занимают ~2 ГБ при любом размере файла. */
+function ensureOsmctools() {
+  const has = () => capture("sh", ["-c", "command -v osmconvert && command -v osmfilter"]).ok;
+  if (has()) return;
+  log("ставлю osmctools");
+  run("apt-get", ["install", "-y", "-q", "--no-install-recommends", "osmctools"], { allowFail: true });
+  if (!has()) throw new Error("osmctools не установился");
+}
+
 /* ------------------------------ тайлы ------------------------------ */
 
 function latestBuild() {
@@ -305,6 +317,7 @@ function buildRoads(regions, { force, dryRun }) {
   }
   if (dryRun) return { dryRun: true, plan: [...byDistrict].map(([d, rs]) => ({ district: d, regions: rs.map((r) => r.id) })) };
   const osmium = ensureOsmium();
+  ensureOsmctools();
   const work = path.join(DIR, "work");
   fs.mkdirSync(work, { recursive: true });
   const done = [];
@@ -315,13 +328,20 @@ function buildRoads(regions, { force, dryRun }) {
     download(`${GEOFABRIK}${d}-latest.osm.pbf`, pbf, { minBytes: 1 << 20 });
     try {
       for (const r of list) {
-        const cut = path.join(work, `cut-${r.id}.osm.pbf`);
+        const cut = path.join(work, `cut-${r.id}.o5m`);
+        const roadsO5m = path.join(work, `roads-${r.id}.o5m`);
         const roads = path.join(work, `roads-${r.id}.osm.pbf`);
         const opl = path.join(work, `roads-${r.id}.opl`);
-        run(osmium, ["extract", "-b", r.bbox.join(","), "-s", "simple", "--overwrite", "-o", cut, pbf], { heavy: true });
-        run(osmium, ["tags-filter", "--overwrite", "-o", roads, cut, "w/highway"], { heavy: true });
+        // Район с целыми дорогами (~0,5 ГБ памяти) → только дороги → pbf →
+        // координаты в линиях (индекс по узлам района, ~0,3 ГБ). Обрывки
+        // дорог на краю района пропускаются.
+        const hash = ["--hash-memory=200"];
+        run("osmconvert", [pbf, `-b=${r.bbox.join(",")}`, "--complete-ways", ...hash, `-o=${cut}`], { heavy: true });
+        run("osmfilter", [cut, "--keep=highway=", "--drop-relations", "--drop-author", ...hash, `-o=${roadsO5m}`], { heavy: true });
         fs.unlinkSync(cut);
-        run(osmium, ["add-locations-to-ways", "--overwrite", "-f", "opl,add_metadata=false", "-o", opl, roads], { heavy: true });
+        run("osmconvert", [roadsO5m, ...hash, `-o=${roads}`], { heavy: true });
+        fs.unlinkSync(roadsO5m);
+        run(osmium, ["add-locations-to-ways", "-i", "sparse_mem_array", "--ignore-missing-nodes", "--overwrite", "-f", "opl,add_metadata=false", "-o", opl, roads], { heavy: true });
         fs.unlinkSync(roads);
         const out = path.join(DIR, `roads-${r.id}.graph`);
         run(process.execPath, ["--max-old-space-size=640", path.join(__dirname, "map-graph.js"), "build", opl, out], { heavy: true });

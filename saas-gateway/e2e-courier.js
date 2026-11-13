@@ -105,6 +105,17 @@ async function main() {
     geolocation: { latitude: 55.7600, longitude: 37.6100, accuracy: 12 }, permissions: ["geolocation"],
   });
   const page = await ctx.newPage();
+  // PERF=1: процессор медленнее в 4 раза (как недорогой Android) и учёт долгих задач (> 50 мс).
+  if (process.env.PERF) {
+    const cdp = await ctx.newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+    await page.addInitScript(() => {
+      window.__long = [];
+      try { new PerformanceObserver((l) => { for (const e of l.getEntries()) { const a = (e.attribution || [])[0]; window.__long.push(`${Math.round(e.duration)}${a && a.containerType !== "window" ? `(${a.containerSrc ? "iframe" : a.containerType})` : ""}${e.name !== "self" ? `[${e.name}]` : ""}`); } }).observe({ type: "longtask", buffered: true }); } catch (_) { /* нет поддержки */ }
+    });
+    // Чужая карта во фрейме меряется отдельно — здесь только наше приложение.
+    if (process.env.PERF === "app") await page.route(/yandex\.(ru|net)/, (r) => r.fulfill({ status: 200, contentType: "text/html", body: "<html></html>" }));
+  }
   const errors = [];
   page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource|ERR_INTERNET_DISCONNECTED/.test(m.text())) errors.push(`console: ${m.text()}`); });
@@ -262,6 +273,11 @@ async function main() {
   await page.waitForSelector("text=Вход для курьера", { timeout: 15000 });
   await shot(page, "10-blocked");
 
+  if (process.env.PERF) {
+    const long = await page.evaluate(() => window.__long || []);
+    const sorted = long.slice().sort((a, b) => parseInt(b, 10) - parseInt(a, 10));
+    console.log(`долгих задач: ${long.length}, самые долгие, мс: ${sorted.slice(0, 12).join(", ")}`);
+  }
   assert.deepEqual(errors, [], "в консоли браузера нет ошибок");
   await browser.close();
   server.close();
