@@ -68,7 +68,9 @@ if command -v snap >/dev/null 2>&1; then
 fi
 # Остатки прерванных сборок карты (выгрузки округов, недособранные файлы):
 # только если сборка сейчас не идёт — иначе это её рабочие файлы.
-if [[ -d /opt/zalpos-maps ]] && ! systemctl is-active --quiet zalpos-map.service; then
+# Служба сборки — oneshot: пока работает, её состояние «activating», не «active».
+map_running() { [[ "$(systemctl show -p ActiveState --value zalpos-map.service 2>/dev/null)" =~ ^(active|activating|reloading|deactivating)$ ]]; }
+if [[ -d /opt/zalpos-maps ]] && ! map_running && ! pgrep -f 'map-build.js' >/dev/null 2>&1; then
   rm -rf /opt/zalpos-maps/work 2>/dev/null || true
   find /opt/zalpos-maps -maxdepth 1 -type f \( -name '*.new' -o -name '*.part' -o -name '*.tmp' -o -name 'dry.pmtiles' \) -delete 2>/dev/null || true
 fi
@@ -275,7 +277,7 @@ timer zalpos-map "*-*-* 04:40:00 Europe/Moscow" "nice -n 15 $NODE_BIN $REPO/saas
 # сразу выходит; добавилась точка или город (демо) — карта дособерётся сама.
 # Код карты обновился, а сборка идёт по-старому — перезапустить её: готовые
 # города и дороги сохраняются, заново пойдёт только недоделанное.
-if systemctl is-active --quiet zalpos-map.service; then
+if map_running; then
   new_code=$(cat "$REPO/saas-gateway/map-build.js" "$REPO/saas-gateway/map-graph.js" | sha1sum | cut -d' ' -f1)
   if [[ "$(cat /opt/zalpos-maps/.code 2>/dev/null)" != "$new_code" ]]; then
     echo "код карты обновился — перезапускаю идущую сборку"
