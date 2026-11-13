@@ -518,12 +518,13 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
     // Карта в адресе: позиция свежая — точка курьера есть; без свежей — честная подсказка
     res = mkRes();
     await tg.handleAddress({ url: `/deliveryAddress?t=A&s=s2dlvr&e=${exp}&k=${k2}` }, res);
-    assert.ok(/map-widget\/v1\/\?ll=37\.620000,55\.753000/.test(res.body) && /Курьер на карте/.test(res.body), "на странице адреса карта курьера");
-    assert.ok(/yandex\.ru/.test(res.headers["Content-Security-Policy"]), "для карты разрешён Яндекс");
+    assert.ok(/data-zalmap="[^"]*&quot;lat&quot;:55\.753,&quot;lng&quot;:37\.62/.test(res.body) && /Курьер на карте/.test(res.body), "на странице адреса своя карта с курьером");
+    assert.ok(/<script src="map\/zal-embed\.js"><\/script>/.test(res.body) && !/yandex\.ru\/map-widget/.test(res.body), "без виджета Яндекса с рекламой");
+    assert.ok(/script-src 'self'/.test(res.headers["Content-Security-Policy"]) && !/frame-src/.test(res.headers["Content-Security-Policy"]), "скрипты карты — только с нашего адреса");
     store.set("tenants/A/sessions/s2dlvr", { ...store.get("tenants/A/sessions/s2dlvr"), courierPos: { lat: 55.7, lng: 37.6, at: new TS(Date.now() - 3600000) } });
     res = mkRes();
     await tg.handleAddress({ url: `/deliveryAddress?t=A&s=s2dlvr&e=${exp}&k=${k2}` }, res);
-    assert.ok(!/map-widget/.test(res.body) && /не передаёт геолокацию/.test(res.body), "старая позиция на карте не показывается");
+    assert.ok(!/data-zalmap/.test(res.body) && /не передаёт геолокацию/.test(res.body), "старая позиция на карте не показывается");
     // Заказ закрыт — передача не принимается; живая точка гаснет, геолокация убирается
     store.set("tenants/A/sessions/s2dlvr", { ...store.get("tenants/A/sessions/s2dlvr"), deliveryStatus: "done" });
     await assert.rejects(tg.handleCourierPing(mkReq({ lat: 55.75, lng: 37.6 }, {}, `/courierPing?${q}`), mkRes()),

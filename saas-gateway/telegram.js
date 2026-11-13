@@ -1030,9 +1030,10 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     const t = u.searchParams.get("t") || "";
     const s = u.searchParams.get("s") || "";
     const exp = Number(u.searchParams.get("e")) || 0;
-    // Карта курьера — только iframe Яндекса; скриптов нет.
+    // Карта курьера — своя (скрипт и тайлы с нашего же адреса), без чужих виджетов.
     const page = (code, html) => htmlPage(res, code, "Адрес доставки", html,
-      "default-src 'none'; style-src 'unsafe-inline'; frame-src https://yandex.ru; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+      "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src 'self' blob:; "
+      + "img-src 'self' data: blob:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
     const esc = escHtml;
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(t) || !/^[A-Za-z0-9_-]{1,128}$/.test(s) || exp < Date.now()
         || !sigOk(u.searchParams.get("k"), addressSig(secretKey(), t, s, exp))) {
@@ -1072,11 +1073,15 @@ ${courierMap}`);
     }
     const venue = await venueOf(tenantId);
     const tz = venue.timezone || "Europe/Moscow";
-    // Координаты — числа из нашей базы, в адрес подставляются только они.
-    const la = lat.toFixed(6);
-    const lo = lng.toFixed(6);
+    // Своя карта ZalPOS (map/zal-embed.js — тот же сервер): курьер и точка гостя.
+    const marks = [{ id: "courier", kind: "courier", lat: +lat.toFixed(6), lng: +lng.toFixed(6), label: "Курьер" }];
+    const g = ses.deliveryGeo || {};
+    if (Number.isFinite(Number(g.lat)) && Number.isFinite(Number(g.lng))) {
+      marks.push({ id: "guest", kind: "guest", lat: +Number(g.lat).toFixed(6), lng: +Number(g.lng).toFixed(6), label: "Гость" });
+    }
     return `<p><b>Курьер на карте</b> · позиция на ${escHtml(hhmm(at, tz))}</p>
-<iframe src="https://yandex.ru/map-widget/v1/?ll=${lo},${la}&z=16&pt=${lo},${la},pm2rdm" title="Карта курьера" style="width:100%;height:300px;border:0;border-radius:8px" loading="lazy"></iframe>`;
+<div data-zalmap="${escHtml(JSON.stringify({ marks, key: "addr" })).replace(/"/g, "&quot;")}" role="img" aria-label="Карта курьера" style="height:300px;border-radius:8px;overflow:hidden;background:#eee"></div>
+<script src="map/zal-embed.js"></script>`;
   }
 
   // ------------------------------------------------------------ геолокация курьера

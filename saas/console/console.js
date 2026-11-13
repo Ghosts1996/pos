@@ -418,23 +418,43 @@ function dlvStateOf(tenantId) {
 
 const DLV_PROVIDER = { yandex: 'Яндекс Доставка', dostavista: 'Достависта' };
 
-/** Карта Яндекса: точки — красные, курьеры — с номером (зелёный — свободен, синий — везёт), службы — фиолетовые. */
-function dlvMapHtml(points, couriers, extOrders = []) {
+/**
+ * Своя карта ZalPOS (без сторонних карт и рекламы): заведения — тёмные
+ * метки с названием, курьеры — зелёные с номером («везёт» — когда с
+ * заказом), курьеры служб доставки — с названием службы. Сама карта
+ * монтируется после отрисовки (dlvMountMap) и при обновлении «Сейчас» раз
+ * в 15 секунд не перезагружается — метки переезжают.
+ */
+function dlvMarks(points, couriers, extOrders = []) {
   const marks = [];
-  for (const o of extOrders) if (o.pos) marks.push([o.pos.lng, o.pos.lat, 'pm2vvm']);
-  for (const p of points || []) if (p.venuePos) marks.push([p.venuePos.lng, p.venuePos.lat, 'pm2rdl']);
-  for (const c of couriers || []) if (c.pos) marks.push([c.pos.lng, c.pos.lat, `pm2${c.orders ? 'bl' : 'gn'}m${Math.min(99, Number(c.no) || 1)}`]);
-  if (!marks.length) return '<p class="small muted" style="margin:0">Карта появится, когда курьеры начнут смену в приложении и разрешат геолокацию. Точка заведения отметится сама после первых заборов заказов.</p>';
-  const lngs = marks.map((m) => m[0]);
-  const lats = marks.map((m) => m[1]);
-  const lng = (Math.min(...lngs) + Math.max(...lngs)) / 2;
-  const lat = (Math.min(...lats) + Math.max(...lats)) / 2;
-  const spread = Math.max(Math.max(...lngs) - Math.min(...lngs), (Math.max(...lats) - Math.min(...lats)) * 1.8, 0.005);
-  const z = Math.max(9, Math.min(16, Math.round(Math.log2(360 / (spread * 2.2)))));
-  const pt = marks.map((m) => `${m[0].toFixed(6)},${m[1].toFixed(6)},${m[2]}`).join('~');
-  return `<iframe title="Курьеры на карте" loading="lazy" style="width:100%;height:340px;border:0;border-radius:12px"
-    src="https://yandex.ru/map-widget/v1/?ll=${lng.toFixed(6)},${lat.toFixed(6)}&z=${z}&pt=${pt}"></iframe>
-    <p class="small muted" style="margin:6px 0 0">Красная метка — заведение, зелёная с номером — свободный курьер, синяя — везёт заказ, фиолетовая — курьер службы доставки. Обновляется раз в 15 секунд.</p>`;
+  for (const p of points || []) if (p.venuePos) marks.push({ id: `v:${p.id || p.name}`, lat: p.venuePos.lat, lng: p.venuePos.lng, kind: 'venue', label: p.name || 'Заведение' });
+  for (const c of couriers || []) if (c.pos) marks.push({ id: `c:${c.id || c.no}`, lat: c.pos.lat, lng: c.pos.lng, kind: 'courier', label: `№${Number(c.no) || ''}${c.orders ? ' · везёт' : ''}`, heading: c.pos.heading });
+  for (const o of extOrders) if (o.pos) marks.push({ id: `x:${o.id || o.no}`, lat: o.pos.lat, lng: o.pos.lng, kind: 'courier', label: DLV_PROVIDER[o.ext && o.ext.provider] || 'Служба' });
+  return marks;
+}
+let dlvMapMarks = [];
+function dlvMapHtml(points, couriers, extOrders = []) {
+  dlvMapMarks = dlvMarks(points, couriers, extOrders);
+  if (!dlvMapMarks.length) return '<p class="small muted" style="margin:0">Карта появится, когда курьеры начнут смену в приложении и разрешат геолокацию. Точка заведения отметится сама после первых заборов заказов.</p>';
+  return `<div class="dlv-map" id="dlvMap" style="height:340px;border-radius:12px;overflow:hidden;background:var(--surface-2,#eee)"></div>
+    <p class="small muted" style="margin:6px 0 0">Тёмная метка — заведение, зелёная с номером — курьер («везёт» — с заказом), с названием службы — курьер службы доставки. Обновляется раз в 15 секунд.</p>`;
+}
+let dlvEmbedLoading = null;
+function dlvMountMap() {
+  const slot = $('dlvMap');
+  if (!slot || !dlvMapMarks.length) return;
+  const go = () => window.ZalEmbed && window.ZalEmbed.mount(slot, dlvMapMarks, { key: 'dlv-now' });
+  if (window.ZalEmbed) return go();
+  if (!dlvEmbedLoading) {
+    dlvEmbedLoading = new Promise((ok, bad) => {
+      const el = document.createElement('script');
+      el.src = `${SAAS_GATEWAY_URL}/map/zal-embed.js`;
+      el.onload = ok;
+      el.onerror = () => { dlvEmbedLoading = null; bad(new Error('карта не загрузилась')); };
+      document.head.appendChild(el);
+    });
+  }
+  dlvEmbedLoading.then(go).catch(() => { const sl = $('dlvMap'); if (sl) sl.innerHTML = '<p class="small muted" style="padding:16px;margin:0">Карта временно недоступна</p>'; });
 }
 
 function deliveryTabHtml(tenantId) {
@@ -846,6 +866,7 @@ function dlvReportHtml(st) {
 
 function bindDeliveryTab(tenantId, redraw) {
   const st = dlvStateOf(tenantId);
+  if (st.sub === 'now') dlvMountMap();
   const alive = () => !!$('f-dl-root');
   const loadList = async (quiet) => {
     try {

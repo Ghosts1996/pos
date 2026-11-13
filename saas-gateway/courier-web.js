@@ -25,7 +25,6 @@ const CSP = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "connect-src 'self'",
-  "frame-src https://yandex.ru",
   "manifest-src 'self'",
   "worker-src 'self' blob:",
   "base-uri 'none'",

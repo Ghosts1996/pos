@@ -25,6 +25,8 @@ const STATIC = {
   "maplibre-gl.css": ["map-web", "text/css; charset=utf-8"],
   "zal-map.js": ["map-web", "text/javascript; charset=utf-8"],
   "zal-map.css": ["map-web", "text/css; charset=utf-8"],
+  // Встраивание своей карты в кабинет, страницу гостя и страницу из бота.
+  "zal-embed.js": ["map-web", "text/javascript; charset=utf-8"],
   "LICENSE-maplibre.txt": ["map-web", "text/plain; charset=utf-8"],
   "LICENSE-fonts.txt": ["map-web", "text/plain; charset=utf-8"],
   "map-style.js": [".", "text/javascript; charset=utf-8"],

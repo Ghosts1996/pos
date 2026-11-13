@@ -708,8 +708,6 @@
   function mapSpec() {
     const d = S.data;
     const me = here();
-    const tr = TRANSPORT[S.transport];
-    const base = `https://yandex.ru/map-widget/v1/?lang=ru_RU&l=${LAYERS[S.layer].yl}&`;
     const marks = [];
     const mode = listMode();
     const a = mode === "mine" ? activeOrder() : null;
@@ -717,18 +715,14 @@
       const t = targetOf(a);
       const to = t.pos ? coordText(t.pos) : t.address;
       if (to) {
-        const pts = [me ? coordText(me) : "", to];
-        // Ещё не забрал, и точка гостя известна — маршрут сразу до гостя через заведение.
-        if (t.venue && !a.cancelled && a.dest) pts.push(coordText(a.dest));
-        const enc = (v) => (/^-?\d+\.\d+,-?\d+\.\d+$/.test(v) ? v : encodeURIComponent(v));
         if (me) marks.push({ p: me, k: "me", t: "Вы" });
         if (a.point.pos) marks.push({ p: a.point.pos, k: "venue", t: a.point.name });
         if (a.dest) marks.push({ p: a.dest, k: "guest", t: `№${a.no}` });
+        // Ещё не забрал, и точка гостя известна — маршрут сразу до гостя через заведение.
         const routePts = t.pos ? [me, t.pos, t.venue && !a.cancelled && a.dest ? a.dest : null].filter(Boolean) : [];
         return {
           routePts: me && routePts.length >= 2 ? routePts : [],
           key: `r:${a.key}:${a.stage}:${S.transport}:${S.layer}`,
-          url: `${base}mode=routes&rtt=${tr.rtt}&ruri=${"~".repeat(pts.length - 1)}&rtext=${pts.map(enc).join("~")}`,
           from: me, marks, note: t.pos ? "" : "Точки на схеме нет: маршрут — по адресу",
         };
       }
@@ -740,8 +734,8 @@
     const orders = mode === "mine" ? d.mine : d.free;
     orders.slice(0, 20).forEach((f, i) => { if (f.dest) { pt.push(`${f.dest.lng},${f.dest.lat},pm2blm${Math.min(99, i + 1)}`); marks.push({ p: f.dest, k: "guest", t: `№${f.no}` }); } });
     const c = me || ((d.me.points || []).find((p) => p.pos) || {}).pos || (orders.find((f) => f.dest) || {}).dest;
-    if (!c) return { key: "none", url: "", marks, note: "Включите геолокацию — карта покажет, где вы" };
-    return { key: `o:${mode}:${pt.length}:${orders.map((f) => f.key).join(",")}:${S.layer}`, url: `${base}ll=${c.lng},${c.lat}&z=12${pt.length ? `&pt=${pt.join("~")}` : ""}`, from: me, marks, note: "" };
+    if (!c) return { key: "none", marks, note: "Включите геолокацию — карта покажет, где вы" };
+    return { key: `o:${mode}:${pt.length}:${orders.map((f) => f.key).join(",")}:${S.layer}`, from: me, marks, note: "" };
   }
 
   /** Схема без интернета карт: точки и прямые с расстояниями. */

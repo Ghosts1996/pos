@@ -210,7 +210,7 @@ function gridOpl(lat0, lon0, n = 6, step = 0.001) {
   assert.match(r.headers["content-security-policy"], /connect-src 'self'/, "потоку карты можно качать тайлы");
   const etag = r.headers.etag;
   assert.strictEqual((await get("maplibre-gl-csp-worker.js", { "If-None-Match": etag })).status, 304);
-  for (const f of ["maplibre-gl-csp.js", "maplibre-gl.css", "zal-map.js", "zal-map.css", "map-style.js"]) {
+  for (const f of ["maplibre-gl-csp.js", "maplibre-gl.css", "zal-map.js", "zal-map.css", "map-style.js", "zal-embed.js"]) {
     const x = await get(f);
     assert.strictEqual(x.status, 200, f);
     assert.ok(!/sourceMappingURL/.test(x.body.toString()), `${f}: без ссылок на отсутствующие карты исходников`);

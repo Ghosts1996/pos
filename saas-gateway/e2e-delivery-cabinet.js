@@ -103,6 +103,7 @@ async function main() {
 const $ = (id) => document.getElementById(id);
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 window.toasts = [];
+const SAAS_GATEWAY_URL = 'https://pii.zalpos.ru/saas';
 function toast(m) { window.toasts.push(m); }
 async function copyToClipboard(t) { window.copied = t; toast('Скопировано'); }
 async function callSaasGateway(path, data) {
@@ -149,7 +150,11 @@ draw();
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => { if (m.type() === "error" && !/yandex|Failed to load resource/.test(m.text())) errors.push(m.text()); });
-  await page.route("https://yandex.ru/**", (r) => r.fulfill({ status: 200, contentType: "text/html", body: "<html><body style='background:#dfe8e3'>карта</body></html>" }));
+  // Своя карта (map/zal-embed.js) здесь — заглушка: запоминает метки (сама карта проверяется в e2e-map-embed.js).
+  const external = [];
+  page.on("request", (r) => { if (/yandex\.ru|map-widget/.test(r.url())) external.push(r.url()); });
+  await page.route("**/map/zal-embed.js", (r) => r.fulfill({ status: 200, contentType: "text/javascript", body:
+    "window.ZalEmbed={mount(slot,marks,o){window.__zm={marks,key:o.key};slot.innerHTML='<div class=\"zal-embed\" style=\"height:100%;background:#e9e4da\">карта</div>';return Promise.resolve({})}};" }));
   await page.goto(url);
 
   // «Сейчас»: цифры, карта с метками, заказы, назначение.
@@ -157,8 +162,13 @@ draw();
   const now = await page.textContent("#f-dl-root");
   assert.ok(/1\s*курьеров на смене/.test(now.replace(/\s+/g, " ")), "1 курьер на смене");
   assert.ok(now.includes("№21") && now.includes("№22"), "заказы в работе");
-  const mapSrc = await page.getAttribute("iframe", "src");
-  assert.ok(/pt=37\.610100,55\.760100,pm2rdl~37\.620000,55\.765000,pm2gnm1/.test(mapSrc), `метки на карте: ${mapSrc}`);
+  await page.waitForFunction(() => window.__zm && document.querySelector("#dlvMap .zal-embed"));
+  const zm = await page.evaluate(() => window.__zm);
+  const at = (k) => zm.marks.filter((m) => m.kind === k).map((m) => `${m.lat.toFixed(4)},${m.lng.toFixed(4)}`);
+  assert.deepEqual(at("venue"), ["55.7601,37.6101"], `заведение на своей карте: ${JSON.stringify(zm.marks)}`);
+  assert.deepEqual(at("courier"), ["55.7650,37.6200"], `курьер на своей карте: ${JSON.stringify(zm.marks)}`);
+  assert.equal(await page.locator("iframe").count(), 0, "без чужого окна карты");
+  assert.deepEqual(external, [], "без запросов к Яндексу");
   await shot(page, "c1-now");
   await page.selectOption('.f-dl-assign[data-s="o1"]', made.id);
   await page.waitForFunction(() => window.toasts.some((t) => /назначен/.test(t)));

@@ -2710,8 +2710,7 @@ function screenOrder(id) {
       <h1 style="margin-top:4px">${type === 'delivery' ? 'Доставка' : 'С собой'}</h1>
       <p class="${cancelled ? '' : 'muted'}" style="${cancelled ? 'color:var(--danger)' : stage === 'arrived' ? 'color:var(--gold);font-weight:700;font-size:18px' : ''}">${stageHint || hint}</p>
       ${promised ? `<p class="small muted" style="margin:-6px 0 12px">Обещали привезти к ${esc(promised)}</p>` : ''}
-      ${posFresh ? `<div class="card" style="padding:8px"><iframe title="Курьер на карте" loading="lazy" style="width:100%;height:260px;border:0;border-radius:12px"
-        src="https://yandex.ru/map-widget/v1/?ll=${Number(pos.lng).toFixed(6)},${Number(pos.lat).toFixed(6)}&z=15&pt=${Number(pos.lng).toFixed(6)},${Number(pos.lat).toFixed(6)},pm2gnl"></iframe>
+      ${posFresh ? `<div class="card" style="padding:8px"><div id="courierMap" role="img" aria-label="Курьер на карте" style="height:260px;border-radius:12px;overflow:hidden;background:var(--card2,#eee)"></div>
         <p class="small muted" style="margin:6px 4px 0">Курьер на карте · ${esc(posAt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }))}</p></div>` : ''}
       ${(st === 'courier' || stage) && /^\d{11}$/.test(courier.phone) ? `<a class="btn btn-ghost" href="tel:+${esc(courier.phone)}"
         style="margin:0 0 14px">${ic('phone')}Позвонить курьеру${courier.name ? ' · ' + esc(courier.name) : ''}</a>` : ''}
@@ -2738,6 +2737,7 @@ function screenOrder(id) {
       ${sellerHtml()}`;
 
     if ($('payPanel')) paintSbp(s, 'payPanel', true);
+    if (posFresh) mountCourierMap($('courierMap'), pos, s.deliveryGeo);
     const cancel = $('oCancel');
     if (cancel) {
       cancel.onclick = async () => {
@@ -4808,6 +4808,23 @@ function stopScanner() {
     scanStream.getTracks().forEach((t) => { try { t.stop(); } catch (_) {} });
     scanStream = null;
   }
+}
+
+/// Своя карта ZalPOS (без рекламы и чужих виджетов): курьер и точка гостя.
+/// Карта живёт одна на странице — при обновлении заказа метка плавно сдвигается.
+let courierEmbed = null;
+function mountCourierMap(slot, pos, geo) {
+  if (!slot) return;
+  const marks = [{ id: 'courier', kind: 'courier', lat: Number(pos.lat), lng: Number(pos.lng), label: 'Курьер',
+    heading: Number.isFinite(Number(pos.heading)) ? Number(pos.heading) : undefined }];
+  if (geo && Number.isFinite(Number(geo.lat)) && Number.isFinite(Number(geo.lng))) {
+    marks.push({ id: 'guest', kind: 'guest', lat: Number(geo.lat), lng: Number(geo.lng), label: 'Вы' });
+  }
+  if (!courierEmbed) courierEmbed = window.ZalEmbed ? Promise.resolve() : loadScript(`${GATEWAY}/map/zal-embed.js`);
+  courierEmbed.then(() => window.ZalEmbed.mount(slot, marks, { key: 'guest-courier' })).catch(() => {
+    courierEmbed = null;
+    slot.innerHTML = '<p class="small muted" style="margin:0;padding:16px">Карта временно недоступна</p>';
+  });
 }
 
 function loadScript(src) {
