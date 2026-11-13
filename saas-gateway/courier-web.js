@@ -18,7 +18,7 @@ const TYPES = {
   ".png": "image/png",
   ".svg": "image/svg+xml",
 };
-const FILES = new Set(["index.html", "rules.html", "app.js", "app.css", "qr.js", "sw.js", "manifest.webmanifest", "icon-192.png", "icon-512.png"]);
+const FILES = new Set(["index.html", "rules.html", "app.js", "app.css", "qr.js", "sw.js", "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"]);
 const CSP = [
   "default-src 'self'",
   "script-src 'self'",

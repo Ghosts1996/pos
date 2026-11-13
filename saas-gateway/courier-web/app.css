@@ -534,3 +534,31 @@ h1, .dest, .offer-pay, .hero .big { font-family: "SF Pro Display", -apple-system
 .field input:focus, .field textarea:focus { border-color: var(--gold-hi); box-shadow: 0 0 0 4px var(--gold-soft); }
 .spinner { border-top-color: var(--gold-hi); }
 .doc-card { background: var(--gold-soft); }
+
+/* ---------------------------------------------------------------- вид карты: схема, спутник, гибрид */
+.round.on { background: var(--brand); color: var(--brand-ink); }
+.zm-btn.fit { bottom: 94px; }
+.layers { position: absolute; right: 70px; top: calc(var(--top) + 68px); z-index: 7; width: min(300px, calc(100vw - 96px)); padding: 12px; border-radius: 22px; background: var(--card); border: 1px solid var(--glass-line); box-shadow: var(--shadow-pill), 0 18px 40px -18px rgba(10, 8, 4, .45); display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; animation: pop .16s ease-out; }
+@keyframes pop { from { transform: translateY(-4px) scale(.98); opacity: 0; } }
+.layer-tile { display: grid; gap: 6px; justify-items: center; font-size: 12.5px; font-weight: 700; color: var(--muted); padding: 0; }
+.layer-tile[aria-checked="true"] { color: var(--text); }
+.lt-prev { width: 100%; aspect-ratio: 1; border-radius: 14px; border: 2px solid transparent; box-shadow: inset 0 0 0 1px var(--glass-line); background-size: cover; }
+.layer-tile[aria-checked="true"] .lt-prev { border-color: var(--gold-hi); box-shadow: 0 0 0 3px var(--gold-soft); }
+.lt-map { background:
+  linear-gradient(28deg, transparent 46%, #EED29A 46% 54%, transparent 54%),
+  linear-gradient(-62deg, transparent 47%, #FFFFFF 47% 53%, transparent 53%),
+  linear-gradient(90deg, transparent 70%, #BCD3E2 70%),
+  radial-gradient(circle at 25% 75%, #D9E6CF 0 22%, transparent 23%), #EDEAE3; }
+.lt-sat { background:
+  radial-gradient(circle at 30% 30%, #3F5A32 0 18%, transparent 30%),
+  radial-gradient(circle at 75% 70%, #5B5348 0 20%, transparent 32%),
+  radial-gradient(circle at 70% 20%, #24384A 0 16%, transparent 28%),
+  linear-gradient(135deg, #2F3B2A, #4A4A3E 55%, #2C3A44); }
+.lt-hyb { background:
+  linear-gradient(28deg, transparent 47%, rgba(255, 214, 120, .95) 47% 53%, transparent 53%),
+  linear-gradient(-62deg, transparent 48%, rgba(255, 255, 255, .9) 48% 52%, transparent 52%),
+  radial-gradient(circle at 30% 30%, #3F5A32 0 18%, transparent 30%),
+  radial-gradient(circle at 75% 70%, #5B5348 0 20%, transparent 32%),
+  linear-gradient(135deg, #2F3B2A, #4A4A3E 55%, #2C3A44); }
+.layers-note { grid-column: 1 / -1; margin: 2px 2px 0; font-size: 12px; line-height: 1.35; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .layers { animation: none; } }

@@ -29,7 +29,7 @@
   const KEY = {
     token: "zc_token", queue: "zc_queue", pings: "zc_pings", order: "zc_order", nav: "zc_nav",
     sound: "zc_sound", seen: "zc_seen", transport: "zc_transport", sheet: "zc_sheet", installSkip: "zc_install_skip",
-    auth: "zc_auth",
+    auth: "zc_auth", layer: "zc_layer",
   };
   const load = (k, def) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? def : v; } catch (_) { return def; } };
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* память переполнена — не страшно */ } };
@@ -82,6 +82,8 @@
     back: (c) => svg('<polyline points="15 18 9 12 15 6"/>', c),
     key: (c) => svg('<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.8-9.8M17 5l3 3M15 7l2 2"/>', c),
     doc: (c) => svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h8M8 17h5"/>', c),
+    layers: (c) => svg('<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>', c),
+    fit: (c) => svg('<path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/><circle cx="12" cy="12" r="2.5"/>', c),
     flag: (c) => svg('<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>', c),
   };
 
@@ -96,6 +98,13 @@
     foot: { label: "Пешком", rtt: "pd", mPerMin: 80, dgis: "pedestrian" },
   };
   const ROAD_FACTOR = 1.3;
+  // Вид карты: «Схема» — своя карта (быстрая, без сторонних сервисов, если
+  // район собран), «Спутник» и «Гибрид» — снимки сервиса «Яндекс Карты».
+  const LAYERS = {
+    map: { label: "Схема", yl: "map,trf" },
+    sat: { label: "Спутник", yl: "sat" },
+    hyb: { label: "Гибрид", yl: "sat,skl,trf" },
+  };
   const FAIL = [
     ["no_answer", "Не открывают, не отвечают"],
     ["wrong_address", "Неверный адрес"],
@@ -129,6 +138,8 @@
     nav: load(KEY.nav, "yandexmaps"),
     transport: load(KEY.transport, ""),
     sound: load(KEY.sound, true),
+    layer: load(KEY.layer, "map"),
+    layersOpen: false,
     seenFree: new Set(load(KEY.seen, [])),
     newFree: new Set(),
     gone: new Set(),
@@ -161,6 +172,7 @@
     else if (a && a.email) S.auth.email = a.email;
   }
   if (!NAVS[S.nav]) S.nav = "yandexmaps";
+  if (!LAYERS[S.layer]) S.layer = "map";
   const TRANSPORT_OF = { car: "auto", bike: "bike", foot: "foot" };
   const TRANSPORT_NAME = { car: "Автомобиль", bike: "Велосипед или самокат", foot: "Пешком" };
   // Транспорт не выбран в приложении — берём из карточки курьера в кабинете.
@@ -686,7 +698,7 @@
     const d = S.data;
     const me = here();
     const tr = TRANSPORT[S.transport];
-    const base = "https://yandex.ru/map-widget/v1/?lang=ru_RU&l=map,trf&";
+    const base = `https://yandex.ru/map-widget/v1/?lang=ru_RU&l=${LAYERS[S.layer].yl}&`;
     const marks = [];
     const mode = listMode();
     const a = mode === "mine" ? activeOrder() : null;
@@ -704,7 +716,7 @@
         const routePts = t.pos ? [me, t.pos, t.venue && !a.cancelled && a.dest ? a.dest : null].filter(Boolean) : [];
         return {
           routePts: me && routePts.length >= 2 ? routePts : [],
-          key: `r:${a.key}:${a.stage}:${S.transport}`,
+          key: `r:${a.key}:${a.stage}:${S.transport}:${S.layer}`,
           url: `${base}mode=routes&rtt=${tr.rtt}&ruri=${"~".repeat(pts.length - 1)}&rtext=${pts.map(enc).join("~")}`,
           from: me, marks, note: t.pos ? "" : "Точки на схеме нет: маршрут — по адресу",
         };
@@ -718,7 +730,7 @@
     orders.slice(0, 20).forEach((f, i) => { if (f.dest) { pt.push(`${f.dest.lng},${f.dest.lat},pm2blm${Math.min(99, i + 1)}`); marks.push({ p: f.dest, k: "guest", t: `№${f.no}` }); } });
     const c = me || ((d.me.points || []).find((p) => p.pos) || {}).pos || (orders.find((f) => f.dest) || {}).dest;
     if (!c) return { key: "none", url: "", marks, note: "Включите геолокацию — карта покажет, где вы" };
-    return { key: `o:${mode}:${pt.length}:${orders.map((f) => f.key).join(",")}`, url: `${base}ll=${c.lng},${c.lat}&z=12${pt.length ? `&pt=${pt.join("~")}` : ""}`, from: me, marks, note: "" };
+    return { key: `o:${mode}:${pt.length}:${orders.map((f) => f.key).join(",")}:${S.layer}`, url: `${base}ll=${c.lng},${c.lat}&z=12${pt.length ? `&pt=${pt.join("~")}` : ""}`, from: me, marks, note: "" };
   }
 
   /** Схема без интернета карт: точки и прямые с расстояниями. */
@@ -770,7 +782,11 @@
     fitMap();
     const spec = mapSpec();
     ensureOwnMap(spec);
-    if (S.zm.state === "on") return ownMapUpdate(spec, force);
+    const own = $("zmap");
+    if (S.zm.state === "on" && S.layer === "map") return ownMapUpdate(spec, force);
+    // Спутник и гибрид — во фрейме Яндекс Карт; своя карта прячется, но не
+    // выгружается: назад на «Схему» — мгновенно.
+    if (own && S.zm.state === "on") { own.hidden = true; ["zmloc", "zmeta", "zmfit"].forEach((id) => { const b = $(id); if (b) b.hidden = true; }); }
     const box = $("map");
     schema.innerHTML = schemaSvg(spec.marks, box.clientWidth, box.clientHeight);
     const showNote = !S.online ? "Нет связи — показываем схему" : spec.note;
@@ -851,6 +867,8 @@
       b.classList.toggle("on", S.zm.follow);
       b.setAttribute("aria-pressed", S.zm.follow ? "true" : "false");
     }
+    const fitB = $("zmfit");
+    if (fitB) fitB.hidden = !(S.zm.state === "on" && S.layer === "map" && S.zm.fitPts && S.zm.fitPts.length > 1 && S.zm.key && S.zm.key.startsWith("r:"));
     const eta = $("zmeta");
     if (eta) {
       const r = S.zm.route;
@@ -864,6 +882,7 @@
     const z = S.zm;
     const api = z.api;
     $("mapframe").hidden = true;
+    if ($("zmap").hidden) { $("zmap").hidden = false; setTimeout(() => api.resize(), 0); }
     $("schema").innerHTML = "";
     const noteEl = $("mapnote");
     const note = !S.online ? "Нет связи — карта из памяти телефона" : spec.note;
@@ -884,6 +903,7 @@
     z.key = spec.key;
     if (!spec.routePts || !spec.routePts.length) {
       if (keyChanged) { z.route = null; api.setRoute(null); }
+      z.fitPts = null;
       // Обзор: все точки на виду — один раз на набор точек.
       if ((keyChanged || force) && z.fitKey !== spec.key && !z.follow) {
         z.fitKey = spec.key;
@@ -896,6 +916,7 @@
     const moved = z.from && me ? dist(z.from, me) : 1e9;
     const stale = Date.now() - z.at > 90000;
     if (!z.busy && S.online && (keyChanged || force || stale || (moved > 120 && Date.now() - z.at > 15000))) requestRoute(spec);
+    z.fitPts = spec.routePts;
     if (keyChanged && !z.follow) api.fit(spec.routePts, { padding: mapPadding() });
     paintMapButtons();
   }
@@ -1002,6 +1023,7 @@
           <div class="zmap" id="zmap" hidden></div>
           <div class="zm-eta" id="zmeta" hidden></div>
           <button class="zm-btn" id="zmloc" type="button" aria-label="Следовать за мной" aria-pressed="false" hidden>${I.locate("s")}</button>
+          <button class="zm-btn fit" id="zmfit" type="button" aria-label="Весь маршрут" hidden>${I.fit("s")}</button>
           <div class="schema-note" id="mapnote" hidden></div>
         </div>
         <div id="hud"></div>
@@ -1015,6 +1037,12 @@
       </div>`;
     $("mapframe").addEventListener("load", (e) => e.target.classList.add("ready"));
     $("zmloc").addEventListener("click", () => { if (S.zm.api) S.zm.api.follow(!S.zm.follow); });
+    $("zmfit").addEventListener("click", () => {
+      const z = S.zm;
+      if (!z.api) return;
+      const pts = z.fitPts && z.fitPts.length ? z.fitPts : null;
+      if (pts) { z.follow = false; z.api.fit(pts, { padding: mapPadding() }); paintMapButtons(); }
+    });
     // Новая оболочка — карта создаётся заново.
     if (S.zm.api) { try { S.zm.api.destroy(); } catch (_) { /* уже снята */ } }
     S.zm = { ...S.zm, state: S.zm.state === "off" ? "off" : "idle", api: null, key: "", fitKey: "", route: null, busy: false };
@@ -1041,8 +1069,12 @@
       </div>
       ${net}
       <div class="hud-col">
+        <button class="round${S.layer !== "map" ? " on" : ""}" data-a="layers" aria-label="Вид карты: ${LAYERS[S.layer].label}" aria-expanded="${S.layersOpen}">${I.layers()}</button>
         <button class="round" data-a="map-refresh" aria-label="Обновить карту и маршрут">${I.refresh()}</button>
-      </div>`;
+      </div>
+      ${S.layersOpen ? `<div class="layers" role="radiogroup" aria-label="Вид карты">${Object.entries(LAYERS).map(([id, l]) => `
+        <button class="layer-tile" role="radio" aria-checked="${S.layer === id}" data-a="layer" data-v="${id}"><span class="lt-prev lt-${id}" aria-hidden="true"></span><span>${l.label}</span></button>`).join("")}
+        <p class="layers-note">${S.layer === "map" ? "Своя карта: быстрая, работает и без сторонних сервисов" : "Снимки — «Яндекс Карты»; им уходят только координаты точек"}</p></div>` : ""}`;
   }
 
   function navHtml() {
@@ -1726,6 +1758,15 @@
           try { await navigator.clipboard.writeText(text); toast("Адрес скопирован", "ok"); } catch (_) { toast(text); }
         }
         return;
+      case "layers": S.layersOpen = !S.layersOpen; $("hud").innerHTML = hudHtml(); return;
+      case "layer":
+        S.layer = LAYERS[el.dataset.v] ? el.dataset.v : "map";
+        save(KEY.layer, S.layer);
+        S.layersOpen = false;
+        $("hud").innerHTML = hudHtml();
+        updateMap(true);
+        paintMapButtons();
+        return;
       case "map-refresh":
         S.v = "";
         updateMap(true);
@@ -1821,6 +1862,8 @@
   // ---------------------------------------------------------------- события
 
   $app.addEventListener("click", (e) => {
+    // Нажали мимо выбора вида карты — закрываем его.
+    if (S.layersOpen && !e.target.closest(".layers, [data-a=\"layers\"]")) { S.layersOpen = false; const h = $("hud"); if (h) h.innerHTML = hudHtml(); }
     const el = e.target.closest("[data-a]");
     if (!el || el.disabled || el.getAttribute("aria-disabled") === "true") return;
     // Ссылки (звонок, навигатор) открывает сам телефон — так их не блокирует браузер.

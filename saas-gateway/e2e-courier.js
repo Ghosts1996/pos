@@ -244,6 +244,18 @@ async function main() {
   const day = (await page.textContent("#page")).replace(/\s+/g, " ");
   assert.ok(/1 090 ₽ ?на руках/.test(day), "наличные на руках — 1 090 ₽");
   await shot(page, "7-day");
+  // 10б. Вид карты: схема → спутник (снимки Яндекса во фрейме), выбор запоминается.
+  await page.click('[data-a="view"][data-view="orders"]');
+  await page.click('[data-a="layers"]');
+  await page.waitForSelector(".layers");
+  await page.waitForTimeout(300);
+  await shot(page, "7b-layers");
+  await page.click('[data-a="layer"][data-v="hyb"]');
+  await page.waitForFunction(() => /l=sat%2Cskl|l=sat,skl/.test((document.getElementById("mapframe") || {}).src || ""));
+  assert.equal(await page.evaluate(() => localStorage.getItem("zc_layer")), '"hyb"', "вид карты запомнен");
+  await page.click('[data-a="layers"]');
+  await page.click('[data-a="layer"][data-v="map"]');
+  await page.waitForFunction(() => /l=map/.test((document.getElementById("mapframe") || {}).src || ""));
   // 11. Тёмная тема — без ошибок.
   await page.emulateMedia({ colorScheme: "dark" });
   await page.click('[data-a="view"][data-view="profile"]');

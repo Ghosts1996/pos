@@ -9795,7 +9795,29 @@ const port = Number(process.env.PORT || 8081);
 server.listen(port, "127.0.0.1", () => {
   console.log(`saas-gateway listening on 127.0.0.1:${port}`);
   if (require.main === module) scheduleAutoDataMigration();
+  if (require.main === module) setTimeout(() => backfillPlanCouriers().catch((e) => console.warn(`тарифы: лимит курьеров не дописан — ${e.message}`)), 15000);
 });
+
+/**
+ * У тарифов из каталога, созданных до лимита курьеров, поля maxCouriers нет —
+ * сайт показал бы «без ограничений», а сервер считает по каталогу. Дописываем
+ * значение каталога только туда, где поля нет: заданное в панели не трогаем.
+ */
+async function backfillPlanCouriers() {
+  let n = 0;
+  for (const [planId, fields] of Object.entries(PLAN_CATALOG)) {
+    if (fields.maxCouriers === undefined) continue;
+    const ref = db().collection("plans").doc(planId);
+    const snap = await ref.get();
+    if (!snap.exists) continue;
+    const cur = snap.data() || {};
+    if (cur.maxCouriers !== undefined && cur.maxCouriers !== null && cur.maxCouriers !== "") continue;
+    await ref.set({ maxCouriers: fields.maxCouriers }, { merge: true });
+    n += 1;
+  }
+  if (n) console.log(`тарифы: дописан лимит курьеров в ${n}`);
+  return n;
+}
 
 // Плановый перенос данных на свой сервер — один раз на номер (владелец
 // попросил перенести, все кассы — тестовые). Из Firestore; не вышло (лимит

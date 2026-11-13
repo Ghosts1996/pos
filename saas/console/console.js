@@ -2725,7 +2725,8 @@ function planFeatureRows(p, { priorityRow = p.prioritySupport === true } = {}) {
     { label: 'Смены, зарплата, ЕГАИС', on: true },
     { label: `Устройства с кассой${perPoint}`, value: c.maxDevices ? `до ${c.maxDevices}` : 'без ограничений', on: true },
     { label: 'Сотрудники', value: 'без ограничений', on: true },
-    { label: `Курьеры в приложении${p.isChainPlan ? ' на сеть' : ''}`, value: c.maxCouriers < 0 ? 'без ограничений' : c.maxCouriers ? `до ${c.maxCouriers}` : 'нет', on: c.maxCouriers !== 0 },
+    { label: 'Своя доставка, карта, маршруты', on: true },
+    { label: `Приложение курьера (Android и веб)${p.isChainPlan ? ', на сеть' : ''}`, value: c.maxCouriers < 0 ? 'без ограничений' : c.maxCouriers ? `до ${c.maxCouriers} ${couriersWord(c.maxCouriers)}` : 'нет', on: c.maxCouriers !== 0 },
     { label: 'Приложение гостя', on: c.guestApp },
     { label: 'Меню по QR и заказ со стола', on: c.guestApp },
     { label: 'ИИ-помощник', on: c.ai },
@@ -3353,8 +3354,9 @@ function screenLanding() {
     <section class="landing-section" id="landing-delivery">
       <div class="landing-inner">
         <div class="l-head l-head-row">
-          <h2 class="landing-h2">Доставка и самовывоз — из&nbsp;вашего приложения</h2>
-          <p class="landing-h2-sub">Гость заказывает домой или навынос, вы перезваниваете и&nbsp;подтверждаете, курьер везёт.
+          <h2 class="landing-h2">Своя доставка с&nbsp;приложением курьера</h2>
+          <p class="landing-h2-sub">Гость заказывает домой или навынос, вы подтверждаете, ваш курьер везёт по&nbsp;маршруту
+          в&nbsp;своём приложении — на&nbsp;Android или в&nbsp;браузере любого телефона.
           Процент с&nbsp;заказов мы не&nbsp;берём, за&nbsp;онлайн-оплату платите только комиссию своему банку.
           <span id="delivery-plan-note"></span></p>
         </div>
@@ -3368,9 +3370,21 @@ function screenLanding() {
           <div class="risk-item"><b>Гость платит и&nbsp;следит</b><span>После подтверждения он платит онлайн по&nbsp;СБП
             или картой, и&nbsp;деньги сразу приходят на&nbsp;ваш счёт. Статусы «Готовится», «У&nbsp;курьера», «Доставлен»
             видны ему в&nbsp;приложении.</span></div>
-          <div class="risk-item"><b>Курьеры в&nbsp;Telegram</b><span>Бот вашего заведения присылает заказы в&nbsp;рабочую
-            группу с&nbsp;кнопками статусов. Нажать их могут только люди, чей Telegram ID вы добавили в&nbsp;кабинете.
-            Телефонов гостей в&nbsp;переписке нет.</span></div>
+          <div class="risk-item"><b>Приложение курьера</b><span>Android-приложение и&nbsp;веб-версия для iPhone и&nbsp;любого
+            телефона. Заказы только вашего заведения, «Беру» или назначение администратором, шаги «Забрал → У&nbsp;двери →
+            Вручил», оплата у&nbsp;двери наличными со&nbsp;сдачей, картой или по&nbsp;QR, заработок за&nbsp;поездку, день и&nbsp;неделю.</span></div>
+          <div class="risk-item"><b>Карта и&nbsp;маршруты</b><span>Своя карта с&nbsp;маршрутом по&nbsp;дорогам для машины,
+            велосипеда и&nbsp;пешком, схема, спутник или гибрид. Навигатор — одной кнопкой. В&nbsp;кабинете видно, где курьеры
+            и&nbsp;какие заказы в&nbsp;пути.</span></div>
+          <div class="risk-item"><b>Цена доставки по&nbsp;адресу</b><span>Районы, цена за&nbsp;километр по&nbsp;дорогам,
+            «бесплатно от», минимальный заказ, наценка на&nbsp;блюда в&nbsp;доставке. Гость видит цену сразу в&nbsp;счёте,
+            строка «Доставка» встаёт в&nbsp;чек.</span></div>
+          <div class="risk-item"><b>Курьеры под контролем</b><span>Курьеров добавляете вы: имя, почта, транспорт. Вход
+            по&nbsp;коду из&nbsp;письма, без паролей. Число курьеров — по&nbsp;тарифу; заблокировали — курьер сразу вышел.
+            Наличные на&nbsp;руках и&nbsp;отчёт по&nbsp;поездкам — в&nbsp;кабинете.</span></div>
+          <div class="risk-item"><b>Службы доставки и&nbsp;Telegram</b><span>Нет своего курьера — вызовите Яндекс Доставку
+            или Достависта по&nbsp;своему договору прямо из&nbsp;кабинета. Бот заведения присылает заказы в&nbsp;рабочую
+            группу с&nbsp;кнопками статусов, без телефонов гостей.</span></div>
         </div>
         <div class="scale-strip">
           <div><b>Онлайн-оплата через ваш банк</b><span>Т-Банк, Сбербанк, Альфа-Банк, ВТБ, МТС Банк, Райффайзенбанк,
