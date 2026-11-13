@@ -18,6 +18,9 @@
   const reduceMotion = () => !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 
   function themeNow() {
+    // Тему выбрали в приложении (<html data-theme>) — она главнее настройки телефона.
+    const forced = document.documentElement.getAttribute("data-theme");
+    if (forced === "dark" || forced === "light") return forced;
     return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
 
@@ -235,6 +238,25 @@
       if (more) anim = requestAnimationFrame(tick);
     }
 
+    /** Повернуть стрелку «Вы» кратчайшим путём (359° → 1° — на 2°, а не на круг). */
+    function turnNav(rec, h) {
+      const nav = rec.el.querySelector(".zm-nav");
+      if (!nav) return;
+      h = ((h % 360) + 360) % 360;
+      const prev = Number.isFinite(rec.navDeg) ? rec.navDeg : h;
+      const d = ((((h - prev) % 360) + 540) % 360) - 180;
+      if (Number.isFinite(rec.navDeg) && Math.abs(d) < 1) return;
+      rec.navDeg = prev + d;
+      rec.heading = h;
+      nav.style.transform = `rotate(${rec.navDeg.toFixed(1)}deg)`;
+    }
+
+    /** Направление стрелки «Вы» (компас телефона или ход по GPS), без перерисовки меток. */
+    function setHeading(h) {
+      const rec = markers.get("me");
+      if (rec && h != null && Number.isFinite(Number(h))) turnNav(rec, Number(h));
+    }
+
     function setMarkers(list) {
       const ids = new Set();
       for (const m of list || []) {
@@ -261,12 +283,8 @@
             else { rec.from = { ...rec.cur }; rec.to = { lat: m.lat, lng: m.lng }; rec.t0 = performance.now(); rec.dur = 900; if (!anim) anim = requestAnimationFrame(tick); }
           }
         }
-        const nav = rec.el.querySelector(".zm-nav");
-        if (nav) {
-          const h = m.heading == null ? NaN : Number(m.heading);
-          // Стоите — стрелка остаётся там, куда ехали в последний раз.
-          if (Number.isFinite(h)) { rec.heading = h; nav.style.transform = `rotate(${Math.round(h)}deg)`; }
-        }
+        // Нет направления — стрелка остаётся там, куда смотрела в последний раз.
+        if (m.heading != null && Number.isFinite(Number(m.heading))) turnNav(rec, Number(m.heading));
         const arrow = rec.el.querySelector(".zm-arrow");
         if (arrow) {
           const h = m.heading == null ? NaN : Number(m.heading);
@@ -339,6 +357,7 @@
     const mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
     const onScheme = () => { if (!opts.theme) setTheme(themeNow()); };
     if (mq && mq.addEventListener) mq.addEventListener("change", onScheme);
+    if (window.MutationObserver) new MutationObserver(onScheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
     function covers(lat, lng) {
       return lng >= b[0] && lng <= b[2] && lat >= b[1] && lat <= b[3];
@@ -346,7 +365,7 @@
 
     return {
       map,
-      setMarkers,
+      setMarkers, setHeading,
       setRoute,
       fit,
       follow,

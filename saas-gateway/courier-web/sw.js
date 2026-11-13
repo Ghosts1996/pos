@@ -2,7 +2,7 @@
  * Сначала сеть (обновления приходят сразу), кэш — запасной путь.
  * Запросы к серверу (api/) не кэшируются никогда: заказы — только свежие. */
 "use strict";
-const CACHE = "zalpos-courier-v15";
+const CACHE = "zalpos-courier-v16";
 // Тайлы своей карты — отдельно и «сначала из памяти»: адрес тайла меняется
 // с каждой новой сборкой карты (?v=…), старые вытесняются по количеству.
 const TILES = "zalpos-map-tiles-v1";
@@ -10,7 +10,7 @@ const TILES_MAX = 3000;
 // Карта города, скачанная для работы без связи (тайлы, шрифты, движок, сеть
 // дорог): не вытесняется и не стирается при обновлении приложения.
 const OFFLINE = "zalpos-map-offline";
-const SHELL = ["./", "index.html", "app.js", "app.css", "qr.js", "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "rules.html"];
+const SHELL = ["./", "index.html", "app.js", "theme.js", "app.css", "qr.js", "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "rules.html"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

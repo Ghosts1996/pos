@@ -155,7 +155,7 @@
     syncing: false,
     flushing: false,
     retryAt: 0,
-    geo: { watch: null, error: 0, fix: null, lastBuffered: null },
+    geo: { watch: null, error: 0, fix: null, lastBuffered: null, speed: 0 },
     wake: null,
     install: null,
     reg: null,
@@ -528,6 +528,9 @@
   }
 
   function startGeo() {
+    // Компас без вопросов (Android) — вместе с геолокацией; iPhone — по нажатию.
+    const D = window.DeviceOrientationEvent;
+    if (!(D && typeof D.requestPermission === "function")) startCompass();
     if (S.geo.watch !== null || !("geolocation" in navigator)) return;
     S.geo.watch = navigator.geolocation.watchPosition(onPos, (err) => {
       S.geo.error = err && err.code ? err.code : 2;
@@ -541,6 +544,50 @@
     if (NATIVE) { try { window.ZalNative.stopTracking(); } catch (_) { /* нет службы */ } }
   }
 
+  // ---------------------------------------------------------------- компас
+  // Стрелка «Вы» поворачивается вместе с телефоном (на месте, пешком); на ходу
+  // быстрее 2,5 м/с (~9 км/ч) — по направлению движения из GPS: в машине и на
+  // мопеде компас сбивают металл и магниты.
+  const compass = { deg: null, at: 0, on: false, asked: false, painted: 0 };
+  const screenAngle = () => Number((screen.orientation && screen.orientation.angle) || window.orientation || 0) || 0;
+  function onOrient(e) {
+    let h = null;
+    if (typeof e.webkitCompassHeading === "number" && e.webkitCompassHeading >= 0) h = e.webkitCompassHeading;
+    else if ((e.absolute || e.type === "deviceorientationabsolute") && typeof e.alpha === "number") h = 360 - e.alpha;
+    if (h == null || !Number.isFinite(h)) return;
+    h = (((h + screenAngle()) % 360) + 360) % 360;
+    // Сглаживание по кругу: стрелка не дрожит от шума датчика.
+    if (compass.deg == null || Date.now() - compass.at > 2000) compass.deg = h;
+    else { const d = ((((h - compass.deg) % 360) + 540) % 360) - 180; compass.deg = (((compass.deg + d * 0.3) % 360) + 360) % 360; }
+    compass.at = Date.now();
+    if (compass.at - compass.painted < 80 || S.view !== "map" || !S.zm.api) return;
+    compass.painted = compass.at;
+    S.zm.api.setHeading(headingNow());
+  }
+  function startCompass() {
+    if (compass.on) return;
+    const ev = "ondeviceorientationabsolute" in window ? "deviceorientationabsolute" : "ondeviceorientation" in window ? "deviceorientation" : "";
+    if (!ev) return;
+    compass.on = true;
+    window.addEventListener(ev, onOrient);
+  }
+  /** iPhone спрашивает разрешение на компас — только по нажатию. */
+  function askCompass() {
+    const D = window.DeviceOrientationEvent;
+    if (D && typeof D.requestPermission === "function") {
+      if (compass.asked) return;
+      compass.asked = true;
+      D.requestPermission().then((r) => { if (r === "granted") startCompass(); }).catch(() => {});
+    } else startCompass();
+  }
+  /** Куда смотрит стрелка «Вы»: ход по GPS на скорости, иначе компас телефона. */
+  function headingNow() {
+    const f = S.geo.fix;
+    if (f && f.heading != null && (S.geo.speed || 0) >= 2.5 && Date.now() - f.at < 5000) return f.heading;
+    if (compass.deg != null && Date.now() - compass.at < 3000) return compass.deg;
+    return f ? f.heading : null;
+  }
+
   function onPos(p) {
     const hd = Number(p.coords.heading);
     const fix = {
@@ -551,6 +598,8 @@
     const first = !S.geo.fix;
     S.geo.error = 0;
     S.geo.fix = fix;
+    S.geo.speed = Number(p.coords.speed) || 0;
+    if (S.zm.api && S.view === "map") S.zm.api.setHeading(headingNow());
     const last = S.geo.lastBuffered;
     // В память — каждые 15 с или при сдвиге на 25 м: путь считается точно, лишнего не шлём.
     // В приложении для Android точки шлёт служба телефона — здесь только карта.
@@ -703,6 +752,9 @@
     if (o.cancelled) return { pos: o.point.pos, address: o.point.address || o.point.name, venue: true };
     return { pos: o.dest, address: o.address || o.street, venue: false };
   }
+
+  /** Тема: «auto» — как в телефоне (theme.js держит выбор в zc_theme). */
+  const themeMode = () => (window.ZalTheme ? window.ZalTheme.get() : "auto");
 
   /** Что показать на карте: маршрут активного заказа или все точки. */
   function mapSpec() {
@@ -1092,7 +1144,7 @@
     const marks = spec.marks.map((m, i) => ({
       id: m.k === "me" ? "me" : `${m.k}:${m.t}:${i}`,
       lat: m.p.lat, lng: m.p.lng, kind: m.k, label: m.k === "me" ? "" : m.t,
-      heading: m.k === "me" && S.geo.fix ? S.geo.fix.heading : null,
+      heading: m.k === "me" ? headingNow() : null,
       stale: m.k === "me" && !S.geo.fix,
       active: !!(a && m.k === "guest" && m.t === `№${a.no}`),
     }));
@@ -1267,7 +1319,7 @@
         <nav class="bnav" id="bnav" aria-label="Разделы"></nav>
       </div>`;
     $("mapframe").addEventListener("load", (e) => e.target.classList.add("ready"));
-    $("zmloc").addEventListener("click", () => { if (S.zm.api) S.zm.api.follow(!S.zm.follow); });
+    $("zmloc").addEventListener("click", () => { askCompass(); if (S.zm.api) S.zm.api.follow(!S.zm.follow); });
     $("zmfit").addEventListener("click", () => {
       const z = S.zm;
       if (!z.api) return;
@@ -1609,6 +1661,12 @@
 
       <div class="sec">Карта без интернета</div>
       <div class="list">${offHtml()}</div>
+
+      <div class="sec">Оформление</div>
+      <div class="list"><div class="lrow" style="display:block">
+        <div class="seg" role="group" aria-label="Тема приложения">${[["auto", "Как в телефоне"], ["light", "Светлая"], ["dark", "Тёмная"]].map(([v, l]) =>
+          `<button data-a="theme" data-v="${v}" aria-pressed="${themeMode() === v}">${l}</button>`).join("")}</div>
+      </div></div>
 
       <div class="sec">Сигналы</div>
       <div class="list">
@@ -1985,6 +2043,7 @@
     switch (a) {
       case "view":
         S.view = el.dataset.view;
+        if (S.view === "map") askCompass();
         if (S.view === "orders" || S.view === "map") save(KEY.view, S.view);
         if (S.view === "orders") S.newFree.clear();
         if (S.view === "income") { S.histDay = ""; loadHistory(true); }
@@ -2049,6 +2108,7 @@
       case "hday": S.histDay = el.dataset.day; render(); loadHistory(true); return;
       case "transport": S.transport = el.dataset.v; S.transportAuto = false; save(KEY.transport, S.transport); render(); return;
       case "nav": S.nav = el.dataset.v; save(KEY.nav, S.nav); render(); return;
+      case "theme": if (window.ZalTheme) window.ZalTheme.set(el.dataset.v); render(); return;
       case "sound": S.sound = !S.sound; save(KEY.sound, S.sound); if (S.sound) beep(); render(); return;
       case "notify":
         if ("Notification" in window) await Notification.requestPermission().catch(() => {});

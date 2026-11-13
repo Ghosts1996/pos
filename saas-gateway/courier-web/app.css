@@ -47,7 +47,7 @@
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0B0B0C;
     --card: #151517;
     --card-2: #1E1E21;
@@ -82,6 +82,42 @@
     --shadow-pill: 0 8px 24px -8px rgba(0, 0, 0, .7), 0 0 0 1px rgba(255, 255, 255, .06);
   }
 }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+    --bg: #0B0B0C;
+    --card: #151517;
+    --card-2: #1E1E21;
+    --text: #F4F0E8;
+    --muted: #ABA498;
+    --faint: #827C72;
+    --line: #2C2A27;
+    --ink: #F4F0E8;
+    --ink-text: #0B0B0C;
+    --brand: #D9B66C;
+    --brand-ink: #17120A;
+    --brand-soft: #2A2417;
+    --gold: #E2C384;
+    --gold-hi: #D9B66C;
+    --gold-soft: #262013;
+    --online: #2FBF7F;
+    --online-ink: #04150D;
+    --online-soft: #10261B;
+    --money: #4CD99A;
+    --blue: #79A6FF;
+    --blue-soft: #15213A;
+    --amber: #F5B94A;
+    --amber-soft: #2E2310;
+    --red: #FF7F73;
+    --red-soft: #351716;
+    --violet: #B9A0FF;
+    --violet-soft: #241B3D;
+    --glass: rgba(24, 24, 26, .84);
+    --glass-line: rgba(255, 255, 255, .06);
+    --shadow-1: 0 0 0 1px rgba(255, 255, 255, .04);
+    --shadow-2: 0 -10px 40px rgba(0, 0, 0, .6), 0 -1px 0 rgba(255, 255, 255, .05);
+    --shadow-pill: 0 8px 24px -8px rgba(0, 0, 0, .7), 0 0 0 1px rgba(255, 255, 255, .06);
+  }
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -288,7 +324,8 @@ details.items li { margin: 3px 0; }
 .hero .big { font-size: 46px; font-weight: 800; letter-spacing: -.03em; line-height: 1.05; margin: 4px 0 12px; }
 .hero .stats3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .hero .stats3 div { background: rgba(255, 255, 255, .08); border-radius: 14px; padding: 10px; }
-@media (prefers-color-scheme: dark) { .hero .stats3 div { background: rgba(10, 13, 18, .08); } }
+@media (prefers-color-scheme: dark) { html:not([data-theme="light"]) .hero .stats3 div { background: rgba(10, 13, 18, .08); } }
+html[data-theme="dark"] .hero .stats3 div { background: rgba(10, 13, 18, .08); }
 .hero .stats3 b { display: block; font-size: 18px; }
 .hero .stats3 span { font-size: 12px; opacity: .72; font-weight: 600; }
 .week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; align-items: end; height: 150px; padding: 10px 4px 0; }
@@ -496,7 +533,8 @@ h1, .dest, .offer-pay, .hero .big { font-family: "SF Pro Display", -apple-system
 /* главные кнопки: чёрная с шампанью (светлая) / золотая (тёмная) */
 .btn.go { background: var(--brand); color: var(--brand-ink); box-shadow: 0 10px 24px -12px rgba(20, 16, 8, .55); }
 .btn.go .ico { color: var(--gold-hi); }
-@media (prefers-color-scheme: dark) { .btn.go .ico { color: var(--brand-ink); } .btn.go { box-shadow: 0 10px 28px -14px rgba(217, 182, 108, .55); } }
+@media (prefers-color-scheme: dark) { html:not([data-theme="light"]) .btn.go .ico { color: var(--brand-ink); } html:not([data-theme="light"]) .btn.go { box-shadow: 0 10px 28px -14px rgba(217, 182, 108, .55); } }
+html[data-theme="dark"] .btn.go .ico { color: var(--brand-ink); } html[data-theme="dark"] .btn.go { box-shadow: 0 10px 28px -14px rgba(217, 182, 108, .55); }
 .btn.huge { border-radius: 20px; letter-spacing: -.005em; }
 .btn.line { box-shadow: inset 0 0 0 1.5px var(--line); }
 .online-card { background: linear-gradient(135deg, #17171A 0%, #232018 100%); color: #F4F0E8; border: 1px solid rgba(217, 182, 108, .25); }
@@ -509,7 +547,8 @@ h1, .dest, .offer-pay, .hero .big { font-family: "SF Pro Display", -apple-system
 .hero small { color: #D9B66C; opacity: 1; letter-spacing: .04em; text-transform: uppercase; font-size: 12px; font-weight: 700; }
 .hero .big { color: #F7EBCB; }
 .hero .stats3 div { background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .06); }
-@media (prefers-color-scheme: dark) { .hero .stats3 div { background: rgba(255, 255, 255, .05); } }
+@media (prefers-color-scheme: dark) { html:not([data-theme="light"]) .hero .stats3 div { background: rgba(255, 255, 255, .05); } }
+html[data-theme="dark"] .hero .stats3 div { background: rgba(255, 255, 255, .05); }
 .week .bar { background: var(--line); }
 .week button[aria-pressed="true"] .bar { background: linear-gradient(180deg, var(--gold-hi), var(--gold)); }
 .trip .e { color: var(--money); }

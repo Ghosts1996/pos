@@ -120,6 +120,48 @@ async function main() {
   await page.waitForSelector("#zmap:not([hidden]) canvas", { timeout: 30000 });
   await page.waitForTimeout(2500);
   await shot(page, "off-0-map");
+  // Компас: повернули телефон — стрелка «Вы» поворачивается следом (кратчайшим путём).
+  const navDeg = () => page.evaluate(() => {
+    const n = document.querySelector(".zm-me .zm-nav");
+    const m = n && /rotate\((-?[\d.]+)deg\)/.exec(n.style.transform || "");
+    return m ? Number(m[1]) : null;
+  });
+  const turn = async (alpha) => {
+    for (let i = 0; i < 12; i++) {
+      await page.evaluate((a) => { const e = new Event("deviceorientationabsolute"); Object.assign(e, { alpha: a, beta: 0, gamma: 0, absolute: true }); window.dispatchEvent(e); }, alpha);
+      await page.waitForTimeout(90);
+    }
+  };
+  await turn(270); // телефон смотрит на восток: 360 − 270 = 90°
+  const east = await navDeg();
+  assert.ok(east != null && Math.abs(east - 90) < 8, `стрелка на восток: ${east}`);
+  await turn(5); // на север чуть левее: 355° — через север, а не через юг
+  const north = await navDeg();
+  assert.ok(north != null && ((north % 360) + 360) % 360 > 340, `стрелка на север: ${north}`);
+  await shot(page, "off-0-compass");
+  // Тема: в профиле «Тёмная» — приложение и карта тёмные, «Светлая» — светлые.
+  await page.click('#bnav [data-a="view"][data-view="profile"]');
+  await page.click('[data-a="theme"][data-v="dark"]');
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "dark");
+  const bgOf = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  assert.equal(await bgOf(), "rgb(11, 11, 12)", "тёмный фон");
+  await page.click('#bnav [data-a="view"][data-view="map"]');
+  await page.waitForTimeout(2000);
+  await shot(page, "off-0-dark-map");
+  await page.click('#bnav [data-a="view"][data-view="profile"]');
+  await shot(page, "off-0-dark-profile");
+  await page.click('[data-a="theme"][data-v="light"]');
+  assert.notEqual(await bgOf(), "rgb(11, 11, 12)", "светлый фон");
+  await page.reload();
+  await page.waitForSelector("#bnav");
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "light", "выбор темы запомнен");
+  await page.click('[data-a="theme"][data-v="auto"]').catch(async () => {
+    await page.click('#bnav [data-a="view"][data-view="profile"]');
+    await page.click('[data-a="theme"][data-v="auto"]');
+  });
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme || ""), "", "как в телефоне");
+  await page.click('#bnav [data-a="view"][data-view="map"]');
+  await page.waitForSelector("#zmap:not([hidden]) canvas", { timeout: 30000 });
   await page.waitForFunction(() => navigator.serviceWorker && navigator.serviceWorker.controller, null, { timeout: 15000 }).catch(() => {});
   // 2. Профиль → «Карта без интернета» → скачать город.
   await page.click('#bnav [data-a="view"][data-view="profile"]');
