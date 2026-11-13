@@ -94,6 +94,13 @@ void main() {
     });
   });
 
+  test('шаг курьера из приложения — подпись для карточки в кассе', () {
+    expect(courierStageLabel('onWay'), 'везёт гостю');
+    expect(courierStageLabel('arrived'), 'у двери');
+    expect(courierStageLabel('failed'), 'не удалось вручить');
+    expect(courierStageLabel('что-то'), '');
+  });
+
   test('позиции: скидка, строка «Доставка» — услуга без скидки', () {
     final s = SessionModel(
       id: 's1',

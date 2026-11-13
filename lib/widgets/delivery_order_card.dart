@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../build_info.dart';
 import '../models/delivery_status.dart';
 import '../models/employee.dart';
 import '../models/session_model.dart';
@@ -197,6 +198,14 @@ class _DeliveryOrderCardState extends State<DeliveryOrderCard> {
                 label: Text(DeliveryFlow.label(s.orderType, s.deliveryStatus) +
                     (s.courierName.isNotEmpty ? ' · ${s.courierName}' : '')),
               ),
+              // Курьер из приложения курьера: номер и где он сейчас.
+              if (kSaasMode && s.courierNo > 0 && courierStageLabel(s.courierStage).isNotEmpty)
+                Chip(
+                  visualDensity: VisualDensity.compact,
+                  avatar: Icon(Icons.delivery_dining,
+                      size: 18, color: s.courierStage == 'failed' ? Colors.red : AppColors.textMuted),
+                  label: Text('Курьер №${s.courierNo} · ${courierStageLabel(s.courierStage)}'),
+                ),
               if (awaitingCall) ...[
                 FilledButton.icon(
                   onPressed: _busy ? null : _accept,

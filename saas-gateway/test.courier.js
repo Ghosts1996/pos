@@ -382,7 +382,7 @@ test("заказ целиком: свободный без данных гост
   const calls = (await w.db.collection("tenants/A/waiterCalls").get()).docs.map((d) => d.data());
   assert.equal(calls.length, 1);
   assert.equal(calls[0].type, "bill");
-  assert.match(calls[0].comment, /Курьер №1 получил 750.₽ наличными — пробейте чек сейчас/);
+  assert.match(calls[0].comment, /Курьер №1 получил 750.₽ наличными\. Чек гостю касса с онлайн-кассой пробьёт сама, иначе пробейте сейчас\. Закройте заказ на кассе/);
   assert.equal(calls[0].tableName, "Доставка №12");
   const trip = (await w.db.doc(`couriers/${c.id}/trips/A__s1`).get()).data();
   assert.equal(trip.result, "done");
@@ -713,7 +713,7 @@ test("демо: вход по коду демо-сети, заказы обеи�
   await w.set("tenants/N2", { name: "Демо · Набережная", chainId: "N", timezone: "Europe/Moscow", status: "active", demo: true, demoCode: "demo-ab12cd34", demoExpiresAt: exp, createdAt: Timestamp.fromMillis(2) });
   await w.set("tenants/N2/sessions/s9", order());
   // Заказ из приложения гостя без адреса — в демо получает адрес в Петербурге.
-  await w.set("tenants/N1/sessions/s8", order({ deliveryAddress: "", customerPhone: "", customerName: "" }));
+  await w.set("tenants/N1/sessions/s8", order({ deliveryAddress: "", customerPhone: "", customerName: "", deliveryOpen: true, startTime: Timestamp.fromMillis(clock - 20 * 3600000) }));
   // неверный и чужой (не демо) код — отказ и учёт в щите
   await assert.rejects(call(w.api.handleDemoLogin, { code: "demo-zzzz0000" }), (e) => e.status === 404);
   await assert.rejects(call(w.api.handleDemoLogin, { code: "../x" }), (e) => e.status === 404);
@@ -729,6 +729,7 @@ test("демо: вход по коду демо-сети, заказы обеи�
   assert.equal(st.me.points.length, 2);
   assert.deepEqual(st.free.map((f) => f.key).sort(), ["N1__s8", "N2__s9"]);
   const noAddr = st.free.find((f) => f.key === "N1__s8");
+  assert.ok(noAddr.ageMin < 30, `старый демо-заказ при входе курьера — снова свежий (${noAddr.ageMin} мин)`);
   assert.match(noAddr.street, /^Санкт-Петербург, .+, \d+$/, "в демо — настоящий адрес без квартиры");
   assert.ok(noAddr.dest && noAddr.dest.lat > 59.9 && noAddr.dest.lat < 60, "и точка на карте");
   const dc = require("./courier").demoContact("s8");

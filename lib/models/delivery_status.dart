@@ -13,6 +13,27 @@
 /// услуга, в Z-отчёте — отдельный вид продаж. В меню такой позиции нет.
 const kDeliveryFeeItemId = 'zalpos_delivery';
 
+/// Шаг курьера из приложения курьера (поле courierStage заказа) — для
+/// карточки доставки в кассе.
+String courierStageLabel(String stage) {
+  switch (stage) {
+    case 'toVenue':
+      return 'едет за заказом';
+    case 'onWay':
+      return 'везёт гостю';
+    case 'arrived':
+      return 'у двери';
+    case 'failed':
+      return 'не удалось вручить';
+    case 'returned':
+      return 'вернул в заведение';
+    case 'done':
+      return 'вручил';
+    default:
+      return '';
+  }
+}
+
 class DeliveryFlow {
   DeliveryFlow._();
 

@@ -431,6 +431,11 @@ class SessionModel {
 
   /// Статус заказа с собой/доставки — см. DeliveryFlow.
   final String deliveryStatus;
+
+  /// Курьер из приложения курьера (SaaS): его номер в заведении и шаг —
+  /// toVenue, onWay, arrived, failed, returned, done (пишет шлюз, courier.js).
+  final int courierNo;
+  final String courierStage;
   final String _courierName;
   String get courierName => Pd.extra('delivery', id, 'courierName', _courierName);
 
@@ -542,6 +547,8 @@ class SessionModel {
     String customerPhone = '',
     String deliveryAddress = '',
     this.deliveryStatus = '',
+    this.courierNo = 0,
+    this.courierStage = '',
     String courierName = '',
     String courierPhone = '',
     String customerName = '',
@@ -606,6 +613,8 @@ class SessionModel {
       customerPhone: asText(data['customerPhone']),
       deliveryAddress: asText(data['deliveryAddress']),
       deliveryStatus: asText(data['deliveryStatus']),
+      courierNo: asNum(data['courierNo'])?.toInt() ?? 0,
+      courierStage: asText(data['courierStage']),
       courierName: asText(data['courierName']),
       courierPhone: asText(data['courierPhone']),
       customerName: asText(data['customerName']),

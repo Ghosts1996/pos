@@ -688,7 +688,33 @@ function createCourier({
       cashOnHand: 0, odometerM: 0, createdAt: ts(), createdBy: "demo",
       tokenHash: sha(token), tokenAt: ts(), lastSeenAt: ts(), device: clean(device, 80),
     });
+    await freshenDemo(snap.docs.filter((d) => d.data().demo === true).map((d) => d.id)).catch(() => {});
     sendJson(res, 200, { token, courier: { no, name } });
+  }
+
+  /**
+   * Демо живёт несколько дней, а заказы в нём созданы при открытии: курьер
+   * видел «ждёт 19 ч» и «обещали к» давно прошедшему времени. При входе
+   * курьера в демо открытые заказы доставки старше полутора часов
+   * «оформляются» заново — несколько минут назад, в прежнем порядке.
+   */
+  async function freshenDemo(tenantIds) {
+    const t0 = now();
+    for (const t of tenantIds) {
+      const snap = await tenantRef(t).collection("sessions").where("deliveryOpen", "==", true).get();
+      const old = snap.docs
+        .filter((d) => (d.data() || {}).orderType === "delivery" && t0 - ms(d.data().startTime) > 90 * 60000)
+        .sort((a, b) => ms(b.data().startTime) - ms(a.data().startTime));
+      let i = 0;
+      for (const d of old) {
+        const at = t0 - (6 + 7 * i++) * 60000;
+        await d.ref.update({
+          startTime: Timestamp.fromMillis(at),
+          deliveryStatusAt: Timestamp.fromMillis(Math.min(t0 - 2 * 60000, at + 4 * 60000)),
+        });
+      }
+      if (old.length) forget(`open:${t}`);
+    }
   }
 
   /** Стереть курьеров заведения или сети целиком (сброс демо). */
@@ -1202,7 +1228,7 @@ function createCourier({
         }
         if (e.collected > 0) {
           await staffCall(t, s, e.orderNo, "bill",
-            `${no} получил ${rubText(e.collected)} ${METHOD_LABEL[e.method]} — пробейте чек сейчас, гостю уйдёт электронный чек`);
+            `${no} получил ${rubText(e.collected)} ${METHOD_LABEL[e.method]}. Чек гостю касса с онлайн-кассой пробьёт сама, иначе пробейте сейчас. Закройте заказ на кассе: деньги у курьера`);
         }
         const paidText = e.collected > 0 ? ` · ${METHOD_LABEL[e.method]} ${rubText(e.collected)}` : e.method === "prepaid" ? "" : " · оплачено онлайн";
         await hooks.event(t, s, `✅ ${no} вручил заказ${paidText}`);
