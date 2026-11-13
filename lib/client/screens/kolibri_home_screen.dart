@@ -282,11 +282,15 @@ class KolibriHomeScreen extends StatelessWidget {
                 FittedBox(
                   fit: BoxFit.scaleDown,
                   alignment: Alignment.centerLeft,
-                  child: Text(rub(bonus), style: KolibriFonts.display(48, color: cardAccent)),
+                  // SaaS: число бонусов, а не рубли — гость видит, сколько накопил.
+                  child: Text(kSaasMode ? bonusesLabel(bonus) : rub(bonus), style: KolibriFonts.display(kSaasMode ? 40 : 48, color: cardAccent)),
                 ),
                 const SizedBox(height: 4),
                 Text('Уровень «$tier» · кешбэк ${cashback.toStringAsFixed(0)}%',
                     style: TextStyle(color: metal?.inkMuted ?? KolibriColors.textMuted, fontSize: 12)),
+                if (kSaasMode)
+                  Text('1 бонус = 1 ₽ при оплате',
+                      style: TextStyle(color: metal?.inkMuted ?? KolibriColors.textMuted, fontSize: 12)),
               ],
             ),
           ),

@@ -463,7 +463,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Уровень «$tier»',
+              Text(kSaasMode ? 'Ваши бонусы · уровень «$tier»' : 'Уровень «$tier»',
                   style: TextStyle(color: cardAccent, fontWeight: FontWeight.w600)),
               const SizedBox(height: 10),
               Text(bonusesLabel(p?.bonusBalance ?? 0), style: KolibriFonts.display(40, color: metal?.ink)),

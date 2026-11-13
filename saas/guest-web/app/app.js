@@ -1028,8 +1028,9 @@ function screenHome() {
     <h1 class="display">${esc(hello)}${name ? ',<br><em>' + esc(name) + '</em>' : ''}</h1>
 
     <div class="card tier metal-${tierMetal(tier)}">
-      <div class="overline">Бонусный счёт</div>
-      <div class="bonus">${money(p.bonusBalance)}</div>
+      <div class="overline">Ваши бонусы</div>
+      <div class="bonus">${bonusesText(p.bonusBalance)}</div>
+      <div class="small muted">1 бонус = 1 ₽ при оплате</div>
       <div class="small muted">Уровень «${esc(tier.name)}» · кешбэк ${tier.cashback}%</div>
       ${next ? `
         <div class="bar"><i style="width:${progressPercent(spent)}%"></i></div>
@@ -3362,6 +3363,12 @@ function renderSlotSummary() {
 }
 
 /// «1 бронь», «2 брони», «5 броней».
+/// «0 бонусов», «1 бонус», «1 250 бонусов» — сколько накопил гость (1 бонус = 1 ₽).
+function bonusesText(v) {
+  const n = Math.max(0, Math.floor(Number(v) || 0));
+  return `${n.toLocaleString('ru-RU')}<span class="unit"> ${plural(n, 'бонус', 'бонуса', 'бонусов')}</span>`;
+}
+
 function plural(n, one, few, many) {
   const last = n % 10;
   const teen = n % 100 >= 11 && n % 100 <= 14;
@@ -3720,8 +3727,9 @@ function screenProfile() {
     <h1>Профиль</h1>
 
     <div class="card tier metal-${tierMetal(tier)}">
-      <div class="muted small">Уровень «${esc(tier.name)}»</div>
-      <div class="bonus">${money(p.bonusBalance)}</div>
+      <div class="muted small">Ваши бонусы · уровень «${esc(tier.name)}»</div>
+      <div class="bonus">${bonusesText(p.bonusBalance)}</div>
+      <div class="small muted">1 бонус = 1 ₽ при оплате</div>
       <div class="small muted">кешбэк ${tier.cashback}% · визитов: ${Number(p.visits) || 0}</div>
       ${next ? `
         <div class="bar"><i style="width:${progressPercent(spent)}%"></i></div>
