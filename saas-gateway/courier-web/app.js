@@ -29,7 +29,7 @@
   const KEY = {
     token: "zc_token", queue: "zc_queue", pings: "zc_pings", order: "zc_order", nav: "zc_nav",
     sound: "zc_sound", seen: "zc_seen", transport: "zc_transport", sheet: "zc_sheet", installSkip: "zc_install_skip",
-    auth: "zc_auth", layer: "zc_layer", off: "zc_offmap", last: "zc_last",
+    auth: "zc_auth", layer: "zc_layer", off: "zc_offmap", last: "zc_last", view: "zc_view",
   };
   const load = (k, def) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? def : v; } catch (_) { return def; } };
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* память переполнена — не страшно */ } };
@@ -55,6 +55,7 @@
   const I = {
     phone: (c) => svg('<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/>', c),
     nav: (c) => svg('<polygon points="3 11 22 2 13 21 11 13 3 11"/>', c),
+    fold: (c) => svg('<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>', c),
     copy: (c) => svg('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', c),
     more: (c) => svg('<circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/><circle cx="5" cy="12" r="1.5"/>', c),
     box: (c) => svg('<path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/>', c),
@@ -127,7 +128,8 @@
     token: load(KEY.token, ""),
     data: null,
     v: "",
-    view: "orders",
+    // «Заказы» или «Карта» — где курьер был в прошлый раз.
+    view: load(KEY.view, "orders") === "map" ? "map" : "orders",
     list: "",
     focus: "",
     sheet: load(KEY.sheet, "peek"),
@@ -780,7 +782,7 @@
   }
 
   function updateMap(force = false) {
-    if (!S.data || S.view !== "orders") return;
+    if (!S.data || S.view !== "map") return;
     const frame = $("mapframe");
     const schema = $("schema");
     const noteEl = $("mapnote");
@@ -1187,6 +1189,15 @@
       sheetRO.observe(sheet);
       sheet.addEventListener("transitionend", () => fitMap());
     }
+    // Вкладка «Карта»: карта до нижнего меню, карточка заказа — поверх снизу,
+    // кнопки карты и подписи поднимаются над ней (--mc).
+    if (S.view === "map") {
+      const card = $("mapcard");
+      const nav = $("bnav");
+      map.style.bottom = `${nav ? nav.getBoundingClientRect().height : 0}px`;
+      map.style.setProperty("--mc", `${card && !card.hidden ? Math.round(card.getBoundingClientRect().height) + 12 : 0}px`);
+      return;
+    }
     if (S.view !== "orders" || sheet.hidden) { map.style.bottom = "0px"; return; }
     // Карта — от своего верха до верхнего края шторки (с заходом под скругление).
     const mapTop = map.getBoundingClientRect().top;
@@ -1211,12 +1222,17 @@
     renderSheet();
     const page = $("page");
     const sheet = $("sheet");
-    if (S.view === "orders") {
+    const card = $("mapcard");
+    $("shell").className = `v-${S.view}`;
+    if (S.view === "orders" || S.view === "map") {
       page.hidden = true;
-      sheet.hidden = false;
+      sheet.hidden = S.view !== "orders";
+      card.hidden = S.view !== "map";
+      if (S.view === "map") card.innerHTML = mapCardHtml();
       $("hud").hidden = false;
     } else {
       sheet.hidden = true;
+      card.hidden = true;
       $("hud").hidden = true;
       page.hidden = false;
       const top = page.scrollTop;
@@ -1247,6 +1263,7 @@
           <div class="sheet-head" id="sheethead"></div>
           <div class="sheet-body" id="sheetbody"></div>
         </section>
+        <section class="mapcard" id="mapcard" aria-label="Текущий заказ" hidden></section>
         <div class="page" id="page" hidden></div>
         <nav class="bnav" id="bnav" aria-label="Разделы"></nav>
       </div>`;
@@ -1295,7 +1312,7 @@
   function navHtml() {
     const fresh = S.data.me.onShift ? S.data.free.length : 0;
     const tab = (id, label, icon, badge = 0) => `<button data-a="view" data-view="${id}" ${S.view === id ? 'aria-current="page"' : ""}>${icon()}${label}${badge ? `<span class="badge hot">${badge}</span>` : ""}</button>`;
-    return tab("orders", "Заказы", I.box, fresh) + tab("income", "Мои поездки", I.route) + tab("profile", "Профиль", I.user);
+    return tab("orders", "Заказы", I.box, fresh) + tab("map", "Карта", I.fold) + tab("income", "Мои поездки", I.route) + tab("profile", "Профиль", I.user);
   }
 
   function renderSheet() {
@@ -1424,6 +1441,50 @@
         <button data-a="copy" data-key="${esc(o.key)}">${I.copy()}Адрес</button>
         <button data-a="more" data-key="${esc(o.key)}">${I.more()}Ещё</button>
       </div>`;
+    const { main, minor } = stepActions(o);
+    const money = o.toCollect > 0
+      ? `<div class="box cash">${I.cash("l")}<span class="grow"><span class="small muted">Взять с гостя</span><br><b>${rub(o.toCollect)}</b></span><span class="small muted" style="text-align:right">${payWays(o)}</span></div>`
+      : `<div class="box ok cash">${I.check("l")}<span class="grow">Оплачено — деньги не брать<br><span class="small" style="opacity:.8">${rub(o.total)}${o.receipt ? " · чек пробит, гостю пришёл на телефон" : ""}</span></span></div>`;
+    const showAddr = !t.venue || o.cancelled ? "" : `<div class="small muted" style="margin-top:6px">Дальше: ${esc(o.address || o.street || "адрес гостя")}</div>`;
+    return `
+      <div class="steps" aria-hidden="true">${steps}</div>
+      <div class="kicker">${kicker}<span class="grow"></span><span>№${esc(o.no)}</span></div>
+      <div class="dest">${esc(t.address || "Адрес уточняется — позвоните в заведение")}</div>
+      <div class="meta">${meta.join("")}</div>
+      ${showAddr}
+      ${o.fail ? `<div class="box bad">${I.warn("s")} ${esc(o.fail.label || "")}${o.fail.note ? ` — ${esc(o.fail.note)}` : ""}</div>` : ""}
+      ${o.comment && !t.venue ? `<div class="box note">💬 ${esc(o.comment)}</div>` : ""}
+      ${o.local ? `<div class="chips"><span class="chip">${I.refresh("s")}сохраняем…</span></div>` : ""}
+      ${quick}
+      <button class="btn line wide tomap" data-a="view" data-view="map">${I.fold("s")}Маршрут на карте</button>
+      ${money}
+      ${o.payout != null ? `<div class="earnline"><span>Ваш заработок за заказ</span><b>${o.payoutExact ? "≈ " : "от "}${rub(o.payout)}</b></div>` : ""}
+      ${o.lines && o.lines.length ? `<details class="items"><summary>${I.list("s")}Состав: ${o.items} ${plural(o.items, "позиция", "позиции", "позиций")} ▾</summary><ul>${o.lines.map((x) => `<li>${esc(x.name)}${x.mods && x.mods.length ? ` <span class="muted">(${esc(x.mods.join(", "))})</span>` : ""} × ${x.qty}</li>`).join("")}</ul></details>` : ""}
+      <div class="main-act">${main}${minor ? `<div class="minor">${minor}</div>` : ""}</div>`;
+  }
+
+  /** Вкладка «Карта»: снизу — текущий заказ, куда ехать и главная кнопка шага. */
+  function mapCardHtml() {
+    const o = S.data.me.onShift || S.data.mine.length ? activeOrder() : null;
+    if (!o) {
+      const n = S.data.me.onShift ? S.data.free.length : 0;
+      return `<div class="mc-row"><span class="grow"><b>${S.data.me.onShift ? "Заказов в работе нет" : "Вы не на линии"}</b><br><span class="small muted">${n ? `Свободных: ${n}` : S.data.me.onShift ? "Новые придут со звуком" : "Нажмите «Не на линии» сверху, чтобы начать"}</span></span>
+        <button class="btn line" data-a="view" data-view="orders">${I.box("s")}Заказы</button></div>`;
+    }
+    const st = o.cancelled ? { label: "Отменён заведением" } : STAGE[o.stage] || STAGE.toVenue;
+    const t = targetOf(o);
+    const l = leg(here(), t.pos);
+    const { main } = stepActions(o);
+    return `<div class="mc-row">
+        <span class="grow"><span class="small muted">№${esc(o.no)} · ${esc(st.label)}${l ? ` · ${kmText(l.m)}, ~${minText(l.min)}` : ""}</span><br>
+        <b class="mc-dest">${esc(t.venue ? o.point.name : t.address || "Адрес уточняется")}</b>${o.toCollect > 0 ? `<br><span class="small" style="color:var(--amber)">Взять ${rub(o.toCollect)}</span>` : ""}</span>
+        <a class="round mc-nav" href="${esc(navHref(t.pos, t.address))}" target="_blank" rel="noopener" data-a="link" aria-label="Навигатор">${I.nav()}</a>
+        <button class="round" data-a="view" data-view="orders" aria-label="Открыть заказ">${I.list()}</button>
+      </div>
+      ${main ? `<div class="mc-main">${main}</div>` : ""}`;
+  }
+
+  function stepActions(o) {
     let main = "";
     let minor = "";
     if (o.cancelled) {
@@ -1439,24 +1500,7 @@
     } else if (o.stage === "failed") {
       main = `<button class="btn go huge wide" data-a="retry" data-key="${esc(o.key)}">Попробовать ещё раз</button><button class="btn amber wide" data-a="returned" data-key="${esc(o.key)}">↩ Вернул в заведение</button>`;
     }
-    const money = o.toCollect > 0
-      ? `<div class="box cash">${I.cash("l")}<span class="grow"><span class="small muted">Взять с гостя</span><br><b>${rub(o.toCollect)}</b></span><span class="small muted" style="text-align:right">${payWays(o)}</span></div>`
-      : `<div class="box ok cash">${I.check("l")}<span class="grow">Оплачено — деньги не брать<br><span class="small" style="opacity:.8">${rub(o.total)}${o.receipt ? " · чек пробит, гостю пришёл на телефон" : ""}</span></span></div>`;
-    const showAddr = !t.venue || o.cancelled ? "" : `<div class="small muted" style="margin-top:6px">Дальше: ${esc(o.address || o.street || "адрес гостя")}</div>`;
-    return `
-      <div class="steps" aria-hidden="true">${steps}</div>
-      <div class="kicker">${kicker}<span class="grow"></span><span>№${esc(o.no)}</span></div>
-      <div class="dest">${esc(t.address || "Адрес уточняется — позвоните в заведение")}</div>
-      <div class="meta">${meta.join("")}</div>
-      ${showAddr}
-      ${o.fail ? `<div class="box bad">${I.warn("s")} ${esc(o.fail.label || "")}${o.fail.note ? ` — ${esc(o.fail.note)}` : ""}</div>` : ""}
-      ${o.comment && !t.venue ? `<div class="box note">💬 ${esc(o.comment)}</div>` : ""}
-      ${o.local ? `<div class="chips"><span class="chip">${I.refresh("s")}сохраняем…</span></div>` : ""}
-      ${quick}
-      ${money}
-      ${o.payout != null ? `<div class="earnline"><span>Ваш заработок за заказ</span><b>${o.payoutExact ? "≈ " : "от "}${rub(o.payout)}</b></div>` : ""}
-      ${o.lines && o.lines.length ? `<details class="items"><summary>${I.list("s")}Состав: ${o.items} ${plural(o.items, "позиция", "позиции", "позиций")} ▾</summary><ul>${o.lines.map((x) => `<li>${esc(x.name)}${x.mods && x.mods.length ? ` <span class="muted">(${esc(x.mods.join(", "))})</span>` : ""} × ${x.qty}</li>`).join("")}</ul></details>` : ""}
-      <div class="main-act">${main}${minor ? `<div class="minor">${minor}</div>` : ""}</div>`;
+    return { main, minor };
   }
 
   function payWays(o) {
@@ -1934,10 +1978,11 @@
     switch (a) {
       case "view":
         S.view = el.dataset.view;
+        if (S.view === "orders" || S.view === "map") save(KEY.view, S.view);
         if (S.view === "orders") S.newFree.clear();
         if (S.view === "income") { S.histDay = ""; loadHistory(true); }
         render();
-        if (S.view === "orders") updateMap(true);
+        if (S.view === "map") { requestAnimationFrame(() => { fitMap(); updateMap(true); }); }
         return;
       case "list":
         S.list = el.dataset.list;

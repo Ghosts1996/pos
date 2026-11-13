@@ -177,6 +177,12 @@ async function main() {
   const mine = await page.textContent("#sheetbody");
   assert.ok(/Дальше: ул\. Ленина, 5, кв\.\/офис 12/.test(mine), "у своего заказа — полный адрес");
   await shot(page, "3-mine-pickup");
+  // На «Карте» — текущий заказ снизу с главной кнопкой шага.
+  await page.click('#bnav [data-a="view"][data-view="map"]');
+  await page.waitForSelector('#mapcard [data-a="pickup"]');
+  await page.waitForTimeout(300);
+  await shot(page, "3b-map-active");
+  await page.click('#bnav [data-a="view"][data-view="orders"]');
   // 6. Без сети: «Забрал» сразу на экране, уходит потом.
   await ctx.setOffline(true);
   await page.click('[data-a="pickup"]');
@@ -237,15 +243,22 @@ async function main() {
   await page.click('[data-m="deliver"]');
   await page.waitForSelector("text=Заказ вручён");
   // 10. Итоги: 2 доставки, наличные на руках.
-  await page.click('[data-a="view"][data-view="income"]');
+  await page.click('#bnav [data-a="view"][data-view="income"]');
   await page.waitForSelector("h1 >> text=Мои поездки");
   await page.waitForSelector("text=Доставки сегодня");
   await page.waitForSelector(".trip >> nth=1");
   const day = (await page.textContent("#page")).replace(/\s+/g, " ");
   assert.ok(/1 090 ₽ ?на руках/.test(day), "наличные на руках — 1 090 ₽");
   await shot(page, "7-day");
+  // 10а. Вкладка «Заказы» — список без карты; «Карта» — карта на весь экран и карточка заказа снизу.
+  await page.click('#bnav [data-a="view"][data-view="orders"]');
+  assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById("map")).visibility), "hidden", "в «Заказах» карты нет");
+  await page.click('#bnav [data-a="view"][data-view="map"]');
+  await page.waitForSelector("#mapcard:not([hidden])");
+  assert.equal(await page.isVisible("#sheet"), false, "на «Карте» список заказов не закрывает карту");
+  await page.waitForTimeout(400);
+  await shot(page, "7a-map-tab");
   // 10б. Вид карты: схема → спутник (снимки Яндекса во фрейме), выбор запоминается.
-  await page.click('[data-a="view"][data-view="orders"]');
   await page.click('[data-a="layers"]');
   await page.waitForSelector(".layers");
   await page.waitForTimeout(300);
@@ -258,18 +271,20 @@ async function main() {
   await page.waitForFunction(() => /l=map/.test((document.getElementById("mapframe") || {}).src || ""));
   // 11. Тёмная тема — без ошибок.
   await page.emulateMedia({ colorScheme: "dark" });
-  await page.click('[data-a="view"][data-view="profile"]');
+  await page.click('#bnav [data-a="view"][data-view="profile"]');
   await page.waitForSelector("text=Как езжу");
   await page.waitForSelector("text=nikolay@example.ru");
   await page.waitForSelector("text=/Согласие дано .* редакция 2\\.0/");
   await shot(page, "8-dark-profile");
-  await page.click('[data-a="view"][data-view="orders"]');
+  await page.click('#bnav [data-a="view"][data-view="orders"]');
   await shot(page, "9-dark");
   // 12. Ручное назначение: свободных не видно, «Свободные» скрыты.
   await call(api.handleAdminRates, { tenantId: "A", ratePerTrip: 0, ratePerKm: 0, dispatch: "manual" });
   api.forgetCache();
   await db.doc("tenants/A/sessions/s4").set(order(15));
+  await page.click('#bnav [data-a="view"][data-view="map"]');
   await page.click('[data-a="map-refresh"]');
+  await page.click('#bnav [data-a="view"][data-view="orders"]');
   await page.waitForSelector("text=назначает заведение");
   assert.equal(await page.$('[data-a="list"][data-list="free"]'), null, "вкладки «Свободные» нет");
   // 13. Условия открываются; блокировка в кабинете — курьер выходит.
@@ -281,6 +296,7 @@ async function main() {
   const id = (await db.collection("couriers").where("email", "==", "nikolay@example.ru").get()).docs[0].id;
   await db.doc(`couriers/${id}`).update({ cashOnHand: 0 });
   await call(api.handleAdminEnable, { tenantId: "A", courierId: id, enabled: false });
+  await page.click('#bnav [data-a="view"][data-view="map"]');
   await page.click('[data-a="map-refresh"]');
   await page.waitForSelector("text=Вход для курьера", { timeout: 15000 });
   await shot(page, "10-blocked");

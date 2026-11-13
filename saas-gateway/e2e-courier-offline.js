@@ -116,10 +116,11 @@ async function main() {
   // 1. Своя карта Владикавказа открывается сама — по точке заведения.
   await page.goto(base);
   await page.waitForSelector(".venue-line >> text=Кафе «Осетия»");
+  await page.click('#bnav [data-a="view"][data-view="map"]');
   await page.waitForSelector("#zmap:not([hidden]) canvas", { timeout: 30000 });
   await page.waitForFunction(() => navigator.serviceWorker && navigator.serviceWorker.controller, null, { timeout: 15000 }).catch(() => {});
   // 2. Профиль → «Карта без интернета» → скачать город.
-  await page.click('[data-a="view"][data-view="profile"]');
+  await page.click('#bnav [data-a="view"][data-view="profile"]');
   await page.waitForSelector(".off-card >> text=Владикавказ");
   await page.click('[data-a="off-get"]');
   await page.waitForSelector(".off-card >> text=/В телефоне: улицы, подписи и дороги/", { timeout: 120000 });
@@ -130,9 +131,10 @@ async function main() {
   // 3. Смена и заказ: маршрут — по серверу.
   await page.click('#page [data-a="shift"]');
   await page.waitForSelector(".pill.on", { state: "attached" });
-  await page.click('[data-a="view"][data-view="orders"]');
+  await page.click('#bnav [data-a="view"][data-view="orders"]');
   await page.waitForSelector('[data-key="A__s1"][data-a="take"]');
   await page.click('[data-key="A__s1"][data-a="take"]');
+  await page.click('#bnav [data-a="view"][data-view="map"]');
   await page.waitForSelector("#zmeta:not([hidden])", { timeout: 20000 });
   assert.ok(serverRoutes >= 1, "маршрут посчитал сервер");
   await shot(page, "off-2-online-route");

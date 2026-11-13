@@ -132,6 +132,47 @@ function odometerStep(last, points) {
   return { meters: Math.round(meters), last: cur };
 }
 
+/**
+ * Демо: заказ без адреса (оформлен в приложении гостя без адреса, справочник
+ * недоступен) получает настоящий адрес в центре Петербурга рядом с демо-
+ * точками — чтобы курьера можно было проверить целиком: маршрут, «У двери»,
+ * звонок. Выбор постоянный для заказа (по его id). Телефон и имя — вымышленные.
+ */
+const DEMO_ADDRESSES = [
+  ["Малая Садовая ул., 3", 59.93470, 30.33730],
+  ["ул. Рубинштейна, 13", 59.92960, 30.34490],
+  ["Литейный пр., 30", 59.94190, 30.34800],
+  ["Большая Конюшенная ул., 27", 59.93890, 30.32270],
+  ["Гороховая ул., 34", 59.92770, 30.31950],
+  ["Владимирский пр., 11", 59.92900, 30.34820],
+  ["ул. Марата, 20", 59.92460, 30.35280],
+  ["Каменноостровский пр., 10", 59.95750, 30.31650],
+  ["Средний пр. В.О., 31", 59.94200, 30.27800],
+  ["Лиговский пр., 50", 59.92200, 30.35900],
+  ["Садовая ул., 26", 59.93050, 30.32000],
+  ["Невский пр., 100", 59.93200, 30.35400],
+  ["наб. реки Фонтанки, 40", 59.93300, 30.34400],
+  ["ул. Восстания, 25", 59.93850, 30.36250],
+  ["Кронверкский пр., 49", 59.95600, 30.31000],
+  ["7-я линия В.О., 34", 59.94000, 30.27950],
+];
+const DEMO_NAMES = ["Анна", "Михаил", "Ольга", "Дмитрий", "Екатерина", "Сергей", "Мария", "Алексей"];
+
+function demoContact(sessionId) {
+  let h = 0;
+  for (const ch of String(sessionId)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const [street, lat, lng] = DEMO_ADDRESSES[h % DEMO_ADDRESSES.length];
+  const flat = 1 + (h >>> 8) % 120;
+  return {
+    address: `Санкт-Петербург, ${street}, кв. ${flat}, подъезд ${1 + (h >>> 4) % 4}, этаж ${1 + (h >>> 12) % 6}`,
+    // Как у остальных демо-заказов: вымышленный номер 900 000-00-NN.
+    phone: `+7 900 000-00-${String(30 + (h >>> 3) % 70).padStart(2, "0")}`,
+    name: `${DEMO_NAMES[(h >>> 5) % DEMO_NAMES.length]} (демо)`,
+    comment: "Демо-заказ: адрес для проверки",
+    geo: { lat, lng },
+  };
+}
+
 /** Улица и дом без квартиры, подъезда, этажа и домофона — для свободных заказов. */
 function streetOf(address) {
   const a = String(address || "");
@@ -294,16 +335,21 @@ function createCourier({
     const rf = await rfMode(t);
     let recs = new Map();
     if (rf) recs = await pii.lookup(t, need.map((s) => ({ k: "delivery", id: s.id }))).catch(() => new Map());
+    const demo = await rootOf(t).then((r) => r.tenant.demo === true).catch(() => false);
     for (const s of need) {
       const r = recs.get(`delivery:${s.id}`) || {};
       const extra = r.extra && typeof r.extra === "object" ? r.extra : {};
-      const v = {
+      let v = {
         address: String(r.address || s.deliveryAddress || ""),
         phone: String(r.phone || s.customerPhone || extra.guestContact || s.guestContact || ""),
         name: String(r.name || s.customerName || s.guestTag || ""),
         comment: String(extra.comment || r.comment || s.deliveryComment || ""),
         geo: geoOf(extra.geo) || geoOf(s.deliveryGeo),
       };
+      if (demo && !v.address) {
+        const d = demoContact(s.id);
+        v = { address: d.address, phone: v.phone || d.phone, name: v.name || d.name, comment: v.comment || d.comment, geo: v.geo || d.geo };
+      }
       cache.set(`pd:${t}:${s.id}`, { value: v, until: now() + 60000 });
       out.set(s.id, v);
     }
@@ -1716,6 +1762,6 @@ function createCourier({
 }
 
 module.exports = {
-  createCourier, distanceM, odometerStep, streetOf, dayStartMs, zonedMs, normalizePhone,
+  createCourier, distanceM, odometerStep, streetOf, dayStartMs, zonedMs, normalizePhone, demoContact,
   FAIL_REASONS, LOST_MS, MAX_ACTIVE, POLICY_VERSION, CODE_TTL_MS, CODE_RESEND_MS, TRANSPORTS,
 };
