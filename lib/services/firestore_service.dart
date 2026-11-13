@@ -146,6 +146,9 @@ class FirestoreService {
           // Выдан/доставлен — из списка «в работе» уходит (неоплаченный
           // остаётся видным как открытый чек, пока его не закроют).
           if (to == 'done') 'deliveryOpen': false,
+          // Чек полного расчёта (если заказ оплачен заранее) касса пробьёт
+          // сама — delivery_fiscal_service.dart.
+          if (kSaasMode && to == 'done') 'fiscalNeed': true,
         };
     void check(Map<String, dynamic>? data) {
       if (data == null) throw StateError('Заказ не найден');
@@ -242,6 +245,8 @@ class FirestoreService {
         'courierPhone': FieldValue.delete(),
         if (wasActive) 'status': 'cancelled',
         if (wasActive) 'closedAt': now,
+        // Предоплату пробили чеком — касса сама пробьёт его возврат.
+        if (kSaasMode) 'fiscalNeed': true,
       });
       if (wasActive && table != null) {
         final ids = ((table['activeSessionIds'] ?? []) as List).map((e) => e.toString()).toList()..remove(sessionId);

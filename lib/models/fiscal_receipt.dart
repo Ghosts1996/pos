@@ -198,12 +198,19 @@ class FiscalReceipt {
   /// Чек «возврат прихода» (признак расчёта 2) — при возврате оплаченного чека.
   final bool refund;
 
+  /// Способ расчёта (тег 1214) у всех позиций: false — «полный расчёт» (4),
+  /// true — «предоплата 100%» (1): гость оплатил заказ заранее (доставка,
+  /// оплата онлайн), товар отдадут позже. При вручении пробивается второй
+  /// чек — «полный расчёт» с зачётом предоплаты (оплата 'prepayment').
+  final bool fullPrepayment;
+
   const FiscalReceipt({
     required this.receiptId,
     required this.items,
     required this.payments,
     this.buyerContact = '',
     this.refund = false,
+    this.fullPrepayment = false,
   });
 
   /// Возврат этого чека: те же позиции и формы оплаты. Свой номер — по
@@ -214,6 +221,7 @@ class FiscalReceipt {
         payments: payments,
         buyerContact: buyerContact,
         refund: true,
+        fullPrepayment: fullPrepayment,
       );
 
   double get total => (items.fold<double>(0, (sum, i) => sum + i.sum) * 100).roundToDouble() / 100;
@@ -226,6 +234,7 @@ class FiscalReceipt {
         'payments': payments.map((p) => {'type': p.type, 'amount': p.amount}).toList(),
         'buyerContact': buyerContact,
         if (refund) 'refund': true,
+        if (fullPrepayment) 'fullPrepayment': true,
       };
 
   factory FiscalReceipt.fromJson(Map<String, dynamic> j) => FiscalReceipt(
@@ -240,6 +249,7 @@ class FiscalReceipt {
         ],
         buyerContact: j['buyerContact'] as String? ?? '',
         refund: j['refund'] == true,
+        fullPrepayment: j['fullPrepayment'] == true,
       );
 }
 

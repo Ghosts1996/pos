@@ -424,7 +424,18 @@ function createCourier({
       fail: s.courierFail ? { reason: s.courierFail.reason, label: FAIL_REASONS[s.courierFail.reason] || "", note: s.courierFail.note || "" } : null,
       payAtDoor: point.payAtDoor,
       payment: s.courierPayment || null,
+      receipt: receiptOf(s),
     };
+  }
+
+  /**
+   * Чек заказа, пробитый кассой автоматически (fiscalAuto): курьер видит
+   * «Чек пробит» и может показать гостю ссылку на электронный чек.
+   */
+  function receiptOf(s) {
+    const a = s.fiscalAuto || {};
+    const pick = (x, kind) => (x && x.ok === true ? { kind, queued: x.queued === true, url: /^https:\/\//.test(String(x.url || "")) ? String(x.url) : "" } : null);
+    return pick(a.full, "full") || pick(a.prepay, "prepay");
   }
 
   // ------------------------------------------------------------ вход курьера
@@ -1034,6 +1045,8 @@ function createCourier({
             deliveryStatus: "done", deliveryStatusAt: now_, deliveryOpen: false,
             courierStage: "done", courierStageAt: now_, deliveredAt: now_, courierPos: del(),
             ...(rf ? {} : { courierPhone: del() }),
+            // Касса с онлайн-кассой сама пробьёт чек полного расчёта.
+            fiscalNeed: true,
             courierPayment: {
               method: method === "qr_or_online" ? "online" : method,
               amount: collected,

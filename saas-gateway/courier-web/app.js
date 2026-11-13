@@ -1441,7 +1441,7 @@
     }
     const money = o.toCollect > 0
       ? `<div class="box cash">${I.cash("l")}<span class="grow"><span class="small muted">Взять с гостя</span><br><b>${rub(o.toCollect)}</b></span><span class="small muted" style="text-align:right">${payWays(o)}</span></div>`
-      : `<div class="box ok cash">${I.check("l")}<span class="grow">Оплачено — деньги не брать<br><span class="small" style="opacity:.8">${rub(o.total)}</span></span></div>`;
+      : `<div class="box ok cash">${I.check("l")}<span class="grow">Оплачено — деньги не брать<br><span class="small" style="opacity:.8">${rub(o.total)}${o.receipt ? " · чек пробит, гостю пришёл на телефон" : ""}</span></span></div>`;
     const showAddr = !t.venue || o.cancelled ? "" : `<div class="small muted" style="margin-top:6px">Дальше: ${esc(o.address || o.street || "адрес гостя")}</div>`;
     return `
       <div class="steps" aria-hidden="true">${steps}</div>

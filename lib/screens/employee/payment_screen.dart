@@ -12,6 +12,7 @@ import '../../services/payment_terminal_service.dart';
 import '../../utils/sale_kind.dart';
 import '../../services/printer_service.dart';
 import '../../services/kassa_service.dart';
+import '../../services/delivery_fiscal_service.dart';
 import '../../utils/phone_utils.dart';
 import '../../services/chestny_znak_service.dart';
 import '../../services/venue_service.dart';
@@ -782,6 +783,20 @@ class _PaymentScreenState extends State<PaymentScreen> {
   Future<String?> _sendToKassa() async {
     if (!kassaService.isAvailable) {
       return 'касса не настроена (Настройки → Интеграции)';
+    }
+    // Доставка (SaaS): чек предоплаты или полного расчёта касса уже пробила
+    // сама (delivery_fiscal_service.dart) — второй чек не нужен.
+    if (kSaasMode && (widget.session.orderType == 'delivery' || widget.session.orderType == 'takeaway')) {
+      try {
+        final raw = (await AppScope.col('sessions').doc(widget.session.id).get()).data();
+        final state = deliveryFiscalState(raw);
+        if (state.isNotEmpty) {
+          _showKassaWarning(state == 'full'
+              ? 'Чек этого заказа касса уже пробила автоматически'
+              : 'Чек предоплаты пробит автоматически, полный расчёт касса пробьёт сама при вручении');
+          return null;
+        }
+      } catch (_) {}
     }
     try {
       final cz = ChestnyZnakService();

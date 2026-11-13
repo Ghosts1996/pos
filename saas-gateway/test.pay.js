@@ -186,6 +186,7 @@ test("демо-заведение: оплата проходит сразу, б�
   const p = store.get(`tenants/d1/guestPayments/${res.body.paymentId}`);
   assert.equal(p.status, "paid");
   assert.equal(store.get("tenants/d1/sessions/s1").guestPaidTotal, 590);
+  assert.equal(store.get("tenants/d1/sessions/s1").fiscalNeed, true, "доставка оплачена — касса пробьёт чек предоплаты");
   const call = [...store.entries()].find(([k, v]) => k.startsWith("tenants/d1/waiterCalls/") && v.type === "paid");
   assert.ok(call && /демо, деньги не списаны/.test(call[1].comment));
   const st = {};

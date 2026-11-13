@@ -572,9 +572,12 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
         tx.update(sesRef, {
           guestPaidTotal: admin.firestore.FieldValue.increment(p.amount),
           guestPaymentIds: admin.firestore.FieldValue.arrayUnion(paymentId),
+          // Заказ с собой/доставка: касса с онлайн-кассой сама пробьёт чек
+          // предоплаты (lib/services/delivery_fiscal_service.dart).
+          ...(ses.orderType === "delivery" || ses.orderType === "takeaway" ? { fiscalNeed: true } : {}),
         });
       }
-      const where = ses?.orderType ? " — пробейте чек: заказ оплачен заранее" : "";
+      const where = ses?.orderType ? " — заказ оплачен заранее: чек предоплаты касса с онлайн-кассой пробьёт сама, иначе пробейте чек вручную" : "";
       const bank = p.provider === "demo" ? "демо, деньги не списаны" : PROVIDERS[p.provider] || "банк";
       // Оплата по QR у двери (приложение курьера): чек — сейчас, гость его ждёт.
       const byCourier = p.courierNo ? `Оплачено по QR у курьера №${p.courierNo} (${bank}): ${p.amount} ₽ — пробейте чек сейчас, гостю уйдёт электронный чек` : "";

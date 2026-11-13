@@ -374,6 +374,7 @@ test("заказ целиком: свободный без данных гост
   s = (await w.db.doc("tenants/A/sessions/s1").get()).data();
   assert.deepEqual([s.deliveryStatus, s.courierStage, s.deliveryOpen], ["done", "done", false]);
   assert.deepEqual({ ...s.courierPayment, at: 0 }, { method: "cash", amount: 750, received: 1000, change: 250, courierId: c.id, courierNo: 1, at: 0 });
+  assert.equal(s.fiscalNeed, true, "касса пробьёт чек полного расчёта сама");
   assert.equal((await act(w, c.token, "deliver", "A", "s1", { method: "cash" })).body.result, "same", "повтор вручения — без второго учёта денег");
   const me = (await w.db.doc(`couriers/${c.id}`).get()).data();
   assert.equal(me.cashOnHand, 750);

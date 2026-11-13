@@ -61,6 +61,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   final _kassaCashierInnCtrl = TextEditingController();
   String _kassaSno = 'osn';
   String _kassaVat = 'none';
+  bool _deliveryAutoFiscal = true;
   String _kassaApiVersion = 'v5';
   final _kassaOrangeKeyNameCtrl = TextEditingController();
   final _kassaOrangeCertPemCtrl = TextEditingController();
@@ -151,6 +152,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _kassaCashierInnCtrl.text = data['kassaCashierInn'] ?? '';
     _kassaSno = data['kassaSno'] ?? 'osn';
     _kassaVat = FiscalVatRateX.fromId(data['kassaVat'] as String?).id;
+    _deliveryAutoFiscal = data['deliveryAutoFiscal'] != false;
     _kassaApiVersion = data['kassaApiVersion'] == 'v4' ? 'v4' : 'v5';
     _kassaOrangeKeyNameCtrl.text = data['kassaOrangeKeyName'] ?? '';
     _kassaOrangeCertPemCtrl.text = data['kassaOrangeCertPem'] ?? '';
@@ -256,6 +258,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'kassaCashierInn': _kassaCashierInnCtrl.text.trim(),
       'kassaSno': _kassaSno,
       'kassaVat': _kassaVat,
+      if (kSaasMode) 'deliveryAutoFiscal': _deliveryAutoFiscal,
       'kassaApiVersion': _kassaApiVersion,
       'kassaOrangeKeyName': _kassaOrangeKeyNameCtrl.text.trim(),
       'kassaOrangeCertPem': _kassaOrangeCertPemCtrl.text.trim(),
@@ -558,6 +561,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'kassaCashierInn': _kassaCashierInnCtrl.text.trim(),
       'kassaSno': _kassaSno,
       'kassaVat': _kassaVat,
+      if (kSaasMode) 'deliveryAutoFiscal': _deliveryAutoFiscal,
       'kassaApiVersion': _kassaApiVersion,
       'kassaOrangeKeyName': _kassaOrangeKeyNameCtrl.text.trim(),
       'kassaOrangeCertPem': _kassaOrangeCertPemCtrl.text.trim(),
@@ -1282,6 +1286,15 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
               options: [for (final v in FiscalVatRate.values) _Opt(v.id, v.label)],
               onChanged: (v) => setState(() => _kassaVat = v),
             ),
+            if (kSaasMode)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _deliveryAutoFiscal,
+                onChanged: (v) => setState(() => _deliveryAutoFiscal = v),
+                title: const Text('Чеки доставки автоматически'),
+                subtitle: const Text('Оплата онлайн — чек предоплаты сразу; курьер вручил заказ — чек полного расчёта. '
+                    'Гостю чек приходит по телефону. Работает, пока открыта хотя бы одна касса.'),
+              ),
           ],
           OutlinedButton.icon(
             onPressed: _testing ? null : _testKassa,

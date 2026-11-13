@@ -105,13 +105,14 @@ extension FiscalTaxSystemX on FiscalTaxSystem {
   }
 }
 
-/// Код способа расчёта (тег 1214) для позиции чека, закрываемого прямо
-/// сейчас на кассе, — у этого приложения нет сценария "продажа в рассрочку"
-/// или "зачёт предоплаты", закрытие стола всегда одномоментный полный расчёт.
-const String _atolPaymentMethodFull = 'full_payment';
+/// Код способа расчёта (тег 1214) для позиции чека: закрытие стола —
+/// «полный расчёт»; заказ, оплаченный заранее (доставка, оплата онлайн), —
+/// «предоплата 100%» ([FiscalReceipt.fullPrepayment]), а при вручении —
+/// снова «полный расчёт» с зачётом предоплаты.
+String atolPaymentMethod(FiscalReceipt r) => r.fullPrepayment ? 'full_prepayment' : 'full_payment';
 
-/// Код способа расчёта (тег 1214) для OrangeData — "полный расчёт".
-const int _orangeDataPaymentMethodFull = 4;
+/// Код способа расчёта (тег 1214) для OrangeData: 1 — предоплата 100%, 4 — полный расчёт.
+int orangeDataPaymentMethod(FiscalReceipt r) => r.fullPrepayment ? 1 : 4;
 
 int orangeDataVatCode(FiscalVatRate v) => v.orangeDataCode;
 
@@ -308,7 +309,7 @@ class AtolCloudKassaService implements KassaService {
           'inn': companyInn,
           'payment_address': companyPaymentAddress,
         },
-        'items': receipt.items.map(_v5 ? _itemV5 : _itemV4).toList(),
+        'items': receipt.items.map((i) => _v5 ? _itemV5(i, receipt) : _itemV4(i, receipt)).toList(),
         'payments': receipt.payments
             .map((p) => {'type': atolPaymentTypeCode(p.type), 'sum': roundKopecks(p.amount)})
             .toList(),
@@ -317,8 +318,9 @@ class AtolCloudKassaService implements KassaService {
     };
   }
 
-  Map<String, dynamic> _itemV5(FiscalReceiptItem i) {
-    final marked = i.markingCode != null && i.markingCode!.isNotEmpty;
+  Map<String, dynamic> _itemV5(FiscalReceiptItem i, FiscalReceipt r) {
+    // Код маркировки выбывает при передаче товара — в чек предоплаты не идёт.
+    final marked = !r.fullPrepayment && i.markingCode != null && i.markingCode!.isNotEmpty;
     final permit = i.markingPermit;
     return {
       'name': i.name,
@@ -326,7 +328,7 @@ class AtolCloudKassaService implements KassaService {
       'quantity': i.quantity,
       'sum': i.sum,
       'measure': 0, // штуки
-      'payment_method': _atolPaymentMethodFull,
+      'payment_method': atolPaymentMethod(r),
       'payment_object': i.paymentObject.ffd12Code(marked: marked),
       'vat': {'type': i.vat.providerCode},
       if (marked) ...{
@@ -345,13 +347,13 @@ class AtolCloudKassaService implements KassaService {
     };
   }
 
-  Map<String, dynamic> _itemV4(FiscalReceiptItem i) => {
+  Map<String, dynamic> _itemV4(FiscalReceiptItem i, FiscalReceipt r) => {
         'name': i.name,
         'price': roundKopecks(i.price),
         'quantity': i.quantity,
         'sum': i.sum,
         'measurement_unit': 'шт',
-        'payment_method': _atolPaymentMethodFull,
+        'payment_method': atolPaymentMethod(r),
         'payment_object': atolPaymentObjectCode(i.paymentObject),
         'vat': {'type': i.vat.providerCode},
       };
@@ -538,14 +540,14 @@ class OrangeDataKassaService implements KassaService {
         'ffdVersion': 4, // ФФД 1.2
         'type': receipt.refund ? 2 : 1, // приход или возврат прихода
         'positions': receipt.items.map((i) {
-          final marked = (i.markingCode ?? '').isNotEmpty;
+          final marked = !receipt.fullPrepayment && (i.markingCode ?? '').isNotEmpty;
           final permit = i.markingPermit;
           return {
             'quantity': i.quantity,
             'price': roundKopecks(i.price),
             'tax': orangeDataVatCode(i.vat),
             'text': i.name,
-            'paymentMethodType': _orangeDataPaymentMethodFull,
+            'paymentMethodType': orangeDataPaymentMethod(receipt),
             'paymentSubjectType': i.paymentObject.ffd12Code(marked: marked),
             'quantityMeasurementUnit': 0, // штуки
             if (marked) ...{
@@ -654,6 +656,12 @@ class KassaException implements Exception {
 /// не придётся.
 KassaService kassaService = NoKassaService();
 
+/// Чеки доставки пробиваются сами (SaaS): предоплата при оплате онлайн,
+/// полный расчёт при вручении — Настройки → Интеграции → «Онлайн-касса»,
+/// поле `deliveryAutoFiscal` (по умолчанию включено). См.
+/// `delivery_fiscal_service.dart`.
+bool deliveryAutoFiscal = true;
+
 /// Ставка НДС заведения по умолчанию (Настройки → Интеграции → касса) —
 /// для позиций меню, у которых своя ставка не задана.
 FiscalVatRate kassaDefaultVat = FiscalVatRate.none;
@@ -678,6 +686,7 @@ Future<void> loadSavedKassaSettings() async {
 /// том, какие поля к какому провайдеру относятся.
 KassaService buildKassaService(Map<String, dynamic> data) {
   kassaDefaultVat = FiscalVatRateX.fromId(data['kassaVat'] as String?);
+  deliveryAutoFiscal = data['deliveryAutoFiscal'] != false;
   final type = data['kassaType'] as String? ?? 'none';
   String s(String key) => data[key] as String? ?? '';
   final sno = FiscalTaxSystemX.fromId(data['kassaSno'] as String?);

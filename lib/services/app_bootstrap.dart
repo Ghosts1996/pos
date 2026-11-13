@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'fiscal_queue.dart';
+import 'delivery_fiscal_service.dart';
+import '../build_info.dart';
 import 'net_status.dart';
 import '../models/client_models.dart';
 import '../utils/time_cafe.dart';
@@ -41,6 +43,8 @@ void startBackgroundServices() {
   // Звонки и сигналы: реле, зуммер, сигналы между планшетами по Wi‑Fi.
   SignalBootstrap.start();
   unawaited(loadSavedKassaSettings());
+  // Чеки доставки без кассира: предоплата и полный расчёт при вручении.
+  if (kSaasMode) DeliveryFiscalService.instance.start();
   unawaited(loadSavedTerminalSettings());
   unawaited(loadSavedEgaisSettings());
   unawaited(loadSavedChestnyZnakSettings());

@@ -69,8 +69,8 @@ class AtolLocalKassaService implements KassaService {
     }
   }
 
-  String _paymentObject(FiscalReceiptItem i) {
-    final marked = ffd12 && (i.markingCode ?? '').isNotEmpty;
+  String _paymentObject(FiscalReceiptItem i, [bool fullPrepayment = false]) {
+    final marked = ffd12 && !fullPrepayment && (i.markingCode ?? '').isNotEmpty;
     switch (i.paymentObject) {
       case FiscalPaymentObject.service:
         return 'service';
@@ -82,8 +82,9 @@ class AtolLocalKassaService implements KassaService {
     }
   }
 
-  Map<String, dynamic> _item(FiscalReceiptItem i) {
-    final marked = ffd12 && (i.markingCode ?? '').isNotEmpty;
+  Map<String, dynamic> _item(FiscalReceiptItem i, [bool fullPrepayment = false]) {
+    // Код маркировки выбывает при передаче товара — в чек предоплаты не идёт.
+    final marked = ffd12 && !fullPrepayment && (i.markingCode ?? '').isNotEmpty;
     final permit = i.markingPermit;
     return {
       'type': 'position',
@@ -91,8 +92,8 @@ class AtolLocalKassaService implements KassaService {
       'price': roundKopecks(i.price),
       'quantity': i.quantity,
       'amount': i.sum,
-      'paymentMethod': 'fullPayment',
-      'paymentObject': _paymentObject(i),
+      'paymentMethod': fullPrepayment ? 'fullPrepayment' : 'fullPayment',
+      'paymentObject': _paymentObject(i, fullPrepayment),
       'tax': {'type': i.vat.providerCode},
       if (ffd12) 'measurementUnit': 'piece',
       if (marked)
@@ -124,7 +125,7 @@ class AtolLocalKassaService implements KassaService {
       if (cashierName.isNotEmpty)
         'operator': {'name': cashierName, if (cashierInn.isNotEmpty) 'vatin': cashierInn},
       if (emailOrPhone != null) 'clientInfo': {'emailOrPhone': emailOrPhone},
-      'items': receipt.items.map(_item).toList(),
+      'items': receipt.items.map((i) => _item(i, receipt.fullPrepayment)).toList(),
       'payments': receipt.payments
           .map((p) => {'type': paymentType(p.type), 'sum': roundKopecks(p.amount)})
           .toList(),
