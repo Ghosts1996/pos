@@ -15,7 +15,10 @@
  * чтобы касса, кабинет и база не замедлялись. Скачанные выгрузки удаляются.
  * Готовые файлы подменяются целиком: шлюз подхватывает их сам.
  *
- *   node map-build.js [--force] [--only=tiles|roads] [--dry-run]
+ *   4. Вся Россия — обзорная карта до масштаба 12 (russia.pmtiles): шлюз
+ *      отдаёт участок из карты городов, а где её нет — из карты страны.
+ *
+ *   node map-build.js [--force] [--only=tiles|roads|country] [--dry-run]
  */
 const crypto = require("crypto");
 const fs = require("fs");
@@ -27,7 +30,11 @@ const REGIONS_FILE = process.env.MAP_REGIONS_FILE || "/opt/saas-gateway/state/ma
 const RADIUS_KM = Number(process.env.MAP_RADIUS_KM) || 25;
 const MAXZOOM = Number(process.env.MAP_MAXZOOM) || 15;
 const TILES_MAX_DAYS = 30;
-const ROADS_MAX_DAYS = 14;
+const ROADS_MAX_DAYS = 30;
+// Вся Россия — обзорная карта до масштаба COUNTRY_MAXZOOM (города, районы,
+// главные и второстепенные улицы, ~2,6 ГБ); обновляется раз в COUNTRY_MAX_DAYS.
+const COUNTRY_MAXZOOM = Number(process.env.MAP_COUNTRY_MAXZOOM) || 12;
+const COUNTRY_MAX_DAYS = 60;
 const MEMORY_MAX = process.env.MAP_MEMORY_MAX || "900M";
 const PMTILES_VERSION = "1.31.2";
 const PMTILES_SHA256 = "3ed7dbf4ec2e6dfe5e25b6f70d1ffc932729f93c86db353bf514dd71010a312f";
@@ -43,8 +50,10 @@ const DISTRICTS = [
 ];
 // Демо всегда в Санкт-Петербурге (Невский пр., 28 и Университетская наб., 3).
 const DEMO_POINTS = [[59.9357, 30.3258], [59.9415, 30.3045]];
-// Города, карта которых есть всегда, даже без заведений: Владикавказ (просьба
-// владельца) и дополнительные из MAP_EXTRA_POINTS («шир,долг;шир,долг»).
+// Подробная карта (до домов) и маршруты есть всегда — для крупных городов
+// России (CITIES ниже; просьба владельца: «карту всей России») и городов
+// заведений; дополнительные — MAP_EXTRA_POINTS («шир,долг;шир,долг»).
+// MAP_ALL_CITIES=0 — только Владикавказ и Петербург (маленький сервер).
 const FIXED_POINTS = [[43.0247, 44.6819]];
 const EXTRA_POINTS = String(process.env.MAP_EXTRA_POINTS || "").split(";")
   .map((x) => x.split(",").map(Number)).filter((p) => p.length === 2 && p.every(Number.isFinite));
@@ -52,18 +61,35 @@ const EXTRA_POINTS = String(process.env.MAP_EXTRA_POINTS || "").split(";")
 const CITIES = [
   ["Санкт-Петербург", 59.9386, 30.3141], ["Москва", 55.7558, 37.6176], ["Владикавказ", 43.0247, 44.6819],
   ["Беслан", 43.1936, 44.5408], ["Нальчик", 43.4853, 43.6071], ["Грозный", 43.3178, 45.6949],
-  ["Махачкала", 42.9849, 47.5047], ["Пятигорск", 44.0486, 43.0594], ["Ставрополь", 45.0428, 41.9734],
-  ["Краснодар", 45.0355, 38.9753], ["Сочи", 43.5855, 39.7231], ["Ростов-на-Дону", 47.2357, 39.7015],
+  ["Махачкала", 42.9849, 47.5047], ["Дербент", 42.0578, 48.2883], ["Пятигорск", 44.0486, 43.0594],
+  ["Кисловодск", 43.9133, 42.7208], ["Ставрополь", 45.0428, 41.9734], ["Черкесск", 44.2269, 42.0467],
+  ["Майкоп", 44.6098, 40.1006], ["Элиста", 46.3078, 44.2558], ["Магас", 43.1688, 44.8131],
+  ["Краснодар", 45.0355, 38.9753], ["Сочи", 43.5855, 39.7231], ["Новороссийск", 44.7235, 37.7686],
+  ["Анапа", 44.8946, 37.3166], ["Геленджик", 44.5622, 38.0848], ["Ростов-на-Дону", 47.2357, 39.7015],
   ["Волгоград", 48.708, 44.5133], ["Астрахань", 46.3497, 48.0408], ["Воронеж", 51.6608, 39.2003],
-  ["Казань", 55.7963, 49.1088], ["Нижний Новгород", 56.3269, 44.0059], ["Самара", 53.1959, 50.1002],
-  ["Саратов", 51.5331, 46.0342], ["Уфа", 54.7388, 55.9721], ["Пермь", 58.0105, 56.2502],
-  ["Екатеринбург", 56.8389, 60.6057], ["Челябинск", 55.1644, 61.4368], ["Тюмень", 57.153, 65.5343],
-  ["Омск", 54.9885, 73.3242], ["Новосибирск", 55.0084, 82.9357], ["Томск", 56.4846, 84.9476],
-  ["Красноярск", 56.0153, 92.8932], ["Иркутск", 52.2869, 104.305], ["Хабаровск", 48.4802, 135.0719],
-  ["Владивосток", 43.1155, 131.8855], ["Калининград", 54.7104, 20.4522], ["Ярославль", 57.6261, 39.8845],
-  ["Тула", 54.1931, 37.6173], ["Рязань", 54.6269, 39.6916], ["Оренбург", 51.7682, 55.0969],
-  ["Мурманск", 68.9585, 33.0827], ["Архангельск", 64.5399, 40.5152], ["Севастополь", 44.6167, 33.5254],
-  ["Симферополь", 44.9521, 34.1024], ["Барнаул", 53.3548, 83.7698], ["Кемерово", 55.3547, 86.0873],
+  ["Белгород", 50.5997, 36.5983], ["Курск", 51.7304, 36.1926], ["Липецк", 52.6031, 39.5708],
+  ["Тамбов", 52.7212, 41.4523], ["Орёл", 52.9703, 36.0635], ["Брянск", 53.2434, 34.3644],
+  ["Казань", 55.7963, 49.1088], ["Набережные Челны", 55.7436, 52.3958], ["Нижний Новгород", 56.3269, 44.0059],
+  ["Самара", 53.1959, 50.1002], ["Тольятти", 53.5078, 49.4204], ["Саратов", 51.5331, 46.0342],
+  ["Пенза", 53.1959, 45.0183], ["Ульяновск", 54.3142, 48.4031], ["Чебоксары", 56.1439, 47.2489],
+  ["Йошкар-Ола", 56.6344, 47.8999], ["Саранск", 54.1838, 45.1749], ["Ижевск", 56.8526, 53.2045],
+  ["Киров", 58.6036, 49.668], ["Уфа", 54.7388, 55.9721], ["Оренбург", 51.7682, 55.0969],
+  ["Пермь", 58.0105, 56.2502], ["Екатеринбург", 56.8389, 60.6057], ["Нижний Тагил", 57.9194, 59.965],
+  ["Челябинск", 55.1644, 61.4368], ["Магнитогорск", 53.4072, 58.9791], ["Курган", 55.441, 65.3411],
+  ["Тюмень", 57.153, 65.5343], ["Сургут", 61.254, 73.3962], ["Омск", 54.9885, 73.3242],
+  ["Новосибирск", 55.0084, 82.9357], ["Томск", 56.4846, 84.9476], ["Барнаул", 53.3548, 83.7698],
+  ["Кемерово", 55.3547, 86.0873], ["Новокузнецк", 53.7557, 87.1099], ["Красноярск", 56.0153, 92.8932],
+  ["Абакан", 53.7156, 91.4292], ["Иркутск", 52.2869, 104.305], ["Улан-Удэ", 51.8335, 107.5841],
+  ["Чита", 52.0339, 113.4994], ["Якутск", 62.0355, 129.6755], ["Благовещенск", 50.2907, 127.5272],
+  ["Хабаровск", 48.4802, 135.0719], ["Владивосток", 43.1155, 131.8855], ["Южно-Сахалинск", 46.9591, 142.738],
+  ["Петропавловск-Камчатский", 53.0452, 158.6483], ["Магадан", 59.5638, 150.8035], ["Калининград", 54.7104, 20.4522],
+  ["Псков", 57.8136, 28.3496], ["Великий Новгород", 58.5228, 31.2698], ["Петрозаводск", 61.7849, 34.3469],
+  ["Мурманск", 68.9585, 33.0827], ["Архангельск", 64.5399, 40.5152], ["Вологда", 59.2181, 39.8886],
+  ["Череповец", 59.1265, 37.9093], ["Сыктывкар", 61.6688, 50.8364], ["Ярославль", 57.6261, 39.8845],
+  ["Кострома", 57.7665, 40.9269], ["Иваново", 57.0004, 40.9739], ["Владимир", 56.1291, 40.4066],
+  ["Тверь", 56.8587, 35.9176], ["Смоленск", 54.7826, 32.0453], ["Калуга", 54.5293, 36.2754],
+  ["Тула", 54.1931, 37.6173], ["Рязань", 54.6269, 39.6916], ["Севастополь", 44.6167, 33.5254],
+  ["Симферополь", 44.9521, 34.1024], ["Ялта", 44.4952, 34.1663], ["Керчь", 45.3562, 36.4673],
 ];
 function regionName(r) {
   const [w, s0, e, n] = r.bbox;
@@ -122,7 +148,8 @@ function readPoints(file = REGIONS_FILE) {
   let pts = [];
   try { pts = JSON.parse(fs.readFileSync(file, "utf8")).points || []; } catch (_) {}
   pts = pts.filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
-  return [...DEMO_POINTS, ...FIXED_POINTS, ...EXTRA_POINTS, ...pts];
+  const cities = process.env.MAP_ALL_CITIES === "0" ? [] : CITIES.map(([, lat, lng]) => [lat, lng]);
+  return [...DEMO_POINTS, ...FIXED_POINTS, ...cities, ...EXTRA_POINTS, ...pts];
 }
 
 function regionsGeoJson(regions) {
@@ -311,6 +338,70 @@ function buildTiles(regions, { force, dryRun }) {
   return res;
 }
 
+/* ------------------------------ вся Россия ------------------------------ */
+
+/** Контур России для вырезки тайлов: округа Geofabrik (тот же список, что для дорог). */
+function russiaGeoJson() {
+  const polyDir = path.join(DIR, "geofabrik");
+  fs.mkdirSync(polyDir, { recursive: true });
+  const polys = [];
+  for (const d of DISTRICTS) {
+    const f = path.join(polyDir, `${d}.poly`);
+    let st = null;
+    try { st = fs.statSync(f); } catch (_) {}
+    if (!st || Date.now() - st.mtimeMs > 30 * 86400000) {
+      try { download(`${GEOFABRIK}${d}.poly`, f, { minBytes: 100 }); } catch (e) { if (!st) throw new Error(`${d}.poly: ${e.message}`); }
+    }
+    // Только внешние контуры (дыры не нужны: лишний участок тайлов не мешает).
+    for (const r of parsePoly(fs.readFileSync(f, "utf8"))) if (!r.hole) polys.push([[...r.ring, r.ring[0]]]);
+  }
+  return { type: "MultiPolygon", coordinates: polys };
+}
+
+function buildCountry({ force, dryRun }) {
+  const metaFile = path.join(DIR, "country.json");
+  const meta = readJson(metaFile, {});
+  const out = path.join(DIR, "russia.pmtiles");
+  if (!force && fs.existsSync(out) && meta.maxzoom === COUNTRY_MAXZOOM && daysSince(meta.at) < COUNTRY_MAX_DAYS) {
+    log(`Россия: без изменений (сборка ${meta.build}, ${daysSince(meta.at).toFixed(0)} дн.)`);
+    return { skipped: true, ...meta };
+  }
+  const bin = ensurePmtiles();
+  const build = latestBuild();
+  const regionFile = path.join(DIR, "russia.geojson");
+  writeJson(regionFile, russiaGeoJson());
+  let maxzoom = COUNTRY_MAXZOOM;
+  for (;;) {
+    const est = capture(bin, ["extract", BUILD_BASE + build, path.join(DIR, "dry.pmtiles"), `--region=${regionFile}`, `--maxzoom=${maxzoom}`, "--dry-run"]);
+    const m = /archive size of ([\d.]+) ([KMGT]?B)/.exec(est.out);
+    const mb = m ? Number(m[1]) * ({ B: 1 / 1048576, KB: 1 / 1024, MB: 1, GB: 1024, TB: 1048576 }[m[2]] || 1) : NaN;
+    // Место: новый файл + старый до подмены + запас 3 ГБ для городов и дорог.
+    const old = fs.existsSync(out) ? fs.statSync(out).size / 1048576 : 0;
+    log(`Россия: сборка ${build}, масштаб до ${maxzoom}, размер ≈ ${Number.isFinite(mb) ? mb.toFixed(0) : "?"} МБ, свободно ${freeMb(DIR)} МБ`);
+    if (!est.ok) throw new Error(`pmtiles: оценка не удалась — ${est.out.slice(-300)}`);
+    if (Number.isFinite(mb) && mb + 3072 > freeMb(DIR) + old) {
+      if (maxzoom > 9) { maxzoom--; continue; }
+      throw new Error("Россия: мало места на диске");
+    }
+    break;
+  }
+  if (dryRun) return { dryRun: true, build, maxzoom };
+  const tmp = path.join(DIR, "russia.pmtiles.new");
+  try { fs.unlinkSync(tmp); } catch (_) {}
+  run(bin, ["extract", BUILD_BASE + build, tmp, `--region=${regionFile}`, `--maxzoom=${maxzoom}`, "--download-threads=4", "--quiet"], { heavy: true, timeoutMs: 8 * 3600 * 1000 });
+  const { openPmtiles } = require("./map-tiles");
+  const p = openPmtiles(tmp);
+  const ok = p.header.tileType === 1 && p.header.maxZoom >= 9;
+  p.close();
+  if (!ok) { fs.unlinkSync(tmp); throw new Error("Россия: собранный файл не подходит"); }
+  fs.chmodSync(tmp, 0o644);
+  fs.renameSync(tmp, out);
+  const res = { build, maxzoom, at: new Date().toISOString(), bytes: fs.statSync(out).size };
+  writeJson(metaFile, res);
+  log(`Россия: готово, ${(res.bytes / 1048576).toFixed(0)} МБ`);
+  return res;
+}
+
 /* ------------------------------ дороги ------------------------------ */
 
 function districtOf(region) {
@@ -370,13 +461,14 @@ function buildRoads(regions, { force, dryRun }) {
   const work = path.join(DIR, "work");
   fs.mkdirSync(work, { recursive: true });
   const done = [];
+  const failed = [];
   for (const [d, list] of byDistrict) {
     const pbf = path.join(work, `${d}.osm.pbf`);
     if (freeMb(DIR) < 4096) throw new Error(`дороги: мало места (${freeMb(DIR)} МБ) для выгрузки ${d}`);
     log(`дороги: качаю ${d}`);
     download(`${GEOFABRIK}${d}-latest.osm.pbf`, pbf, { minBytes: 1 << 20 });
     try {
-      for (const r of list) {
+      for (const r of list) try {
         const cut = path.join(work, `cut-${r.id}.o5m`);
         const roadsO5m = path.join(work, `roads-${r.id}.o5m`);
         const roads = path.join(work, `roads-${r.id}.osm.pbf`);
@@ -403,12 +495,18 @@ function buildRoads(regions, { force, dryRun }) {
         meta[r.id] = { bbox: r.bbox, district: d, at: new Date().toISOString(), bytes: fs.statSync(out).size };
         writeJson(metaFile, meta);
         done.push(r.id);
-        log(`дороги: район ${r.id} готов`);
+        log(`дороги: район ${r.id} (${r.name || ""}) готов`);
+      } catch (e) {
+        // Один город не получился — остальные собираются дальше; ошибка — в отчёт.
+        failed.push(`${r.name || r.id}: ${e.message}`);
+        log(`!! дороги: ${r.name || r.id} — ${e.message}`);
+        for (const f of fs.readdirSync(work)) if (f.includes(r.id)) { try { fs.unlinkSync(path.join(work, f)); } catch (_) {} }
       }
     } finally {
       try { fs.unlinkSync(pbf); } catch (_) {}
     }
   }
+  if (failed.length) throw new Error(`не собраны ${failed.length}: ${failed.slice(0, 5).join("; ")}`);
   return { done };
 }
 
@@ -433,11 +531,18 @@ function main() {
     const regions = clusterRegions(readPoints());
     status.regions = regions;
     log(`районов: ${regions.length} (${regions.map((r) => r.id).join(", ")})`);
-    if (only !== "roads") {
+    if (only !== "roads" && only !== "country") {
       try { status.tiles = buildTiles(regions, { force, dryRun }); } catch (e) { status.errors.push(`тайлы: ${e.message}`); log(`!! ${e.message}`); }
     }
-    if (only !== "tiles") {
+    const partial = () => { if (!dryRun) writeJson(path.join(DIR, "status.json"), { ...status, running: true, ok: status.errors.length === 0 }); };
+    partial(); // города уже видны приложению, пока идут дороги и страна
+    if (only !== "tiles" && only !== "country") {
       try { status.roads = buildRoads(regions, { force, dryRun }); } catch (e) { status.errors.push(`дороги: ${e.message}`); log(`!! ${e.message}`); }
+    }
+    partial();
+    // Страна — последней: города и их дороги нужнее курьерам и собираются быстрее.
+    if ((only === "" || only === "country") && process.env.MAP_COUNTRY !== "0") {
+      try { status.country = buildCountry({ force, dryRun }); } catch (e) { status.errors.push(`Россия: ${e.message}`); log(`!! ${e.message}`); }
     }
   } finally {
     status.finishedAt = new Date().toISOString();

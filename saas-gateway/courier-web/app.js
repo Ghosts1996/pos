@@ -851,7 +851,8 @@
         if (!info) { z.state = "idle"; z.retryAt = Date.now() + 120000; return updateMap(true); }
         z.info = info;
         const area = areaFor(ref);
-        const covered = area ? true : !(info.areas && info.areas.length) && inBox(info.tiles.bounds, ref);
+        // Карта всей России (countryMaxzoom) — своя карта везде в стране; иначе только в районах городов.
+        const covered = area ? true : (info.tiles.countryMaxzoom || !(info.areas && info.areas.length)) && inBox(info.tiles.bounds, ref);
         if (!covered) { z.state = "off"; z.offRef = ref; return updateMap(true); }
         z.area = area;
         offAuto();
@@ -860,7 +861,7 @@
         box.hidden = false;
         z.info = info;
         z.api = window.ZalMap.create(box, {
-          base: MAP_BASE, info, center: ref, zoom: 14, bounds: area ? area.bbox : null,
+          base: MAP_BASE, info, center: ref, zoom: area ? 14 : Math.min(12, info.tiles.countryMaxzoom || 12), bounds: area && !info.tiles.countryMaxzoom ? area.bbox : null,
           onFollow: (on) => { z.follow = on; paintMapButtons(); },
         });
         if (!z.api) { box.hidden = true; z.state = "off"; return updateMap(true); }
@@ -1043,7 +1044,7 @@
     const o = S.off;
     if (!("caches" in window)) return "";
     if (!st.area) {
-      return `<div class="lrow">${I.download()}<span class="grow small muted">${S.zm.state === "off" ? "Своей карты для этого города пока нет — её соберёт сервер, когда заведение отметит точку на карте в кабинете." : "Карта загружается…"}</span></div>`;
+      return `<div class="lrow">${I.download()}<span class="grow small muted">${S.zm.state === "on" ? "Здесь — обзорная карта России. Подробная карта с домами и маршрутами появится, когда заведение отметит свою точку на карте в кабинете («Доставка» → «Цена и районы»)." : S.zm.state === "off" ? "Своей карты для этого места пока нет — её соберёт сервер, когда заведение отметит точку на карте в кабинете." : "Карта загружается…"}</span></div>`;
     }
     const pct = o.total ? Math.round((o.done / o.total) * 100) : 0;
     const status = o.busy

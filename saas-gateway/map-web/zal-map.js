@@ -132,7 +132,8 @@
       style: styleFor(base, info, theme),
       center: [c.lng, c.lat],
       zoom: opts.zoom || 13,
-      minZoom: 9,
+      // С картой всей России — можно отдалить до страны целиком.
+      minZoom: info.tiles.countryMaxzoom ? 3 : 9,
       maxZoom: 19,
       maxBounds: [[b[0] - 0.6, b[1] - 0.4], [b[2] + 0.6, b[3] + 0.4]],
       attributionControl: false,
@@ -144,6 +145,20 @@
       renderWorldCopies: false,
     });
     map.touchZoomRotate.disableRotation();
+    // Вся Россия: подробно (до домов) — в районах городов, вне их карта
+    // страны до масштаба countryMaxzoom: дальше не приближаем, а не рисуем пустоту.
+    const detail = (info.areas || []).map((a) => a.bbox).filter((b) => Array.isArray(b) && b.length === 4);
+    const cmz = Number(info.tiles.countryMaxzoom) || 0;
+    if (cmz && detail.length) {
+      const limitZoom = () => {
+        const c = map.getCenter();
+        const inside = detail.some((b) => c.lng >= b[0] && c.lng <= b[2] && c.lat >= b[1] && c.lat <= b[3]);
+        const mz = inside ? 19 : Math.max(cmz, map.getMinZoom() + 1);
+        if (map.getMaxZoom() !== mz) map.setMaxZoom(mz);
+      };
+      map.on("moveend", limitZoom);
+      limitZoom();
+    }
     map.addControl(new ml.AttributionControl({ compact: true, customAttribution: "© OpenStreetMap" }), "bottom-left");
 
     const markers = new Map(); // id → {marker, el, cur:{lat,lng}, to, from, t0, kind}

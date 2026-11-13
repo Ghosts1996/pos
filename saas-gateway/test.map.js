@@ -157,6 +157,31 @@ function gridOpl(lat0, lon0, n = 6, step = 0.001) {
   assert.strictEqual((await get("fonts/..%2F..%2Fserver.js/0-255.pbf")).body.length, 0, "имя шрифта с путём — ничего не читается");
   ok("тайлы: gzip, кэш по версии, пустые — 204, чужие пути — 404");
 
+  // Вся Россия: участка нет в карте городов — берётся из карты страны; версия тайлов меняется.
+  writePmtiles(path.join(dir, "russia.pmtiles"), [[0, 0, 0, Buffer.from("ru-world")], [5, 19, 9, Buffer.from("ru-z5")]], { bounds: [19.6, 41.1, 180, 80] });
+  const before = info.tiles.v;
+  await new Promise((res) => setTimeout(res, 5)); // проверка файлов не чаще раза в 30 с — сбросим через новый объект карты
+  const map2 = createMap({ dir });
+  const srv2 = http.createServer((req, res) => { const [p0, q] = req.url.split("?"); map2.serve(req, res, p0.slice(5), q || ""); });
+  await new Promise((res) => srv2.listen(0, "127.0.0.1", res));
+  const get2 = (u) => new Promise((resolve, reject) => {
+    http.get(`http://127.0.0.1:${srv2.address().port}/map/${u}`, (res) => { const parts = []; res.on("data", (d) => parts.push(d)); res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(parts) })); }).on("error", reject);
+  });
+  const info2 = JSON.parse((await get2("info")).body);
+  assert.notStrictEqual(info2.tiles.v, before, "новая карта страны — новая версия тайлов");
+  assert.deepStrictEqual(info2.tiles.bounds, [19.6, 41.1, 180, 80], "границы — вся Россия");
+  assert.strictEqual(typeof info2.tiles.countryMaxzoom, "number");
+  r = await get2("tiles/5/19/9.mvt");
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(String(r.body), "ru-z5", "нет в городах — из карты России");
+  r = await get2("tiles/0/0/0.mvt");
+  assert.strictEqual(String(r.body), "world", "есть в городах — из карты городов");
+  assert.strictEqual((await get2("tiles/14/1/1.mvt")).status, 204, "нигде нет — пусто");
+  await map2.close();
+  srv2.close();
+  fs.unlinkSync(path.join(dir, "russia.pmtiles"));
+  ok("вся Россия: участок из карты городов, иначе из карты страны");
+
   r = await get("fonts/Noto%20Sans%20Regular/1024-1279.pbf");
   assert.strictEqual(r.status, 200);
   assert.ok(r.body.length > 10000, "кириллица на месте");

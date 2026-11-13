@@ -20,6 +20,7 @@ const CLASSES = [
   "footway", "path", "cycleway", "steps", "bridleway",
 ];
 const CLASS_ID = new Map(CLASSES.map((c, i) => [c, i]));
+const RESIDENTIAL = CLASS_ID.get("residential");
 
 // Скорости в городе, км/ч (с учётом светофоров и пробок — не «по знаку»).
 const SPEEDS = {
@@ -423,7 +424,7 @@ function edgeCoords(g, e) {
 }
 
 /** Ближайшая к точке дорога, по которой можно в этом режиме. */
-function snap(g, lat, lon, mode, maxM = 1500) {
+function snap(g, lat, lon, mode, maxM = 1500, exclude = null, maxCls = 255) {
   const [cx, cy] = g.cellOf(lat, lon);
   let best = null;
   const seen = new Set();
@@ -438,7 +439,7 @@ function snap(g, lat, lon, mode, maxM = 1500) {
           const e = g.grid[i];
           if (seen.has(e)) continue;
           seen.add(e);
-          if (!edgeAnyAllowed(g, e, mode)) continue;
+          if (!edgeAnyAllowed(g, e, mode) || (exclude && exclude.has(e)) || g.eCls[e] > maxCls) continue;
           const pts = edgeCoords(g, e);
           let along = 0;
           for (let k = 0; k + 1 < pts.length; k++) {
@@ -650,7 +651,34 @@ function route(g, points, mode = "auto") {
   const line = [];
   const legs = [];
   for (let i = 0; i + 1 < snaps.length; i++) {
-    const r = search(g, snaps[i], snaps[i + 1], mode);
+    let r = search(g, snaps[i], snaps[i + 1], mode);
+    // Точка привязалась к дорожке, куда этим транспортом не попасть (парк,
+    // двор с односторонним въездом, изолированный кусок) — пробуем следующие
+    // ближайшие дороги у конца участка, а у самого начала маршрута — и у него.
+    if (!r) {
+      const exB = new Set([snaps[i + 1].e]);
+      const exA = new Set([snaps[i].e]);
+      // Сначала — ближайшие любые дороги, потом — только улицы (не дворы,
+      // не служебные проезды и не дорожки): к ним путь есть почти всегда.
+      for (let k = 0; k < 8 && !r; k++) {
+        const cls = k < 4 ? 255 : RESIDENTIAL;
+        const nb = snap(g, points[i + 1].lat, points[i + 1].lng, mode, 1500, exB, cls);
+        if (nb) {
+          exB.add(nb.e);
+          r = search(g, snaps[i], nb, mode);
+          if (r) { snaps[i + 1] = nb; break; }
+        }
+        if (i === 0) {
+          const na = snap(g, points[i].lat, points[i].lng, mode, 1500, exA, cls);
+          if (na) {
+            exA.add(na.e);
+            r = search(g, na, snaps[i + 1], mode);
+            if (r) { snaps[i] = na; break; }
+          }
+        }
+        if (!nb && i !== 0 && k >= 4) break;
+      }
+    }
     if (!r) return { ok: false, reason: "noroute" };
     m += r.meters; s += r.cost;
     legs.push({ m: Math.round(r.meters), s: Math.round(r.cost) });
@@ -667,7 +695,7 @@ function contains(g, lat, lng, padDeg = 0.02) {
 
 module.exports = {
   buildGraph, encodeGraph, loadGraph, route, snap, contains, parseWayLine, wayFlags, haversine, simplify,
-  CLASSES, MODES, F_AUTO_FWD, F_AUTO_BACK, F_BIKE_FWD, F_BIKE_BACK, F_FOOT, F_PRIVATE,
+  CLASSES, MODES, MAGIC, HEADER, F_AUTO_FWD, F_AUTO_BACK, F_BIKE_FWD, F_BIKE_BACK, F_FOOT, F_PRIVATE,
 };
 
 /* Командная строка: node map-graph.js build <roads.opl> <out.graph> */

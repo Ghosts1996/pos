@@ -28,29 +28,68 @@ function listGraphs(dir) {
 
 if (!isMainThread && workerData && workerData.zalMapRouter) {
   const G = require("./map-graph");
-  let graphs = [];
-  const load = () => {
+  // Городов много (вся Россия) — в памяти держим только нужные сейчас сети
+  // дорог: границы каждого файла читаются из заголовка (48 байт), сам граф —
+  // при первом маршруте в этом городе, лишние выгружаются (не больше MAX_LOADED).
+  const MAX_LOADED = Number(workerData.maxLoaded) || 3;
+  let index = [];
+  const loaded = new Map(); // file → { g, used }
+  const readBounds = (file) => {
+    const fd = fs.openSync(path.join(workerData.dir, file), "r");
+    try {
+      const b = Buffer.alloc(48);
+      fs.readSync(fd, b, 0, 48, 0);
+      if (b.readUInt32LE(0) !== G.MAGIC) throw new Error("не граф дорог ZalPOS");
+      return { bounds: [b.readInt32LE(32) / 1e6, b.readInt32LE(36) / 1e6, b.readInt32LE(40) / 1e6, b.readInt32LE(44) / 1e6], createdAt: b.readDoubleLE(24), nV: b.readUInt32LE(8), nE: b.readUInt32LE(12) };
+    } finally {
+      fs.closeSync(fd);
+    }
+  };
+  const scan = () => {
     const next = [];
     for (const f of listGraphs(workerData.dir)) {
       try {
-        const g = G.loadGraph(fs.readFileSync(path.join(workerData.dir, f.file)));
-        g.file = f.file;
-        next.push(g);
+        next.push({ file: f.file, sig: `${f.size}:${f.mtime}`, ...readBounds(f.file) });
       } catch (e) {
         parentPort.postMessage({ log: `граф ${f.file} не прочитан: ${e.message}` });
       }
     }
-    graphs = next;
-    parentPort.postMessage({
-      loaded: graphs.map((g) => ({ file: g.file, bounds: g.bounds, nV: g.nV, nE: g.nE, createdAt: g.createdAt })),
-    });
+    // Сменившиеся и удалённые файлы — выгрузить.
+    for (const [file, rec] of loaded) {
+      const now = next.find((x) => x.file === file);
+      if (!now || now.sig !== rec.sig) loaded.delete(file);
+    }
+    index = next;
+    parentPort.postMessage({ loaded: index.map((g) => ({ file: g.file, bounds: g.bounds, nV: g.nV, nE: g.nE, createdAt: g.createdAt })) });
   };
-  load();
+  const within = (g, p, pad = 0.02) => p.lat >= g.bounds[0] - pad && p.lat <= g.bounds[2] + pad && p.lng >= g.bounds[1] - pad && p.lng <= g.bounds[3] + pad;
+  const graphFor = (points) => {
+    // Самый маленький район, где все точки (город внутри большого района — точнее и быстрее).
+    const cands = index.filter((g) => points.every((p) => within(g, p))).sort((a, b) => a.nV - b.nV);
+    for (const c of cands) {
+      let rec = loaded.get(c.file);
+      if (!rec) {
+        const g = G.loadGraph(fs.readFileSync(path.join(workerData.dir, c.file)));
+        rec = { g, sig: c.sig, used: 0 };
+        loaded.set(c.file, rec);
+        while (loaded.size > MAX_LOADED) {
+          let old = null;
+          for (const [f, r] of loaded) if (f !== c.file && (!old || r.used < old[1].used)) old = [f, r];
+          if (!old) break;
+          loaded.delete(old[0]);
+        }
+      }
+      rec.used = Date.now();
+      if (points.every((p) => G.contains(rec.g, p.lat, p.lng))) return rec.g;
+    }
+    return null;
+  };
+  scan();
   parentPort.on("message", (msg) => {
-    if (msg.reload) return load();
+    if (msg.reload) return scan();
     const { id, points, mode } = msg;
     try {
-      const g = graphs.find((x) => points.every((p) => G.contains(x, p.lat, p.lng)));
+      const g = graphFor(points);
       if (!g) return parentPort.postMessage({ id, result: { ok: false, reason: "nomap" } });
       parentPort.postMessage({ id, result: G.route(g, points, mode) });
     } catch (e) {
@@ -77,7 +116,7 @@ function createRouter({ dir, log = () => {}, checkMs = 60000, now = Date.now } =
   function start() {
     worker = new Worker(__filename, {
       workerData: { zalMapRouter: true, dir },
-      resourceLimits: { maxOldGenerationSizeMb: 256 },
+      resourceLimits: { maxOldGenerationSizeMb: 384 },
     });
     worker.unref();
     worker.on("message", (msg) => {

@@ -43,6 +43,11 @@ function createMap({
   now = Date.now,
 } = {}) {
   const tilesFile = path.join(dir, "tiles.pmtiles");
+  // Вся Россия — обзорная карта (до масштаба 12): участок берётся из карты
+  // городов, а где её нет — отсюда.
+  const countryFile = path.join(dir, "russia.pmtiles");
+  let country = null;
+  let countrySig = "";
   const fontsDir = path.join(root, "map-web", "fonts");
   const files = new Map();
   let tiles = null;
@@ -64,14 +69,33 @@ function createMap({
     return /\bgzip\b/.test(String((req.headers && req.headers["accept-encoding"]) || ""));
   }
 
+  function openCountry() {
+    let st;
+    try { st = fs.statSync(countryFile); } catch (_) { st = null; }
+    const sig = st ? `${st.size}:${Math.round(st.mtimeMs)}` : "none";
+    if (sig === countrySig) return;
+    if (country) { try { country.close(); } catch (_) {} }
+    country = null;
+    countrySig = sig;
+    if (!st) return;
+    try {
+      const p = openPmtiles(countryFile);
+      if (p.header.tileType !== 1) throw new Error("не векторные тайлы");
+      country = p;
+    } catch (e) {
+      log(`карта: ${countryFile} не открылся — ${e.message}`);
+    }
+  }
+
   /** Тайлы: файл открыт один раз, после пересборки — открывается заново. */
   function currentTiles() {
     if (now() - lastCheck < 30000 && (tiles || tilesSig === "none")) return tiles;
     lastCheck = now();
+    openCountry();
     let st;
     try { st = fs.statSync(tilesFile); } catch (_) { st = null; }
     const sig = st ? `${st.size}:${Math.round(st.mtimeMs)}` : "none";
-    if (sig === tilesSig) return tiles;
+    if (sig === tilesSig && (!tiles || tiles.countrySig === countrySig)) return tiles;
     if (tiles) { try { tiles.close(); } catch (_) {} }
     tiles = null;
     tilesSig = sig;
@@ -79,7 +103,8 @@ function createMap({
     try {
       const p = openPmtiles(tilesFile);
       if (p.header.tileType !== 1) throw new Error("не векторные тайлы");
-      p.version = crypto.createHash("sha1").update(sig).digest("hex").slice(0, 10);
+      p.version = crypto.createHash("sha1").update(`${sig}|${countrySig}`).digest("hex").slice(0, 10);
+      p.countrySig = countrySig;
       tiles = p;
     } catch (e) {
       log(`карта: ${tilesFile} не открылся — ${e.message}`);
@@ -153,8 +178,10 @@ function createMap({
         v: t.version,
         minzoom: h.minZoom,
         maxzoom: h.maxZoom,
-        bounds: [h.minLon, h.minLat, h.maxLon, h.maxLat],
+        bounds: country ? [country.header.minLon, country.header.minLat, country.header.maxLon, country.header.maxLat] : [h.minLon, h.minLat, h.maxLon, h.maxLat],
         center: [h.centerLon, h.centerLat, h.centerZoom],
+        // Вне районов городов подробность — до этого масштаба (карта страны).
+        countryMaxzoom: country ? country.header.maxZoom : null,
       } : null,
       route: router.available() ? { modes: [...MODES], regions: r.regions } : null,
       areas: areas(),
@@ -211,12 +238,16 @@ function createMap({
     if (!t) return notFound(res);
     const cache = v && v === t.version ? "public, max-age=2592000, immutable" : "public, max-age=3600";
     let data = null;
+    let src = t;
     try { data = t.tile(z, x, y); } catch (e) { log(`карта: тайл ${z}/${x}/${y} — ${e.message}`); }
+    if ((!data || !data.length) && country && z <= country.header.maxZoom) {
+      try { data = country.tile(z, x, y); src = country; } catch (e) { log(`карта: тайл России ${z}/${x}/${y} — ${e.message}`); }
+    }
     if (!data || !data.length) {
       res.writeHead(204, headers("application/vnd.mapbox-vector-tile", { "Cache-Control": cache }));
       return res.end();
     }
-    const gzipped = t.encoding === "gzip";
+    const gzipped = src.encoding === "gzip";
     let body = data;
     let enc = {};
     if (gzipped && acceptsGzip(req)) enc = { "Content-Encoding": "gzip" };
@@ -292,6 +323,7 @@ function createMap({
 
   function close() {
     if (tiles) { try { tiles.close(); } catch (_) {} tiles = null; }
+    if (country) { try { country.close(); } catch (_) {} country = null; }
     return router.close();
   }
 
