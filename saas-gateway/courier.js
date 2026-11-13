@@ -111,6 +111,29 @@ function distanceM(a, b) {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+/** Где стоят демо-точки (их же ставит демо в server.js). Курьер в демо
+ *  тестирует из дома — точки заведений в демо не «учатся» и не двигаются. */
+const DEMO_VENUE_POS = {
+  "Демо · Центр": { lat: 59.9357, lng: 30.3258 },
+  "Демо · Набережная": { lat: 59.9415, lng: 30.3045 },
+};
+
+/**
+ * Место заведения по точкам, где курьеры забирали заказы: самая плотная
+ * группа (соседи в радиусе 150 м), не меньше 3 заборов; иначе — null.
+ * Пара нажатий «Забрал» в машине за углом или дома точку не сдвигает.
+ */
+function pickupCluster(list, radiusM = 150, minHits = 3) {
+  let best = null;
+  list.forEach((p, i) => {
+    const near = list.filter((q) => distanceM(p, q) <= radiusM);
+    if (!best || near.length > best.length || (near.length === best.length && i > best.i)) best = Object.assign(near, { i });
+  });
+  if (!best || best.length < minHits) return null;
+  const med = (arr) => { const a = arr.slice().sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
+  return { lat: med(best.map((p) => p.lat)), lng: med(best.map((p) => p.lng)), hits: best.length };
+}
+
 /**
  * Пройденный путь по точкам телефона: отбрасываем неточные (> 50 м), дрожь
  * на месте (< 15 м) и прыжки быстрее 160 км/ч. → { meters, last }.
@@ -698,9 +721,33 @@ function createCourier({
    * курьера в демо открытые заказы доставки старше полутора часов
    * «оформляются» заново — несколько минут назад, в прежнем порядке.
    */
+  /** Точка демо-заведения — всегда на своём адресе (раньше могла уехать
+   *  туда, где курьер нажимал «Забрал» дома). */
+  async function fixDemoVenue(t) {
+    const r = await rootOf(t);
+    const fixed = r.tenant.demo === true ? DEMO_VENUE_POS[r.tenant.name || ""] : null;
+    if (!fixed) return false;
+    const ref = tenantRef(t).collection("settings").doc("delivery");
+    const cur = (await ref.get()).data() || {};
+    const vp = cur.venuePos;
+    if (cur.venuePosFixed && !cur.pickupPoints && vp && distanceM(vp, fixed) <= 1) return false;
+    await ref.set({ venuePos: fixed, venuePosFixed: true, pickupPoints: FieldValue.delete() }, { merge: true });
+    cache.clear();
+    return true;
+  }
+
+  /** При запуске: вернуть на место точки всех демо-заведений. */
+  async function fixDemoVenues() {
+    const snap = await db().collection("tenants").where("demo", "==", true).get();
+    let n = 0;
+    for (const d of snap.docs) if ((d.data() || {}).status !== "deleted" && await fixDemoVenue(d.id).catch(() => false)) n++;
+    return n;
+  }
+
   async function freshenDemo(tenantIds) {
     const t0 = now();
     for (const t of tenantIds) {
+      await fixDemoVenue(t).catch(() => {});
       const snap = await tenantRef(t).collection("sessions").where("deliveryOpen", "==", true).get();
       const old = snap.docs
         .filter((d) => (d.data() || {}).orderType === "delivery" && t0 - ms(d.data().startTime) > 90 * 60000)
@@ -1280,22 +1327,31 @@ function createCourier({
   }
 
   /**
-   * Координаты точки — по тому, где курьеры забирают заказы (медиана
-   * последних 15 заборов): заведению не нужно ставить точку на карте.
+   * Координаты точки — по тому, где курьеры забирают заказы (самая плотная
+   * группа последних 15 заборов, см. pickupCluster): заведению не нужно
+   * ставить точку на карте. Не трогаем: демо (курьер тестирует из дома),
+   * точку, поставленную вручную или демо (venuePosFixed), и заборы с
+   * неточной или старой геопозицией.
    */
   async function learnVenuePos(c, t) {
     const pos = c.pos;
-    if (!pos || now() - ms(pos.at) > 2 * 60 * 1000 || !(pos.acc <= 80)) return;
+    if (c.demo || !pos || now() - ms(pos.at) > 2 * 60 * 1000 || !(pos.acc <= 80)) return;
+    const demo = await rootOf(t).then((r) => r.tenant.demo === true).catch(() => true);
+    if (demo) return;
     const ref = tenantRef(t).collection("settings").doc("delivery");
+    let moved = false;
     await db().runTransaction(async (tx) => {
       const cur = (await tx.get(ref)).data() || {};
+      if (cur.venuePosFixed) return;
       const list = (Array.isArray(cur.pickupPoints) ? cur.pickupPoints : []).slice(-14);
       list.push({ lat: Math.round(pos.lat * 1e5) / 1e5, lng: Math.round(pos.lng * 1e5) / 1e5 });
-      const med = (arr) => { const a = arr.slice().sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
-      const venuePos = { lat: med(list.map((p) => p.lat)), lng: med(list.map((p) => p.lng)) };
-      tx.set(ref, { pickupPoints: list, ...(list.length >= 3 ? { venuePos } : {}) }, { merge: true });
+      const found = pickupCluster(list);
+      const venuePos = found ? { lat: found.lat, lng: found.lng } : null;
+      const old = cur.venuePos;
+      moved = !!venuePos && !(old && Number.isFinite(old.lat) && distanceM(old, venuePos) < 1);
+      tx.set(ref, { pickupPoints: list, ...(moved ? { venuePos } : {}) }, { merge: true });
     });
-    forget(`points:${c.root}`);
+    if (moved) forget(`points:${c.root}`);
   }
 
   async function handleAct(req, res) {
@@ -1807,13 +1863,13 @@ function createCourier({
     handleAdminList, handleAdminSave, handleAdminWelcome, handleAdminEnable, handleAdminCash, handleAdminAssign,
     handleAdminRates, handleAdminReport, handleAdminForget,
     // Telegram, сторож, тесты
-    onShiftFor, assignFromBot, sweep, start, act, stateOf, purgeRoot, purgeLegacyFree, slotsOf,
+    onShiftFor, assignFromBot, sweep, start, act, stateOf, purgeRoot, purgeLegacyFree, slotsOf, fixDemoVenues, fixDemoVenue, learnVenuePos,
     setHooks: (h) => { hooks = { ...hooks, ...h }; },
     forgetCache: () => cache.clear(),
   };
 }
 
 module.exports = {
-  createCourier, distanceM, odometerStep, streetOf, dayStartMs, zonedMs, normalizePhone, demoContact,
+  createCourier, distanceM, pickupCluster, DEMO_VENUE_POS, odometerStep, streetOf, dayStartMs, zonedMs, normalizePhone, demoContact,
   FAIL_REASONS, LOST_MS, MAX_ACTIVE, POLICY_VERSION, CODE_TTL_MS, CODE_RESEND_MS, TRANSPORTS,
 };

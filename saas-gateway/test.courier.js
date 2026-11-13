@@ -526,21 +526,40 @@ test("геолокация: путь копится, в заказе в пути
   assert.equal("courierPos" in (await w.db.doc("tenants/A/sessions/s1").get()).data(), false, "вручён — точку стёрли");
 });
 
-test("координаты точки — по тому, где курьеры забирают заказы (медиана)", async () => {
+test("координаты точки — по тому, где курьеры забирают заказы (плотная группа, не случайные нажатия)", async () => {
   const w = world();
   await seed(w);
   const c = await hire(w);
-  const spots = [[55.7601, 37.6101], [55.7602, 37.6102], [55.7999, 37.6999], [55.7603, 37.6103]];
-  for (const [i, [lat, lng]] of spots.entries()) {
-    await w.set(`tenants/A/sessions/p${i}`, order());
-    await act(w, c.token, "take", "A", `p${i}`);
-    await call(w.api.handlePing, { points: [{ lat, lng, acc: 15, at: clock }] }, asCourier(c.token));
-    await act(w, c.token, "pickup", "A", `p${i}`);
+  let k = 0;
+  const pickAt = async (lat, lng, acc = 15) => {
+    const s = `p${k++}`;
+    await w.set(`tenants/A/sessions/${s}`, order());
+    await act(w, c.token, "take", "A", s);
+    await call(w.api.handlePing, { points: [{ lat, lng, acc, at: clock }] }, asCourier(c.token));
+    await act(w, c.token, "pickup", "A", s);
+    await act(w, c.token, "deliver", "A", s, { method: "cash", received: 100000 });
     clock += 1000;
-  }
-  const d = (await w.db.doc("tenants/A/settings/delivery").get()).data();
-  assert.deepEqual(d.venuePos, { lat: 55.7603, lng: 37.6103 });
-  assert.equal(d.pickupPoints.length, 4);
+  };
+  const vp = async () => (await w.db.doc("tenants/A/settings/delivery").get()).data() || {};
+  // Два нажатия «Забрал» дома — точки ещё нет (мало и не в одном месте с заведением)
+  await pickAt(55.7999, 37.6999);
+  await pickAt(55.7601, 37.6101);
+  assert.equal((await vp()).venuePos, undefined, "по двум разным местам точку не ставим");
+  await pickAt(55.7602, 37.6102);
+  await pickAt(55.7603, 37.6103);
+  assert.deepEqual((await vp()).venuePos, { lat: 55.7602, lng: 37.6102 }, "три забора в одном месте — точка там");
+  // Ещё два нажатия в другом районе — точка не уезжает
+  await pickAt(55.8501, 37.5001);
+  await pickAt(55.8502, 37.5002);
+  assert.deepEqual((await vp()).venuePos, { lat: 55.7602, lng: 37.6102 }, "пара случайных нажатий не сдвигает точку");
+  // Неточная геопозиция не учитывается
+  await pickAt(55.8503, 37.5003, 500);
+  assert.equal((await vp()).pickupPoints.length, 6);
+  // Точку поставили вручную — заборы её не трогают
+  await w.set("tenants/A/settings/delivery", { ...(await vp()), venuePos: { lat: 55.7, lng: 37.6 }, venuePosFixed: true });
+  for (let i = 0; i < 3; i++) await pickAt(55.7602, 37.6102);
+  assert.deepEqual((await vp()).venuePos, { lat: 55.7, lng: 37.6 }, "ручную точку не двигаем");
+  assert.deepEqual(cm.pickupCluster([{ lat: 1, lng: 1 }, { lat: 1, lng: 1 }]), null);
 });
 
 // ---------------------------------------------------------------- сети
@@ -758,6 +777,18 @@ test("демо: вход по коду демо-сети, заказы обеи�
   const dc = require("./courier").demoContact("s8");
   assert.deepEqual(require("./courier").demoContact("s8"), dc, "адрес заказа постоянный");
   assert.match(dc.phone, /^\+7 900 000-00-\d\d$/);
+  // Курьер в демо нажимает «Забрал» дома — точка демо-заведения на месте;
+  // уехавшую раньше точку возвращает починка при входе и при запуске сервера
+  await w.set("tenants/N1/settings/delivery", { venuePos: { lat: 43.02, lng: 44.68 }, pickupPoints: [{ lat: 43.02, lng: 44.68 }] });
+  assert.equal(await w.api.fixDemoVenues(), 1, "одна точка возвращена");
+  const nd = (await w.db.doc("tenants/N1/settings/delivery").get()).data();
+  assert.deepEqual(nd.venuePos, cm.DEMO_VENUE_POS["Демо · Центр"]);
+  assert.equal(nd.venuePosFixed, true);
+  assert.equal("pickupPoints" in nd, false);
+  assert.equal(await w.api.fixDemoVenues(), 0, "повторно — ничего не меняет");
+  await w.api.learnVenuePos({ id: "x", root: "c_N", demo: true, pos: { lat: 43.02, lng: 44.68, acc: 10, at: Timestamp.fromMillis(clock) } }, "N1");
+  await w.api.learnVenuePos({ id: "x", root: "c_N", pos: { lat: 43.02, lng: 44.68, acc: 10, at: Timestamp.fromMillis(clock) } }, "N1");
+  assert.deepEqual((await w.db.doc("tenants/N1/settings/delivery").get()).data().venuePos, cm.DEMO_VENUE_POS["Демо · Центр"], "в демо точка не учится");
   // демо истекло — новый вход закрыт
   clock += 4 * 86400000;
   await assert.rejects(call(w.api.handleDemoLogin, { code: "demo-ab12cd34" }), (e) => e.status === 404);

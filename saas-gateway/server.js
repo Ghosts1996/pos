@@ -45,7 +45,7 @@ const { createGuestPay, onlinePaySettings, credsPrint, sellerReady } = require("
 const requisites = require("./requisites");
 const aiKeys = require("./ai-keys");
 const { createGuestDelivery } = require("./guest-delivery");
-const { createCourier } = require("./courier");
+const { createCourier, DEMO_VENUE_POS } = require("./courier");
 const { createCourierWeb } = require("./courier-web");
 const { createMap } = require("./map");
 const deliveryPricing = require("./delivery-pricing");
@@ -4556,7 +4556,8 @@ function seedDemoData(tenantRef, batch, nowMs, { staffList = DEMO_STAFF, loyalty
     ...DEMO_DELIVERY_PRICES,
     payAtDoor: { cash: true, card: true, qr: true },
     liveInTelegram: false, courierLink: true,
-    ...(venuePos ? { venuePos } : {}),
+    // Точка демо постоянная: курьер в демо тестирует из дома.
+    ...(venuePos ? { venuePos, venuePosFixed: true } : {}),
   });
 
 
@@ -4935,8 +4936,8 @@ async function handleCreateDemoTenant(req, res) {
   await head.commit();
 
   const points = [
-    { key: "center", name: "Демо · Центр", address: "Санкт-Петербург, Невский пр., 28", staffList: DEMO_STAFF, venuePos: { lat: 59.9357, lng: 30.3258 } },
-    { key: "river", name: "Демо · Набережная", address: "Санкт-Петербург, Университетская наб., 3", staffList: DEMO_STAFF_RIVER, venuePos: { lat: 59.9415, lng: 30.3045 } },
+    { key: "center", name: "Демо · Центр", address: "Санкт-Петербург, Невский пр., 28", staffList: DEMO_STAFF, venuePos: DEMO_VENUE_POS["Демо · Центр"] },
+    { key: "river", name: "Демо · Набережная", address: "Санкт-Петербург, Университетская наб., 3", staffList: DEMO_STAFF_RIVER, venuePos: DEMO_VENUE_POS["Демо · Набережная"] },
   ];
   const created = [];
   for (const point of points) {
@@ -9797,6 +9798,9 @@ server.listen(port, "127.0.0.1", () => {
   console.log(`saas-gateway listening on 127.0.0.1:${port}`);
   if (require.main === module) scheduleAutoDataMigration();
   if (require.main === module) setTimeout(() => backfillPlanCouriers().catch((e) => console.warn(`тарифы: лимит курьеров не дописан — ${e.message}`)), 15000);
+  // Точки демо-заведений — на своих адресах (раньше уезжали к курьеру домой).
+  if (require.main === module) setTimeout(() => courier.fixDemoVenues().then((n) => { if (n) console.log(`демо: точки заведений возвращены на место — ${n}`); })
+    .catch((e) => console.warn(`демо: точки заведений не проверены — ${e.message}`)), 20000);
 });
 
 /**
