@@ -629,6 +629,29 @@ test("назначение: только курьер на смене и сво�
   await assert.rejects(call(w.api.handleAdminAssign, { tenantId: "A", s: "s1", courierId: null }, { uid: "owner" }), (e) => e.status === 409);
 });
 
+test("курьер сам удаляет свои данные и отзывает согласие: с заказами — нельзя; после — вход закрыт, остаётся только номер", async () => {
+  const w = world();
+  await seed(w);
+  const c = await hire(w, { email: "self@example.ru" });
+  await w.set("tenants/A/sessions/s1", order());
+  await act(w, c.token, "take", "A", "s1");
+  await assert.rejects(call(w.api.handleSelfForget, { confirm: true }, asCourier(c.token)), (e) => e.status === 409 && /вручите заказы/.test(e.message));
+  await act(w, c.token, "pickup", "A", "s1");
+  await act(w, c.token, "deliver", "A", "s1", { method: "cash", received: 750 });
+  await assert.rejects(call(w.api.handleSelfForget, {}, asCourier(c.token)), (e) => e.status === 400, "без подтверждения — нет");
+  const r = await call(w.api.handleSelfForget, { confirm: true }, asCourier(c.token));
+  assert.equal(r.body.cashOnHand, 750, "долг по наличным виден — сдать заведению");
+  const me = (await w.db.doc(`couriers/${c.id}`).get()).data();
+  assert.deepEqual([me.name, me.email, me.phone, me.enabled, me.forgottenBy, me.onShift], [`Курьер №${c.no}`, "", "", false, "self", false]);
+  for (const k of ["consentAt", "consentIp", "consentEmail", "policyVersion", "tokenHash", "pos", "device"]) assert.equal(me[k], undefined, `${k} стёрто`);
+  await assert.rejects(call(w.api.handleState, {}, asCourier(c.token)), (e) => e.status === 401, "вход закрыт сразу");
+  const list = (await call(w.api.handleAdminList, { tenantId: "A" }, { uid: "owner" })).body.couriers.find((x) => x.id === c.id);
+  assert.equal(list.forgottenSelf, true, "заведение видит: курьер удалил свои данные");
+  // По этой почте учётки больше нет — код не уходит.
+  clock += 61 * 1000;
+  await assert.rejects(call(w.api.handleRequestCode, { email: "self@example.ru", consent_accepted: true }), (e) => e.status === 404 && e.code === "COURIER_NOT_FOUND");
+});
+
 test("отключение курьера: вход закрыт, незабранные заказы свободны; в пути — сначала вручить", async () => {
   const w = world();
   await seed(w);

@@ -375,6 +375,7 @@
         if (S.transportAuto && TRANSPORT_OF[r.me.transport]) S.transport = TRANSPORT_OF[r.me.transport];
         reconcile(prev, r);
         if (r.me.onShift) startShiftServices();
+        else if (S.view === "map") startGeo();
         else stopGeo();
         render();
       } else {
@@ -553,7 +554,9 @@
     const last = S.geo.lastBuffered;
     // В память — каждые 15 с или при сдвиге на 25 м: путь считается точно, лишнего не шлём.
     // В приложении для Android точки шлёт служба телефона — здесь только карта.
-    if (!nativeTracking() && (!last || fix.at - last.at > 15000 || dist(last, fix) > 25)) {
+    // Не на смене — точка только для карты на экране, на сервер не уходит.
+    const onShift = !!(S.data && S.data.me.onShift);
+    if (onShift && !nativeTracking() && (!last || fix.at - last.at > 15000 || dist(last, fix) > 25)) {
       S.pings.push(fix);
       if (S.pings.length > 600) S.pings = S.pings.slice(-600);
       S.geo.lastBuffered = fix;
@@ -1106,7 +1109,16 @@
     if (!spec.routePts || !spec.routePts.length) {
       if (keyChanged) { z.route = null; api.setRoute(null); }
       z.fitPts = null;
-      // Обзор: все точки на виду — один раз на набор точек.
+      // Заказа в работе нет — карта на вас и едет за вами, как навигатор
+      // (один раз; потянули карту пальцем — следование выключается).
+      if (me && !z.autoFollowed) {
+        z.autoFollowed = true;
+        z.autoFollow = true;
+        api.follow(true);
+        paintMapButtons();
+        return;
+      }
+      // Где вы, пока неизвестно: все точки на виду — один раз на набор точек.
       if ((keyChanged || force) && z.fitKey !== spec.key && !z.follow) {
         z.fitKey = spec.key;
         api.fit([...marks].sort((x, y) => (y.kind === "me") - (x.kind === "me")).map((m) => ({ lat: m.lat, lng: m.lng })), { padding: mapPadding() });
@@ -1115,6 +1127,8 @@
       return;
     }
     if (keyChanged) { z.route = null; api.setRoute(null); }
+    // Появился заказ — следование «без заказа» снимаем: маршрут целиком на виду.
+    if (keyChanged && z.autoFollow) { z.autoFollow = false; z.autoFollowed = false; api.follow(false); }
     const moved = z.from && me ? dist(z.from, me) : 1e9;
     const stale = Date.now() - z.at > 90000;
     if (!z.busy && (S.online || offGraphSaved()) && (keyChanged || force || stale || (moved > 120 && Date.now() - z.at > 15000))) requestRoute(spec);
@@ -1621,20 +1635,21 @@
       <div class="sec">Данные</div>
       <div class="list">
         <div class="lrow">${I.shield()}<span class="grow small muted">Геолокация передаётся только на линии и хранится на сервере в России. Последняя точка стирается в конце смены, в заказе — после вручения.</span></div>
-        <a class="lrow" href="rules.html" target="_blank" rel="noopener">${I.doc()}<span class="grow"><b>Условия использования</b><br><span class="small muted">${me.consentAt ? `Согласие дано ${new Date(me.consentAt).toLocaleDateString("ru-RU")} · редакция ${esc(me.policy)}` : "Редакция 2.0"}</span></span><span class="chev">›</span></a>
-        <a class="lrow" href="https://yandex.ru/legal/maps_termsofuse/" target="_blank" rel="noopener">${I.nav()}<span class="grow small">Карты — © Яндекс, условия использования</span></a>
+        <a class="lrow" href="rules.html" target="_blank" rel="noopener">${I.doc()}<span class="grow"><b>Условия использования</b><br><span class="small muted">${me.consentAt ? `Согласие дано ${new Date(me.consentAt).toLocaleDateString("ru-RU")} · редакция ${esc(me.policy)}` : "Редакция 3.0"}</span></span><span class="chev">›</span></a>
+        <a class="lrow" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">${I.nav()}<span class="grow small">Карта — © участники OpenStreetMap</span></a>
       </div>
 
       <div style="display:grid;gap:8px;margin-top:18px">
         ${me.onShift ? `<button class="btn line wide" data-a="shift-end">Закончить смену</button>` : `<button class="btn go wide" data-a="shift">Выйти на линию</button>`}
         <button class="btn link" data-a="refresh">${I.refresh("s")}Обновить данные</button>
         <button class="btn danger" data-a="logout">${I.logout("s")}Выйти из приложения</button>
+        ${me.demo ? "" : `<button class="btn link" data-a="forget" style="color:var(--red)">Удалить мои данные и отозвать согласие</button>`}
       </div>`;
   }
 
   // -------- вход и согласие
 
-  const CONSENT_TEXT = `Я принимаю <a href="rules.html" target="_blank" rel="noopener">Условия использования приложения</a> и даю согласие ИП Бикоеву К.${nbsp}Н. и моему заведению на обработку персональных данных и передачу геопозиции во время смены`;
+  const CONSENT_TEXT = `Я принимаю <a href="rules.html" target="_blank" rel="noopener">Условия использования приложения</a> и даю моему заведению согласие на обработку персональных данных и передачу геопозиции во время смены`;
 
   function checkHtml(id, on, text) {
     return `<label class="check${on ? " on" : ""}" for="${id}">
@@ -1701,7 +1716,7 @@
           <button class="btn ink wide" data-a="demo">Войти в демо</button>
         </details>`;
     }
-    $app.innerHTML = `<div class="screen auth"><div class="inner">${body}<p class="legal small muted">ИП Бикоев К.${nbsp}Н. · данные хранятся в России · <a href="rules.html" target="_blank" rel="noopener">Условия</a></p></div></div>`;
+    $app.innerHTML = `<div class="screen auth"><div class="inner">${body}<p class="legal small muted">Приложение заведения на платформе ZalPOS · данные хранятся в России · <a href="rules.html" target="_blank" rel="noopener">Условия</a></p></div></div>`;
   }
 
   function renderConsent() {
@@ -1812,6 +1827,13 @@
       const busy = S.data && S.data.mine.length;
       html = `<h2>Закончить смену?</h2><p class="muted">${busy ? `<b>У вас ${busy} ${plural(busy, "заказ", "заказа", "заказов")}.</b> Сначала вручите или верните их. ` : ""}Заказы перестанут приходить, передача геолокации остановится.</p>
         <div class="actions"><button class="btn ink huge wide" data-m="shift-off">Закончить смену</button><button class="btn link" data-m="close">Остаться на линии</button></div>`;
+    } else if (m.kind === "forget") {
+      const busy = S.data && S.data.mine.length;
+      html = `<h2>Удалить мои данные?</h2>
+        <p class="muted">Согласие на обработку данных будет отозвано, вход в приложение закроется. Имя, почта, телефон и запись о согласии сотрутся; в истории поездок заведения останется только «Курьер №${esc(S.data.me.no)}» — без ваших данных.</p>
+        ${S.data.me.cashOnHand > 0 ? `<p class="box bad">У вас на руках ${rub(S.data.me.cashOnHand)} заведения — сдайте их администратору: долг по деньгам остаётся по договору с заведением.</p>` : ""}
+        <p class="small muted">Работать снова можно будет, только если заведение заведёт вас заново.</p>
+        <div class="actions">${busy ? `<p class="box bad">Сначала вручите заказы или верните их в заведение.</p>` : `<button class="btn danger huge wide" style="background:var(--red-soft)" data-m="forget-yes">Удалить мои данные</button>`}<button class="btn link" data-m="close">Отмена</button></div>`;
     } else if (m.kind === "logout") {
       html = `<h2>Выйти из приложения?</h2><p class="muted">${S.queue.length ? "<b>Не все нажатия ушли на сервер.</b> " : ""}Чтобы войти снова, понадобится новая ссылка от заведения.</p>
         <div class="actions"><button class="btn danger huge wide" style="background:var(--red-soft)" data-m="logout">Выйти</button><button class="btn link" data-m="close">Отмена</button></div>`;
@@ -1973,7 +1995,9 @@
         if (S.view === "orders") S.newFree.clear();
         if (S.view === "income") { S.histDay = ""; loadHistory(true); }
         render();
-        if (S.view === "map") { requestAnimationFrame(() => { fitMap(); updateMap(true); }); }
+        // Карта показывает, где вы, и не на смене — только на экране телефона.
+        if (S.view === "map") { startGeo(); requestAnimationFrame(() => { fitMap(); updateMap(true); }); }
+        else if (!(S.data && S.data.me.onShift)) stopGeo();
         return;
       case "list":
         S.list = el.dataset.list;
@@ -2044,6 +2068,7 @@
         return;
       case "refresh": S.v = ""; await refresh(true); loadHistory(true); toast("Обновлено"); return;
       case "logout": return openModal({ kind: "logout" });
+      case "forget": return openModal({ kind: "forget" });
       default:
     }
   }
@@ -2056,7 +2081,7 @@
         if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {});
       }
       await api("shift", { on });
-      if (!on) { stopGeo(); releaseWake(); S.pings = []; save(KEY.pings, []); }
+      if (!on) { stopGeo(); releaseWake(); S.pings = []; save(KEY.pings, []); if (S.view === "map") startGeo(); }
       S.v = "";
       await refresh(true);
       toast(on ? "Вы на линии — новые заказы придут со звуком" : "Смена закончена", "ok");
@@ -2081,6 +2106,15 @@
         S.queue = [];
         save(KEY.queue, []);
         return signedOut("");
+      case "forget-yes":
+        try {
+          await api("forget", { confirm: true });
+        } catch (e) { closeModal(); return toast(e.message, "bad"); }
+        closeModal();
+        S.queue = []; save(KEY.queue, []);
+        S.pings = []; save(KEY.pings, []);
+        drop(KEY.last);
+        return signedOut("Ваши данные удалены, согласие отозвано. Спасибо за работу!");
       case "release": return openModal({ kind: "release", key: m.key });
       case "release-yes": closeModal(); if (o) act("release", o); return;
       case "fail-open": return openModal({ kind: "fail", key: m.key });
@@ -2230,6 +2264,7 @@
       if (S.data.me.onShift) startShiftServices();
     }
     render();
+    if (S.token && S.view === "map") startGeo();
     if (S.token) await refresh(true);
     flush();
     setInterval(loop, 1000);

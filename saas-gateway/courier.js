@@ -38,7 +38,7 @@ const pricing = require("./delivery-pricing");
 const { sessionBill } = require("./guest-pay");
 
 /** Редакция условий для курьеров (courier-web/rules.html): новая — согласие заново. */
-const POLICY_VERSION = "2.0";
+const POLICY_VERSION = "3.0";
 const CODE_TTL_MS = 10 * 60 * 1000;
 const CODE_RESEND_MS = 60 * 1000;
 const CODE_TRIES = 5;
@@ -738,6 +738,31 @@ function createCourier({
     await couriersCol().doc(c.id).update({ tokenHash: del(), tokenAt: del(), ...(c.onShift ? await shiftEndPatch(c) : {}) });
     forget(`tok:${c.tokenHash}`);
     sendJson(res, 200, { ok: true });
+  }
+
+  /**
+   * Курьер сам удаляет свои данные и отзывает согласие (ч. 2 ст. 9, ст. 21
+   * 152-ФЗ) — кнопка в профиле приложения. Имя, почта, телефон, устройство,
+   * геопозиция и запись о согласии стираются, вход закрывается сразу; в
+   * истории поездок и учёте наличных остаётся только «Курьер №N» — без
+   * персональных данных. Заведение видит «Курьер №N удалил свои данные».
+   */
+  async function handleSelfForget(req, res) {
+    const c = await courierByToken(req);
+    const body = await parseJsonBody(req).catch(() => ({}));
+    if (body.confirm !== true) throw new HttpError(400, "Подтвердите удаление данных");
+    if (Object.keys(c.active || {}).length) throw new HttpError(409, "Сначала вручите заказы или верните их в заведение — потом удалите данные");
+    const email = String(c.email || "");
+    await couriersCol().doc(c.id).update({
+      ...(c.onShift ? await shiftEndPatch(c) : {}),
+      name: `Курьер №${c.no}`, phone: "", email: "", enabled: false,
+      forgottenAt: ts(), forgottenBy: "self",
+      device: del(), pos: del(), consentAt: del(), consentIp: del(), consentEmail: del(), policyVersion: del(),
+      tokenHash: del(), tokenAt: del(),
+    });
+    if (email) await codeRef(email).delete().catch(() => {});
+    forget(`tok:${c.tokenHash}`);
+    sendJson(res, 200, { ok: true, cashOnHand: round2(Number(c.cashOnHand) || 0) });
   }
 
   /** Согласие в приложении: демо-курьер и новая редакция правил (вход по почте пишет его сам). */
@@ -1442,6 +1467,7 @@ function createCourier({
         consent: c.consentAt ? { at: ms(c.consentAt), version: c.policyVersion || "", current: consentOk(c) } : null,
         enabled: c.enabled !== false,
         forgotten: !!c.forgottenAt,
+        forgottenSelf: !!c.forgottenAt && c.forgottenBy === "self",
         onShift: c.onShift === true, shiftStartedAt: ms(c.shiftStartedAt),
         lastSeenAt: ms(c.lastSeenAt),
         linked: !!c.tokenHash, welcomedAt: ms(c.welcomedAt),
@@ -1776,7 +1802,7 @@ function createCourier({
   return {
     // приложение курьера
     invalidate: (t) => forget(`open:${t}`),
-    handleRequestCode, handleVerifyCode, handleSelect, handleDemoLogin, handleLogout, handleConsent, handleHistory, handleState, handleShift, handleAct, handlePing, handlePay, handleRoute,
+    handleRequestCode, handleVerifyCode, handleSelect, handleDemoLogin, handleLogout, handleSelfForget, handleConsent, handleHistory, handleState, handleShift, handleAct, handlePing, handlePay, handleRoute,
     // кабинет
     handleAdminList, handleAdminSave, handleAdminWelcome, handleAdminEnable, handleAdminCash, handleAdminAssign,
     handleAdminRates, handleAdminReport, handleAdminForget,

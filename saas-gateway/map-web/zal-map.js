@@ -106,7 +106,14 @@
     const el = document.createElement("div");
     el.className = `zm-pin ${KIND_CLASS[m.kind] || "zm-guest"}`;
     el.setAttribute("aria-label", m.label || "");
-    if (m.kind === "me" || m.kind === "courier") {
+    if (m.kind === "me") {
+      // «Вы» — золотая гранёная стрелка, как на значке приложения курьера;
+      // смотрит туда, куда едете (на месте — вверх, на север).
+      el.innerHTML = `<i class="zm-halo"></i><svg class="zm-nav" viewBox="-118 -146 236 280" aria-hidden="true">
+        <path d="M0 -132 L98 120 L0 64 L-98 120 Z" fill="none" stroke="#fff" stroke-width="22" stroke-linejoin="round"/>
+        <path d="M0 -132 L0 64 L-98 120 Z" fill="#F3DCA2"/><path d="M0 -132 L98 120 L0 64 Z" fill="#B8893C"/>
+        <path d="M0 -132 L98 120 L0 64 L-98 120 Z" fill="none" stroke="#3A2A0E" stroke-opacity=".55" stroke-width="5" stroke-linejoin="round"/></svg>`;
+    } else if (m.kind === "courier") {
       el.innerHTML = `<i class="zm-halo"></i><i class="zm-arrow"></i><b class="zm-dot"></b>${m.kind === "courier" && m.label ? `<span class="zm-tag">${esc(m.label)}</span>` : ""}`;
     } else {
       el.innerHTML = `<span class="zm-badge">${esc(m.label || "")}</span><i class="zm-stem"></i>`;
@@ -149,6 +156,11 @@
       dragRotate: opts.rotate === true,
       touchPitch: false,
       fadeDuration: reduceMotion() ? 0 : 200,
+      // Без лагов на телефонах: экран с плотностью 2,6–3 рисуется в 2
+      // (на слабых — с памятью до 3 ГБ — в 1,5): картинка так же чёткая,
+      // а точек считать в 2–4 раза меньше. Старые плитки не перекачиваются.
+      pixelRatio: Math.min(window.devicePixelRatio || 1, navigator.deviceMemory && navigator.deviceMemory <= 3 ? 1.5 : 2),
+      refreshExpiredTiles: false,
       cooperativeGestures: false,
       renderWorldCopies: false,
     });
@@ -248,6 +260,12 @@
             if (reduceMotion() || d > 0.03) { rec.cur = { lat: m.lat, lng: m.lng }; rec.to = null; rec.marker.setLngLat([m.lng, m.lat]); }
             else { rec.from = { ...rec.cur }; rec.to = { lat: m.lat, lng: m.lng }; rec.t0 = performance.now(); rec.dur = 900; if (!anim) anim = requestAnimationFrame(tick); }
           }
+        }
+        const nav = rec.el.querySelector(".zm-nav");
+        if (nav) {
+          const h = m.heading == null ? NaN : Number(m.heading);
+          // Стоите — стрелка остаётся там, куда ехали в последний раз.
+          if (Number.isFinite(h)) { rec.heading = h; nav.style.transform = `rotate(${Math.round(h)}deg)`; }
         }
         const arrow = rec.el.querySelector(".zm-arrow");
         if (arrow) {

@@ -154,7 +154,7 @@ async function main() {
   await page.fill("#auth-code", code); // 6 цифр — вход сам, без кнопки
   await page.waitForSelector(".venue-line >> text=Кафе «Лето»");
   const me = (await db.collection("couriers").where("email", "==", "nikolay@example.ru").get()).docs[0].data();
-  assert.deepEqual([me.policyVersion, !!me.consentAt, me.consentEmail], ["2.0", true, "nikolay@example.ru"], "согласие ПЭП записано");
+  assert.deepEqual([me.policyVersion, !!me.consentAt, me.consentEmail], ["3.0", true, "nikolay@example.ru"], "согласие ПЭП записано");
   await page.waitForSelector("text=Не на линии");
   await page.waitForSelector("text=Вы не на линии");
   // Свободный заказ виден, но без смены не взять.
@@ -266,8 +266,14 @@ async function main() {
   await page.click('#bnav [data-a="view"][data-view="profile"]');
   await page.waitForSelector("text=Как езжу");
   await page.waitForSelector("text=nikolay@example.ru");
-  await page.waitForSelector("text=/Согласие дано .* редакция 2\\.0/");
+  await page.waitForSelector("text=/Согласие дано .* редакция 3\\.0/");
   await shot(page, "8-dark-profile");
+  // Удалить мои данные и отозвать согласие — окно с подтверждением (отмена).
+  await page.click('[data-a="forget"]');
+  await page.waitForSelector("text=Удалить мои данные?");
+  await page.waitForTimeout(600);
+  await shot(page, "8b-forget");
+  await page.click('[data-m="close"]');
   await page.click('#bnav [data-a="view"][data-view="orders"]');
   await shot(page, "9-dark");
   // 12. Ручное назначение: свободных не видно, «Свободные» скрыты.

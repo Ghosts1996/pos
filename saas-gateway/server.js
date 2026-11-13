@@ -8344,6 +8344,7 @@ const COURIER_API = {
   "auth/select": courier.handleSelect,
   demo: courier.handleDemoLogin,
   logout: courier.handleLogout,
+  forget: courier.handleSelfForget,
   consent: courier.handleConsent,
   state: courier.handleState,
   shift: courier.handleShift,
