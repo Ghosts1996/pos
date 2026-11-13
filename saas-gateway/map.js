@@ -223,7 +223,9 @@ function createMap({
       };
       files.set(name, f);
     }
-    const h = headers(type, { "Cache-Control": "public, max-age=3600", ETag: f.etag, Vary: "Accept-Encoding" });
+    // Каждый раз сверяется по ETag (ответ 304 — без скачивания): исправление
+    // движка или стиля доходит до телефонов сразу, а не через час.
+    const h = headers(type, { "Cache-Control": "no-cache", ETag: f.etag, Vary: "Accept-Encoding" });
     // Поток карты живёт по своей политике безопасности (берётся из ответа на
     // сам скрипт): ему нужно только скачивать тайлы и шрифты с этого же адреса.
     if (name === "maplibre-gl-csp-worker.js") h["Content-Security-Policy"] = "default-src 'none'; connect-src 'self'";

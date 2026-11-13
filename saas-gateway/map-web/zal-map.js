@@ -127,6 +127,14 @@
     // Границы — район города, где работает курьер (opts.bounds), а не все
     // районы сразу: карта не уезжает в пустоту между городами.
     const b = Array.isArray(opts.bounds) && opts.bounds.length === 4 ? opts.bounds : info.tiles.bounds;
+    // Карта всей России пересекает 180-й меридиан (Чукотка): её границы —
+    // весь пояс от −180 до 180. Такие рамки с запасом выходят за ±180, и
+    // MapLibre не рисует ничего (пустой фон). С картой страны рамок нет —
+    // отдалить дальше страны не даёт minZoom; у района города — в пределах ±180.
+    const wide = !b || b[2] - b[0] >= 300;
+    const clampLng = (v) => Math.max(-180, Math.min(180, v));
+    const clampLat = (v) => Math.max(-85, Math.min(85, v));
+    const maxBounds = wide ? null : [[clampLng(b[0] - 0.6), clampLat(b[1] - 0.4)], [clampLng(b[2] + 0.6), clampLat(b[3] + 0.4)]];
     const map = new ml.Map({
       container: el,
       style: styleFor(base, info, theme),
@@ -135,7 +143,7 @@
       // С картой всей России — можно отдалить до страны целиком.
       minZoom: info.tiles.countryMaxzoom ? 3 : 9,
       maxZoom: 19,
-      maxBounds: [[b[0] - 0.6, b[1] - 0.4], [b[2] + 0.6, b[3] + 0.4]],
+      ...(maxBounds ? { maxBounds } : {}),
       attributionControl: false,
       pitchWithRotate: false,
       dragRotate: opts.rotate === true,

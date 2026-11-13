@@ -258,17 +258,9 @@ async function main() {
   assert.equal(await page.isVisible("#sheet"), false, "на «Карте» список заказов не закрывает карту");
   await page.waitForTimeout(400);
   await shot(page, "7a-map-tab");
-  // 10б. Вид карты: схема → спутник (снимки Яндекса во фрейме), выбор запоминается.
-  await page.click('[data-a="layers"]');
-  await page.waitForSelector(".layers");
-  await page.waitForTimeout(300);
-  await shot(page, "7b-layers");
-  await page.click('[data-a="layer"][data-v="hyb"]');
-  await page.waitForFunction(() => /l=sat%2Cskl|l=sat,skl/.test((document.getElementById("mapframe") || {}).src || ""));
-  assert.equal(await page.evaluate(() => localStorage.getItem("zc_layer")), '"hyb"', "вид карты запомнен");
-  await page.click('[data-a="layers"]');
-  await page.click('[data-a="layer"][data-v="map"]');
-  await page.waitForFunction(() => /l=map/.test((document.getElementById("mapframe") || {}).src || ""));
+  // 10б. Окна «Яндекс Карт» с рекламой нет: ни выбора «Спутник/Гибрид», ни запасной карты Яндекса.
+  assert.equal(await page.$('[data-a="layers"]'), null, "выбора вида карты нет — только своя карта");
+  assert.equal(await page.isVisible("#mapframe"), false, "окно Яндекс Карт не показывается");
   // 11. Тёмная тема — без ошибок.
   await page.emulateMedia({ colorScheme: "dark" });
   await page.click('#bnav [data-a="view"][data-view="profile"]');

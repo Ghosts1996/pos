@@ -99,12 +99,12 @@
     foot: { label: "Пешком", rtt: "pd", mPerMin: 80, dgis: "pedestrian" },
   };
   const ROAD_FACTOR = 1.3;
-  // Вид карты: «Схема» — своя карта (быстрая, без сторонних сервисов, если
-  // район собран), «Спутник» и «Гибрид» — снимки сервиса «Яндекс Карты».
+  // Вид карты — только своя карта. «Спутник» и «Гибрид» были окном
+  // «Яндекс Карт» с рекламой внутри (убрать её в чужом окне нельзя) — по
+  // просьбе владельца убраны 13.11.2026. Выбор вида появится снова, когда
+  // будут свои снимки без рекламы (тогда — новые записи здесь).
   const LAYERS = {
     map: { label: "Схема", yl: "map,trf" },
-    sat: { label: "Спутник", yl: "sat" },
-    hyb: { label: "Гибрид", yl: "sat,skl,trf" },
   };
   const FAIL = [
     ["no_answer", "Не открывают, не отвечают"],
@@ -800,18 +800,9 @@
     const showNote = !S.online ? "Нет связи — показываем схему" : spec.note;
     noteEl.hidden = !showNote;
     noteEl.textContent = showNote || "";
-    if (!S.online || !spec.url || S.zm.state === "loading") { frame.hidden = true; return; }
-    frame.hidden = false;
-    const m = S.map;
-    if (!force && spec.key === m.key) {
-      // Тот же маршрут: перестраиваем, только если курьер заметно сдвинулся.
-      const moved = spec.from && m.from ? dist(spec.from, m.from) : spec.from && !m.from ? 1e9 : 0;
-      if (moved < 350 || Date.now() - m.at < 45000) return;
-    }
-    if (spec.url === m.url && !force) return;
-    S.map = { url: spec.url, key: spec.key, at: Date.now(), from: spec.from };
-    frame.classList.remove("ready");
-    frame.src = spec.url;
+    // Окно «Яндекс Карт» (с рекламой) больше не показываем: где своей карты
+    // нет или она не загрузилась — своя схема точек с расстояниями.
+    frame.hidden = true;
   }
 
   // ---------------------------------------------------------------- своя карта
@@ -1301,7 +1292,7 @@
       </div>
       ${net}
       <div class="hud-col">
-        <button class="round${S.layer !== "map" ? " on" : ""}" data-a="layers" aria-label="Вид карты: ${LAYERS[S.layer].label}" aria-expanded="${S.layersOpen}">${I.layers()}</button>
+        ${Object.keys(LAYERS).length > 1 ? `<button class="round${S.layer !== "map" ? " on" : ""}" data-a="layers" aria-label="Вид карты: ${LAYERS[S.layer].label}" aria-expanded="${S.layersOpen}">${I.layers()}</button>` : ""}
         <button class="round" data-a="map-refresh" aria-label="Обновить карту и маршрут">${I.refresh()}</button>
       </div>
       ${S.layersOpen ? `<div class="layers" role="radiogroup" aria-label="Вид карты">${Object.entries(LAYERS).map(([id, l]) => `

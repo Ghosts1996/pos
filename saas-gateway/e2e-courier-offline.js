@@ -118,6 +118,8 @@ async function main() {
   await page.waitForSelector(".venue-line >> text=Кафе «Осетия»");
   await page.click('#bnav [data-a="view"][data-view="map"]');
   await page.waitForSelector("#zmap:not([hidden]) canvas", { timeout: 30000 });
+  await page.waitForTimeout(2500);
+  await shot(page, "off-0-map");
   await page.waitForFunction(() => navigator.serviceWorker && navigator.serviceWorker.controller, null, { timeout: 15000 }).catch(() => {});
   // 2. Профиль → «Карта без интернета» → скачать город.
   await page.click('#bnav [data-a="view"][data-view="profile"]');
