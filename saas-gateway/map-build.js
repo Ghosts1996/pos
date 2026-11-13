@@ -43,6 +43,38 @@ const DISTRICTS = [
 ];
 // Демо всегда в Санкт-Петербурге (Невский пр., 28 и Университетская наб., 3).
 const DEMO_POINTS = [[59.9357, 30.3258], [59.9415, 30.3045]];
+// Города, карта которых есть всегда, даже без заведений: Владикавказ (просьба
+// владельца) и дополнительные из MAP_EXTRA_POINTS («шир,долг;шир,долг»).
+const FIXED_POINTS = [[43.0247, 44.6819]];
+const EXTRA_POINTS = String(process.env.MAP_EXTRA_POINTS || "").split(";")
+  .map((x) => x.split(",").map(Number)).filter((p) => p.length === 2 && p.every(Number.isFinite));
+// Названия районов в приложении — по ближайшему крупному городу внутри района.
+const CITIES = [
+  ["Санкт-Петербург", 59.9386, 30.3141], ["Москва", 55.7558, 37.6176], ["Владикавказ", 43.0247, 44.6819],
+  ["Беслан", 43.1936, 44.5408], ["Нальчик", 43.4853, 43.6071], ["Грозный", 43.3178, 45.6949],
+  ["Махачкала", 42.9849, 47.5047], ["Пятигорск", 44.0486, 43.0594], ["Ставрополь", 45.0428, 41.9734],
+  ["Краснодар", 45.0355, 38.9753], ["Сочи", 43.5855, 39.7231], ["Ростов-на-Дону", 47.2357, 39.7015],
+  ["Волгоград", 48.708, 44.5133], ["Астрахань", 46.3497, 48.0408], ["Воронеж", 51.6608, 39.2003],
+  ["Казань", 55.7963, 49.1088], ["Нижний Новгород", 56.3269, 44.0059], ["Самара", 53.1959, 50.1002],
+  ["Саратов", 51.5331, 46.0342], ["Уфа", 54.7388, 55.9721], ["Пермь", 58.0105, 56.2502],
+  ["Екатеринбург", 56.8389, 60.6057], ["Челябинск", 55.1644, 61.4368], ["Тюмень", 57.153, 65.5343],
+  ["Омск", 54.9885, 73.3242], ["Новосибирск", 55.0084, 82.9357], ["Томск", 56.4846, 84.9476],
+  ["Красноярск", 56.0153, 92.8932], ["Иркутск", 52.2869, 104.305], ["Хабаровск", 48.4802, 135.0719],
+  ["Владивосток", 43.1155, 131.8855], ["Калининград", 54.7104, 20.4522], ["Ярославль", 57.6261, 39.8845],
+  ["Тула", 54.1931, 37.6173], ["Рязань", 54.6269, 39.6916], ["Оренбург", 51.7682, 55.0969],
+  ["Мурманск", 68.9585, 33.0827], ["Архангельск", 64.5399, 40.5152], ["Севастополь", 44.6167, 33.5254],
+  ["Симферополь", 44.9521, 34.1024], ["Барнаул", 53.3548, 83.7698], ["Кемерово", 55.3547, 86.0873],
+];
+function regionName(r) {
+  const [w, s0, e, n] = r.bbox;
+  let best = null;
+  for (const [name, lat, lng] of CITIES) {
+    if (lat < s0 || lat > n || lng < w || lng > e) continue;
+    const d = (lat - r.center[0]) ** 2 + ((lng - r.center[1]) * Math.cos((lat * Math.PI) / 180)) ** 2;
+    if (!best || d < best.d) best = { name, d };
+  }
+  return best ? best.name : `Район ${r.center[0].toFixed(2)}, ${r.center[1].toFixed(2)}`;
+}
 
 const log = (s) => console.log(`${new Date().toISOString().slice(0, 19).replace("T", " ")} ${s}`);
 
@@ -79,7 +111,9 @@ function clusterRegions(points, radiusKm = RADIUS_KM) {
       const bbox = b.map(round3);
       const center = [round3((bbox[1] + bbox[3]) / 2), round3((bbox[0] + bbox[2]) / 2)];
       const id = `${Math.round(center[0] * 100)}-${Math.round(center[1] * 100)}`.replace(/[^0-9-]/g, "");
-      return { id, bbox, center };
+      const r = { id, bbox, center };
+      r.name = regionName(r);
+      return r;
     })
     .sort((a, b) => (a.id < b.id ? -1 : 1));
 }
@@ -88,7 +122,7 @@ function readPoints(file = REGIONS_FILE) {
   let pts = [];
   try { pts = JSON.parse(fs.readFileSync(file, "utf8")).points || []; } catch (_) {}
   pts = pts.filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
-  return [...DEMO_POINTS, ...pts];
+  return [...DEMO_POINTS, ...FIXED_POINTS, ...EXTRA_POINTS, ...pts];
 }
 
 function regionsGeoJson(regions) {
@@ -305,7 +339,22 @@ function buildRoads(regions, { force, dryRun }) {
   // Графы районов, которых больше нет, — убрать.
   const keep = new Set(regions.map((r) => `roads-${r.id}.graph`));
   for (const f of fs.readdirSync(DIR)) {
-    if (/^roads-[0-9-]+\.graph$/.test(f) && !keep.has(f) && !dryRun) { fs.unlinkSync(path.join(DIR, f)); delete meta[f.slice(6, -6)]; log(`дороги: убрал ${f}`); }
+    if (/^roads-[0-9-]+\.graph$/.test(f) && !keep.has(f) && !dryRun) { fs.unlinkSync(path.join(DIR, f)); try { fs.unlinkSync(path.join(DIR, `${f}.gz`)); } catch (_) {} delete meta[f.slice(6, -6)]; log(`дороги: убрал ${f}`); }
+  }
+  if (!dryRun) {
+    for (const r of regions) {
+      const g = path.join(DIR, `roads-${r.id}.graph`);
+      try {
+        const st = fs.statSync(g);
+        let gst = null;
+        try { gst = fs.statSync(`${g}.gz`); } catch (_) {}
+        if (!gst || gst.mtimeMs < st.mtimeMs) {
+          fs.writeFileSync(`${g}.gz.tmp`, require("zlib").gzipSync(fs.readFileSync(g), { level: 9 }), { mode: 0o644 });
+          fs.renameSync(`${g}.gz.tmp`, `${g}.gz`);
+          log(`дороги: сжатая копия ${r.id} для телефонов`);
+        }
+      } catch (_) { /* графа ещё нет */ }
+    }
   }
   if (!todo.length) { log("дороги: без изменений"); if (!dryRun) writeJson(metaFile, meta); return { skipped: true }; }
   const byDistrict = new Map();
@@ -347,6 +396,10 @@ function buildRoads(regions, { force, dryRun }) {
         run(process.execPath, ["--max-old-space-size=640", path.join(__dirname, "map-graph.js"), "build", opl, out], { heavy: true });
         fs.unlinkSync(opl);
         fs.chmodSync(out, 0o644);
+        // Сжатая копия — для скачивания в телефон курьера (маршруты без связи).
+        const gz = `${out}.gz`;
+        fs.writeFileSync(`${gz}.tmp`, require("zlib").gzipSync(fs.readFileSync(out), { level: 9 }), { mode: 0o644 });
+        fs.renameSync(`${gz}.tmp`, gz);
         meta[r.id] = { bbox: r.bbox, district: d, at: new Date().toISOString(), bytes: fs.statSync(out).size };
         writeJson(metaFile, meta);
         done.push(r.id);
@@ -396,6 +449,6 @@ function main() {
   return status.ok ? 0 : 1;
 }
 
-module.exports = { clusterRegions, boxAround, parsePoly, inPoly, regionsGeoJson, readPoints, DEMO_POINTS };
+module.exports = { clusterRegions, boxAround, parsePoly, inPoly, regionsGeoJson, readPoints, regionName, DEMO_POINTS, FIXED_POINTS };
 
 if (require.main === module) process.exit(main());

@@ -29,7 +29,7 @@
   const KEY = {
     token: "zc_token", queue: "zc_queue", pings: "zc_pings", order: "zc_order", nav: "zc_nav",
     sound: "zc_sound", seen: "zc_seen", transport: "zc_transport", sheet: "zc_sheet", installSkip: "zc_install_skip",
-    auth: "zc_auth", layer: "zc_layer",
+    auth: "zc_auth", layer: "zc_layer", off: "zc_offmap", last: "zc_last",
   };
   const load = (k, def) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? def : v; } catch (_) { return def; } };
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* память переполнена — не страшно */ } };
@@ -139,6 +139,8 @@
     transport: load(KEY.transport, ""),
     sound: load(KEY.sound, true),
     layer: load(KEY.layer, "map"),
+    // Карта без связи: что скачано (район, версия тайлов и дорог), ход скачивания.
+    off: { saved: load(KEY.off, null), busy: false, done: 0, total: 0, error: "", graph: null, auto: false },
     layersOpen: false,
     seenFree: new Set(load(KEY.seen, [])),
     newFree: new Set(),
@@ -228,6 +230,7 @@
     S.map = { url: "", key: "", at: 0, from: null };
     S.auth = { ...S.auth, step: "email", ticket: "", venues: [], busy: false, error: "", consent: false };
     drop(KEY.token);
+    drop(KEY.last);
     stopGeo();
     releaseWake();
     render();
@@ -364,6 +367,9 @@
         const prev = S.data;
         S.data = r;
         S.v = r.v;
+        S.stale = false;
+        // Последние заказы — в телефоне: открыли приложение без связи — сразу карта и заказы.
+        save(KEY.last, { at: Date.now(), r });
         if (S.transportAuto && TRANSPORT_OF[r.me.transport]) S.transport = TRANSPORT_OF[r.me.transport];
         reconcile(prev, r);
         if (r.me.onShift) startShiftServices();
@@ -843,14 +849,18 @@
       .then((info) => {
         // Нет ответа сервера карты — попробуем позже; нет тайлов или район не наш — схема Яндекса.
         if (!info) { z.state = "idle"; z.retryAt = Date.now() + 120000; return updateMap(true); }
-        const covered = info && ref.lng >= info.tiles.bounds[0] && ref.lng <= info.tiles.bounds[2] && ref.lat >= info.tiles.bounds[1] && ref.lat <= info.tiles.bounds[3];
+        z.info = info;
+        const area = areaFor(ref);
+        const covered = area ? true : !(info.areas && info.areas.length) && inBox(info.tiles.bounds, ref);
         if (!covered) { z.state = "off"; z.offRef = ref; return updateMap(true); }
+        z.area = area;
+        offAuto();
         const box = $("zmap");
         if (!box) { z.state = "idle"; return; }
         box.hidden = false;
         z.info = info;
         z.api = window.ZalMap.create(box, {
-          base: MAP_BASE, info, center: ref, zoom: 14,
+          base: MAP_BASE, info, center: ref, zoom: 14, bounds: area ? area.bbox : null,
           onFollow: (on) => { z.follow = on; paintMapButtons(); },
         });
         if (!z.api) { box.hidden = true; z.state = "off"; return updateMap(true); }
@@ -858,6 +868,204 @@
         updateMap(true);
       })
       .catch(() => { z.state = "idle"; z.retryAt = Date.now() + 120000; updateMap(true); });
+  }
+
+  // ---------------------------------------------------------------- карта без связи
+
+  const OFF_CACHE = "zalpos-map-offline";
+  const inBox = (b, p) => !!(b && p && p.lng >= b[0] && p.lng <= b[2] && p.lat >= b[1] && p.lat <= b[3]);
+  /** Район карты (город с окрестностями), где работает курьер: по точкам его заведений, иначе по телефону. */
+  function areaFor(ref) {
+    const info = S.zm.info;
+    const list = (info && info.areas) || [];
+    if (!list.length) return null;
+    const pts = [...((S.data && S.data.me.points) || []).map((p) => p.pos).filter(Boolean), ref, S.geo.fix].filter(Boolean);
+    for (const p of pts) { const a = list.find((x) => inBox(x.bbox, p)); if (a) return a; }
+    return null;
+  }
+  const tileX = (lng, z) => Math.floor(((lng + 180) / 360) * 2 ** z);
+  const tileY = (lat, z) => { const r = (lat * Math.PI) / 180; return Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** z); };
+  const boxKm = (p, km) => { const dLat = km / 111.2; const dLng = km / (111.2 * Math.max(0.2, Math.cos((p.lat * Math.PI) / 180))); return [p.lng - dLng, p.lat - dLat, p.lng + dLng, p.lat + dLat]; };
+  const clip = (a, b) => [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])];
+  /** Участки карты для скачивания: весь район до масштаба 13, улицы (14–15) — вокруг заведений. */
+  function offTiles(area) {
+    const maxz = Math.min(15, (S.zm.info && S.zm.info.tiles.maxzoom) || 15);
+    const centers = ((S.data && S.data.me.points) || []).map((p) => p.pos).filter((p) => p && inBox(area.bbox, p));
+    if (!centers.length) centers.push({ lat: area.center[0], lng: area.center[1] });
+    const out = new Set();
+    const add = (b, z) => {
+      if (b[0] >= b[2] || b[1] >= b[3]) return;
+      for (let x = tileX(b[0], z); x <= tileX(b[2], z); x++) for (let y = tileY(b[3], z); y <= tileY(b[1], z); y++) out.add(`${z}/${x}/${y}`);
+    };
+    for (let z = 8; z <= Math.min(13, maxz); z++) add(area.bbox, z);
+    for (const c of centers) {
+      if (maxz >= 14) add(clip(boxKm(c, 20), area.bbox), 14);
+      if (maxz >= 15) add(clip(boxKm(c, 12), area.bbox), 15);
+    }
+    return [...out];
+  }
+  const FONT_RANGES = ["0-255", "1024-1279", "8192-8447"];
+  const FONT_STACKS = ["Noto Sans Regular", "Noto Sans Medium"];
+  const MAP_FILES = ["info", "maplibre-gl-csp.js", "maplibre-gl-csp-worker.js", "maplibre-gl.css", "map-style.js", "zal-map.js", "zal-map.css", "map-graph.js", "route-worker.js"];
+  const graphUrl = (a) => `${MAP_BASE}/graph/${a.id}.graph`;
+  /** Скачанное соответствует нынешнему району и сборке карты. */
+  function offState() {
+    const a = S.zm.area;
+    const sv = S.off.saved;
+    const info = S.zm.info;
+    if (!a) return { area: null };
+    const same = sv && sv.id === a.id;
+    return {
+      area: a,
+      saved: same ? sv : null,
+      fresh: !!(same && info && sv.v === info.tiles.v && (!a.graph || sv.graphV === a.graph.v)),
+    };
+  }
+  const offGraphSaved = () => { const st = offState(); return !!(st.saved && st.saved.graphV); };
+
+  async function offDownload({ quiet = false } = {}) {
+    const st = offState();
+    const info = S.zm.info;
+    if (!st.area || !info || S.off.busy || !("caches" in window)) return;
+    const a = st.area;
+    const list = offTiles(a);
+    S.off = { ...S.off, busy: true, done: 0, total: list.length + MAP_FILES.length + FONT_RANGES.length * FONT_STACKS.length + (a.graph ? 1 : 0), error: "" };
+    if (!quiet || S.view === "profile") render();
+    try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (_) { /* браузер решит сам */ }
+    let bytes = 0;
+    try {
+      const cache = await caches.open(OFF_CACHE);
+      const step = () => { S.off.done++; if (S.view === "profile") paintOff(); };
+      const put = async (key, url) => {
+        if (await cache.match(key)) { step(); return; }
+        const res = await fetch(url, { cache: "no-store" });
+        if (!res.ok) throw new Error(`карта: ${res.status}`);
+        const blob = await res.blob();
+        bytes += blob.size;
+        await cache.put(key, new Response(res.status === 204 ? null : blob, { status: res.status, headers: { "Content-Type": res.headers.get("Content-Type") || "application/octet-stream" } }));
+        step();
+      };
+      for (const f of MAP_FILES) await put(`${MAP_BASE}/${f}`, `${MAP_BASE}/${f}`);
+      for (const fs of FONT_STACKS) for (const r of FONT_RANGES) { const u = `${MAP_BASE}/fonts/${encodeURIComponent(fs)}/${r}.pbf`; await put(u, u); }
+      // Тайлы: по 6 одновременно, ключ — без версии (после пересборки старые ещё служат).
+      const v = info.tiles.v;
+      if (S.off.saved && S.off.saved.v !== v) for (const k of await cache.keys()) if (k.url.includes("/map/tiles/")) await cache.delete(k);
+      let i = 0;
+      const worker = async () => { while (i < list.length) { const t = list[i++]; await put(`${MAP_BASE}/tiles/${t}.mvt`, `${MAP_BASE}/tiles/${t}.mvt?v=${v}&dl=1`); } };
+      await Promise.all(Array.from({ length: 6 }, worker));
+      let graphV = "";
+      if (a.graph) {
+        if (S.off.saved && S.off.saved.graphV !== a.graph.v) await cache.delete(graphUrl(a));
+        await put(graphUrl(a), graphUrl(a));
+        graphV = a.graph.v;
+        S.off.graph = null; // новая сеть дорог — загрузится в поток заново
+      }
+      const prevBytes = S.off.saved && S.off.saved.id === a.id ? S.off.saved.bytes || 0 : 0;
+      S.off.saved = { id: a.id, name: a.name, v, graphV, tiles: list.length, bytes: bytes + (bytes < 1e6 ? prevBytes : 0), at: Date.now() };
+      save(KEY.off, S.off.saved);
+      if (!quiet) toast(`Карта «${a.name}» в телефоне — работает и без интернета`, "ok");
+    } catch (e) {
+      S.off.error = S.online ? "Не всё скачалось — нажмите ещё раз, продолжим с места остановки" : "Нет связи — скачивание продолжится, когда появится интернет";
+    } finally {
+      S.off.busy = false;
+      if (S.view === "profile") render();
+    }
+  }
+
+  async function offRemove() {
+    try { await caches.delete(OFF_CACHE); } catch (_) { /* нет доступа */ }
+    S.off.saved = null;
+    S.off.graph = null;
+    drop(KEY.off);
+    if (routeWorker) { routeWorker.terminate(); routeWorker = null; }
+    render();
+  }
+
+  /** На Wi-Fi карта своего города скачивается сама (мобильный трафик не тратим). */
+  function offAuto() {
+    if (S.off.auto || S.off.busy) return;
+    const c = navigator.connection;
+    const wifi = c && (c.type === "wifi" || c.type === "ethernet");
+    if (!wifi || !S.online) return;
+    const st = offState();
+    if (!st.area || st.fresh) return;
+    S.off.auto = true;
+    setTimeout(() => offDownload({ quiet: true }), 4000);
+  }
+
+  // Маршрут на телефоне: поток с сетью дорог района.
+  let routeWorker = null;
+  let rwSeq = 0;
+  const rwWait = new Map();
+  function rwCall(msg, transfer) {
+    return new Promise((resolve) => {
+      const id = ++rwSeq;
+      const t = setTimeout(() => { rwWait.delete(id); resolve({ ok: false, reason: "timeout" }); }, 20000);
+      rwWait.set(id, (r) => { clearTimeout(t); resolve(r); });
+      routeWorker.postMessage({ ...msg, id }, transfer || []);
+    });
+  }
+  async function localRoute(points, mode) {
+    const st = offState();
+    if (!st.saved || !st.saved.graphV || !("caches" in window)) return null;
+    try {
+      if (!routeWorker) {
+        // Поток собирается из скриптов в кэше карты: без связи браузер иногда
+        // грузит скрипты потока мимо service worker — так они найдутся всегда.
+        const off = await caches.open(OFF_CACHE);
+        const text = async (f) => { const r = (await off.match(`${MAP_BASE}/${f}`)) || (await fetch(`${MAP_BASE}/${f}`)); return r.text(); };
+        const [g, w] = await Promise.all([text("map-graph.js"), text("route-worker.js")]);
+        const src = w.replace('importScripts("map-graph.js");', `(function () {\n${g}\n})();`);
+        const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+        routeWorker = new Worker(url);
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+        routeWorker.onmessage = (e) => { const f = rwWait.get(e.data.id); if (f) { rwWait.delete(e.data.id); f(e.data); } };
+        routeWorker.onerror = () => { routeWorker = null; S.off.graph = null; };
+      }
+      if (S.off.graph !== st.area.id) {
+        const res = await (await caches.open(OFF_CACHE)).match(graphUrl(st.area));
+        if (!res) return null;
+        const buf = await res.arrayBuffer();
+        const r = await rwCall({ op: "load", buf, area: st.area.id }, [buf]);
+        if (!r.ok) return null;
+        S.off.graph = st.area.id;
+      }
+      const r = await rwCall({ op: "route", points, mode });
+      return r && r.ok ? r : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  const mbText = (b) => `${Math.max(1, Math.round(b / 1048576))}${nbsp}МБ`;
+  function offHtml() {
+    const st = offState();
+    const o = S.off;
+    if (!("caches" in window)) return "";
+    if (!st.area) {
+      return `<div class="lrow">${I.download()}<span class="grow small muted">${S.zm.state === "off" ? "Своей карты для этого города пока нет — её соберёт сервер, когда заведение отметит точку на карте в кабинете." : "Карта загружается…"}</span></div>`;
+    }
+    const pct = o.total ? Math.round((o.done / o.total) * 100) : 0;
+    const status = o.busy
+      ? `<div class="off-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><i id="offbar" style="width:${pct}%"></i></div><span class="small muted" id="offpct">Скачиваем… ${pct}%</span>`
+      : st.saved
+        ? `<span class="small ${st.fresh ? "muted" : ""}" style="${st.fresh ? "" : "color:var(--amber)"}">${st.fresh ? `В телефоне: улицы, подписи${st.saved.graphV ? " и дороги для маршрутов" : ""} · ${mbText(st.saved.bytes || 0)} · ${new Date(st.saved.at).toLocaleDateString("ru-RU")}` : "Карта на сервере обновилась — скачайте новую версию"}</span>`
+        : `<span class="small muted">Город и окрестности: улицы, подписи и дороги — маршрут построится и без интернета. На Wi-Fi скачается само.</span>`;
+    return `<div class="off-card">
+      <div class="row" style="align-items:flex-start">${I.download()}<span class="grow"><b>${esc(st.area.name || "Ваш город")}</b><br>${status}</span></div>
+      ${o.error ? `<div class="box bad small" style="margin:10px 0 0">${esc(o.error)}</div>` : ""}
+      <div class="row" style="margin-top:10px;gap:8px">
+        ${o.busy ? "" : `<button class="btn ${st.fresh ? "line" : "go"}" style="min-height:44px;flex:1" data-a="off-get">${st.saved ? (st.fresh ? "Проверить и докачать" : "Обновить карту") : "Скачать карту города"}</button>`}
+        ${st.saved && !o.busy ? `<button class="btn link" style="color:var(--red)" data-a="off-del">Удалить</button>` : ""}
+      </div></div>`;
+  }
+  /** Ход скачивания — без перерисовки всей страницы. */
+  function paintOff() {
+    const pct = S.off.total ? Math.round((S.off.done / S.off.total) * 100) : 0;
+    const bar = $("offbar");
+    const t = $("offpct");
+    if (bar) bar.style.width = `${pct}%`;
+    if (t) t.textContent = `Скачиваем… ${pct}%`;
   }
 
   function paintMapButtons() {
@@ -915,7 +1123,7 @@
     if (keyChanged) { z.route = null; api.setRoute(null); }
     const moved = z.from && me ? dist(z.from, me) : 1e9;
     const stale = Date.now() - z.at > 90000;
-    if (!z.busy && S.online && (keyChanged || force || stale || (moved > 120 && Date.now() - z.at > 15000))) requestRoute(spec);
+    if (!z.busy && (S.online || offGraphSaved()) && (keyChanged || force || stale || (moved > 120 && Date.now() - z.at > 15000))) requestRoute(spec);
     z.fitPts = spec.routePts;
     if (keyChanged && !z.follow) api.fit(spec.routePts, { padding: mapPadding() });
     paintMapButtons();
@@ -940,7 +1148,13 @@
     z.at = Date.now();
     z.from = pts[0];
     try {
-      const r = await api("route", { points: pts, mode: S.transport });
+      let r = null;
+      if (S.online) {
+        try { r = await api("route", { points: pts, mode: S.transport }); } catch (e) { if (!e.network) throw e; }
+      }
+      // Нет связи или сервер не ответил — считаем по скачанной сети дорог.
+      if (!r && offGraphSaved()) r = await localRoute(pts, S.transport);
+      if (!r) return;
       if (z.key !== key || !z.api) return;
       if (!r || !r.ok) { z.route = null; z.api.setRoute(null); return; }
       z.route = { key, m: r.m, s: r.s, at: Date.now() };
@@ -1348,6 +1562,9 @@
       <div class="sec">Навигатор</div>
       <div class="list">${Object.entries(NAVS).map(([id, n]) => `
         <button class="lrow" style="width:100%;text-align:left" data-a="nav" data-v="${id}">${I.nav()}<span class="grow"><b>${n.label}</b><br><span class="small muted">${n.note}</span></span>${S.nav === id ? `<span style="color:var(--brand)">${I.check()}</span>` : ""}</button>`).join("")}</div>
+
+      <div class="sec">Карта без интернета</div>
+      <div class="list">${offHtml()}</div>
 
       <div class="sec">Сигналы</div>
       <div class="list">
@@ -1758,6 +1975,8 @@
           try { await navigator.clipboard.writeText(text); toast("Адрес скопирован", "ok"); } catch (_) { toast(text); }
         }
         return;
+      case "off-get": offDownload(); return;
+      case "off-del": offRemove(); toast("Карта удалена из телефона"); return;
       case "layers": S.layersOpen = !S.layersOpen; $("hud").innerHTML = hudHtml(); return;
       case "layer":
         S.layer = LAYERS[el.dataset.v] ? el.dataset.v : "map";
@@ -1966,6 +2185,13 @@
     const demo = /[#&]demo=(demo-[A-Za-z0-9]{4,32})/.exec(location.hash || "");
     if (demo && !S.token) await demoLogin(demo[1]);
     else if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+    // Связи нет или сервер долго отвечает — сразу последние заказы и карта из телефона.
+    const last = S.token ? load(KEY.last, null) : null;
+    if (last && last.r && last.r.me && Date.now() - last.at < 12 * 3600 * 1000) {
+      S.data = last.r;
+      S.stale = true;
+      if (S.data.me.onShift) startShiftServices();
+    }
     render();
     if (S.token) await refresh(true);
     flush();

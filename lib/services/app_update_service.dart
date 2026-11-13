@@ -281,10 +281,10 @@ class AppUpdateService {
     try {
       final info = await _ask(strict: true);
       _lastCheck = DateTime.now();
-      if (info == null) return 'У вас последняя версия (сборка $currentBuild)';
+      if (info == null) return 'У вас последняя версия (${buildPhrase(currentBuild)})';
       hiddenUntil.value = null; // «Позже» больше не прячет плашку
       await checkNow();
-      return 'Вышла новая версия — сборка ${info.buildNumber} (у вас $currentBuild). '
+      return 'Вышла новая версия — ${buildPhrase(info.buildNumber)} (у вас ${buildPhrase(currentBuild)}). '
           '${autoDownload ? 'Она уже загружается — когда загрузится, нажмите «Установить» на плашке вверху экрана.' : 'Нажмите «Обновить» на плашке вверху экрана.'}';
     } on _UpdateError catch (e) {
       return 'Не удалось проверить: ${e.message}';

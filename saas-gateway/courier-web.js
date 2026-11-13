@@ -27,7 +27,7 @@ const CSP = [
   "connect-src 'self'",
   "frame-src https://yandex.ru",
   "manifest-src 'self'",
-  "worker-src 'self'",
+  "worker-src 'self' blob:",
   "base-uri 'none'",
   "form-action 'none'",
   "frame-ancestors 'none'",

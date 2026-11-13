@@ -28,6 +28,9 @@ const STATIC = {
   "LICENSE-maplibre.txt": ["map-web", "text/plain; charset=utf-8"],
   "LICENSE-fonts.txt": ["map-web", "text/plain; charset=utf-8"],
   "map-style.js": [".", "text/javascript; charset=utf-8"],
+  // Маршруты без связи: тот же поиск пути, что на сервере, — в потоке браузера.
+  "map-graph.js": [".", "text/javascript; charset=utf-8"],
+  "route-worker.js": ["map-web", "text/javascript; charset=utf-8"],
 };
 const EMPTY = Buffer.alloc(0);
 const MODES = new Set(["auto", "bike", "foot"]);
@@ -84,6 +87,47 @@ function createMap({
     return tiles;
   }
 
+  /**
+   * Районы карты для приложения: название города, границы и сеть дорог для
+   * скачивания (маршруты без связи). Из итога сборки (status.json).
+   */
+  let areasCache = { at: 0, list: [] };
+  function areas() {
+    if (now() - areasCache.at < 30000) return areasCache.list;
+    let list = [];
+    try {
+      const st = JSON.parse(fs.readFileSync(path.join(dir, "status.json"), "utf8"));
+      list = (Array.isArray(st.regions) ? st.regions : []).filter((r) => r && /^[0-9-]{3,20}$/.test(String(r.id)) && Array.isArray(r.bbox) && r.bbox.length === 4).map((r) => {
+        let graph = null;
+        try {
+          const g = fs.statSync(path.join(dir, `roads-${r.id}.graph`));
+          let gz = null;
+          try { gz = fs.statSync(path.join(dir, `roads-${r.id}.graph.gz`)); } catch (_) {}
+          graph = { bytes: gz ? gz.size : g.size, v: crypto.createHash("sha1").update(`${g.size}:${Math.round(g.mtimeMs)}`).digest("hex").slice(0, 10) };
+        } catch (_) { /* дорог этого района ещё нет */ }
+        return { id: String(r.id), name: String(r.name || ""), bbox: r.bbox.map(Number), center: (r.center || []).map(Number), graph };
+      });
+    } catch (_) { /* сборки ещё не было */ }
+    areasCache = { at: now(), list };
+    return list;
+  }
+
+  /** Сеть дорог района целиком — в телефон курьера (сжатая, если есть копия). */
+  function sendGraph(req, res, id) {
+    const file = path.join(dir, `roads-${id}.graph`);
+    let st;
+    try { st = fs.statSync(file); } catch (_) { return notFound(res); }
+    let gz = null;
+    try { gz = fs.statSync(`${file}.gz`); } catch (_) {}
+    const useGz = gz && gz.mtimeMs >= st.mtimeMs && acceptsGzip(req);
+    const etag = `"g${crypto.createHash("sha1").update(`${st.size}:${Math.round(st.mtimeMs)}`).digest("hex").slice(0, 16)}"`;
+    const h = headers("application/octet-stream", { "Cache-Control": "public, max-age=3600", ETag: etag, Vary: "Accept-Encoding" });
+    if (req.headers && req.headers["if-none-match"] === etag) { res.writeHead(304, h); return res.end(); }
+    res.writeHead(200, { ...h, ...(useGz ? { "Content-Encoding": "gzip" } : {}), "Content-Length": useGz ? gz.size : st.size });
+    if (req.method === "HEAD") return res.end();
+    fs.createReadStream(useGz ? `${file}.gz` : file).on("error", () => res.destroy()).pipe(res);
+  }
+
   /** Итог последней сборки карты (map-build.js): когда, получилось ли, ошибки. */
   function buildStatus() {
     try {
@@ -113,6 +157,7 @@ function createMap({
         center: [h.centerLon, h.centerLat, h.centerZoom],
       } : null,
       route: router.available() ? { modes: [...MODES], regions: r.regions } : null,
+      areas: areas(),
       build: buildStatus(),
       attribution: "© OpenStreetMap",
     };
@@ -195,6 +240,8 @@ function createMap({
       const v = (/(?:^|&)v=([0-9a-f]{1,20})(?:&|$)/.exec(query) || [])[1] || "";
       return sendTile(req, res, z, x, y, v);
     }
+    m = /^graph\/([0-9-]{3,20})\.graph$/.exec(rel);
+    if (m) return sendGraph(req, res, m[1]);
     m = /^fonts\/([^/]{1,200})\/(\d{1,5})-(\d{1,5})\.pbf$/.exec(rel);
     if (m && Number(m[3]) - Number(m[2]) === 255 && Number(m[2]) % 256 === 0) return sendFont(req, res, m[1], `${m[2]}-${m[3]}`);
     return notFound(res);

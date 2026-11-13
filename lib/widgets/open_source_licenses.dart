@@ -28,7 +28,7 @@ void showOpenSourceLicenses(BuildContext context, {required String appName}) {
   showLicensePage(
     context: context,
     applicationName: appName,
-    applicationVersion: build > 0 ? 'Сборка $build' : null,
+    applicationVersion: build > 0 ? buildTitle(build) : null,
     applicationLegalese: 'Приложение использует открытые библиотеки и шрифты. Ниже — их лицензии.',
   );
 }

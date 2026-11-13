@@ -12,6 +12,18 @@ const String kBuildNumber = String.fromEnvironment(
 /// общий секрет, плоские коллекции (build-apk.yml флаг не ставит).
 const bool kSaasMode = bool.fromEnvironment('SAAS_MODE');
 
+/// Номер сборки как версия: 469 → «1.0.469», 1020 → «1.1.020» (тысячи —
+/// второе число, остаток — три цифры). Просьба владельца: «Сборка 469»
+/// выглядела несолидно.
+String versionOf(int build) => '1.${build ~/ 1000}.${(build % 1000).toString().padLeft(3, '0')}';
+
+/// Подпись сборки для людей: в SaaS — «Версия 1.0.469», в сборке одного
+/// заведения — как раньше, «Сборка 469».
+String buildTitle(int build) => kSaasMode ? 'Версия ${versionOf(build)}' : 'Сборка $build';
+
+/// То же внутри фразы («у вас версия 1.0.469» / «у вас сборка 469»).
+String buildPhrase(int build) => kSaasMode ? 'версия ${versionOf(build)}' : 'сборка $build';
+
 /// true — сборка из конвейера «Собрать APK» (saas-on-demand-build.yml,
 /// `--dart-define=IN_APP_UPDATES=true`): приложение само узнаёт о новой
 /// версии своего заведения и ставит её поверх (см. AppUpdateService).

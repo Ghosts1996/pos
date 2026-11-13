@@ -8,7 +8,7 @@ import 'open_source_licenses.dart';
 /// Номер сборки на устройстве — для подписи в меню.
 String get appBuildLabel {
   final n = int.tryParse(kBuildNumber) ?? 0;
-  return n > 0 ? 'Сборка $n' : 'Сборка для разработки';
+  return n > 0 ? buildTitle(n) : (kSaasMode ? 'Версия для разработки' : 'Сборка для разработки');
 }
 
 /// «Обновления»: какая сборка стоит и кнопка «Проверить обновления» с

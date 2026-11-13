@@ -739,7 +739,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: Text(
-              '${KolibriColors.appName} · приложение гостя · сборка $kBuildNumber'
+              '${KolibriColors.appName} · приложение гостя · ${int.tryParse(kBuildNumber) != null ? buildPhrase(int.parse(kBuildNumber)) : 'сборка $kBuildNumber'}'
               '${AppUpdateService.instance != null ? '\nНажмите, чтобы проверить обновления' : ''}',
               textAlign: TextAlign.center,
               style: TextStyle(color: KolibriColors.textMuted, fontSize: 12, height: 1.4),

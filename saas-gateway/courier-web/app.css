@@ -562,3 +562,12 @@ h1, .dest, .offer-pay, .hero .big { font-family: "SF Pro Display", -apple-system
   linear-gradient(135deg, #2F3B2A, #4A4A3E 55%, #2C3A44); }
 .layers-note { grid-column: 1 / -1; margin: 2px 2px 0; font-size: 12px; line-height: 1.35; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { .layers { animation: none; } }
+
+/* ---------------------------------------------------------------- карта без интернета */
+.off-card { padding: 12px 0; }
+.off-card .ico { color: var(--gold); margin-top: 2px; }
+.off-bar { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; margin: 8px 0 4px; }
+.off-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--gold-hi), var(--gold)); transition: width .25s; }
+@media (prefers-reduced-motion: reduce) { .off-bar i { transition: none; } }
+/* Подпись под картой не наезжает на время в пути */
+.zm-eta:not([hidden]) ~ .schema-note { bottom: 96px; }

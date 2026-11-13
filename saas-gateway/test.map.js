@@ -90,6 +90,14 @@ function gridOpl(lat0, lon0, n = 6, step = 0.001) {
   const readLines = async (cb) => gridOpl(lat0, lon0).forEach(cb);
   fs.writeFileSync(path.join(dir, "roads-5575-3760.graph"), G.encodeGraph(await G.buildGraph(readLines)));
 
+  // Итог сборки с районами: приложение получает названия городов и сеть дорог.
+  const graphBuf = fs.readFileSync(path.join(dir, "roads-5575-3760.graph"));
+  fs.writeFileSync(path.join(dir, "roads-5575-3760.graph.gz"), zlib.gzipSync(graphBuf));
+  fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify({ ok: true, regions: [
+    { id: "5575-3760", name: "Москва", bbox: [37.5, 55.7, 37.7, 55.8], center: [55.75, 37.6] },
+    { id: "../etc", name: "плохой", bbox: [0, 0, 1, 1] },
+  ] }));
+
   // ---- адреса /map/…
   const regionsFile = path.join(dir, "state", "map-regions.json");
   const map = createMap({ dir, regionsFile });
@@ -116,6 +124,21 @@ function gridOpl(lat0, lon0, n = 6, step = 0.001) {
   assert.deepStrictEqual(info.tiles.bounds, [37.5, 55.7, 37.7, 55.8]);
   assert.ok(info.route && info.route.modes.includes("bike"));
   ok("map/info: версия тайлов, границы, маршруты");
+  assert.deepStrictEqual(info.areas.map((a) => [a.id, a.name]), [["5575-3760", "Москва"]], "районы — только с правильным id");
+  assert.ok(info.areas[0].graph && info.areas[0].graph.v && info.areas[0].graph.bytes > 0);
+  r = await get("graph/5575-3760.graph", { "Accept-Encoding": "gzip" });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.headers["content-encoding"], "gzip");
+  assert.deepStrictEqual(zlib.gunzipSync(r.body), graphBuf, "сеть дорог для телефона — та же");
+  r = await get("graph/5575-3760.graph");
+  assert.deepStrictEqual(r.body, graphBuf);
+  assert.strictEqual((await get("graph/..%2Fstatus.graph")).status, 404);
+  assert.strictEqual((await get("graph/9999-9999.graph")).status, 404);
+  r = await get("route-worker.js");
+  assert.strictEqual(r.status, 200);
+  assert.match(String(r.body), /importScripts\("map-graph\.js"\)/);
+  assert.strictEqual((await get("map-graph.js")).status, 200);
+  ok("районы с названиями, сеть дорог и поток маршрутов — для работы без связи");
 
   r = await get(`tiles/14/9898/5120.mvt?v=${info.tiles.v}`, { "Accept-Encoding": "gzip" });
   assert.strictEqual(r.status, 200);

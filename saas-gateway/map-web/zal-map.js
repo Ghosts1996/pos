@@ -1,7 +1,7 @@
 /* Своя карта ZalPOS в браузере: курьер, кабинет, гость.
  *
  *   ZalMap.load(base)  → Promise<info | null>   (null — карты на сервере нет)
- *   ZalMap.create(el, {base, info, theme, center, zoom}) → карта:
+ *   ZalMap.create(el, {base, info, theme, center, zoom, bounds}) → карта:
  *     .setMarkers([{id, lat, lng, kind: me|venue|guest|courier, label, heading}])
  *     .setRoute([[lat, lng], ...] | null)
  *     .fit([{lat, lng}, ...], {padding})   .follow(on)   .setTheme(light|dark)
@@ -48,12 +48,39 @@
     return p;
   }
 
+  /**
+   * Участки карты и шрифты — через свой протокол «zalmap://»: MapLibre
+   * запрашивает их из основной страницы, а не из своего потока. Так их видит
+   * service worker приложения: скачанная карта города и просмотренные участки
+   * открываются из телефона, без интернета. Нет связи — пустой участок.
+   */
+  let protocolOn = false;
+  function useProtocol() {
+    if (protocolOn || !window.maplibregl || typeof window.maplibregl.addProtocol !== "function") return protocolOn;
+    window.maplibregl.addProtocol("zalmap", async (params, abort) => {
+      const url = `${location.protocol}//${params.url.slice("zalmap://".length)}`;
+      try {
+        const res = await fetch(url, { signal: abort && abort.signal });
+        if (res.status === 204 || !res.ok) return { data: new ArrayBuffer(0) };
+        return { data: await res.arrayBuffer(), cacheControl: res.headers.get("Cache-Control"), expires: res.headers.get("Expires") };
+      } catch (e) {
+        if (e && e.name === "AbortError") throw e;
+        return { data: new ArrayBuffer(0) };
+      }
+    });
+    protocolOn = true;
+    return true;
+  }
+
   function styleFor(base, info, theme) {
     const b = String(base).replace(/\/+$/, "");
+    // Свой протокол — только для адреса того же сайта (http/https).
+    const viaProto = /^https?:\/\//.test(b) && b.startsWith(location.protocol) && useProtocol();
+    const root = viaProto ? `zalmap://${b.replace(/^https?:\/\//, "")}` : b;
     return window.ZalMapStyle.buildStyle({
       theme,
-      tilesUrl: `${b}/tiles/{z}/{x}/{y}.mvt?v=${info.tiles.v}`,
-      glyphsUrl: `${b}/fonts/{fontstack}/{range}.pbf`,
+      tilesUrl: `${root}/tiles/{z}/{x}/{y}.mvt?v=${info.tiles.v}`,
+      glyphsUrl: `${root}/fonts/{fontstack}/{range}.pbf`,
       info: info.tiles,
     });
   }
@@ -97,7 +124,9 @@
     }
     let theme = opts.theme || themeNow();
     const c = opts.center || { lat: info.tiles.center[1], lng: info.tiles.center[0] };
-    const b = info.tiles.bounds;
+    // Границы — район города, где работает курьер (opts.bounds), а не все
+    // районы сразу: карта не уезжает в пустоту между городами.
+    const b = Array.isArray(opts.bounds) && opts.bounds.length === 4 ? opts.bounds : info.tiles.bounds;
     const map = new ml.Map({
       container: el,
       style: styleFor(base, info, theme),
