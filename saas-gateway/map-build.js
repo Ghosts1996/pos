@@ -15,7 +15,7 @@
  * чтобы касса, кабинет и база не замедлялись. Скачанные выгрузки удаляются.
  * Готовые файлы подменяются целиком: шлюз подхватывает их сам.
  *
- *   4. Вся Россия — обзорная карта до масштаба 12 (russia.pmtiles): шлюз
+ *   4. Вся Россия — обзорная карта до масштаба 11 (russia.pmtiles): шлюз
  *      отдаёт участок из карты городов, а где её нет — из карты страны.
  *
  *   node map-build.js [--force] [--only=tiles|roads|country] [--dry-run]
@@ -31,9 +31,11 @@ const RADIUS_KM = Number(process.env.MAP_RADIUS_KM) || 25;
 const MAXZOOM = Number(process.env.MAP_MAXZOOM) || 15;
 const TILES_MAX_DAYS = 30;
 const ROADS_MAX_DAYS = 30;
-// Вся Россия — обзорная карта до масштаба COUNTRY_MAXZOOM (города, районы,
-// главные и второстепенные улицы, ~2,6 ГБ); обновляется раз в COUNTRY_MAX_DAYS.
-const COUNTRY_MAXZOOM = Number(process.env.MAP_COUNTRY_MAXZOOM) || 12;
+// Вся Россия — обзорная карта до масштаба COUNTRY_MAXZOOM; обновляется раз в
+// COUNTRY_MAX_DAYS.
+// До 11: города, районы и главные улицы страны — ≈1,3 ГБ (до 12 — 2,6 ГБ);
+// подробные улицы и дома — в картах городов.
+const COUNTRY_MAXZOOM = Number(process.env.MAP_COUNTRY_MAXZOOM) || 11;
 const COUNTRY_MAX_DAYS = 60;
 const MEMORY_MAX = process.env.MAP_MEMORY_MAX || "900M";
 const PMTILES_VERSION = "1.31.2";
@@ -422,16 +424,25 @@ function districtOf(region) {
 function buildRoads(regions, { force, dryRun }) {
   const metaFile = path.join(DIR, "roads.json");
   const meta = readJson(metaFile, {});
+  // Сеть дорог хранится только сжатой (roads-<район>.graph.gz): её же
+  // скачивают телефоны, шлюз распаковывает в память при первом маршруте.
+  const graphFile = (id) => {
+    const gz = path.join(DIR, `roads-${id}.graph.gz`);
+    if (fs.existsSync(gz)) return gz;
+    const raw = path.join(DIR, `roads-${id}.graph`);
+    return fs.existsSync(raw) ? raw : null;
+  };
   const todo = regions.filter((r) => {
     const m = meta[r.id];
-    const file = path.join(DIR, `roads-${r.id}.graph`);
-    return force || !m || JSON.stringify(m.bbox) !== JSON.stringify(r.bbox) || !fs.existsSync(file) || daysSince(m.at) > ROADS_MAX_DAYS;
+    return force || !m || JSON.stringify(m.bbox) !== JSON.stringify(r.bbox) || !graphFile(r.id) || daysSince(m.at) > ROADS_MAX_DAYS;
   });
   // Графы районов, которых больше нет, — убрать.
-  const keep = new Set(regions.map((r) => `roads-${r.id}.graph`));
+  const keep = new Set(regions.map((r) => r.id));
   for (const f of fs.readdirSync(DIR)) {
-    if (/^roads-[0-9-]+\.graph$/.test(f) && !keep.has(f) && !dryRun) { fs.unlinkSync(path.join(DIR, f)); try { fs.unlinkSync(path.join(DIR, `${f}.gz`)); } catch (_) {} delete meta[f.slice(6, -6)]; log(`дороги: убрал ${f}`); }
+    const m = /^roads-([0-9-]+)\.graph(\.gz)?$/.exec(f);
+    if (m && !keep.has(m[1]) && !dryRun) { fs.unlinkSync(path.join(DIR, f)); delete meta[m[1]]; log(`дороги: убрал ${f}`); }
   }
+  // Несжатые графы прежних сборок — сжать и убрать (место на диске).
   if (!dryRun) {
     for (const r of regions) {
       const g = path.join(DIR, `roads-${r.id}.graph`);
@@ -442,9 +453,10 @@ function buildRoads(regions, { force, dryRun }) {
         if (!gst || gst.mtimeMs < st.mtimeMs) {
           fs.writeFileSync(`${g}.gz.tmp`, require("zlib").gzipSync(fs.readFileSync(g), { level: 9 }), { mode: 0o644 });
           fs.renameSync(`${g}.gz.tmp`, `${g}.gz`);
-          log(`дороги: сжатая копия ${r.id} для телефонов`);
         }
-      } catch (_) { /* графа ещё нет */ }
+        fs.unlinkSync(g);
+        log(`дороги: ${r.name || r.id} — оставлена только сжатая копия`);
+      } catch (_) { /* несжатого графа нет */ }
     }
   }
   if (!todo.length) { log("дороги: без изменений"); if (!dryRun) writeJson(metaFile, meta); return { skipped: true }; }
@@ -487,12 +499,14 @@ function buildRoads(regions, { force, dryRun }) {
         const out = path.join(DIR, `roads-${r.id}.graph`);
         run(process.execPath, ["--max-old-space-size=640", path.join(__dirname, "map-graph.js"), "build", opl, out], { heavy: true });
         fs.unlinkSync(opl);
-        fs.chmodSync(out, 0o644);
-        // Сжатая копия — для скачивания в телефон курьера (маршруты без связи).
+        // Хранится только сжатая сеть дорог: её скачивают телефоны, шлюз
+        // распаковывает в память при первом маршруте (место на диске).
         const gz = `${out}.gz`;
         fs.writeFileSync(`${gz}.tmp`, require("zlib").gzipSync(fs.readFileSync(out), { level: 9 }), { mode: 0o644 });
         fs.renameSync(`${gz}.tmp`, gz);
-        meta[r.id] = { bbox: r.bbox, district: d, at: new Date().toISOString(), bytes: fs.statSync(out).size };
+        const bytes = fs.statSync(out).size;
+        fs.unlinkSync(out);
+        meta[r.id] = { bbox: r.bbox, district: d, at: new Date().toISOString(), bytes, gzBytes: fs.statSync(gz).size };
         writeJson(metaFile, meta);
         done.push(r.id);
         log(`дороги: район ${r.id} (${r.name || ""}) готов`);
@@ -512,6 +526,23 @@ function buildRoads(regions, { force, dryRun }) {
 
 /* ------------------------------ запуск ------------------------------ */
 
+/**
+ * Остатки прерванных сборок (перезапуск, нехватка памяти): выгрузки
+ * округов, недособранные карты, пробные файлы. Каждая — сотни МБ и больше.
+ */
+function cleanLeftovers() {
+  let freed = 0;
+  const rm = (f) => {
+    try { const st = fs.statSync(f); fs.rmSync(f, { recursive: true, force: true }); freed += st.isDirectory() ? 0 : st.size; } catch (_) {}
+  };
+  const work = path.join(DIR, "work");
+  try { for (const f of fs.readdirSync(work)) { freed += fs.statSync(path.join(work, f)).size; rm(path.join(work, f)); } } catch (_) {}
+  for (const f of fs.readdirSync(DIR)) {
+    if (/\.(new|part|tmp)$/.test(f) || f === "dry.pmtiles") rm(path.join(DIR, f));
+  }
+  if (freed > 1 << 20) log(`убраны остатки прошлых сборок: ${(freed / 1048576).toFixed(0)} МБ`);
+}
+
 function main() {
   const args = process.argv.slice(2);
   const force = args.includes("--force");
@@ -526,6 +557,14 @@ function main() {
     }
   } catch (_) {}
   fs.writeFileSync(lock, String(process.pid));
+  // Версия кода этой сборки: update-server.sh перезапускает идущую сборку,
+  // если код карты обновился (иначе старая сборка доделает по-старому).
+  try {
+    const sum = crypto.createHash("sha1");
+    for (const f of ["map-build.js", "map-graph.js"]) sum.update(fs.readFileSync(path.join(__dirname, f)));
+    fs.writeFileSync(path.join(DIR, ".code"), sum.digest("hex"));
+  } catch (_) {}
+  if (!dryRun) cleanLeftovers();
   const status = { startedAt: new Date().toISOString(), errors: [] };
   try {
     const regions = clusterRegions(readPoints());

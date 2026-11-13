@@ -15,13 +15,15 @@ say() { echo; echo "== $*"; }
 die() { echo; echo "ОШИБКА: $*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || die "запустите от root"
 
-# Полный диск роняет Postgres и не даёт обновиться. Меньше 3 ГБ свободно —
-# печатаем, что занимает место (разбор виден в логе обновления); меньше
-# 1 ГБ — ещё и чистим то, что безопасно удалять: кэши apt и npm и журналы
-# systemd старше недели.
+# Полный диск роняет Postgres и не даёт обновиться. При каждом обновлении:
+# безопасная уборка мусора (только то, что заново появится само: кэши
+# пакетов, старые сжатые журналы, временные файлы старше недели, остатки
+# прерванных сборок карты) и отчёт, что занимает место (виден в логе
+# обновления). Данные, резервные копии, Docker и nginx не трогаются.
 say "Место на диске"
 free_mb() { df -Pm / | awk 'NR==2 {print $4}'; }
-echo "свободно: $(free_mb) МБ"
+before_mb=$(free_mb)
+echo "свободно: ${before_mb} МБ из $(df -Pm / | awk 'NR==2 {print $2}') МБ"
 # Оперативная память и кто её занимает — только показываем: по логу
 # обновления видно, хватает ли серверу памяти.
 awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} /^SwapTotal:/ {s=$2} /^SwapFree:/ {f=$2}
@@ -31,24 +33,68 @@ echo "процессоров: $(nproc 2>/dev/null || echo '?')"
 # Служба systemd рядом с процессом — по ней видно, чья это программа.
 ps -eo rss=,comm=,unit= --sort=-rss 2>/dev/null | head -n 6 |
   awk '{printf "  %s — %d МБ%s\n", $2, $1/1024, ($3 != "" && $3 != "-" ? " (служба " $3 ")" : "")}' || true
-# Сторонние программы в Docker (ZalPOS его не использует) — только названия.
+# Сторонние программы в Docker (ZalPOS его не использует) — только названия
+# и сколько места занимают; Docker не чистим.
 if command -v docker >/dev/null 2>&1; then
   docker ps --format '  контейнер: {{.Names}} ({{.Image}}), {{.Status}}' 2>/dev/null | head -n 10 || true
+  docker system df 2>/dev/null | sed 's/^/  docker: /' || true
 fi
-if (( $(free_mb) < 1024 )); then
-  echo "меньше 1 ГБ — чищу кэши apt и npm и журналы старше недели"
-  apt-get clean >/dev/null 2>&1 || true
-  journalctl --vacuum-time=7d --vacuum-size=300M >/dev/null 2>&1 || true
-  npm cache clean --force >/dev/null 2>&1 || true
-  echo "после уборки свободно: $(free_mb) МБ"
-fi
-if (( $(free_mb) < 3072 )); then
-  echo "крупнее всего:"
-  for d in / /var/lib /usr /usr/lib /usr/local /var/log /opt /root; do
-    du -xhd1 "$d" 2>/dev/null | sort -rh | sed -n '2,8p' || true
+
+echo "уборка мусора:"
+# Скачанные пакеты apt (ставятся заново из сети при надобности).
+apt-get clean >/dev/null 2>&1 || true
+# Журнал systemd: не больше 200 МБ и не старше месяца.
+journalctl --vacuum-size=200M --vacuum-time=30d >/dev/null 2>&1 || true
+# Старые сжатые и прокрученные журналы (logrotate) старше 2 недель.
+find /var/log -xdev -type f \( -name '*.gz' -o -name '*.[0-9]' -o -name '*.old' \) -mtime +14 -delete 2>/dev/null || true
+# Свои журналы ZalPOS: больше 50 МБ — оставить последние 5 МБ.
+for f in /var/log/zalpos-*.log; do
+  [[ -f "$f" ]] || continue
+  if (( $(stat -c %s "$f") > 52428800 )); then
+    tail -c 5242880 "$f" > "$f.cut" && cat "$f.cut" > "$f" && rm -f "$f.cut"
+    echo "  журнал $f укорочен до 5 МБ"
+  fi
+done
+# Кэш npm (пакеты лежат в node_modules, кэш нужен только при установке).
+npm cache clean --force >/dev/null 2>&1 || true
+# Временные файлы крупнее 1 МБ, которые не открывали больше недели
+# (кроме личных папок служб systemd).
+find /tmp /var/tmp -xdev -type f -size +1M -atime +7 -not -path '*/systemd-private-*' -delete 2>/dev/null || true
+# Старые выключенные версии snap-пакетов (если snap есть).
+if command -v snap >/dev/null 2>&1; then
+  snap list --all 2>/dev/null | awk '/disabled/ {print $1, $3}' | while read -r n r; do
+    snap remove "$n" --revision="$r" >/dev/null 2>&1 && echo "  snap: убрана старая версия $n ($r)"
   done
-  du -xhd1 /opt/saas-gateway/tenant-builds 2>/dev/null | sort -rh | head -n 15 || true
-  ls -la /swapfile /swap.img 2>/dev/null || true
+fi
+# Остатки прерванных сборок карты (выгрузки округов, недособранные файлы):
+# только если сборка сейчас не идёт — иначе это её рабочие файлы.
+if [[ -d /opt/zalpos-maps ]] && ! systemctl is-active --quiet zalpos-map.service; then
+  rm -rf /opt/zalpos-maps/work 2>/dev/null || true
+  find /opt/zalpos-maps -maxdepth 1 -type f \( -name '*.new' -o -name '*.part' -o -name '*.tmp' -o -name 'dry.pmtiles' \) -delete 2>/dev/null || true
+fi
+# Старая история git в папке обновления — сжать (сам код не меняется).
+git -C "$REPO" gc --auto --quiet 2>/dev/null || true
+echo "  освобождено: $(( $(free_mb) - before_mb )) МБ, свободно: $(free_mb) МБ"
+
+echo "что занимает место:"
+for d in /opt /var/lib /var/log /usr /root /home /tmp /var/tmp /var/cache /snap /swapfile /swap.img; do
+  [[ -e "$d" ]] && du -xsh "$d" 2>/dev/null | awk '{printf "  %s — %s\n", $2, $1}'
+done
+echo "  внутри /opt:"
+du -xhd1 /opt 2>/dev/null | sort -rh | sed -n '2,9p' | awk '{printf "    %s — %s\n", $2, $1}' || true
+echo "  внутри /var/lib:"
+du -xhd1 /var/lib 2>/dev/null | sort -rh | sed -n '2,7p' | awk '{printf "    %s — %s\n", $2, $1}' || true
+echo "  ZalPOS: данные, копии, сборки:"
+for d in /opt/saas-gateway/state /opt/saas-gateway/backups /opt/saas-gateway/tenant-builds /opt/saas-gateway/support-uploads /opt/saas-gateway/node_modules /opt/zalpos-maps "$REPO/.git"; do
+  [[ -e "$d" ]] && du -xsh "$d" 2>/dev/null | awk '{printf "    %s — %s\n", $2, $1}'
+done
+echo "  крупные файлы (больше 300 МБ):"
+find / -xdev -type f -size +300M -printf '    %p — %s\n' 2>/dev/null |
+  awk -F' — ' '{printf "%s — %d МБ\n", $1, $2/1048576}' | head -n 15 || true
+echo "  журнал systemd: $(journalctl --disk-usage 2>/dev/null | grep -o '[0-9.]*[KMGT]B*' | head -n 1 || echo '?')"
+old_kernels=$( (dpkg -l 'linux-image-[0-9]*' 2>/dev/null || true) | awk -v cur="$(uname -r)" '/^ii/ && index($2, cur) == 0 {n++} END {print n + 0}')
+if (( old_kernels > 1 )); then
+  echo "  установлено ядер, кроме текущего: $old_kernels (лишние после перезагрузки убирает: apt-get autoremove --purge)"
 fi
 
 say "Веб-версия гостя"
@@ -227,6 +273,23 @@ NODE_BIN="$(command -v node || echo /usr/bin/node)"
 timer zalpos-map "*-*-* 04:40:00 Europe/Moscow" "nice -n 15 $NODE_BIN $REPO/saas-gateway/map-build.js >> /var/log/zalpos-map.log 2>&1" "Своя карта ZalPOS: тайлы и дороги" 10h
 # Сборка — в фоне при каждом обновлении: если районы и версия те же, она
 # сразу выходит; добавилась точка или город (демо) — карта дособерётся сама.
+# Код карты обновился, а сборка идёт по-старому — перезапустить её: готовые
+# города и дороги сохраняются, заново пойдёт только недоделанное.
+if systemctl is-active --quiet zalpos-map.service; then
+  new_code=$(cat "$REPO/saas-gateway/map-build.js" "$REPO/saas-gateway/map-graph.js" | sha1sum | cut -d' ' -f1)
+  if [[ "$(cat /opt/zalpos-maps/.code 2>/dev/null)" != "$new_code" ]]; then
+    echo "код карты обновился — перезапускаю идущую сборку"
+    systemctl stop zalpos-map.service 2>/dev/null || true
+    # Тяжёлые шаги идут в своих рамках памяти (systemd-run) — их тоже остановить.
+    pkill -x osmconvert 2>/dev/null || true
+    pkill -x osmfilter 2>/dev/null || true
+    pkill -x osmium 2>/dev/null || true
+    pkill -x pmtiles 2>/dev/null || true
+    pkill -f 'map-graph.js build' 2>/dev/null || true
+    rm -f /opt/zalpos-maps/.build.lock
+    sleep 2
+  fi
+fi
 systemctl start --no-block zalpos-map.service && echo "сборка карты запущена в фоне (без изменений — сразу выйдет), журнал: /var/log/zalpos-map.log"
 [[ -d /opt/zalpos-maps ]] && echo "карта сейчас: $(du -sh /opt/zalpos-maps 2>/dev/null | cut -f1)"
 

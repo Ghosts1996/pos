@@ -124,12 +124,11 @@ function createMap({
       const st = JSON.parse(fs.readFileSync(path.join(dir, "status.json"), "utf8"));
       list = (Array.isArray(st.regions) ? st.regions : []).filter((r) => r && /^[0-9-]{3,20}$/.test(String(r.id)) && Array.isArray(r.bbox) && r.bbox.length === 4).map((r) => {
         let graph = null;
-        try {
-          const g = fs.statSync(path.join(dir, `roads-${r.id}.graph`));
-          let gz = null;
-          try { gz = fs.statSync(path.join(dir, `roads-${r.id}.graph.gz`)); } catch (_) {}
-          graph = { bytes: gz ? gz.size : g.size, v: crypto.createHash("sha1").update(`${g.size}:${Math.round(g.mtimeMs)}`).digest("hex").slice(0, 10) };
-        } catch (_) { /* дорог этого района ещё нет */ }
+        const f = graphFiles(r.id);
+        if (f) {
+          const st = f.gz || f.raw;
+          graph = { bytes: st.size, v: crypto.createHash("sha1").update(`${st.size}:${Math.round(st.mtimeMs)}`).digest("hex").slice(0, 10) };
+        }
         return { id: String(r.id), name: String(r.name || ""), bbox: r.bbox.map(Number), center: (r.center || []).map(Number), graph };
       });
     } catch (_) { /* сборки ещё не было */ }
@@ -137,20 +136,38 @@ function createMap({
     return list;
   }
 
-  /** Сеть дорог района целиком — в телефон курьера (сжатая, если есть копия). */
-  function sendGraph(req, res, id) {
+  /**
+   * Файлы сети дорог района. map-build хранит только сжатую копию
+   * (roads-<id>.graph.gz); несжатая бывает у старых сборок. Берётся новее.
+   */
+  function graphFiles(id) {
     const file = path.join(dir, `roads-${id}.graph`);
-    let st;
-    try { st = fs.statSync(file); } catch (_) { return notFound(res); }
-    let gz = null;
+    let raw = null, gz = null;
+    try { raw = fs.statSync(file); } catch (_) {}
     try { gz = fs.statSync(`${file}.gz`); } catch (_) {}
-    const useGz = gz && gz.mtimeMs >= st.mtimeMs && acceptsGzip(req);
+    if (raw && gz && raw.mtimeMs > gz.mtimeMs) gz = null;
+    if (!raw && !gz) return null;
+    return { file, raw: gz ? null : raw, gz };
+  }
+
+  /** Сеть дорог района целиком — в телефон курьера (сжатая). */
+  function sendGraph(req, res, id) {
+    const f = graphFiles(id);
+    if (!f) return notFound(res);
+    const st = f.gz || f.raw;
     const etag = `"g${crypto.createHash("sha1").update(`${st.size}:${Math.round(st.mtimeMs)}`).digest("hex").slice(0, 16)}"`;
     const h = headers("application/octet-stream", { "Cache-Control": "public, max-age=3600", ETag: etag, Vary: "Accept-Encoding" });
     if (req.headers && req.headers["if-none-match"] === etag) { res.writeHead(304, h); return res.end(); }
-    res.writeHead(200, { ...h, ...(useGz ? { "Content-Encoding": "gzip" } : {}), "Content-Length": useGz ? gz.size : st.size });
+    if (f.gz && !acceptsGzip(req)) {
+      // Клиент без gzip (редко): распаковать на лету.
+      res.writeHead(200, h);
+      if (req.method === "HEAD") return res.end();
+      const src = fs.createReadStream(`${f.file}.gz`).on("error", () => res.destroy());
+      return src.pipe(zlib.createGunzip()).on("error", () => res.destroy()).pipe(res);
+    }
+    res.writeHead(200, { ...h, ...(f.gz ? { "Content-Encoding": "gzip" } : {}), "Content-Length": st.size });
     if (req.method === "HEAD") return res.end();
-    fs.createReadStream(useGz ? `${file}.gz` : file).on("error", () => res.destroy()).pipe(res);
+    fs.createReadStream(f.gz ? `${f.file}.gz` : f.file).on("error", () => res.destroy()).pipe(res);
   }
 
   /** Итог последней сборки карты (map-build.js): когда, получилось ли, ошибки. */

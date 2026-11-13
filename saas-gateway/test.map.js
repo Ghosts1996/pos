@@ -134,6 +134,17 @@ function gridOpl(lat0, lon0, n = 6, step = 0.001) {
   assert.deepStrictEqual(r.body, graphBuf);
   assert.strictEqual((await get("graph/..%2Fstatus.graph")).status, 404);
   assert.strictEqual((await get("graph/9999-9999.graph")).status, 404);
+  // На сервере хранится только сжатая копия (место на диске): маршруты и выдача — из неё.
+  fs.unlinkSync(path.join(dir, "roads-5575-3760.graph"));
+  r = await get("graph/5575-3760.graph", { "Accept-Encoding": "gzip" });
+  assert.strictEqual(r.headers["content-encoding"], "gzip");
+  assert.deepStrictEqual(zlib.gunzipSync(r.body), graphBuf);
+  r = await get("graph/5575-3760.graph");
+  assert.strictEqual(r.status, 200);
+  assert.ok(!r.headers["content-encoding"]);
+  assert.deepStrictEqual(r.body, graphBuf, "клиенту без gzip — распакованная");
+  const { listGraphs } = require("./map-router");
+  assert.deepStrictEqual(listGraphs(dir).map((f) => f.file), ["roads-5575-3760.graph.gz"]);
   r = await get("route-worker.js");
   assert.strictEqual(r.status, 200);
   assert.match(String(r.body), /importScripts\("map-graph\.js"\)/);
@@ -224,7 +235,7 @@ function gridOpl(lat0, lon0, n = 6, step = 0.001) {
   assert.strictEqual(rt.reason, "points");
   rt = await map.route({ points: [P(0, 0), { lat: "x", lng: 1 }] });
   assert.strictEqual(rt.reason, "points");
-  ok("маршруты: поток-работник, одностороннее, пешком, вне карты, ошибки ввода");
+  ok("маршруты: поток-работник (сжатая сеть дорог), одностороннее, пешком, вне карты, ошибки ввода");
 
   // ---- районы для сборки
   assert.strictEqual(map.saveRegions([{ lat: 55.7579, lng: 37.6108 }, { lat: 55.75791, lng: 37.61081 }, { lat: "x" }, { lat: 0, lng: 0 }]), true);

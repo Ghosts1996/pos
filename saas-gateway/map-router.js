@@ -1,6 +1,6 @@
 "use strict";
 /**
- * Маршруты своей карты в отдельном потоке: граф дорог (файлы roads-*.graph
+ * Маршруты своей карты в отдельном потоке: граф дорог (файлы roads-*.graph.gz
  * в папке карт) живёт в потоке-работнике, поиск не задерживает остальной
  * сервер. Новые файлы графа (после еженедельной сборки) подхватываются сами.
  */
@@ -8,19 +8,47 @@ const fs = require("fs");
 const path = require("path");
 const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
 
-const FILE_RE = /^roads-[a-z0-9_-]+\.graph$/;
+const zlib = require("zlib");
+
+// Сеть дорог района: roads-<id>.graph.gz (так хранит map-build — меньше места)
+// или несжатый roads-<id>.graph (старые сборки, тесты). Если есть оба — новее.
+const FILE_RE = /^roads-([a-z0-9_-]+)\.graph(\.gz)?$/;
 
 function listGraphs(dir) {
   try {
-    return fs.readdirSync(dir)
-      .filter((f) => FILE_RE.test(f))
-      .map((f) => {
-        const st = fs.statSync(path.join(dir, f));
-        return { file: f, size: st.size, mtime: st.mtimeMs };
-      })
-      .sort((a, b) => (a.file < b.file ? -1 : 1));
+    const byId = new Map();
+    for (const f of fs.readdirSync(dir)) {
+      const m = FILE_RE.exec(f);
+      if (!m) continue;
+      const st = fs.statSync(path.join(dir, f));
+      const rec = { file: f, size: st.size, mtime: st.mtimeMs, gz: !!m[2] };
+      const was = byId.get(m[1]);
+      if (!was || rec.mtime > was.mtime || (rec.mtime === was.mtime && rec.gz)) byId.set(m[1], rec);
+    }
+    return [...byId.values()].sort((a, b) => (a.file < b.file ? -1 : 1));
   } catch (_) {
     return [];
+  }
+}
+
+/** Файл графа целиком (сжатый — распаковать). */
+function readGraphFile(file) {
+  const buf = fs.readFileSync(file);
+  return /\.gz$/.test(file) ? zlib.gunzipSync(buf) : buf;
+}
+
+/** Первые n байт графа (заголовок) — у сжатого распаковывается только начало. */
+function readGraphHead(file, n) {
+  const fd = fs.openSync(file, "r");
+  try {
+    const gz = /\.gz$/.test(file);
+    const b = Buffer.alloc(gz ? 16384 : n);
+    const got = fs.readSync(fd, b, 0, b.length, 0);
+    const head = gz ? zlib.gunzipSync(b.subarray(0, got), { finishFlush: zlib.constants.Z_SYNC_FLUSH }) : b.subarray(0, got);
+    if (head.length < n) throw new Error("файл графа короче заголовка");
+    return head.subarray(0, n);
+  } finally {
+    fs.closeSync(fd);
   }
 }
 
@@ -35,15 +63,9 @@ if (!isMainThread && workerData && workerData.zalMapRouter) {
   let index = [];
   const loaded = new Map(); // file → { g, used }
   const readBounds = (file) => {
-    const fd = fs.openSync(path.join(workerData.dir, file), "r");
-    try {
-      const b = Buffer.alloc(48);
-      fs.readSync(fd, b, 0, 48, 0);
-      if (b.readUInt32LE(0) !== G.MAGIC) throw new Error("не граф дорог ZalPOS");
-      return { bounds: [b.readInt32LE(32) / 1e6, b.readInt32LE(36) / 1e6, b.readInt32LE(40) / 1e6, b.readInt32LE(44) / 1e6], createdAt: b.readDoubleLE(24), nV: b.readUInt32LE(8), nE: b.readUInt32LE(12) };
-    } finally {
-      fs.closeSync(fd);
-    }
+    const b = readGraphHead(path.join(workerData.dir, file), 48);
+    if (b.readUInt32LE(0) !== G.MAGIC) throw new Error("не граф дорог ZalPOS");
+    return { bounds: [b.readInt32LE(32) / 1e6, b.readInt32LE(36) / 1e6, b.readInt32LE(40) / 1e6, b.readInt32LE(44) / 1e6], createdAt: b.readDoubleLE(24), nV: b.readUInt32LE(8), nE: b.readUInt32LE(12) };
   };
   const scan = () => {
     const next = [];
@@ -69,7 +91,7 @@ if (!isMainThread && workerData && workerData.zalMapRouter) {
     for (const c of cands) {
       let rec = loaded.get(c.file);
       if (!rec) {
-        const g = G.loadGraph(fs.readFileSync(path.join(workerData.dir, c.file)));
+        const g = G.loadGraph(readGraphFile(path.join(workerData.dir, c.file)));
         rec = { g, sig: c.sig, used: 0 };
         loaded.set(c.file, rec);
         while (loaded.size > MAX_LOADED) {
