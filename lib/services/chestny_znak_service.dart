@@ -6,6 +6,7 @@ import 'app_scope.dart';
 import '../models/fiscal_receipt.dart';
 import '../models/marking_code.dart';
 import 'chestny_znak_api_service.dart';
+import 'piot_service.dart';
 
 /// Маркировка «Честный знак».
 ///
@@ -48,6 +49,12 @@ class ChestnyZnakService {
   /// продолжает работать только на локальной проверке [isAlreadySold], без
   /// онлайн-части.
   Future<ChestnyZnakCodeCheck?> checkOnlineStatus(MarkingCode code) async {
+    // ТС ПИоТ (с 2026 — обязательный способ проверки) — если подключён.
+    final piot = activePiot;
+    if (piot != null) {
+      final results = await piot.checkCodes([code.raw]);
+      return results.isEmpty ? null : results.first;
+    }
     final api = activeChestnyZnakApi;
     if (api == null) return null;
     final results = await api.checkCodes([code.raw]);

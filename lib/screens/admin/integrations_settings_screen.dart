@@ -7,6 +7,7 @@ import '../../services/egais_service.dart';
 import '../../services/atol_local_kassa.dart';
 import '../../services/kassa_service.dart';
 import '../../services/chestny_znak_api_service.dart';
+import '../../services/piot_service.dart';
 import '../../models/terminal_bank.dart';
 import '../../services/payment_terminal_service.dart';
 import '../../services/scanner_service.dart';
@@ -69,6 +70,13 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   final _kassaOrangeCaPemCtrl = TextEditingController();
   String _czCircuit = 'pilot'; // pilot | prod
   final _czTokenCtrl = TextEditingController();
+  // ТС ПИоТ (только SaaS): способ проверки кодов «Честного знака» с 2026 г.
+  String _czMode = 'token'; // token | piot
+  final _piotUrlCtrl = TextEditingController();
+  final _piotIdCtrl = TextEditingController();
+  final _piotTokenCtrl = TextEditingController();
+  final _piotLoginCtrl = TextEditingController();
+  final _piotPassCtrl = TextEditingController();
   final _czTestCodeCtrl = TextEditingController();
   TerminalProvider _terminalProvider = TerminalProvider.manual;
   final _terminalLoginCtrl = TextEditingController();
@@ -152,6 +160,13 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _kassaOrangeCaPemCtrl.text = data['kassaOrangeCaPem'] ?? '';
     _czCircuit = data['czCircuit'] ?? 'pilot';
     _czTokenCtrl.text = data['czToken'] ?? '';
+    // Новое заведение в SaaS — сразу ТС ПИоТ: проверка по токену отключается с 1.10.2026.
+    _czMode = kSaasMode && (data['czMode'] == 'piot' || (data['czMode'] == null && (data['czToken'] ?? '') == '')) ? 'piot' : 'token';
+    _piotUrlCtrl.text = data['czPiotUrl'] as String? ?? PiotService.defaultUrl;
+    _piotIdCtrl.text = data['czPiotId'] as String? ?? '';
+    _piotTokenCtrl.text = data['czPiotToken'] as String? ?? '';
+    _piotLoginCtrl.text = data['czPiotLogin'] as String? ?? '';
+    _piotPassCtrl.text = data['czPiotPassword'] as String? ?? '';
     _terminalProvider = TerminalProvider.fromId(data['terminalProvider'] ?? 'manual');
     _terminalLoginCtrl.text = data['terminalLogin'] ?? '';
     _terminalPasswordCtrl.text = data['terminalPassword'] ?? '';
@@ -250,6 +265,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'kassaOrangeCaPem': _kassaOrangeCaPemCtrl.text.trim(),
       'czCircuit': _czCircuit,
       'czToken': _czTokenCtrl.text.trim(),
+      if (kSaasMode) ..._piotSettings,
       ..._terminalSettings,
       'onlinePayProvider': _onlineProvider,
       'onlinePayLogin': _onlineLoginCtrl.text.trim(),
@@ -580,7 +596,17 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   void _applyActiveChestnyZnak() {
     final token = _czTokenCtrl.text.trim();
     activeChestnyZnakApi = token.isNotEmpty ? ChestnyZnakApiService(token: token, isPilot: _czCircuit != 'prod') : null;
+    activePiot = kSaasMode ? piotFromSettings(_piotSettings) : null;
   }
+
+  Map<String, dynamic> get _piotSettings => {
+        'czMode': _czMode,
+        'czPiotUrl': _piotUrlCtrl.text.trim(),
+        'czPiotId': _piotIdCtrl.text.trim(),
+        'czPiotToken': _piotTokenCtrl.text.trim(),
+        'czPiotLogin': _piotLoginCtrl.text.trim(),
+        'czPiotPassword': _piotPassCtrl.text,
+      };
 
   Future<void> _pickBluetoothDevice() async {
     List<BluetoothInfo> devices;
@@ -826,8 +852,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       setState(() => _czTestResult = 'Вставьте отсканированный код для проверки');
       return;
     }
+    final piot = kSaasMode ? piotFromSettings(_piotSettings) : null;
     final token = _czTokenCtrl.text.trim();
-    if (token.isEmpty) {
+    if (piot == null && token.isEmpty) {
       setState(() => _czTestResult = 'Укажите токен «Честного знака»');
       return;
     }
@@ -836,18 +863,21 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       _czTestResult = null;
     });
     try {
-      final api = ChestnyZnakApiService(token: token, isPilot: _czCircuit != 'prod');
-      final results = await api.checkCodes([code]);
+      final results = piot != null
+          ? await piot.checkCodes([code])
+          : await ChestnyZnakApiService(token: token, isPilot: _czCircuit != 'prod').checkCodes([code]);
       if (!mounted) return;
       if (results.isEmpty) {
         setState(() => _czTestResult = 'Пустой ответ от «Честного знака»');
       } else {
         final r = results.first;
+        final via = piot != null ? 'ТС ПИоТ: ' : '';
+        final off = r.offline ? ' (проверено без связи, по локальному модулю)' : '';
         setState(() => _czTestResult = !r.valid
-            ? 'Код не найден в системе (возможна подделка)'
+            ? '$via${r.errorMessage ?? 'Код не найден в системе (возможна подделка)'}$off'
             : r.alreadyRetired
-                ? 'Код найден, но уже выведен из оборота ранее'
-                : 'Код найден и не продан — можно продавать');
+                ? '$via''Код найден, но уже выведен из оборота ранее$off'
+                : '$via''Код найден и не продан — можно продавать$off${r.reqId.isNotEmpty ? '\nИдентификатор проверки для чека: ${r.reqId}' : ''}');
       }
     } catch (e) {
       if (mounted) setState(() => _czTestResult = 'Ошибка: ${humanError(e, lower: true)}');
@@ -905,6 +935,11 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _kassaOrangeCertPemCtrl.dispose();
     _kassaOrangeKeyPemCtrl.dispose();
     _czTokenCtrl.dispose();
+    _piotUrlCtrl.dispose();
+    _piotIdCtrl.dispose();
+    _piotTokenCtrl.dispose();
+    _piotLoginCtrl.dispose();
+    _piotPassCtrl.dispose();
     _czTestCodeCtrl.dispose();
     _terminalLoginCtrl.dispose();
     _terminalBankOtherCtrl.dispose();
@@ -1498,20 +1533,78 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
 
   Widget _czSection() {
     final token = _czTokenCtrl.text.trim().isNotEmpty;
+    final piot = kSaasMode && _czMode == 'piot';
     return _Section(
       icon: Icons.qr_code_scanner,
-      title: 'Честный ЗНАК (маркировка)',
-      status: !token
-          ? 'Онлайн-проверка выключена'
-          : _czCircuit == 'prod'
-              ? 'Боевой контур'
-              : 'Пилот (тестовый контур)',
-      active: token,
+      title: kSaasMode ? 'Честный ЗНАК и ТС ПИоТ (маркировка)' : 'Честный ЗНАК (маркировка)',
+      status: piot
+          ? 'ТС ПИоТ: ${_piotUrlCtrl.text.trim().isEmpty ? PiotService.defaultUrl : _piotUrlCtrl.text.trim()}'
+          : !token
+              ? 'Онлайн-проверка выключена'
+              : _czCircuit == 'prod'
+                  ? 'Боевой контур'
+                  : 'Пилот (тестовый контур)',
+      active: piot || token,
       children: [
         const _Hint('Онлайн-проверка кода при сканировании: подлинность и выбытие — в ИС МП. '
             'Защита от повторной продажи работает и без токена. Списание кода при продаже — '
             'через онлайн-кассу (тег 1162).'),
-        _Choice<String>(
+        if (kSaasMode)
+          _Choice<String>(
+            value: _czMode,
+            options: const [
+              _Opt('piot', 'ТС ПИоТ (обязательно с 2026 года)',
+                  'Модуль «Честного знака» на компьютере кассы. Проверка по токену отключается с 1 октября 2026 г.'),
+              _Opt('token', 'Токен для ККТ (старый способ)', 'Прямой запрос в «Честный знак» по X-API-KEY'),
+            ],
+            onChanged: (v) => setState(() => _czMode = v),
+          ),
+        if (piot) ...[
+          const _Hint('ТС ПИоТ ставится на компьютер у кассы от оператора из реестра «Честного знака» '
+              '(вместе с локальным модулем ЧЗ для работы без связи). Касса на Windows обращается к нему как '
+              'localhost, планшет или телефон — по адресу компьютера в сети (например, https://192.168.1.10:51401). '
+              'Вторая касса на том же компьютере — порт 51402. Результат проверки касса сама пишет в чек '
+              '(разрешительный режим). В договоре с ОФД должна быть передача данных в «Честный знак».'),
+          TextField(
+            controller: _piotUrlCtrl,
+            onChanged: (_) => setState(() {}),
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(
+              labelText: 'Адрес ТС ПИоТ',
+              hintText: 'https://localhost:51401',
+              helperText: 'Можно указать полный путь проверки из инструкции, например …/api/v2/codes/check',
+            ),
+          ),
+          TextField(
+            controller: _piotIdCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Идентификатор кассовой программы (если требует ТС ПИоТ)',
+              hintText: 'из личного кабинета «Честного знака» или от поставщика ТС ПИоТ',
+            ),
+          ),
+          TextField(
+            controller: _piotTokenCtrl,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: 'Ключ кассовой программы (если требует ТС ПИоТ)'),
+          ),
+          Row(children: [
+            Expanded(
+              child: TextField(
+                controller: _piotLoginCtrl,
+                decoration: const InputDecoration(labelText: 'Логин ТС ПИоТ', hintText: 'обычно пусто'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _piotPassCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'Пароль', hintText: 'обычно пусто'),
+              ),
+            ),
+          ]),
+        ],
+        if (!piot) _Choice<String>(
           value: _czCircuit,
           options: const [
             _Opt('pilot', 'Пилот (тестовый контур)', 'markirovka.sandbox.crptech.ru — начните с него'),
@@ -1519,7 +1612,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
           ],
           onChanged: (v) => setState(() => _czCircuit = v),
         ),
-        TextField(
+        if (!piot) TextField(
           controller: _czTokenCtrl,
           onChanged: (_) => setState(() {}),
           decoration: const InputDecoration(

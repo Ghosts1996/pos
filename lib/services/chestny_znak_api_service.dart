@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'app_scope.dart';
 import 'package:http/http.dart' as http;
 
+import '../build_info.dart';
+import 'piot_service.dart';
+
 /// Клиент True API «Честного знака»: только проверка кода `codes/check`,
 /// как у онлайн-касс в разрешительном режиме. Заказ кодов и вывод из
 /// оборота требуют подписи УКЭП — их здесь нет.
@@ -128,6 +131,10 @@ class ChestnyZnakCodeCheck {
   final String reqId;
   final String reqTimestamp;
 
+  /// true — ТС ПИоТ проверил код без связи с «Честным знаком» (по
+  /// локальному модулю).
+  final bool offline;
+
   const ChestnyZnakCodeCheck({
     required this.code,
     required this.valid,
@@ -136,6 +143,7 @@ class ChestnyZnakCodeCheck {
     this.raw = const {},
     this.reqId = '',
     this.reqTimestamp = '',
+    this.offline = false,
   });
 }
 
@@ -164,6 +172,7 @@ Future<void> loadSavedChestnyZnakSettings() async {
     final circuit = data?['czCircuit'] as String? ?? 'pilot';
     activeChestnyZnakApi =
         (token != null && token.isNotEmpty) ? ChestnyZnakApiService(token: token, isPilot: circuit != 'prod') : null;
+    activePiot = kSaasMode ? piotFromSettings(data ?? const {}) : null;
   } catch (_) {
     // Нет сети/документа при первом запуске — activeChestnyZnakApi остаётся
     // null до захода в Настройки → Интеграции.

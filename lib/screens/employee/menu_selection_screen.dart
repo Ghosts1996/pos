@@ -11,6 +11,7 @@ import '../../services/audit_log_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/scanner_service.dart';
 import '../../services/chestny_znak_service.dart';
+import '../../services/piot_service.dart';
 import '../../services/chestny_znak_api_service.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
@@ -77,7 +78,10 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
           final online = await _cz.checkOnlineStatus(marking);
           if (online != null) {
             if (!online.valid) {
-              _showSnack('Код не найден в системе «Честный знак» — похоже на подделку, продавать нельзя');
+              // Через ТС ПИоТ причина точнее (не введён в оборот, заблокирован, просрочен).
+              _showSnack(activePiot != null && online.errorMessage != null
+                  ? 'Честный знак: ${online.errorMessage} — продавать нельзя'
+                  : 'Код не найден в системе «Честный знак» — похоже на подделку, продавать нельзя');
               return;
             }
             if (online.alreadyRetired) {
