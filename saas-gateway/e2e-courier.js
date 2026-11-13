@@ -38,7 +38,10 @@ const shot = async (page, name) => { if (shotsDir) await page.screenshot({ path:
 async function main() {
   const db = createLocalDb({ admin });
   let qrPaid = false;
+  const mails = [];
   const api = createCourier({
+    getMailer: () => ({ send: async (m) => { mails.push(m); } }),
+    appUrl: "http://127.0.0.1/saas/courier/",
     db: () => db, admin, HttpError, publicUrl: "http://127.0.0.1:0/saas",
     verifyAuth: async () => ({ uid: "owner" }),
     parseJsonBody: (req) => new Promise((resolve) => {
@@ -55,12 +58,12 @@ async function main() {
     },
   });
   const web = createCourierWeb();
-  const routes = { login: api.handleLogin, consent: api.handleConsent, state: api.handleState, shift: api.handleShift, act: api.handleAct, ping: api.handlePing, pay: api.handlePay, logout: api.handleLogout, history: api.handleHistory };
+  const routes = { "auth/request-code": api.handleRequestCode, "auth/verify-code": api.handleVerifyCode, "auth/select": api.handleSelect, consent: api.handleConsent, state: api.handleState, shift: api.handleShift, act: api.handleAct, ping: api.handlePing, pay: api.handlePay, logout: api.handleLogout, history: api.handleHistory };
   const server = http.createServer((req, res) => {
     const p = req.url.split("?")[0].replace(/^\/saas/, "");
     if (req.method === "POST" && p.startsWith("/courier/api/")) {
       const h = routes[p.slice(13)];
-      return h(req, res).catch((e) => { res.writeHead(e.status || 500, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: e.message })); });
+      return h(req, res).catch((e) => { res.writeHead(e.status || 500, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: e.message, code: e.code, retryIn: e.retryIn })); });
     }
     if (p.startsWith("/courier/")) return web.serve(req, res, p.slice(9));
     res.writeHead(404); res.end();
@@ -80,9 +83,7 @@ async function main() {
     req.push(JSON.stringify(body)); req.push(null); req.headers = {};
     fn(req, res).catch(reject);
   });
-  const made = await call(api.handleAdminSave, { tenantId: "A", courier: { name: "Николай Петров", phone: "+7 900 000-00-01" } });
-  const inv = await call(api.handleAdminInvite, { tenantId: "A", courierId: made.id });
-  const code = inv.url.split("#i=")[1];
+  await call(api.handleAdminSave, { tenantId: "A", courier: { name: "Николай Петров", email: "nikolay@example.ru", phone: "+7 900 000-00-01", transport: "bike" } });
   const order = (no, over = {}) => ({
     tableId: "takeaway", status: "active", orderType: "delivery", orderNo: no, source: "app",
     deliveryStatus: "cooking", startTime: T(Date.now() - 7 * 60000),
@@ -109,15 +110,40 @@ async function main() {
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource|ERR_INTERNET_DISCONNECTED/.test(m.text())) errors.push(`console: ${m.text()}`); });
   page.on("dialog", (d) => d.accept());
 
-  // 1. Без ссылки — понятный экран входа.
+  // 1. Вход по почте: кнопка недоступна без почты и без галочки согласия.
   await page.goto(base);
-  await page.waitForSelector("text=личной ссылке-приглашению");
-  // 2. По ссылке: вход, ссылка уходит из адреса.
-  await page.goto(`${base}#i=${code}`);
-  await page.waitForSelector("text=Геолокация во время смены");
-  assert.ok(!page.url().includes(code), "код приглашения убран из адреса");
-  await shot(page, "1-consent");
-  await page.click("text=Согласен, продолжить");
+  await page.waitForSelector("text=Вход для курьера");
+  await page.waitForSelector("text=Доступ предоставляется администратором вашего заведения");
+  assert.equal(await page.isChecked("#auth-consent"), false, "галочка не стоит по умолчанию");
+  assert.equal(await page.isDisabled("#auth-send"), true);
+  await page.fill("#auth-email", "nikolay@example");
+  await page.click(".check");
+  assert.equal(await page.isDisabled("#auth-send"), true, "почта неполная — нельзя");
+  await page.fill("#auth-email", "kto-to@example.ru");
+  assert.equal(await page.isDisabled("#auth-send"), false);
+  await shot(page, "0-login");
+  await page.click("#auth-send");
+  await page.waitForSelector("text=Аккаунт не найден. Обратитесь к администратору вашего заведения");
+  assert.equal(await page.getAttribute('.check-t a[href="rules.html"]', "target"), "_blank", "условия — ссылкой");
+  // 2. Своя почта → письмо с кодом → экран кода с таймером.
+  await page.fill("#auth-email", "Nikolay@Example.ru");
+  await page.click("#auth-send");
+  await page.waitForSelector("text=Код из письма");
+  await page.waitForSelector("text=Проверьте папку «Спам»");
+  await page.waitForSelector("text=/Отправить код ещё раз через 0[01]:\\d\\d/");
+  await shot(page, "0b-code");
+  const letter = mails.find((m) => m.to === "nikolay@example.ru" && /код входа/.test(m.subject));
+  assert.ok(letter, "письмо с кодом ушло");
+  const code = /(\d{6}) —/.exec(letter.subject)[1];
+  // Перезагрузка (ушли в почту, телефон выгрузил страницу) — снова экран кода, а не начало.
+  await page.reload();
+  await page.waitForSelector("text=Код из письма");
+  await page.fill("#auth-code", code === "000000" ? "111111" : "000000");
+  await page.waitForSelector("text=/Код неверный/");
+  await page.fill("#auth-code", code); // 6 цифр — вход сам, без кнопки
+  await page.waitForSelector(".venue-line >> text=Кафе «Лето»");
+  const me = (await db.collection("couriers").where("email", "==", "nikolay@example.ru").get()).docs[0].data();
+  assert.deepEqual([me.policyVersion, !!me.consentAt, me.consentEmail], ["2.0", true, "nikolay@example.ru"], "согласие ПЭП записано");
   await page.waitForSelector("text=Не на линии");
   await page.waitForSelector("text=Вы не на линии");
   // Свободный заказ виден, но без смены не взять.
@@ -201,6 +227,7 @@ async function main() {
   await page.waitForSelector("text=Заказ вручён");
   // 10. Итоги: 2 доставки, наличные на руках.
   await page.click('[data-a="view"][data-view="income"]');
+  await page.waitForSelector("h1 >> text=Мои поездки");
   await page.waitForSelector("text=Доставки сегодня");
   await page.waitForSelector(".trip >> nth=1");
   const day = (await page.textContent("#page")).replace(/\s+/g, " ");
@@ -210,9 +237,30 @@ async function main() {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.click('[data-a="view"][data-view="profile"]');
   await page.waitForSelector("text=Как езжу");
+  await page.waitForSelector("text=nikolay@example.ru");
+  await page.waitForSelector("text=/Согласие дано .* редакция 2\\.0/");
   await shot(page, "8-dark-profile");
   await page.click('[data-a="view"][data-view="orders"]');
   await shot(page, "9-dark");
+  // 12. Ручное назначение: свободных не видно, «Свободные» скрыты.
+  await call(api.handleAdminRates, { tenantId: "A", ratePerTrip: 0, ratePerKm: 0, dispatch: "manual" });
+  api.forgetCache();
+  await db.doc("tenants/A/sessions/s4").set(order(15));
+  await page.click('[data-a="map-refresh"]');
+  await page.waitForSelector("text=назначает заведение");
+  assert.equal(await page.$('[data-a="list"][data-list="free"]'), null, "вкладки «Свободные» нет");
+  // 13. Условия открываются; блокировка в кабинете — курьер выходит.
+  const rules = await ctx.newPage();
+  await rules.goto(`${base}rules.html`);
+  await rules.waitForSelector("text=Условия использования приложения");
+  assert.ok((await rules.textContent("body")).includes("63-ФЗ"), "условия про ПЭП");
+  await rules.close();
+  const id = (await db.collection("couriers").where("email", "==", "nikolay@example.ru").get()).docs[0].id;
+  await db.doc(`couriers/${id}`).update({ cashOnHand: 0 });
+  await call(api.handleAdminEnable, { tenantId: "A", courierId: id, enabled: false });
+  await page.click('[data-a="map-refresh"]');
+  await page.waitForSelector("text=Вход для курьера", { timeout: 15000 });
+  await shot(page, "10-blocked");
 
   assert.deepEqual(errors, [], "в консоли браузера нет ошибок");
   await browser.close();

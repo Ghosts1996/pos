@@ -399,7 +399,7 @@ function bindGuestsTab(tenantId, redraw) {
 // гостей сюда не попадают: в заказах — номер, точка, статус и сумма.
 const deliveryState = new Map(); // tenantId → состояние раздела
 const DLV_SUBS = [
-  ['now', 'Сейчас'], ['couriers', 'Курьеры'], ['free', 'Свободные курьеры'], ['price', 'Цена и районы'], ['menu', 'Что доставляем'], ['services', 'Службы доставки'], ['report', 'Отчёт'],
+  ['now', 'Сейчас'], ['couriers', 'Курьеры'], ['price', 'Цена и районы'], ['menu', 'Что доставляем'], ['services', 'Службы доставки'], ['report', 'Отчёт'],
 ];
 const dlvRub = (n) => `${(Math.round(Number(n) || 0)).toLocaleString('ru-RU')} ₽`;
 const dlvAgo = (ms) => {
@@ -408,10 +408,11 @@ const dlvAgo = (ms) => {
   return m < 1 ? 'только что' : m < 60 ? `${m} мин назад` : `${Math.floor(m / 60)} ч назад`;
 };
 const dlvTime = (ms) => (ms ? new Date(ms).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '—');
+const dlvDate = (ms) => (ms ? new Date(ms).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—');
 let dlvSeq = 0;
 
 function dlvStateOf(tenantId) {
-  if (!deliveryState.has(tenantId)) deliveryState.set(tenantId, { sub: 'now', list: null, free: null, freeForm: null, settings: null, form: null, menuEdits: { items: {}, cats: {} }, menuFilter: '', report: null, reportDay: '', fresh: null, editing: null });
+  if (!deliveryState.has(tenantId)) deliveryState.set(tenantId, { sub: 'now', list: null, settings: null, form: null, menuEdits: { items: {}, cats: {} }, menuFilter: '', report: null, reportDay: '', fresh: null, editing: null });
   return deliveryState.get(tenantId);
 }
 
@@ -433,13 +434,7 @@ function dlvMapHtml(points, couriers, extOrders = []) {
   const pt = marks.map((m) => `${m[0].toFixed(6)},${m[1].toFixed(6)},${m[2]}`).join('~');
   return `<iframe title="Курьеры на карте" loading="lazy" style="width:100%;height:340px;border:0;border-radius:12px"
     src="https://yandex.ru/map-widget/v1/?ll=${lng.toFixed(6)},${lat.toFixed(6)}&z=${z}&pt=${pt}"></iframe>
-    <p class="small muted" style="margin:6px 0 0">Красная метка — заведение, зелёная с номером — свободный курьер, синяя — везёт заказ, фиолетовая — курьер службы доставки или свободный курьер с вашим заказом. Обновляется раз в 15 секунд.</p>`;
-}
-
-/** Заявки свободных курьеров, которые ждут ответа, — число на вкладке. */
-function dlvFreePending(st) {
-  if (st.free && st.free.couriers) return st.free.couriers.filter((c) => c.st === 'pending').length;
-  return (st.list && st.list.freePending) || 0;
+    <p class="small muted" style="margin:6px 0 0">Красная метка — заведение, зелёная с номером — свободный курьер, синяя — везёт заказ, фиолетовая — курьер службы доставки. Обновляется раз в 15 секунд.</p>`;
 }
 
 function deliveryTabHtml(tenantId) {
@@ -447,10 +442,9 @@ function deliveryTabHtml(tenantId) {
   const head = `<h1>Доставка</h1>
     <p class="muted" style="margin-top:-6px">Курьеры в приложении, цена доставки, что везём — и всё, что происходит с заказами прямо сейчас.</p>
     <div class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0 14px">${DLV_SUBS.map(([id, label]) =>
-      `<button class="btn ${st.sub === id ? 'btn-primary' : 'btn-ghost'} f-dl-sub" data-sub="${id}" style="width:auto;padding:8px 14px">${label}${id === 'free' && dlvFreePending(st) ? ` · ${dlvFreePending(st)}` : ''}</button>`).join('')}</div>`;
+      `<button class="btn ${st.sub === id ? 'btn-primary' : 'btn-ghost'} f-dl-sub" data-sub="${id}" style="width:auto;padding:8px 14px">${label}</button>`).join('')}</div>`;
   const body = st.sub === 'now' ? dlvNowHtml(st)
     : st.sub === 'couriers' ? dlvCouriersHtml(st)
-      : st.sub === 'free' ? dlvFreeHtml(st)
       : st.sub === 'price' ? dlvPriceHtml(st)
         : st.sub === 'menu' ? dlvMenuHtml(st)
           : st.sub === 'services' ? dlvServicesHtml(st)
@@ -478,8 +472,7 @@ function dlvNowHtml(st) {
   const orderRow = (o) => {
     let who;
     const x = o.ext && !['cancelled', 'failed'].includes(o.ext.step) ? o.ext : null;
-    if (o.courierId && o.courierFree) who = `<b>Свободный №${esc(o.courierNo)}</b> · ${esc(o.stageLabel || '')}<div class="small muted">${esc(o.courierName || '')}${o.courierPhone ? ` · <a href="tel:+${esc(o.courierPhone)}">+${esc(o.courierPhone)}</a>` : ''}</div>`;
-    else if (o.courierId) who = `<b>№${esc(o.courierNo)}</b> · ${esc(o.stageLabel || '')}`;
+    if (o.courierId) who = `<b>№${esc(o.courierNo)}</b> · ${esc(o.stageLabel || '')}`;
     else if (x) {
       who = `<b>🚕 ${esc(DLV_PROVIDER[x.provider] || x.provider)}</b><div class="small">${esc(x.label)}${x.price ? ` · ${dlvRub(x.price)}` : ''}</div>
         ${x.courier ? `<div class="small muted">${esc(x.courier.name)}${x.courier.car ? ` · ${esc(x.courier.car)}` : ''}</div>` : ''}
@@ -528,8 +521,9 @@ function dlvNowHtml(st) {
       <div class="card" style="text-align:center;padding:14px 8px"><div style="font-size:22px;font-weight:700">${dlvRub(cash)}</div><div class="small muted">наличные у курьеров</div></div>
     </div>
     ${failed.length ? `<div class="card" style="border-left:4px solid var(--danger)"><b>Не удалось вручить: ${failed.length}</b><div class="small muted">Позвоните гостю или курьеру: курьер попробует ещё раз или вернёт заказ.</div></div>` : ''}
-    <div class="card">${dlvMapHtml(L.points, on, L.orders.filter((o) => (o.ext || o.courierFree) && o.pos))}</div>
+    <div class="card">${dlvMapHtml(L.points, on, L.orders.filter((o) => o.ext && o.pos))}</div>
     <h2>Заказы в работе</h2>
+    ${L.dispatch === 'manual' && free.length ? `<div class="card" style="border-left:4px solid var(--primary)"><b>Ручное назначение</b><div class="small muted">Курьеры не видят свободные заказы — выберите курьера в колонке справа. Режим меняется во вкладке «Курьеры».</div></div>` : ''}
     ${quoteCard}
     ${L.orders.length ? `<div class="card" style="padding:6px 8px"><div style="overflow-x:auto"><table class="table">
       <thead><tr><th>Заказ</th><th>Статус</th><th>Курьер</th><th>К оплате</th><th></th></tr></thead>
@@ -544,74 +538,113 @@ function dlvNowHtml(st) {
     : `<div class="card"><p class="small muted" style="margin:0">Сейчас никто не на смене. Курьеры начинают смену в своём приложении — добавьте их во вкладке «Курьеры».</p></div>`}`;
 }
 
+const DLV_TRANSPORT = { foot: 'Пешком', bike: 'Велосипед или самокат', car: 'Автомобиль' };
+const DLV_TRANSPORT_IC = { foot: '🚶', bike: '🚲', car: '🚗' };
+
 function dlvCouriersHtml(st) {
   const L = st.list;
   if (!L) return '<div class="spinner"></div>';
   if (L.error) return dlvErrorHtml(L.error);
   const pointsName = (ids) => (!ids.length ? (L.chain ? 'все точки сети' : '') : ids.map((id) => (L.points.find((p) => p.id === id) || {}).name || id).join(', '));
-  const fresh = st.fresh;
-  const editing = st.editing ? (st.editing === 'new' ? { id: '', name: '', phone: '', points: [] } : L.couriers.find((c) => c.id === st.editing)) : null;
-  const form = editing ? `
-    <div class="card" id="f-dl-form">
-      <h3 style="margin-top:0">${editing.id ? `Курьер №${editing.no}` : 'Новый курьер'}</h3>
-      <div class="row" style="gap:12px;flex-wrap:wrap">
-        <label class="field" style="flex:1 1 200px"><span>Имя</span><input id="f-dl-name" maxlength="60" value="${esc(editing.name)}" placeholder="Николай Петров"></label>
-        <label class="field" style="flex:1 1 200px"><span>Рабочий телефон</span><input id="f-dl-phone" inputmode="tel" maxlength="20" value="${editing.phone ? `+${esc(editing.phone)}` : ''}" placeholder="+7 900 000-00-00"></label>
+  const slots = L.slots || { active: 0, max: -1 };
+  const unlimited = slots.max < 0;
+  const full = !unlimited && slots.active >= slots.max;
+  const pct = unlimited ? 0 : Math.min(100, Math.round((slots.active / Math.max(1, slots.max)) * 100));
+  const limitCard = `
+    <div class="card dlc-limit${full ? ' full' : ''}">
+      <div class="dlc-limit-row">
+        <div>
+          <div class="dlc-limit-n">Активных курьеров: <b>${slots.active}</b> из <b>${unlimited ? '∞' : slots.max}</b></div>
+          <div class="small muted">${unlimited ? 'Тариф — без ограничений по числу курьеров.' : full ? 'Лимит тарифа исчерпан: чтобы добавить курьера, заблокируйте неактивного или увеличьте лимит.' : `Можно добавить ещё ${slots.max - slots.active}. Заблокированные курьеры место не занимают.`}</div>
+        </div>
+        ${unlimited ? '' : '<button class="btn btn-ghost f-dash-tab" data-tab="billing" style="width:auto">Увеличить лимит</button>'}
       </div>
-      <p class="small muted" style="margin:0 0 8px">Гость увидит имя и сможет позвонить курьеру, пока заказ в пути. В Telegram курьер виден только номером.</p>
-      ${L.chain && L.full ? `<div class="small" style="margin:6px 0"><b>Точки</b> <span class="muted">— ни одной не отмечено: все точки сети</span></div>
+      ${unlimited ? '' : `<div class="dlc-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${slots.max}" aria-valuenow="${slots.active}"><i style="width:${pct}%"></i></div>`}
+    </div>`;
+  const mailWarn = L.mail === false ? `<div class="card" style="border-left:4px solid var(--warning)"><b>Почта сервера не настроена</b><div class="small muted">Письма с приглашением и кодами входа не уходят. Напишите в поддержку.</div></div>` : '';
+  const editing = st.editing ? (st.editing === 'new' ? { id: '', name: '', email: '', phone: '', transport: '', points: [] } : L.couriers.find((c) => c.id === st.editing)) : null;
+  const form = editing ? `
+    <div class="card dlc-form" id="f-dl-form">
+      <h3 style="margin-top:0">${editing.id ? `Курьер №${editing.no}` : 'Новый курьер'}</h3>
+      <div class="dlc-grid">
+        <label class="field"><span>Имя и фамилия</span><input id="f-dl-name" maxlength="60" value="${esc(editing.name)}" placeholder="Николай Петров" autocomplete="off"></label>
+        <label class="field"><span>Email — для входа в приложение</span><input id="f-dl-email" type="email" inputmode="email" maxlength="120" value="${esc(editing.email || '')}" placeholder="courier@mail.ru" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+        <label class="field"><span>Телефон</span><input id="f-dl-phone" inputmode="tel" maxlength="20" value="${editing.phone ? `+${esc(editing.phone)}` : ''}" placeholder="+7 900 000-00-00"></label>
+        <div class="field"><span>Транспорт</span>
+          <div class="dlc-seg" role="radiogroup" aria-label="Транспорт">${Object.entries(DLV_TRANSPORT).map(([id, label]) => `
+            <label class="dlc-opt"><input type="radio" name="f-dl-tr" value="${id}" ${editing.transport === id ? 'checked' : ''}><span>${DLV_TRANSPORT_IC[id]} ${label}</span></label>`).join('')}</div></div>
+      </div>
+      ${L.chain && L.full ? `<div class="small" style="margin:10px 0 6px"><b>Точки</b> <span class="muted">— ни одной не отмечено: все точки сети</span></div>
         <div class="row" style="gap:12px;flex-wrap:wrap">${L.points.map((p) => `<label class="row" style="gap:6px;align-items:center"><input type="checkbox" class="f-dl-pt" value="${esc(p.id)}" style="width:auto" ${editing.points.includes(p.id) ? 'checked' : ''}> ${esc(p.name)}</label>`).join('')}</div>` : ''}
+      <p class="small muted" style="margin:10px 0 0">${editing.id ? 'Смена почты выключит приложение на старом телефоне, на новую почту придёт приглашение.' : 'На почту курьеру придёт письмо: «Администратор заведения добавил вас как курьера в систему ZalPOS» — со ссылкой на приложение. Входит курьер по почте и одноразовому коду, без пароля.'} Гость видит имя курьера и может ему позвонить, пока заказ в пути.</p>
       <div id="f-dl-form-msg" class="small" style="margin-top:8px"></div>
-      <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-primary" id="f-dl-save" style="width:auto">${editing.id ? 'Сохранить' : 'Добавить и получить ссылку'}</button>
+      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn btn-primary" id="f-dl-save" style="width:auto">${editing.id ? 'Сохранить' : 'Добавить и отправить приглашение'}</button>
         <button class="btn btn-ghost" id="f-dl-cancel" style="width:auto">Отмена</button></div>
     </div>` : '';
-  const freshBox = fresh ? `
-    <div class="card" style="border:2px solid var(--primary)">
-      <b>Ссылка для курьера №${esc(fresh.no)} · ${esc(fresh.name)}</b>
-      <div style="font-family:var(--mono, monospace);word-break:break-all;margin:8px 0;user-select:all">${esc(fresh.url)}</div>
-      <div class="row" style="gap:8px;flex-wrap:wrap">
-        <button class="btn btn-primary" id="f-dl-copy" style="width:auto">Скопировать ссылку</button>
-        ${navigator.share ? '<button class="btn btn-ghost" id="f-dl-share" style="width:auto">Отправить…</button>' : ''}
-        <button class="btn btn-ghost" id="f-dl-fresh-hide" style="width:auto">Готово</button>
-      </div>
-      <p class="small muted" style="margin:8px 0 0">Отправьте курьеру в мессенджер или СМС. Ссылка одноразовая и действует 72 часа: по ней курьер сразу попадает в своё приложение, без пароля.
-        Вход с новой ссылки выключает старый телефон.</p>
-    </div>` : '';
+  const chip = (text, kind = '') => `<span class="dlc-chip ${kind}">${text}</span>`;
   const row = (c) => {
-    const status = !c.enabled ? '<span style="color:var(--danger)">отключён</span>'
-      : c.onShift ? '<span style="color:var(--primary)">на смене</span>'
-        : c.linked ? 'не на смене' : c.invitePending ? '<span class="muted">ссылка ждёт входа</span>' : '<span class="muted">ещё не входил</span>';
-    return `<div class="card">
-      <div class="row" style="gap:10px;align-items:flex-start;flex-wrap:wrap">
-        <div style="flex:1 1 220px">
-          <div><b>№${c.no} · ${esc(c.name)}</b> — ${status}</div>
-          <div class="small muted">${c.phone ? `+${esc(c.phone)} · ` : ''}${esc(pointsName(c.points))}</div>
-          <div class="small" style="margin-top:4px">Сегодня: ${c.today.trips} дост., ${String(c.today.km).replace('.', ',')} км${L.rates.ratePerTrip || L.rates.ratePerKm ? `, заработал ${dlvRub(c.today.earned)}` : ''}${c.cashOnHand > 0 ? ` · <b>наличные на руках ${dlvRub(c.cashOnHand)}</b>` : ''}</div>
+    const blocked = !c.enabled;
+    const chips = [
+      blocked ? chip(c.forgotten ? 'Данные удалены' : 'Заблокирован', 'bad') : chip('Активен', 'ok'),
+      !blocked && c.onShift ? chip('● На смене', 'live') : '',
+      !blocked && !c.linked ? chip(c.welcomedAt ? 'Приглашение отправлено' : 'Ещё не входил', 'muted') : '',
+      c.consent ? chip(c.consent.current ? `Согласие ${dlvDate(c.consent.at)}` : 'Нужно новое согласие', c.consent.current ? '' : 'warn') : '',
+      c.demo ? chip('Демо', 'muted') : '',
+    ].join('');
+    const meta = [c.email ? esc(c.email) : '', c.phone ? `+${esc(c.phone)}` : '', c.transport ? `${DLV_TRANSPORT_IC[c.transport] || ''} ${esc(DLV_TRANSPORT[c.transport] || c.transport)}` : '', esc(pointsName(c.points))].filter(Boolean).join(' · ');
+    return `<div class="card dlc-card${blocked ? ' off' : ''}">
+      <div class="dlc-head">
+        <div class="dlc-av" aria-hidden="true">${c.no}</div>
+        <div class="dlc-main">
+          <div class="dlc-name">${esc(c.name)}</div>
+          <div class="small muted dlc-meta">${meta || '—'}</div>
+          <div class="dlc-chips">${chips}</div>
         </div>
-        <div class="row" style="gap:6px;flex-wrap:wrap">
-          ${c.cashOnHand > 0 ? `<button class="btn btn-primary f-dl-cash" data-id="${esc(c.id)}" data-amount="${c.cashOnHand}" style="width:auto">Принять ${dlvRub(c.cashOnHand)}</button>` : ''}
-          ${c.editable && c.enabled ? `<button class="btn btn-ghost f-dl-invite" data-id="${esc(c.id)}" style="width:auto">${c.linked ? 'Новая ссылка' : 'Ссылка для входа'}</button>` : ''}
-          ${c.editable ? `<button class="btn btn-ghost f-dl-edit" data-id="${esc(c.id)}" style="width:auto">Изменить</button>` : ''}
-          ${c.editable && !c.forgotten ? `<button class="btn btn-ghost f-dl-enable" data-id="${esc(c.id)}" data-on="${c.enabled ? '0' : '1'}" style="width:auto;${c.enabled ? 'color:var(--danger)' : ''}">${c.enabled ? 'Отключить' : 'Включить'}</button>` : ''}
-          ${c.editable && !c.enabled && !c.forgotten ? `<button class="btn btn-ghost f-dl-forget" data-id="${esc(c.id)}" style="width:auto;color:var(--danger)">Удалить данные</button>` : ''}
-        </div>
+        ${c.editable && !c.forgotten && !c.demo ? `<button class="dlc-switch f-dl-enable" role="switch" aria-checked="${c.enabled}" data-id="${esc(c.id)}" data-on="${c.enabled ? '0' : '1'}" title="${c.enabled ? 'Заблокировать' : 'Сделать активным'}"><span class="dlc-knob"></span><span class="dlc-sw-t">${c.enabled ? 'Активен' : 'Заблокирован'}</span></button>` : ''}
+      </div>
+      ${blocked ? '' : `<div class="dlc-today small">Сегодня: <b>${c.today.trips}</b> дост. · <b>${String(c.today.km).replace('.', ',')}</b> км${L.rates.ratePerTrip || L.rates.ratePerKm ? ` · заработал <b>${dlvRub(c.today.earned)}</b>` : ''}${c.cashOnHand > 0 ? ` · <b style="color:var(--warning)">наличные на руках ${dlvRub(c.cashOnHand)}</b>` : ''}</div>`}
+      <div class="row dlc-actions">
+        ${c.cashOnHand > 0 ? `<button class="btn btn-primary f-dl-cash" data-id="${esc(c.id)}" data-amount="${c.cashOnHand}" style="width:auto">Принять ${dlvRub(c.cashOnHand)}</button>` : ''}
+        ${c.editable && c.enabled && !c.demo && c.email ? `<button class="btn btn-ghost f-dl-welcome" data-id="${esc(c.id)}" style="width:auto">${c.linked ? 'Письмо со ссылкой' : 'Отправить приглашение ещё раз'}</button>` : ''}
+        ${c.editable && !c.forgotten && !c.demo ? `<button class="btn btn-ghost f-dl-edit" data-id="${esc(c.id)}" style="width:auto">Изменить</button>` : ''}
+        ${c.editable && blocked && !c.forgotten ? `<button class="btn btn-ghost f-dl-forget" data-id="${esc(c.id)}" style="width:auto;color:var(--danger)">Удалить данные</button>` : ''}
       </div>
     </div>`;
   };
+  const active = L.couriers.filter((c) => c.enabled);
+  const off = L.couriers.filter((c) => !c.enabled);
+  const dispatch = st.dispatchDraft || L.dispatch || 'pool';
   return `
-    ${freshBox}
-    ${form || '<button class="btn btn-primary" id="f-dl-new" style="width:auto;margin-bottom:12px">+ Добавить курьера</button>'}
-    ${L.couriers.length ? L.couriers.map(row).join('') : '<div class="card"><p class="small muted" style="margin:0">Курьеров пока нет. Добавьте курьера — он получит ссылку и сразу начнёт работать в своём приложении на телефоне (Android и iPhone, ничего ставить не нужно).</p></div>'}
-    ${L.full ? `<h2>Оплата курьерам</h2>
+    ${limitCard}
+    ${mailWarn}
+    ${form || `<button class="btn btn-primary" id="f-dl-new" style="width:auto;margin-bottom:12px" ${full ? 'disabled title="Лимит тарифа исчерпан"' : ''}>+ Добавить курьера</button>`}
+    ${active.length ? active.map(row).join('') : '<div class="card dlc-empty"><div style="font-size:34px">🛵</div><b>Курьеров пока нет</b><p class="small muted" style="margin:4px 0 0">Добавьте курьера: имя, почта, телефон и транспорт. Он получит письмо, войдёт в приложение «Курьер ZalPOS» по почте и коду — и увидит заказы только вашего заведения.</p></div>'}
+    ${off.length ? `<details class="dlc-off"><summary>Заблокированные · ${off.length}</summary>${off.map(row).join('')}</details>` : ''}
+    ${L.full ? `<h2>Как курьеры получают заказы</h2>
       <div class="card">
-        <p class="small muted" style="margin-top:0">Курьер видит заработок за смену в приложении, вы — в отчёте. 0 — не считать.${L.chain ? ' Ставки — одни на всю сеть.' : ''}</p>
+        <div class="dlc-modes" role="radiogroup" aria-label="Режим раздачи заказов">
+          <label class="dlc-mode"><input type="radio" name="f-dl-dispatch" value="pool" ${dispatch === 'pool' ? 'checked' : ''}>
+            <span><b>Свободный пул</b><span class="small muted">Курьеры на смене видят свободные заказы и берут сами. Вы можете и назначить — во вкладке «Сейчас».</span></span></label>
+          <label class="dlc-mode"><input type="radio" name="f-dl-dispatch" value="manual" ${dispatch === 'manual' ? 'checked' : ''}>
+            <span><b>Ручное назначение</b><span class="small muted">Заказ курьеру назначает администратор во вкладке «Сейчас». Свободных заказов курьеры не видят.</span></span></label>
+        </div>
+        <h3 style="margin:16px 0 4px">Оплата курьерам</h3>
+        <p class="small muted" style="margin-top:0">Курьер видит заработок в приложении, вы — в отчёте. 0 — не считать.${L.chain ? ' Ставки и режим — одни на всю сеть.' : ''}</p>
         <div class="row" style="gap:12px;flex-wrap:wrap">
           <label class="field" style="flex:1 1 160px"><span>За доставку, ₽</span><input id="f-dl-rate-trip" type="number" min="0" step="10" value="${L.rates.ratePerTrip}"></label>
           <label class="field" style="flex:1 1 160px"><span>За километр с заказом, ₽</span><input id="f-dl-rate-km" type="number" min="0" step="1" value="${L.rates.ratePerKm}"></label>
         </div>
-        <button class="btn btn-ghost" id="f-dl-rates" style="width:auto">Сохранить ставки</button>
+        <button class="btn btn-primary" id="f-dl-rates" style="width:auto">Сохранить</button>
       </div>` : ''}
-    <p class="small muted">Приложение курьера: <b>pii.zalpos.ru/saas/courier</b> — открывается по личной ссылке. Работает на любом телефоне, можно поставить на экран как приложение.</p>`;
+    <div class="card dlc-how small">
+      <b>Как работает приложение курьера</b>
+      <ul>
+        <li>Приложение «Курьер ZalPOS»: <b>pii.zalpos.ru/saas/courier</b> — на Android можно скачать APK, на iPhone — открыть в Safari и добавить на экран «Домой».</li>
+        <li>Вход — по почте и коду из письма. Курьер отмечает согласие с условиями и на передачу геопозиции во время смены — это простая электронная подпись; дата и редакция согласия видны в карточке.</li>
+        <li>У двери гость платит курьеру <b>наличными или картой</b> (или по QR через банк заведения). Наличные на руках видны в карточке — примите их кнопкой «Принять».</li>
+        <li>Геопозиция передаётся только на смене. Заблокированный курьер сразу выходит из приложения, его место в лимите освобождается.</li>
+      </ul>
+    </div>`;
 }
 
 function dlvPriceHtml(st) {
@@ -786,104 +819,6 @@ function dlvMenuHtml(st) {
     </div>`;
 }
 
-// Свободные курьеры: самозанятые и ИП, которые зарегистрировались сами
-// (saas-gateway/courier-free.js). Заведение включает их, задаёт оплату,
-// принимает заявки и отмечает выплаты; деньги идут мимо платформы.
-const DLV_FREE_ST = { pending: 'заявка', approved: 'работает', declined: 'отклонён', blocked: 'доступ закрыт' };
-function dlvFreeTaxHtml(t) {
-  if (t.status === 'ip') return 'ИП <span class="muted">(проверьте сами в ЕГРИП по ИНН)</span>';
-  if (t.ok === true) return `самозанятый <span style="color:var(--primary)">✓ ФНС подтвердила${t.at ? ` ${new Date(t.at).toLocaleDateString('ru-RU')}` : ''}</span>`;
-  if (t.ok === false) return 'самозанятый <span style="color:var(--danger)">— ФНС не подтвердила</span>';
-  return 'самозанятый <span class="muted">— ФНС ещё не ответила</span>';
-}
-function dlvFreeHtml(st) {
-  const F = st.free;
-  if (!F) return '<div class="spinner"></div>';
-  if (F.error) return dlvErrorHtml(F.error);
-  const S = st.freeForm || (st.freeForm = { ...F.settings });
-  const noQr = F.points.filter((p) => !p.qr);
-  const intro = `<div class="card">
-      <p style="margin-top:0"><b>Свободные курьеры</b> — самозанятые и ИП, которые сами зарегистрировались в приложении курьера и работают на себя. Вы включаете их, когда своих курьеров нет или не хватает: курьер рядом видит ваш заказ и цену доставки, нажимает «Беру» и везёт.</p>
-      <ul class="small" style="margin:0 0 8px;padding-left:18px">
-        <li>Вы платите курьеру сами — переводом или наличными; ZalPOS деньги не принимает и комиссию не берёт.</li>
-        <li>Курьер возит только заказы, оплаченные заранее или по QR у двери: наличные гостя ему в руки не попадают.</li>
-        <li>Назначить заказ свободному курьеру нельзя — он берёт сам. Снять его с заказа можно, пока он не забрал заказ.</li>
-      </ul>
-      <details class="small"><summary><b>Как это по закону</b></summary>
-        <p>Договор на доставку каждого заказа заключается между вашим заведением и курьером в тот момент, когда он нажал «Беру», — по цене, которую вы здесь указали. ZalPOS — только программа: не работодатель, не служба доставки и не посредник в расчётах.</p>
-        <p><b>Что делаете вы:</b> платите курьеру и берёте чек — у самозанятого из приложения «Мой налог» (без чека расход не подтвердить); на день выплаты проверяете, что он всё ещё самозанятый (сервис ФНС «Проверить статус самозанятого»); не привлекаете как самозанятых своих бывших работников два года после увольнения — иначе ФНС доначислит НДФЛ и взносы; не ставите курьеру график и не штрафуете — это признаки трудовых отношений.</p>
-        <p><b>Кто перед вами.</b> ZalPOS сверяет ИНН с ФНС, но паспорт не видит. При первом заказе попросите курьера показать паспорт и профиль в «Мой налог» — ФИО и ИНН должны совпасть с теми, что в заявке.</p>
-        <p><b>Перед гостем</b> за заказ и доставку отвечаете вы как продавец. Курьеру, который возит еду, нужна чистая термосумка; медицинскую книжку курьер отмечает у себя сам — при сомнении попросите показать.</p>
-        <p>Статус самозанятого ZalPOS сверяет с ФНС по ИНН при регистрации и раз в неделю. Это не юридическая консультация — договор и учёт сверьте со своим бухгалтером.</p>
-      </details>
-    </div>`;
-  if (!F.full) {
-    return `${intro}<div class="card"><p class="small muted" style="margin:0">Свободных курьеров сети включает и принимает владелец или администратор сети. ${F.settings.on ? 'Сейчас они включены.' : 'Сейчас они выключены.'}</p></div>${dlvFreeListHtml(F, false)}`;
-  }
-  const posRows = F.points.map((p) => `<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;padding:6px 0;border-top:1px solid var(--border)">
-      <span style="flex:1 1 180px"><b>${esc(p.name)}</b><div class="small ${p.pos ? 'muted' : ''}" ${p.pos ? '' : 'style="color:var(--danger)"'}>${p.pos ? `на карте: ${p.pos.lat.toFixed(5)}, ${p.pos.lng.toFixed(5)}` : 'место на карте не отмечено'}</div></span>
-      <input class="f-df-coord" data-t="${esc(p.id)}" placeholder="59.9358, 30.3259" style="flex:1 1 150px;min-width:140px" aria-label="Координаты: широта, долгота">
-      <button class="btn btn-ghost f-df-pos" data-t="${esc(p.id)}" style="width:auto">Сохранить</button>
-      <button class="btn btn-ghost f-df-here" data-t="${esc(p.id)}" style="width:auto">Я сейчас в заведении</button></div>`).join('');
-  const form = `<div class="card">
-      <label class="row" style="gap:10px;align-items:center;margin-bottom:10px"><input type="checkbox" id="f-df-on" style="width:auto" ${S.on ? 'checked' : ''}> <b>Принимать свободных курьеров</b></label>
-      <div class="row" style="gap:12px;flex-wrap:wrap">
-        <label class="field" style="flex:1 1 160px"><span>Плачу за доставку, ₽</span><input id="f-df-trip" type="number" min="0" step="10" value="${S.ratePerTrip}"></label>
-        <label class="field" style="flex:1 1 160px"><span>И за километр до гостя, ₽</span><input id="f-df-km" type="number" min="0" step="1" value="${S.ratePerKm}"></label>
-      </div>
-      <p class="small muted" style="margin:0 0 8px">Курьер видит цену до «Беру». Цена уже взятого заказа не меняется, даже если вы потом поменяете ставку.</p>
-      <div class="row" style="gap:12px;flex-wrap:wrap">
-        <label class="field" style="flex:1 1 200px"><span>Кого пускать</span><select id="f-df-mode">
-          <option value="approved" ${S.mode === 'approved' ? 'selected' : ''}>Только тех, кого я принял</option>
-          <option value="all" ${S.mode === 'all' ? 'selected' : ''}>Всех, кого подтвердила ФНС</option></select></label>
-        <label class="field" style="flex:1 1 140px"><span>Курьеры в радиусе, км</span><input id="f-df-radius" type="number" min="1" max="30" step="1" value="${S.radiusKm}"></label>
-        <label class="field" style="flex:1 1 180px"><span>Показывать заказ через, мин</span><input id="f-df-delay" type="number" min="0" max="120" step="5" value="${S.delayMin}"></label>
-      </div>
-      <p class="small muted" style="margin:0 0 8px">«Через, мин» — сколько минут после оформления заказ видят только ваши курьеры. 0 — свободные видят сразу.</p>
-      <div class="small" style="margin:10px 0 2px"><b>Место заведения на карте</b> <span class="muted">— по нему курьеры рядом находят вас. Координаты можно скопировать из Яндекс Карт (нажмите на здание → «Что здесь?»).</span></div>
-      ${posRows}
-      ${noQr.length && S.on ? `<p class="small" style="margin:10px 0 0;color:var(--danger)">${noQr.length === F.points.length ? 'Онлайн-оплата гостей не подключена' : `Онлайн-оплата не подключена: ${noQr.map((p) => esc(p.name)).join(', ')}`} — свободные курьеры увидят только заказы, оплаченные заранее. Подключить: Касса · Админ · «Интеграции» → «Онлайн-оплата гостей» и «QR» в «Цена и районы» → «Оплата при получении».</p>` : ''}
-      ${F.settings.agreed ? '' : `<label class="row small" style="gap:8px;align-items:flex-start;margin:12px 0 0"><input type="checkbox" id="f-df-agree" style="width:auto;margin-top:3px"> <span>Понимаю и согласен: договор на доставку заключается между моим заведением и курьером; я сам плачу курьеру и беру у него чек, не привлекаю бывших работников как самозанятых и отвечаю перед гостем за заказ (оферта, п. 7.9).</span></label>`}
-      <div id="f-df-msg" class="small" style="margin-top:8px;color:var(--danger)"></div>
-      <button class="btn btn-primary" id="f-df-save" style="width:auto;margin-top:6px">Сохранить</button>
-    </div>`;
-  const link = F.settings.on ? `<div class="card">
-      <b>Ссылка для курьеров</b>
-      <div style="font-family:var(--mono, monospace);word-break:break-all;margin:8px 0;user-select:all">${esc(F.link)}</div>
-      <button class="btn btn-ghost" id="f-df-copy" style="width:auto">Скопировать</button>
-      <p class="small muted" style="margin:8px 0 0">Отправьте знакомым курьерам или разместите в объявлении: по ссылке курьер регистрируется и сразу видит ваше заведение. Курьеры рядом находят вас и без ссылки — в разделе «Заведения» своего приложения.</p>
-    </div>` : '';
-  return intro + form + link + dlvFreeListHtml(F, true);
-}
-function dlvFreeListHtml(F, canDecide) {
-  if (!F.couriers.length) {
-    return `<h2>Курьеры</h2><div class="card"><p class="small muted" style="margin:0">${F.settings.on ? 'Заявок пока нет. Курьеры рядом увидят ваше заведение в своём приложении; быстрее — отправить им ссылку.' : 'Включите приём свободных курьеров — здесь появятся их заявки.'}</p></div>`;
-  }
-  const row = (c) => `<div class="card" ${c.st === 'pending' ? 'style="border-left:4px solid var(--primary)"' : ''}>
-      <div class="row" style="gap:10px;align-items:flex-start;flex-wrap:wrap">
-        <div style="flex:1 1 240px">
-          <div><b>№${c.no} · ${esc(c.name)}</b> — ${c.st === 'approved' ? (c.onShift ? '<span style="color:var(--primary)">на линии</span>' : 'не на линии') : `<span ${c.st === 'pending' ? '' : 'style="color:var(--danger)"'}>${DLV_FREE_ST[c.st] || ''}</span>`}</div>
-          <div class="small">${c.phone ? `<a href="tel:+${esc(c.phone)}">+${esc(c.phone)}</a> · ` : ''}ИНН ${esc(c.inn)} · ${dlvFreeTaxHtml(c.tax)}</div>
-          <div class="small muted">${esc(c.transport)}${c.medBook ? ' · медкнижка: есть (со слов курьера)' : ' · медкнижка не отмечена'}${c.st === 'pending' ? ` · заявка ${dlvAgo(c.at)}` : ''}</div>
-          ${c.st === 'approved' || c.owed > 0 ? `<div class="small" style="margin-top:4px">Сегодня: ${c.today.trips} дост., ${dlvRub(c.today.earned)}${c.orders ? ` · сейчас везёт ${c.orders}` : ''}${c.owed > 0 ? ` · <b>к выплате ${dlvRub(c.owed)}</b>` : ''}</div>` : ''}
-        </div>
-        ${canDecide ? `<div class="row" style="gap:6px;flex-wrap:wrap">
-          ${c.owed > 0 ? `<button class="btn btn-primary f-df-paid" data-id="${esc(c.id)}" data-amount="${c.owed}" style="width:auto">Отметить выплату</button>` : ''}
-          ${c.st === 'pending' || c.st === 'declined' ? `<button class="btn btn-primary f-df-decide" data-id="${esc(c.id)}" data-d="approve" style="width:auto">Принять</button>` : ''}
-          ${c.st === 'pending' ? `<button class="btn btn-ghost f-df-decide" data-id="${esc(c.id)}" data-d="decline" style="width:auto">Отклонить</button>` : ''}
-          ${c.st === 'approved' ? `<button class="btn btn-ghost f-df-decide" data-id="${esc(c.id)}" data-d="block" style="width:auto;color:var(--danger)">Закрыть доступ</button>` : ''}
-          ${c.st === 'blocked' ? `<button class="btn btn-ghost f-df-decide" data-id="${esc(c.id)}" data-d="unblock" style="width:auto">Вернуть доступ</button>` : ''}
-        </div>` : ''}
-      </div>
-    </div>`;
-  const group = (title, list) => (list.length ? `<h2>${title}</h2>${list.map(row).join('')}` : '');
-  const by = (st) => F.couriers.filter((c) => c.st === st);
-  const owedTotal = F.couriers.reduce((a, c) => a + (c.owed || 0), 0);
-  return group(`Заявки · ${by('pending').length}`, by('pending'))
-    + group(`Работают с вами${owedTotal > 0 ? ` · к выплате ${dlvRub(owedTotal)}` : ''}`, by('approved'))
-    + group('Отклонены и закрыты', [...by('declined'), ...by('blocked')]);
-}
-
 function dlvReportHtml(st) {
   const R = st.report;
   const day = st.reportDay || (st.list && st.list.day) || '';
@@ -898,7 +833,7 @@ function dlvReportHtml(st) {
   return `${head}
     <div class="card" style="padding:6px 8px"><div style="overflow-x:auto"><table class="table">
       <thead><tr><th>Курьер</th><th>Доставок</th><th>Не удалось</th><th>Км</th><th>Среднее время</th><th>Заработок</th><th>Наличные</th></tr></thead>
-      <tbody>${R.rows.map((r) => `<tr><td><b>№${r.no}</b> · ${esc(r.name)}${r.free ? '<div class="small muted">свободный курьер</div>' : ''}</td><td>${r.trips}</td><td>${r.failed || '—'}</td>
+      <tbody>${R.rows.map((r) => `<tr><td><b>№${r.no}</b> · ${esc(r.name)}</td><td>${r.trips}</td><td>${r.failed || '—'}</td>
         <td>${String(r.km).replace('.', ',')}</td><td>${r.avgMin ? `${r.avgMin} мин` : '—'}</td><td>${dlvRub(r.earned)}</td><td>${dlvRub(r.cash)}</td></tr>`).join('')}
         <tr><td><b>Итого</b></td><td><b>${sum('trips')}</b></td><td>${sum('failed') || '—'}</td><td>${String(Math.round(sum('km') * 100) / 100).replace('.', ',')}</td><td></td><td><b>${dlvRub(sum('earned'))}</b></td><td><b>${dlvRub(sum('cash'))}</b></td></tr></tbody>
     </table></div></div>
@@ -942,17 +877,6 @@ function bindDeliveryTab(tenantId, redraw) {
     }
     if (alive()) redraw();
   };
-  const loadFree = async () => {
-    try {
-      const r = await callSaasGateway('courierFreeGet', { tenantId });
-      st.free = r.data;
-      st.freeForm = { ...r.data.settings };
-    } catch (e) {
-      st.free = { error: e.message || 'Не удалось загрузить свободных курьеров' };
-    }
-    if (alive()) redraw();
-  };
-  if (st.sub === 'free' && st.free === null) { st.free = undefined; loadFree(); }
   const needList = ['now', 'couriers'].includes(st.sub) || (st.sub === 'report' && !st.reportDay);
   if (needList && st.list === null) { st.list = undefined; loadList(); }
   if (['price', 'menu'].includes(st.sub) && st.settings === null) { st.settings = undefined; loadSettings(); }
@@ -972,8 +896,8 @@ function bindDeliveryTab(tenantId, redraw) {
     }, 15000);
   }
 
-  document.querySelectorAll('.f-dl-sub').forEach((b) => { b.onclick = () => { st.sub = b.dataset.sub; st.editing = null; if (st.sub === 'free') st.free = null; redraw(); }; });
-  document.querySelectorAll('.f-dl-retry').forEach((b) => { b.onclick = () => { st.list = null; st.settings = null; st.report = null; st.free = null; redraw(); }; });
+  document.querySelectorAll('.f-dl-sub').forEach((b) => { b.onclick = () => { st.sub = b.dataset.sub; st.editing = null; redraw(); }; });
+  document.querySelectorAll('.f-dl-retry').forEach((b) => { b.onclick = () => { st.list = null; st.settings = null; st.report = null; redraw(); }; });
   const call = async (name, data, okText) => {
     try {
       const r = await callSaasGateway(name, { tenantId, ...data });
@@ -1058,59 +982,61 @@ function bindDeliveryTab(tenantId, redraw) {
   });
 
   // ----- Курьеры
-  if ($('f-dl-new')) $('f-dl-new').onclick = () => { st.editing = 'new'; st.fresh = null; redraw(); };
+  if ($('f-dl-new')) $('f-dl-new').onclick = () => { st.editing = 'new'; redraw(); setTimeout(() => { if ($('f-dl-name')) $('f-dl-name').focus(); }, 0); };
   if ($('f-dl-cancel')) $('f-dl-cancel').onclick = () => { st.editing = null; redraw(); };
   document.querySelectorAll('.f-dl-edit').forEach((b) => { b.onclick = () => { st.editing = b.dataset.id; redraw(); }; });
   if ($('f-dl-save')) {
     $('f-dl-save').onclick = async () => {
       const msg = $('f-dl-form-msg');
+      const fail = (text) => { msg.textContent = text; msg.style.color = 'var(--danger)'; };
       const editing = st.editing === 'new' ? null : st.editing;
+      const tr = document.querySelector('input[name="f-dl-tr"]:checked');
       const courier = {
         ...(editing ? { id: editing } : {}),
         name: $('f-dl-name').value.trim(),
+        email: $('f-dl-email').value.trim().toLowerCase(),
         phone: $('f-dl-phone').value.trim(),
+        transport: tr ? tr.value : '',
         points: [...document.querySelectorAll('.f-dl-pt:checked')].map((x) => x.value),
       };
+      if (courier.name.length < 2) return fail('Укажите имя курьера');
+      if (!/^[^\s@<>,;]{1,64}@[^\s@<>,;]{1,190}\.[^\s@<>,;.]{2,24}$/.test(courier.email)) return fail('Проверьте email курьера');
+      if (!courier.transport) return fail('Выберите транспорт');
       $('f-dl-save').disabled = true;
       try {
         const r = await callSaasGateway('courierAdminSave', { tenantId, courier });
-        if (!editing) {
-          const inv = await callSaasGateway('courierAdminInvite', { tenantId, courierId: r.data.id });
-          st.fresh = { url: inv.data.url, no: r.data.no, name: courier.name };
-        }
         st.editing = null;
-        toast(editing ? 'Сохранено' : 'Курьер добавлен — отправьте ему ссылку');
+        toast(editing ? 'Сохранено' : r.data.welcomed ? `Курьер №${r.data.no} добавлен — приглашение ушло на ${courier.email}` : `Курьер №${r.data.no} добавлен. Письмо не ушло — нажмите «Отправить приглашение ещё раз»`);
         await loadList(true);
       } catch (e) {
-        msg.textContent = e.message || 'Не удалось сохранить';
-        msg.style.color = 'var(--danger)';
+        fail(e.message || 'Не удалось сохранить');
         $('f-dl-save').disabled = false;
+        if (e.code === 'COURIER_LIMIT_EXCEEDED') loadList(true);
       }
     };
   }
-  document.querySelectorAll('.f-dl-invite').forEach((b) => {
+  document.querySelectorAll('.f-dl-welcome').forEach((b) => {
     b.onclick = async () => {
       const c = st.list.couriers.find((x) => x.id === b.dataset.id);
-      if (c.linked && !confirm(`Выдать курьеру №${c.no} новую ссылку? Когда он войдёт по ней, старый телефон выйдет из приложения.`)) return;
-      const r = await call('courierAdminInvite', { courierId: c.id });
-      if (r) { st.fresh = { url: r.url, no: c.no, name: c.name }; redraw(); window.scrollTo(0, 0); }
+      b.disabled = true;
+      if (await call('courierAdminWelcome', { courierId: c.id }, `Письмо отправлено на ${c.email}`)) loadList(true);
+      else b.disabled = false;
     };
   });
-  if ($('f-dl-copy')) $('f-dl-copy').onclick = () => copyToClipboard(st.fresh.url);
-  if ($('f-dl-share')) $('f-dl-share').onclick = () => navigator.share({ title: 'Приложение курьера', text: `Ваш вход в приложение курьера (ссылка одноразовая, 72 часа):`, url: st.fresh.url }).catch(() => {});
-  if ($('f-dl-fresh-hide')) $('f-dl-fresh-hide').onclick = () => { st.fresh = null; redraw(); };
   document.querySelectorAll('.f-dl-enable').forEach((b) => {
     b.onclick = async () => {
       const c = st.list.couriers.find((x) => x.id === b.dataset.id);
       const on = b.dataset.on === '1';
-      if (!on && !confirm(`Отключить курьера №${c.no}? Он сразу выйдет из приложения, а заказы, которые он ещё не забрал, снова станут свободными.`)) return;
-      if (await call('courierAdminEnable', { courierId: c.id, enabled: on }, on ? 'Курьер включён — выдайте ему новую ссылку' : 'Курьер отключён')) loadList(true);
+      if (!on && !confirm(`Заблокировать курьера №${c.no} · ${c.name}? Он сразу выйдет из приложения, а заказы, которые он ещё не забрал, снова станут свободными. Место в лимите тарифа освободится.`)) return;
+      b.disabled = true;
+      if (await call('courierAdminEnable', { courierId: c.id, enabled: on }, on ? 'Курьер снова активен — он может войти по почте' : 'Курьер заблокирован')) loadList(true);
+      else b.disabled = false;
     };
   });
   document.querySelectorAll('.f-dl-forget').forEach((b) => {
     b.onclick = async () => {
       const c = st.list.couriers.find((x) => x.id === b.dataset.id);
-      if (!confirm(`Удалить имя и телефон курьера №${c.no}? Это нельзя отменить. Поездки в отчётах останутся за номером курьера.`)) return;
+      if (!confirm(`Удалить имя, почту и телефон курьера №${c.no}? Это нельзя отменить. Поездки в отчётах останутся за номером курьера.`)) return;
       if (await call('courierAdminForget', { courierId: c.id }, 'Данные курьера удалены')) loadList(true);
     };
   });
@@ -1123,92 +1049,17 @@ function bindDeliveryTab(tenantId, redraw) {
       if (await call('courierAdminCash', { courierId: c.id, amount }, `Принято ${dlvRub(amount)}`)) loadList(true);
     };
   });
+  document.querySelectorAll('input[name="f-dl-dispatch"]').forEach((r) => { r.onchange = () => { st.dispatchDraft = r.value; }; });
   if ($('f-dl-rates')) {
     $('f-dl-rates').onclick = async () => {
-      if (await call('courierAdminRates', { ratePerTrip: Number($('f-dl-rate-trip').value) || 0, ratePerKm: Number($('f-dl-rate-km').value) || 0 }, 'Ставки сохранены')) loadList(true);
-    };
-  }
-
-  // ----- Свободные курьеры
-  if ($('f-df-save')) {
-    const read = () => {
-      Object.assign(st.freeForm, {
-        on: $('f-df-on').checked, mode: $('f-df-mode').value,
-        ratePerTrip: Number($('f-df-trip').value) || 0, ratePerKm: Number($('f-df-km').value) || 0,
-        radiusKm: Number($('f-df-radius').value) || 0, delayMin: Number($('f-df-delay').value) || 0,
-      });
-      return st.freeForm;
-    };
-    ['f-df-on', 'f-df-mode', 'f-df-trip', 'f-df-km', 'f-df-radius', 'f-df-delay'].forEach((id) => { $(id).onchange = read; });
-    $('f-df-save').onclick = async () => {
-      const f = read();
-      $('f-df-msg').textContent = '';
-      $('f-df-save').disabled = true;
-      try {
-        await callSaasGateway('courierFreeSave', { tenantId, ...f, agree: $('f-df-agree') ? $('f-df-agree').checked : undefined });
-        toast(f.on ? 'Свободные курьеры включены' : 'Сохранено — свободные курьеры выключены');
-        st.list = null;
-        await loadFree();
-      } catch (e) {
-        if ($('f-df-msg')) $('f-df-msg').textContent = e.message || 'Не получилось сохранить';
-        if ($('f-df-save')) $('f-df-save').disabled = false;
+      const d = document.querySelector('input[name="f-dl-dispatch"]:checked');
+      const dispatch = d ? d.value : 'pool';
+      if (await call('courierAdminRates', { ratePerTrip: Number($('f-dl-rate-trip').value) || 0, ratePerKm: Number($('f-dl-rate-km').value) || 0, dispatch }, dispatch === 'manual' ? 'Сохранено: заказы назначает администратор' : 'Сохранено: курьеры берут заказы сами')) {
+        st.dispatchDraft = null;
+        loadList(true);
       }
     };
-    const savePos = async (t, lat, lng) => {
-      read();
-      try {
-        await callSaasGateway('courierFreePos', { tenantId: t, lat, lng });
-        toast('Место заведения сохранено');
-        const keep = { ...st.freeForm };
-        await loadFree();
-        st.freeForm = keep;
-        st.list = null;
-        st.settings = null;
-        if (alive()) redraw();
-      } catch (e) {
-        toast(e.message || 'Не получилось сохранить место');
-      }
-    };
-    document.querySelectorAll('.f-df-pos').forEach((b) => {
-      b.onclick = () => {
-        const input = document.querySelector(`.f-df-coord[data-t="${b.dataset.t}"]`);
-        const m = /^\s*(-?\d{1,3}(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:[.,]\d+)?)\s*$/.exec(input.value || '');
-        if (!m) return toast('Введите координаты: широта, долгота — например 59.9358, 30.3259');
-        savePos(b.dataset.t, Number(m[1].replace(',', '.')), Number(m[2].replace(',', '.')));
-      };
-    });
-    document.querySelectorAll('.f-df-here').forEach((b) => {
-      b.onclick = () => {
-        if (!navigator.geolocation) return toast('Это устройство не даёт геолокацию — введите координаты');
-        b.disabled = true;
-        navigator.geolocation.getCurrentPosition(
-          (p) => { b.disabled = false; if (p.coords.accuracy > 150) return toast('Геолокация неточная (больше 150 м) — подойдите к окну или введите координаты'); savePos(b.dataset.t, p.coords.latitude, p.coords.longitude); },
-          () => { b.disabled = false; toast('Нет доступа к геолокации — разрешите её в браузере или введите координаты'); },
-          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
-        );
-      };
-    });
   }
-  if ($('f-df-copy')) $('f-df-copy').onclick = () => { navigator.clipboard.writeText(st.free.link).then(() => toast('Ссылка скопирована'), () => toast('Скопируйте ссылку вручную')); };
-  document.querySelectorAll('.f-df-decide').forEach((b) => {
-    b.onclick = async () => {
-      const d = b.dataset.d;
-      if (d === 'block' && !confirm('Закрыть курьеру доступ к вашим заказам? Незабранные заказы снова станут свободными. Заработанное останется к выплате.')) return;
-      b.disabled = true;
-      const text = { approve: 'Курьер принят — он увидит ваши заказы, когда выйдет на линию рядом', decline: 'Заявка отклонена', block: 'Доступ закрыт', unblock: 'Доступ возвращён' }[d];
-      await call('courierFreeDecide', { courierId: b.dataset.id, decision: d }, text);
-      loadFree();
-    };
-  });
-  document.querySelectorAll('.f-df-paid').forEach((b) => {
-    b.onclick = async () => {
-      const raw = prompt('Сколько выплатили курьеру, ₽? Деньги вы переводите сами — здесь только отметка. Не забудьте взять чек из «Мой налог».', String(b.dataset.amount));
-      if (raw === null) return;
-      const amount = Number(String(raw).replace(',', '.').replace(/[^\d.]/g, ''));
-      if (!(amount > 0)) return toast('Укажите сумму');
-      if (await call('courierFreePaid', { courierId: b.dataset.id, amount }, `Выплата ${dlvRub(amount)} отмечена — курьер увидит её в приложении`)) loadFree();
-    };
-  });
 
   // ----- Цена и районы: форма живёт в st.form, поля — по id района (строки не путаются при удалении)
   const syncForm = () => {
@@ -1562,6 +1413,7 @@ async function callSaasGateway(path, data, { forceRefresh = false } = {}) {
   }
   if (!res.ok) {
     const err = new Error(json?.error || `Сервис ответил ошибкой (${res.status})`);
+    if (json?.code) err.code = json.code;
     err.status = res.status;
     throw err;
   }
@@ -2808,9 +2660,12 @@ function planCaps(p) {
     // Тариф ограничивает не сотрудников, а устройства с кассой: касса
     // сверх лимита не открывается (DeviceLimitGate), 0 — без ограничений.
     maxDevices: Math.max(0, Math.floor(Number(p?.maxDevices) || 0)),
+    // Курьеров в приложении курьера: -1 — без ограничений (нет поля — как в сетке тарифов).
+    maxCouriers: Number.isFinite(Number(p?.maxCouriers)) && p?.maxCouriers !== null && p?.maxCouriers !== '' ? Math.max(-1, Math.floor(Number(p.maxCouriers))) : -1,
     prioritySupport: p?.prioritySupport === true,
   };
 }
+const couriersWord = (n) => (n % 10 === 1 && n % 100 !== 11 ? 'курьер' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'курьера' : 'курьеров');
 
 // Тарифы, которые можно выбрать: не в архиве, с ценой, одного вида
 // (сеть или одно заведение), по возрастанию цены.
@@ -2870,6 +2725,7 @@ function planFeatureRows(p, { priorityRow = p.prioritySupport === true } = {}) {
     { label: 'Смены, зарплата, ЕГАИС', on: true },
     { label: `Устройства с кассой${perPoint}`, value: c.maxDevices ? `до ${c.maxDevices}` : 'без ограничений', on: true },
     { label: 'Сотрудники', value: 'без ограничений', on: true },
+    { label: `Курьеры в приложении${p.isChainPlan ? ' на сеть' : ''}`, value: c.maxCouriers < 0 ? 'без ограничений' : c.maxCouriers ? `до ${c.maxCouriers}` : 'нет', on: c.maxCouriers !== 0 },
     { label: 'Приложение гостя', on: c.guestApp },
     { label: 'Меню по QR и заказ со стола', on: c.guestApp },
     { label: 'ИИ-помощник', on: c.ai },
@@ -4042,11 +3898,13 @@ function applyLegalMode(status) {
     // № 4 (9 ноября 2026 г.) — отдельное согласие гостей на подарки и
     // предложения, «Вернуть гостя». № 5 (11 ноября 2026 г.) — курьеры и
     // приложение курьера, точка гостя для доставки, службы доставки,
-    // карты. Свой вход включили позже — от его даты.
-    // № 6 (12 ноября 2026 г.) — курьеры, работающие на себя (зарегистрировались сами).
-    const ed6 = new Date('2026-11-12T00:00:00+03:00');
-    const from = since > ed6 ? since : ed6;
-    LEGAL_EDITION = `Редакция № 6 от ${from.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Moscow' })}`;
+    // карты. № 6 (12 ноября 2026 г.) — свободные курьеры (отменены). № 7
+    // (13 ноября 2026 г.) — курьеров подключает только заведение (в пределах
+    // тарифа), вход курьера по почте и коду с согласием-ПЭП.
+    // Свой вход включили позже — от его даты.
+    const ed7 = new Date('2026-11-13T00:00:00+03:00');
+    const from = since > ed7 ? since : ed7;
+    LEGAL_EDITION = `Редакция № 7 от ${from.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Moscow' })}`;
   }
 }
 const xborderConsentHtml = () => (AUTH_IN_RF ? '' : ', в том числе на их трансграничную передачу');
@@ -4092,7 +3950,7 @@ function screenLegalOffer() {
       ${legalSection('7. Персональные данные', [
         '<b>7.1. Гости.</b> Оператором персональных данных Гостей, обрабатываемых в Платформе (имя, номер телефона, день и месяц рождения, адрес доставки, сведения о бронированиях, заказах, посещениях, бонусах и отзывах), является Исполнитель: он определяет цели обработки — предоставление Гостям бронирования, заказов, доставки и программы лояльности в заведениях, работающих на Платформе, — состав данных и действия с ними. Заказчик в отношении этих данных оператором не является и не обязан уведомлять Роскомнадзор об их обработке.',
         '<b>7.2. Поручение Заказчику.</b> Исполнитель поручает Заказчику (ч. 3 ст. 6 Федерального закона № 152-ФЗ) обработку персональных данных Гостей только в Платформе и только для обслуживания Гостей в Заведении: просмотр, запись, уточнение, использование (связь с Гостем по брони и заказу, выдача и доставка заказа, начисление и списание бонусов), удаление. Заказчик обязуется: допускать к данным только своих работников, которым они нужны для работы, под их личными PIN-кодами; соблюдать конфиденциальность и не передавать данные третьим лицам; не копировать и не выгружать их из Платформы и не использовать в других целях, в том числе для рекламных рассылок; вносить имена, телефоны и адреса Гостей только в Платформу (первичная запись — в базу данных на территории РФ, ч. 5 ст. 18 Федерального закона № 152-ФЗ); принимать меры по ст. 18.1 и 19 этого закона — ознакомить работников с требованиями к обработке персональных данных, не оставлять кассу без присмотра и не сообщать PIN-коды посторонним; не позднее 24 часов сообщать Исполнителю об инцидентах с данными и о запросах Гостей об их данных. Обрабатывая данные Гостей вне Платформы или в собственных целях, Заказчик становится их самостоятельным оператором и отвечает за такую обработку сам.',
-        '<b>7.3. Работники.</b> Оператором персональных данных работников Заказчика (имя, должность, время смен, сведения для расчёта зарплаты, PIN-код в защищённом виде), в том числе курьеров Заказчика (имя, номер телефона, местоположение телефона во время смены в приложении курьера, поездки и принятые у Гостей суммы), является Заказчик как работодатель или заказчик их услуг. Акцептуя оферту, Заказчик поручает Исполнителю их обработку (ч. 3 ст. 6 Федерального закона № 152-ФЗ) в целях исполнения договора: запись, систематизацию, накопление, хранение, уточнение, извлечение, использование, блокирование, удаление и уничтожение.',
+        '<b>7.3. Работники.</b> Оператором персональных данных работников Заказчика (имя, должность, время смен, сведения для расчёта зарплаты, PIN-код в защищённом виде), в том числе курьеров Заказчика (имя, адрес электронной почты, номер телефона, вид транспорта, местоположение телефона во время смены в приложении курьера, поездки и принятые у Гостей суммы, сведения о согласии курьера), является Заказчик как работодатель или заказчик их услуг. Акцептуя оферту, Заказчик поручает Исполнителю их обработку (ч. 3 ст. 6 Федерального закона № 152-ФЗ) в целях исполнения договора: запись, систематизацию, накопление, хранение, уточнение, извлечение, использование, блокирование, удаление и уничтожение.',
         '<b>7.4. Обязанности Исполнителя.</b> Соблюдать конфиденциальность данных, принимать меры защиты по ст. 19 Федерального закона № 152-ФЗ, записывать имена, телефоны и адреса Гостей и имена работников в базу данных на территории РФ и хранить их там, уведомлять Заказчика об инцидентах с данными его работников не позднее 24 часов с момента выявления и по окончании договора удалять данные в сроки раздела 5.',
         (DATA_IN_RF
           ? '<b>7.5. Хранение только в РФ.</b> Имена, телефоны и адреса Гостей и имена работников всех Заведений хранятся только на сервере в РФ; данные Заведений для синхронизации устройств (меню, заказы, суммы, идентификаторы) — на том же сервере Исполнителя в РФ; резервные копии — в зашифрованном виде в хранилище в РФ (ключ шифрования — только у Исполнителя). Персональные данные'
@@ -4102,7 +3960,7 @@ function screenLegalOffer() {
         '<b>7.6. Роскомнадзор.</b> Об обработке персональных данных Гостей в Платформе Роскомнадзор уведомляет Исполнитель как их оператор. Использование Платформы не требует от Заказчика уведомления о трансграничной передаче: её нет, пока Заказчик сам не включит показ своего курьера на карте в чате чат-бота в мессенджере (раздел «Доставка», по умолчанию выключено) — тогда координаты курьера уходят на серверы мессенджера за пределами РФ, и согласие курьера и уведомление Роскомнадзора по ст. 12 Федерального закона № 152-ФЗ — на Заказчике. Обязанность работодателя уведомить Роскомнадзор об обработке персональных данных своих работников (ст. 22 Федерального закона № 152-ФЗ) существует у Заказчика независимо от использования Платформы; памятка с готовым текстом — в личном кабинете.',
         '<b>7.7. ИИ-помощники</b> подключаются Заказчиком по собственному желанию с ключом выбранного им провайдера ИИ; договор с провайдером заключает Заказчик. Исполнитель передаёт провайдеру только сведения, нужные для ответа, без телефонов и email Гостей; имена Гостей — первой буквой, работников — условными обозначениями.',
         '<b>7.8. Подарки и предложения Гостям («Вернуть гостя»).</b> По поручению Заказчика Исполнитель показывает в приложении Заведения сообщения и начисляет бонусы Гостям, которые давно не приходили. Сообщения получают только Гости, давшие Исполнителю отдельное согласие на получение рекламы (ст. 18 Федерального закона «О рекламе»); Гость отказывается от них в профиле приложения, и направление прекращается сразу. Содержание сообщений и размер подарка определяет Заказчик как рекламодатель и отвечает за их соответствие законодательству; Платформа не принимает тексты с упоминанием табачной, никотинсодержащей и алкогольной продукции и ссылок. Исполнитель не передаёт Заказчику сведения о том, кто из Гостей получил сообщение, — только общие цифры.',
-        '<b>7.9. Курьеры, работающие на себя («Свободные курьеры»).</b> Заказчик может по своему решению включить в разделе «Доставка» приём курьеров, которые зарегистрировались в приложении курьера самостоятельно (самозанятые и индивидуальные предприниматели). Исполнитель предоставляет только программу: показывает таким курьерам заказы Заказчика и передаёт Заказчику сведения о курьере. Договор на доставку каждого заказа заключается между Заказчиком и курьером в момент, когда курьер берёт заказ, по цене, указанной Заказчиком в настройках. Исполнитель стороной этого договора, работодателем курьера, агентом или службой доставки не является, плату курьерам не принимает и не перечисляет, за действия курьеров и исполнение ими договора не отвечает. Заказчик сам: рассчитывается с курьером и получает от него чек (у самозанятого — из приложения «Мой налог»); проверяет действительность его налогового статуса на дату выплаты; не привлекает как самозанятых своих бывших работников в течение двух лет после прекращения трудовых отношений (п. 8 ч. 2 ст. 6 Федерального закона от 27.11.2018 № 422-ФЗ); не устанавливает курьеру режим работы и не назначает ему заказы без его согласия; отвечает перед Гостем за заказ и его доставку как продавец; следит, чтобы перевозка еды курьером отвечала санитарным требованиям. Оператором персональных данных таких курьеров является Исполнитель; сведения о курьере (фамилия, имя, отчество, номер телефона, ИНН, налоговый статус, вид транспорта, отметка о медицинской книжке, поездки по заказам Заказчика) Исполнитель передаёт Заказчику с согласия курьера, и Заказчик использует их только для работы с этим курьером и расчётов с ним, соблюдая их конфиденциальность.',
+        '<b>7.9. Курьеры и приложение курьера.</b> Курьеров Заказчик подключает сам в личном кабинете (раздел «Доставка» → «Курьеры») в пределах числа активных курьеров по Тарифу; самостоятельной регистрации курьеров в Платформе нет, курьер видит заказы только Заведения, которое его подключило. Курьер входит в приложение курьера по адресу электронной почты и одноразовому коду из письма и при входе подписывает простой электронной подписью (ст. 5 Федерального закона от 06.04.2011 № 63-ФЗ) согласие с условиями использования приложения и на обработку своих персональных данных Заказчиком и Исполнителем, в том числе на передачу местоположения во время смены; запись о согласии (дата и время, IP-адрес, адрес почты, редакция условий) хранится в Платформе. Условия работы и оплаты курьера устанавливает Заказчик по договору с курьером (трудовому или гражданско-правовому); Исполнитель не является работодателем или заказчиком курьера, не оказывает услуги доставки, не принимает оплату от Гостей и не производит выплат курьерам. Заказчик отвечает за наличие договора с курьером и за то, что указанный адрес почты принадлежит курьеру, и своевременно блокирует доступ курьера, с которым прекращены отношения (блокировка действует сразу и освобождает место в лимите Тарифа). Наличные и оплату картой у двери курьер принимает от имени Заказчика; применение контрольно-кассовой техники при расчётах с Гостем — обязанность Заказчика.',
         'Обработка персональных данных самого Заказчика и его представителей осуществляется по Политике обработки персональных данных, опубликованной на сайте.',
       ])}
       ${legalSection('8. Интеллектуальная собственность и данные Заказчика', [
@@ -4213,14 +4071,13 @@ function screenLegalPrivacy() {
     <p class="small muted">${LEGAL_EDITION} Политика разработана во исполнение ст. 18.1 Федерального закона от 27.07.2006 № 152-ФЗ «О персональных данных» и определяет порядок обработки и меры защиты персональных данных при использовании Платформы ZalPOS.</p>
     <div class="card">
       ${legalSection('1. Оператор', [
-        'Оператор — индивидуальный предприниматель, правообладатель Платформы ZalPOS (реквизиты — раздел 12). Оператор является оператором персональных данных пользователей личного кабинета и Гостей заведений, работающих на Платформе. Заведения обрабатывают данные Гостей по поручению Оператора — только в Платформе и только для обслуживания Гостей (бронь, заказ, доставка, бонусы). Оператор является также оператором персональных данных курьеров, которые зарегистрировались в приложении курьера самостоятельно и работают на себя.',
+        'Оператор — индивидуальный предприниматель, правообладатель Платформы ZalPOS (реквизиты — раздел 12). Оператор является оператором персональных данных пользователей личного кабинета и Гостей заведений, работающих на Платформе. Заведения обрабатывают данные Гостей по поручению Оператора — только в Платформе и только для обслуживания Гостей (бронь, заказ, доставка, бонусы).',
         'В отношении данных работников заведений оператором является заведение-работодатель (Заказчик), а Оператор обрабатывает их по его поручению на основании договора-оферты.',
       ])}
       ${legalSection('2. Субъекты и состав данных', [
         '<b>Пользователи личного кабинета</b> (владельцы и представители заведений): email, имя, роль, сведения об оплатах, журнал действий в кабинете; при оплате по счёту — ФИО индивидуального предпринимателя или наименование организации, ИНН и КПП плательщика.',
         '<b>Работники заведений</b>: имя, должность, PIN-код входа в кассу (в защищённом виде), время смен, сведения для расчёта зарплаты.',
-        '<b>Курьеры заведений</b> (по поручению заведения, как работники): имя, номер телефона, местоположение телефона — только пока курьер на смене в приложении курьера и дал на это согласие, поездки (время, километры, результат), принятые у Гостей суммы и способ оплаты. Последняя точка курьера стирается в конце смены, в заказе — после вручения; в истории поездок остаются только километры, без координат.',
-        '<b>Курьеры, работающие на себя</b> (самозанятые и индивидуальные предприниматели, которые зарегистрировались в приложении курьера сами; основание — согласие, данное при регистрации): фамилия, имя, отчество, номер телефона, email, ИНН и налоговый статус с результатом его проверки в открытом сервисе ФНС России, вид транспорта, отметка о медицинской книжке, местоположение телефона — только пока курьер на линии, сведения о поездках (время, километры, результат), начислениях заведений и отмеченных ими выплатах, технические сведения о входе (дата, IP-адрес, сведения об устройстве). Последняя точка стирается в конце смены, в заказе — после вручения. Курьер удаляет учётную запись сам в приложении: имя, телефон, email, ИНН и пароль уничтожаются сразу, записи о поездках остаются без них, за номером курьера.',
+        '<b>Курьеры заведений</b> (по поручению заведения, которое их подключило; самостоятельной регистрации курьеров нет): имя, адрес электронной почты, номер телефона, вид транспорта — их вносит заведение; местоположение телефона — только пока курьер на смене в приложении курьера; поездки (время, километры, результат), принятые у Гостей суммы и способ оплаты; модель устройства и IP-адрес при входе; сведения о согласии (дата и время, IP-адрес, адрес почты, редакция условий). Курьер входит по адресу почты и одноразовому коду и при входе подписывает согласие простой электронной подписью (ст. 5 Федерального закона № 63-ФЗ, ч. 4 ст. 9 Федерального закона № 152-ФЗ); условия для курьеров — в приложении курьера. Последняя точка курьера стирается в конце смены, в заказе — после вручения; в истории поездок остаются только километры, без координат. Когда заведение удаляет данные курьера, имя, почта и телефон стираются, в истории поездок остаётся только номер курьера.',
         '<b>Менеджеры партнёрской программы</b>: email, имя, налоговый статус, реквизиты для выплат (номер телефона для СБП, банк, ФИО, ИНН), ссылки на чеки из приложения «Мой налог», сведения о начислениях и выплатах, идентификатор аккаунта в мессенджере (если менеджер подключил чат-бота).',
         '<b>Гости заведений</b>: имя, номер телефона, день и месяц рождения (если Гость их укажет), адрес доставки и точка на карте для доставки (если Гость сам отметит её кнопкой «Где я» при заказе), сведения о бронированиях, заказах, посещениях, бонусах и отзывах.',
         'Специальные категории и биометрические персональные данные не обрабатываются. Платформа не предназначена для сбора данных лиц младше 14 лет.',
@@ -4241,13 +4098,12 @@ function screenLegalPrivacy() {
         'Данные не передаются третьим лицам, кроме случаев, предусмотренных законом, и поставщиков инфраструктуры, указанных в разделе 6, действующих на условиях конфиденциальности.',
         `При оплате тарифа email плательщика и сведения о платеже передаются платёжному сервису ${PAYMENT_SERVICE} для приёма оплаты и отправки чека; данные банковской карты вводятся на странице платёжного сервиса и Оператору не передаются. При оплате по счёту реквизиты плательщика используются для выставления счёта и формирования чека с ИНН покупателя в приложении «Мой налог» (сведения о чеке передаются в ФНС России в силу Федерального закона № 422-ФЗ).`,
         'Доставку заказа может выполнять курьер заведения или, по выбору заведения, российская служба доставки, с которой у заведения заключён договор (например, Яндекс Доставка, Достависта). Службе доставки передаются только сведения, нужные для доставки: имя и номер телефона Гостя, адрес и точка доставки, комментарий к доставке, номер и стоимость заказа. Пока курьер (заведения или службы) везёт заказ, Гость видит его местоположение на карте.',
-        'Сведения о курьере, работающем на себя, передаются с его согласия заведению, в которое он подал заявку или чей заказ взял (фамилия, имя, отчество, номер телефона, ИНН, налоговый статус, вид транспорта, отметка о медицинской книжке, поездки по заказам этого заведения, местоположение — пока он везёт заказ этого заведения), и Гостю, чей заказ он везёт (имя, номер телефона и местоположение — только пока заказ в пути). ИНН такого курьера передаётся в ФНС России для проверки статуса плательщика налога на профессиональный доход.',
         'Карты и маршруты в приложениях и кабинете показывает сервис «Яндекс Карты» (ООО «Яндекс», Российская Федерация): чтобы нарисовать карту и маршрут, ему передаются координаты или адреса точек (заведение, курьер, место доставки) — без имён и телефонов.',
         'Если заведение подключило ИИ-помощников, запросы к ним обрабатывает провайдер ИИ, выбранный заведением, по договору заведения с этим провайдером. Провайдеру передаются текст вопроса и сведения, нужные для ответа (меню, занятость столов, брони); имена гостей заменяются первой буквой, телефоны и email гостей не передаются. Гостям не следует сообщать в чате ИИ-помощника свои персональные данные.',
       ])}
       ${legalSection('6. Место хранения и трансграничная передача', [
         'Все персональные данные из раздела 2 при сборе записываются и хранятся в базе данных на сервере Оператора в центре обработки данных в Новосибирской области (Российская Федерация) (ч. 5 ст. 18 Федерального закона № 152-ФЗ). На этом же сервере хранятся данные заведений (меню, заказы, смены, склад), через него синхронизируются устройства. Резервные копии всех данных делаются каждый час, шифруются на сервере Оператора (AES-256) и хранятся в объектном хранилище в г. Санкт-Петербурге (Российская Федерация); ключ шифрования есть только у Оператора, хранилищу данные недоступны. Ежечасные копии хранятся до 2 суток, ежедневные — 14 дней, еженедельные — 8 недель, затем удаляются автоматически.',
-        'Персональные данные Гостей, работников заведений, курьеров, работающих на себя, и менеджеров партнёрской программы за пределы РФ не передаются.',
+        'Персональные данные Гостей, работников заведений и менеджеров партнёрской программы за пределы РФ не передаются.',
         AUTH_IN_RF
           ? 'Вход в личный кабинет, кабинет менеджера и приложения Платформы выполняется собственной системой авторизации Оператора на том же сервере в РФ: адрес электронной почты, пароль в защищённом виде (хеш), технические идентификаторы устройств и сведения о входах хранятся только там, письма для подтверждения почты и сброса пароля отправляет этот сервер. ' + (LEGACY_GOOGLE ? 'Учётные записи, созданные до перехода на эту систему, хранились также в сервисе Firebase Authentication компании Google LLC (США); Оператор удаляет их оттуда, новые данные в этот сервис не передаются.' : 'Учётные записи, созданные до перехода на эту систему, хранились также в сервисе Firebase Authentication компании Google LLC (США) и удалены оттуда Оператором; данные в этот сервис не передаются.') + ' Push-уведомления через сервисы Google на Платформе не используются.'
           : 'Вход в личный кабинет, кабинет менеджера и приложения Платформы выполняется через сервис авторизации Firebase Authentication компании Google LLC (серверы в США). Для пользователей личного кабинета ему передаются адрес электронной почты, пароль в защищённом виде (хеш), технические идентификаторы и IP-адрес при входе; через этот сервис могут отправляться письма для подтверждения почты и сброса пароля. Для касс и приложений гостей передаются только случайные технические идентификаторы устройства, без имён, телефонов и адресов. Push-уведомления через сервисы Google на Платформе не используются.',
@@ -11299,6 +11155,9 @@ function watchPlans() {
           <label class="field grow"><span>Устройств с кассой${p.isChainPlan ? ' на точке' : ''} (0 = без лимита)</span>
             <input type="number" min="0" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxDevices" value="${Number(p.maxDevices) || 0}">
           </label>
+          <label class="field grow"><span>Активных курьеров${p.isChainPlan ? ' на сеть' : ''} (-1 = без лимита)</span>
+            <input type="number" min="-1" step="1" class="f-plan-field" data-plan="${esc(p.id)}" data-field="maxCouriers" value="${planCaps(p).maxCouriers}">
+          </label>
         </div>
         <p class="small muted" style="margin:-4px 0 10px">${p.isChainPlan ? 'Лимит — на каждую точку сети: при 8 точках и лимите 5 у каждой точки до 5 своих устройств. ' : ''}Касса сверх лимита не откроется, пока владелец не удалит лишнее
         устройство в кабинете («Устройства») или не сменит тариф. Удалённые устройства в лимит не входят. Сотрудников тариф не ограничивает.</p>
@@ -11382,7 +11241,7 @@ function watchPlans() {
           isChainPlan: true, customAdditionalPrice: false,
           priceRubAdditional: 0, priceRubAdditionalSemiannual: 0, priceRubAdditionalYearly: 0,
         } : {}),
-        maxEmployees: 0, maxDevices: 0, maxTables: 0, maxStorageMb: 0,
+        maxEmployees: 0, maxDevices: 0, maxCouriers: 1, maxTables: 0, maxStorageMb: 0,
         trialDays: 7, aiEnabled: false, customBranding: false, customDomain: false,
         features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
       } });
@@ -11407,6 +11266,7 @@ async function applyPlanCatalog() {
       const extra = [
         r.after.priceRubAdditional ? `+${r.after.priceRubAdditional} ₽ за доп. точку` : '',
         r.after.maxDevices ? `до ${r.after.maxDevices} устр.` : 'без лимита устройств',
+        r.after.maxCouriers === undefined ? '' : r.after.maxCouriers < 0 ? 'курьеры без лимита' : `до ${r.after.maxCouriers} ${couriersWord(r.after.maxCouriers)}`,
         r.after.guestApp ? 'приложение гостя' : 'без приложения гостя',
         r.after.ai ? 'ИИ' : 'без ИИ',
         r.after.prioritySupport ? 'приоритетная поддержка' : '',
@@ -12713,7 +12573,7 @@ const PLAN_FIELD_LABELS = {
   name: 'название', priceRub: 'цена в месяц', priceRubSemiannual: 'цена за 6 мес',
   priceRubYearly: 'цена за год', priceRubAdditional: 'доп. точка в месяц',
   priceRubAdditionalSemiannual: 'доп. точка за 6 мес', priceRubAdditionalYearly: 'доп. точка за год',
-  maxEmployees: 'сотрудников', maxDevices: 'устройств', maxTables: 'столов', maxStorageMb: 'хранилище, МБ',
+  maxEmployees: 'сотрудников', maxDevices: 'устройств', maxCouriers: 'курьеров', maxTables: 'столов', maxStorageMb: 'хранилище, МБ',
   trialDays: 'дней пробного периода', isChainPlan: 'тариф сети', customAdditionalPrice: 'своя цена доп. точки',
   aiEnabled: 'ИИ', customBranding: 'свой брендинг', customDomain: 'свой домен',
 };

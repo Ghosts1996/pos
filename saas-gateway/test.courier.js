@@ -34,6 +34,9 @@ function world({ rf = false } = {}) {
   const events = [];
   const moved = [];
   const fails = [];
+  const mails = [];
+  const limits = {}; // root → лимит тарифа (нет — без ограничений)
+  let mailOn = true;
   const members = { "A_owner": "owner", "N1_pointadmin": "admin" };
   const chainMembers = { "N_chainowner": "owner" };
   const piiStore = new Map();
@@ -65,10 +68,13 @@ function world({ rf = false } = {}) {
       if (!roles.includes(chainMembers[`${c}_${uid}`])) throw new HttpError(403, "Недостаточно прав в этой сети");
     },
     authFailed: (req) => fails.push(req),
+    getMailer: () => (mailOn ? { send: async (m) => { mails.push(m); } } : null),
+    courierLimit: async (root) => (root in limits ? limits[root] : -1),
+    appUrl: "https://pii.zalpos.ru/saas/courier/",
   });
   api.setHooks({ event: async (t, s, text) => events.push({ t, s, text }), moved: async (t, s, lat, lng) => moved.push({ t, s, lat, lng }) });
   const set = (p, d) => db.doc(p).set(d);
-  return { db, api, events, moved, fails, set, piiStore, paid };
+  return { db, api, events, moved, fails, set, piiStore, paid, mails, limits, mail: (v) => { mailOn = v; } };
 }
 
 async function seed(w) {
@@ -91,18 +97,33 @@ const order = (over = {}) => ({
 const call = async (fn, body, extra = {}) => { const res = {}; await fn({ body, headers: {}, ...extra }, res); return res; };
 const asCourier = (token) => ({ headers: { authorization: `Bearer ${token}` } });
 
-/** Курьер через кабинет: создать, выдать ссылку, войти, согласие, смена. */
-async function hire(w, { tenantId = "A", uid = "owner", name = "Николай Петров", phone = "8 900 000-00-01", points, shift = true } = {}) {
-  const made = await call(w.api.handleAdminSave, { tenantId, courier: { name, phone, ...(points ? { points } : {}) } }, { uid });
+let hired = 0;
+/** Код из последнего письма на эту почту. */
+const codeFor = (w, email) => {
+  const m = [...w.mails].reverse().find((x) => x.to === email && /код входа/.test(x.subject));
+  return m ? /(\d{6}) —/.exec(m.subject)[1] : "";
+};
+
+/** Вход по почте: галочка → код в письме → ключ (одно заведение) или выбор заведения. */
+async function signIn(w, email, { pick } = {}) {
+  clock += 61 * 1000; // код не чаще раза в минуту
+  const rq = await call(w.api.handleRequestCode, { email, consent_accepted: true });
+  assert.equal(rq.status, 200);
+  const v = await call(w.api.handleVerifyCode, { email, code: codeFor(w, email), consent_accepted: true, device: "Android" }, { headers: { "x-real-ip": "203.0.113.7" } });
+  if (!v.body.choose) return v.body;
+  const venue = v.body.venues.find((x) => (pick ? pick(x) : true));
+  return (await call(w.api.handleSelect, { email, ticket: v.body.ticket, courierId: venue.id, device: "Android" }, { headers: { "x-real-ip": "203.0.113.7" } })).body;
+}
+
+/** Курьер через кабинет: создать (имя, почта, телефон, транспорт), войти по почте, смена. */
+async function hire(w, { tenantId = "A", uid = "owner", name = "Николай Петров", phone = "8 900 000-00-01", email, points, shift = true } = {}) {
+  const mail = email || `courier${++hired}@example.ru`;
+  const made = await call(w.api.handleAdminSave, { tenantId, courier: { name, email: mail, phone, transport: "bike", ...(points ? { points } : {}) } }, { uid });
   assert.equal(made.status, 200);
-  const inv = await call(w.api.handleAdminInvite, { tenantId, courierId: made.body.id }, { uid });
-  const code = inv.body.url.split("#i=")[1];
-  const login = await call(w.api.handleLogin, { invite: code, device: "Android" });
-  assert.equal(login.status, 200);
-  const token = login.body.token;
-  await call(w.api.handleConsent, {}, asCourier(token));
+  const r = await signIn(w, mail);
+  const token = r.token;
   if (shift) await call(w.api.handleShift, { on: true }, asCourier(token));
-  return { id: made.body.id, no: made.body.no, token, code };
+  return { id: made.body.id, no: made.body.no, token, email: mail };
 }
 
 const state = async (w, token) => (await call(w.api.handleState, {}, asCourier(token))).body;
@@ -133,33 +154,174 @@ test("рабочие сутки с 06:00 по поясу точки; улица 
 
 // ---------------------------------------------------------------- вход
 
-test("вход: одноразовая ссылка, ключ на сервере — только хэш; чужой ключ — 401 и счёт щиту", async () => {
+test("вход по почте: без галочки код не уходит; код — 6 цифр, 10 минут, раз в минуту; ПЭП в учётке; ключ — только хэш", async () => {
+  const w = world();
+  await seed(w);
+  await call(w.api.handleAdminSave, { tenantId: "A", courier: { name: "Оля Смирнова", email: "  Olya@Example.RU ", phone: "+7 900 000-00-09", transport: "foot" } }, { uid: "owner" });
+  const doc0 = (await w.db.collection("couriers").where("email", "==", "olya@example.ru").get()).docs[0];
+  assert.ok(doc0, "почта хранится в нижнем регистре");
+  assert.equal(w.mails.length, 1, "приветственное письмо");
+  assert.match(w.mails[0].subject, /курьером в «Лето»/);
+  assert.match(w.mails[0].text, /Администратор заведения «Лето» добавил вас как курьера/);
+  await assert.rejects(call(w.api.handleRequestCode, { email: "olya@example.ru" }), (e) => e.status === 400 && e.code === "CONSENT_REQUIRED");
+  await assert.rejects(call(w.api.handleRequestCode, { email: "kto-to@example.ru", consent_accepted: true }), (e) => e.status === 404 && e.code === "COURIER_NOT_FOUND" && /Обратитесь к администратору вашего заведения/.test(e.message));
+  await assert.rejects(call(w.api.handleRequestCode, { email: "не почта", consent_accepted: true }), (e) => e.status === 400);
+  assert.equal((await call(w.api.handleRequestCode, { email: "OLYA@example.ru", consent_accepted: true })).status, 200);
+  await assert.rejects(call(w.api.handleRequestCode, { email: "olya@example.ru", consent_accepted: true }), (e) => e.status === 429 && e.code === "CODE_TOO_OFTEN" && e.retryIn > 0);
+  const code = codeFor(w, "olya@example.ru");
+  assert.match(code, /^\d{6}$/);
+  const codes = (await w.db.collection("courierCodes").get()).docs.map((d) => JSON.stringify(d.data()));
+  assert.ok(codes.length === 1 && !codes[0].includes(code) && !codes[0].includes("olya"), "в базе — только хэши кода и почты");
+  // Неверный код — попытки считаются; без галочки — нельзя.
+  await assert.rejects(call(w.api.handleVerifyCode, { email: "olya@example.ru", code, consent_accepted: false }), (e) => e.status === 400);
+  await assert.rejects(call(w.api.handleVerifyCode, { email: "olya@example.ru", code: code === "000000" ? "111111" : "000000", consent_accepted: true }), (e) => e.status === 403 && /осталось попыток: 4/.test(e.message));
+  const ok = await call(w.api.handleVerifyCode, { email: "olya@example.ru", code: `${code.slice(0, 3)} ${code.slice(3)}`, consent_accepted: true, device: "Android" }, { headers: { "x-real-ip": "203.0.113.7" } });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.body.courier, { no: 1, name: "Оля Смирнова", venue: "Лето" });
+  const doc = (await w.db.doc(`couriers/${doc0.id}`).get()).data();
+  assert.deepEqual([doc.consentIp, doc.consentEmail, doc.policyVersion, !!doc.consentAt], ["203.0.113.7", "olya@example.ru", cm.POLICY_VERSION, true], "доказательство согласия");
+  assert.ok(doc.tokenHash && !JSON.stringify(doc).includes(ok.body.token), "ключа в базе нет");
+  await assert.rejects(call(w.api.handleVerifyCode, { email: "olya@example.ru", code, consent_accepted: true }), (e) => e.status === 403, "код одноразовый");
+  // Сразу можно на смену: согласие уже дано при входе.
+  assert.equal((await call(w.api.handleState, {}, asCourier(ok.body.token))).body.me.consent, true);
+  assert.equal((await call(w.api.handleShift, { on: true }, asCourier(ok.body.token))).status, 200);
+  await assert.rejects(call(w.api.handleState, {}, asCourier("x".repeat(40))), (e) => e.status === 401);
+  // Код живёт 10 минут; 5 ошибок — код сгорает.
+  clock += 61 * 1000;
+  await call(w.api.handleRequestCode, { email: "olya@example.ru", consent_accepted: true });
+  const code2 = codeFor(w, "olya@example.ru");
+  clock += cm.CODE_TTL_MS + 1000;
+  await assert.rejects(call(w.api.handleVerifyCode, { email: "olya@example.ru", code: code2, consent_accepted: true }), (e) => e.status === 403 && /устарел/.test(e.message));
+  await call(w.api.handleRequestCode, { email: "olya@example.ru", consent_accepted: true });
+  const code3 = codeFor(w, "olya@example.ru");
+  for (let i = 0; i < 5; i++) await assert.rejects(call(w.api.handleVerifyCode, { email: "olya@example.ru", code: code3 === "999999" ? "888888" : "999999", consent_accepted: true }), (e) => e.status === 403);
+  await assert.rejects(call(w.api.handleVerifyCode, { email: "olya@example.ru", code: code3, consent_accepted: true }), (e) => e.status === 403, "после 5 ошибок верный код уже не подходит");
+  assert.ok(w.fails.length >= 7, "ошибки входа — щиту");
+  // Почта не работает — понятная ошибка, а не «успех».
+  w.mail(false);
+  clock += 61 * 1000;
+  await assert.rejects(call(w.api.handleRequestCode, { email: "olya@example.ru", consent_accepted: true }), (e) => e.status === 503 && e.code === "MAIL_UNAVAILABLE");
+});
+
+test("одна почта в двух заведениях: после кода — выбор заведения; ключ — только своего заведения", async () => {
+  const w = world();
+  await seed(w);
+  await w.set("tenants/B", { name: "Зима", timezone: "Europe/Moscow", status: "active", createdAt: Timestamp.fromMillis(1) });
+  const owners = { A: "owner", B: "ownerB" };
+  await call(w.api.handleAdminSave, { tenantId: "A", courier: { name: "Пётр", email: "petr@example.ru", transport: "car" } }, { uid: owners.A });
+  // Владелец B — свой участник; в тесте права проверяются по таблице members.
+  w.api.forgetCache();
+  const membersFix = await call(w.api.handleAdminSave, { tenantId: "B", courier: { name: "Пётр", email: "petr@example.ru", transport: "car" } }, { uid: "ownerB" }).catch((e) => e);
+  assert.ok(membersFix instanceof Error, "чужой владелец без прав — отказ");
+  // В заведении B курьера заводит его владелец (подменяем права через данные).
+  await w.set("couriers/b1", { root: "t_B", no: 1, name: "Пётр", email: "petr@example.ru", transport: "car", phone: "", points: [], enabled: true, onShift: false, cashOnHand: 0, odometerM: 0 });
+  await w.set("tenants/A/sessions/a1", order());
+  await w.set("tenants/B/sessions/b1", order({ orderNo: 77 }));
+  clock += 61 * 1000;
+  await call(w.api.handleRequestCode, { email: "petr@example.ru", consent_accepted: true });
+  const v = await call(w.api.handleVerifyCode, { email: "petr@example.ru", code: codeFor(w, "petr@example.ru"), consent_accepted: true });
+  assert.equal(v.body.choose, true);
+  assert.deepEqual(v.body.venues.map((x) => x.name), ["Зима", "Лето"]);
+  await assert.rejects(call(w.api.handleSelect, { email: "petr@example.ru", ticket: "чужой", courierId: "b1" }), (e) => e.status === 403);
+  const r = await call(w.api.handleSelect, { email: "petr@example.ru", ticket: v.body.ticket, courierId: "b1" });
+  assert.equal(r.body.courier.venue, "Зима");
+  await call(w.api.handleShift, { on: true }, asCourier(r.body.token));
+  const st = await state(w, r.body.token);
+  assert.deepEqual([st.me.venue, st.free.map((f) => f.t)], ["Зима", ["B"]], "видит заказы только своего заведения");
+  await assert.rejects(act(w, r.body.token, "take", "A", "a1"), (e) => e.status === 403, "чужое заведение — нельзя");
+  await assert.rejects(call(w.api.handleSelect, { email: "petr@example.ru", ticket: v.body.ticket, courierId: "b1" }), (e) => e.status === 403, "билет одноразовый");
+});
+
+test("лимит тарифа: сверх лимита — 403 COURIER_LIMIT_EXCEEDED; блокировка освобождает место и гасит вход; почта уникальна в заведении", async () => {
+  const w = world();
+  await seed(w);
+  w.limits.t_A = 1;
+  const a = await hire(w, { name: "Аня" });
+  await assert.rejects(call(w.api.handleAdminSave, { tenantId: "A", courier: { name: "Боря", email: "borya@example.ru", transport: "foot" } }, { uid: "owner" }),
+    (e) => e.status === 403 && e.code === "COURIER_LIMIT_EXCEEDED" && /Лимит тарифа — 1 активный курьер/.test(e.message));
+  await assert.rejects(call(w.api.handleAdminSave, { tenantId: "A", courier: { name: "Аня 2", email: a.email.toUpperCase(), transport: "foot" } }, { uid: "owner" }), (e) => e.status === 409 && e.code === "EMAIL_TAKEN");
+  await assert.rejects(call(w.api.handleAdminSave, { tenantId: "A", courier: { name: "Без почты", transport: "foot" } }, { uid: "owner" }), (e) => e.status === 400);
+  await assert.rejects(call(w.api.handleAdminSave, { tenantId: "A", courier: { name: "Без транспорта", email: "x@example.ru" } }, { uid: "owner" }), (e) => e.status === 400);
+  let list = (await call(w.api.handleAdminList, { tenantId: "A" }, { uid: "owner" })).body;
+  assert.deepEqual(list.slots, { active: 1, max: 1 });
+  assert.equal(list.couriers[0].consent.current, true);
+  // Блокировка: вход гаснет сразу, место свободно.
+  await call(w.api.handleShift, { on: false }, asCourier(a.token));
+  await call(w.api.handleAdminEnable, { tenantId: "A", courierId: a.id, enabled: false }, { uid: "owner" });
+  await assert.rejects(call(w.api.handleState, {}, asCourier(a.token)), (e) => e.status === 401);
+  clock += 61 * 1000;
+  await assert.rejects(call(w.api.handleRequestCode, { email: a.email, consent_accepted: true }), (e) => e.status === 404, "заблокированному код не отправляем");
+  const b = await call(w.api.handleAdminSave, { tenantId: "A", courier: { name: "Боря", email: "borya@example.ru", transport: "foot" } }, { uid: "owner" });
+  assert.equal(b.status, 200);
+  // Вернуть Аню — места нет.
+  await assert.rejects(call(w.api.handleAdminEnable, { tenantId: "A", courierId: a.id, enabled: true }, { uid: "owner" }), (e) => e.status === 403 && e.code === "COURIER_LIMIT_EXCEEDED");
+  w.limits.t_A = -1;
+  assert.equal((await call(w.api.handleAdminEnable, { tenantId: "A", courierId: a.id, enabled: true }, { uid: "owner" })).status, 200);
+  list = (await call(w.api.handleAdminList, { tenantId: "A" }, { uid: "owner" })).body;
+  assert.deepEqual(list.slots, { active: 2, max: -1 });
+  // Письмо ещё раз — не чаще раза в минуту.
+  await assert.rejects(call(w.api.handleAdminWelcome, { tenantId: "A", courierId: b.body.id }, { uid: "owner" }), (e) => e.status === 429);
+  clock += 61 * 1000;
+  assert.equal((await call(w.api.handleAdminWelcome, { tenantId: "A", courierId: b.body.id }, { uid: "owner" })).status, 200);
+  // Смена почты в карточке — старый вход гаснет, новое приветствие.
+  const before = w.mails.length;
+  const bt = await signIn(w, "borya@example.ru");
+  await call(w.api.handleAdminSave, { tenantId: "A", courier: { id: b.body.id, name: "Боря", email: "boris@example.ru", transport: "foot" } }, { uid: "owner" });
+  await assert.rejects(call(w.api.handleState, {}, asCourier(bt.token)), (e) => e.status === 401);
+  assert.ok(w.mails.slice(before).some((m) => m.to === "boris@example.ru" && /курьером/.test(m.subject)));
+});
+
+test("ручное назначение: курьер не видит свободные и не берёт сам; касса назначает — заказ у него", async () => {
+  const w = world();
+  await seed(w);
+  const c = await hire(w);
+  await w.set("tenants/A/sessions/s1", order());
+  assert.equal((await state(w, c.token)).free.length, 1);
+  await assert.rejects(call(w.api.handleAdminRates, { tenantId: "A", ratePerTrip: 0, ratePerKm: 0, dispatch: "что-то" }, { uid: "owner" }), (e) => e.status === 400);
+  await call(w.api.handleAdminRates, { tenantId: "A", ratePerTrip: 150, ratePerKm: 0, dispatch: "manual" }, { uid: "owner" });
+  w.api.forgetCache();
+  let st = await state(w, c.token);
+  assert.deepEqual([st.me.dispatch, st.free.length], ["manual", 0]);
+  await assert.rejects(act(w, c.token, "take", "A", "s1"), (e) => e.status === 409 && /назначает заведение/.test(e.message));
+  await call(w.api.handleAdminAssign, { tenantId: "A", s: "s1", courierId: c.id }, { uid: "owner" });
+  st = await state(w, c.token);
+  assert.deepEqual(st.mine.map((m) => m.s), ["s1"]);
+  assert.equal((await call(w.api.handleAdminList, { tenantId: "A" }, { uid: "owner" })).body.dispatch, "manual");
+});
+
+test("демо: вход по коду демо — согласие в приложении с галочкой; новая редакция правил — согласие заново", async () => {
   const w = world();
   await seed(w);
   const c = await hire(w, { shift: false });
-  const doc = (await w.db.doc(`couriers/${c.id}`).get()).data();
-  assert.equal(doc.no, 1);
-  assert.equal(doc.root, "t_A");
-  assert.equal(doc.phone, "79000000001");
-  assert.ok(doc.tokenHash && doc.tokenHash !== c.token && !JSON.stringify(doc).includes(c.token), "ключа в базе нет");
-  assert.equal("inviteHash" in doc, false, "ссылка сгорела после входа");
-  await assert.rejects(call(w.api.handleLogin, { invite: c.code }), (e) => e.status === 403);
-  await assert.rejects(call(w.api.handleState, {}, asCourier("x".repeat(40))), (e) => e.status === 401);
-  assert.equal(w.fails.length, 2, "неверная ссылка и неверный ключ — щиту");
-  // Ссылка живёт 72 часа.
-  const inv = await call(w.api.handleAdminInvite, { tenantId: "A", courierId: c.id }, { uid: "owner" });
-  clock += 73 * 3600 * 1000;
-  await assert.rejects(call(w.api.handleLogin, { invite: inv.body.url.split("#i=")[1] }), (e) => e.status === 403);
+  await w.db.doc(`couriers/${c.id}`).update({ policyVersion: "1.0" });
+  assert.equal((await state(w, c.token)).me.consent, false, "правила изменились — спросить ещё раз");
+  await assert.rejects(call(w.api.handleShift, { on: true }, asCourier(c.token)), (e) => e.status === 409);
+  await assert.rejects(call(w.api.handleConsent, {}, asCourier(c.token)), (e) => e.status === 400);
+  await call(w.api.handleConsent, { consent_accepted: true }, asCourier(c.token));
+  assert.equal((await state(w, c.token)).me.consent, true);
+  assert.equal((await w.db.doc(`couriers/${c.id}`).get()).data().policyVersion, cm.POLICY_VERSION);
+});
+
+test("учётки прежних «свободных курьеров» стираются при запуске", async () => {
+  const w = world();
+  await w.set("couriers/f1", { root: "free", no: 1001, name: "Иванов Пётр", inn: "770000000000", phone: "79110000001" });
+  await w.set("couriers/f1/payouts/p1", { amount: 100 });
+  await w.set("couriers/k1", { root: "t_A", no: 1, name: "Свой" });
+  assert.equal(await w.api.purgeLegacyFree(), 1);
+  assert.equal((await w.db.doc("couriers/f1").get()).exists, false);
+  assert.equal((await w.db.doc("couriers/f1/payouts/p1").get()).exists, false);
+  assert.equal((await w.db.doc("couriers/k1").get()).exists, true);
 });
 
 test("смена: без согласия не начать; с заказами не закончить; конец смены стирает геолокацию", async () => {
   const w = world();
   await seed(w);
-  const made = await call(w.api.handleAdminSave, { tenantId: "A", courier: { name: "Оля" } }, { uid: "owner" });
-  const inv = await call(w.api.handleAdminInvite, { tenantId: "A", courierId: made.body.id }, { uid: "owner" });
-  const token = (await call(w.api.handleLogin, { invite: inv.body.url.split("#i=")[1] })).body.token;
+  const c0 = await hire(w, { name: "Оля", shift: false });
+  const made = { body: { id: c0.id } };
+  const token = c0.token;
+  await w.db.doc(`couriers/${c0.id}`).update({ policyVersion: "0" });
   await assert.rejects(call(w.api.handleShift, { on: true }, asCourier(token)), (e) => e.status === 409 && /согласие/.test(e.message));
-  await call(w.api.handleConsent, {}, asCourier(token));
+  await call(w.api.handleConsent, { consent_accepted: true }, asCourier(token));
   await call(w.api.handleShift, { on: true }, asCourier(token));
   await w.set("tenants/A/sessions/s1", order());
   await act(w, token, "take", "A", "s1");
@@ -403,7 +565,7 @@ test("сеть: курьер точки видит и берёт только е
   await act(w, all.token, "take", "N2", "b");
   assert.equal((await state(w, all.token)).mine.length, 2);
   // Администратор точки не меняет общего курьера сети и не видит его на чужой точке.
-  await assert.rejects(call(w.api.handleAdminSave, { tenantId: "N1", courier: { id: all.id, name: "Хак" } }, { uid: "pointadmin" }), (e) => e.status === 403);
+  await assert.rejects(call(w.api.handleAdminSave, { tenantId: "N1", courier: { id: all.id, name: "Хак", email: "hack@example.ru", transport: "car" } }, { uid: "pointadmin" }), (e) => e.status === 403);
   const listPoint = (await call(w.api.handleAdminList, { tenantId: "N1" }, { uid: "pointadmin" })).body;
   assert.deepEqual(listPoint.couriers.map((c) => [c.no, c.editable]), [[1, true], [2, false]]);
   assert.deepEqual(listPoint.orders.map((o) => o.point), ["Сеть · Центр"], "администратор точки видит заказы своей точки");
@@ -481,7 +643,7 @@ test("отключение курьера: вход закрыт, незабра
   await call(w.api.handleAdminEnable, { tenantId: "A", courierId: c.id, enabled: false }, { uid: "owner" });
   assert.equal((await w.db.doc("tenants/A/sessions/s1").get()).data().courierId, undefined, "незабранный — свободен");
   await assert.rejects(call(w.api.handleState, {}, asCourier(c.token)), (e) => e.status === 401);
-  await assert.rejects(call(w.api.handleAdminInvite, { tenantId: "A", courierId: c.id }, { uid: "owner" }), (e) => e.status === 409);
+  await assert.rejects(call(w.api.handleAdminWelcome, { tenantId: "A", courierId: c.id }, { uid: "owner" }), (e) => e.status === 409);
   // Наличные сдал — долг закрыт; больше, чем на руках, — нельзя.
   await assert.rejects(call(w.api.handleAdminForget, { tenantId: "A", courierId: c.id }, { uid: "owner" }), (e) => e.status === 409 && /наличные/.test(e.message));
   await assert.rejects(call(w.api.handleAdminCash, { tenantId: "A", courierId: c.id, amount: 800 }, { uid: "owner" }), (e) => e.status === 409);
@@ -558,7 +720,7 @@ test("демо: вход по коду демо-сети, заказы обеи�
   assert.deepEqual(r.body.courier, { no: 1, name: "Демо" });
   const two = (await call(w.api.handleDemoLogin, { code: "demo-ab12cd34" })).body;
   assert.equal(two.courier.no, 2);
-  await call(w.api.handleConsent, {}, asCourier(r.body.token));
+  await call(w.api.handleConsent, { consent_accepted: true }, asCourier(r.body.token));
   await call(w.api.handleShift, { on: true }, asCourier(r.body.token));
   const st = (await call(w.api.handleState, {}, asCourier(r.body.token))).body;
   assert.equal(st.me.points.length, 2);

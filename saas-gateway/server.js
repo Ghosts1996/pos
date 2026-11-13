@@ -46,7 +46,6 @@ const requisites = require("./requisites");
 const aiKeys = require("./ai-keys");
 const { createGuestDelivery } = require("./guest-delivery");
 const { createCourier } = require("./courier");
-const { createNpdCheck } = require("./npd-check");
 const { createCourierWeb } = require("./courier-web");
 const { createMap } = require("./map");
 const deliveryPricing = require("./delivery-pricing");
@@ -5470,7 +5469,7 @@ async function handleOverrideSubscription(req, res) {
 const PLAN_NUMBER_FIELDS = [
   "priceRub", "priceRubSemiannual", "priceRubYearly",
   "priceRubAdditional", "priceRubAdditionalSemiannual", "priceRubAdditionalYearly",
-  "maxEmployees", "maxDevices", "maxTables", "maxStorageMb", "trialDays",
+  "maxEmployees", "maxDevices", "maxTables", "maxStorageMb", "trialDays", "maxCouriers",
 ];
 const PLAN_BOOL_FIELDS = ["isChainPlan", "customAdditionalPrice", "aiEnabled", "customBranding", "customDomain", "prioritySupport", "archived"];
 const PLAN_FEATURE_FIELDS = ["reservations", "loyalty", "guestApp", "advancedReports"];
@@ -5486,7 +5485,10 @@ function sanitizePlanFields(raw) {
   for (const f of PLAN_NUMBER_FIELDS) {
     if (src[f] === undefined) continue;
     const n = Number(src[f]);
-    if (!Number.isFinite(n) || n < 0 || n > 10000000) throw new HttpError(400, `Поле ${f}: число от 0`);
+    // maxCouriers: -1 — без ограничений, 0 — курьеров нет.
+    if (f === "maxCouriers" ? !(Number.isInteger(n) && n >= -1 && n <= 10000) : !Number.isFinite(n) || n < 0 || n > 10000000) {
+      throw new HttpError(400, f === "maxCouriers" ? "Лимит курьеров: целое от -1 (без ограничений)" : `Поле ${f}: число от 0`);
+    }
     out[f] = n;
   }
   for (const f of PLAN_BOOL_FIELDS) {
@@ -5581,6 +5583,28 @@ function planCapabilities(plan) {
     maxEmployees: 0,
     maxDevices: Math.max(0, Math.floor(Number(plan.maxDevices) || 0)),
   };
+}
+
+/**
+ * Сколько активных курьеров даёт тариф заведения (root курьеров: t_<точка>
+ * или c_<сеть>). -1 — без ограничений. В тарифе из базы поля ещё может не
+ * быть (сетку не переприменяли) — берём из каталога; тарифа нет — без лимита.
+ */
+async function courierLimitOf(root) {
+  let tenantDoc = null;
+  if (root.startsWith("t_")) tenantDoc = await db().collection("tenants").doc(root.slice(2)).get();
+  else if (root.startsWith("c_")) {
+    const snap = await db().collection("tenants").where("chainId", "==", root.slice(2)).limit(1).get();
+    tenantDoc = snap.docs[0] || null;
+  }
+  if (!tenantDoc || !tenantDoc.exists) return -1;
+  if ((tenantDoc.data() || {}).demo === true) return -1;
+  const planId = await effectivePlanId(tenantDoc);
+  const plan = planId ? (await db().collection("plans").doc(planId).get()).data() : null;
+  const raw = plan && plan.maxCouriers !== undefined && plan.maxCouriers !== null && plan.maxCouriers !== ""
+    ? Number(plan.maxCouriers)
+    : PLAN_CATALOG[planId] ? Number(PLAN_CATALOG[planId].maxCouriers) : -1;
+  return Number.isFinite(raw) ? Math.max(-1, Math.floor(raw)) : -1;
 }
 
 /** Тариф, по которому работает заведение: у точки сети — тариф сети. */
@@ -5697,19 +5721,19 @@ const PLAN_CATALOG = {
   start: {
     ...PLAN_BASE, name: "Старт",
     priceRub: 1790, priceRubSemiannual: 9590, priceRubYearly: 17190,
-    maxEmployees: 0, maxDevices: 2, aiEnabled: false,
+    maxEmployees: 0, maxDevices: 2, maxCouriers: 1, aiEnabled: false,
     features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
   standard: {
     ...PLAN_BASE, name: "Бизнес",
     priceRub: 2390, priceRubSemiannual: 12890, priceRubYearly: 22890,
-    maxEmployees: 0, maxDevices: 5, aiEnabled: true,
+    maxEmployees: 0, maxDevices: 5, maxCouriers: 3, aiEnabled: true,
     features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
   pro: {
     ...PLAN_BASE, name: "Про",
     priceRub: 2990, priceRubSemiannual: 16090, priceRubYearly: 28690,
-    maxEmployees: 0, aiEnabled: true, prioritySupport: true,
+    maxEmployees: 0, maxCouriers: 10, aiEnabled: true, prioritySupport: true,
     features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
   chain: {
@@ -5717,7 +5741,7 @@ const PLAN_CATALOG = {
     isChainPlan: true, customAdditionalPrice: true,
     priceRub: 2590, priceRubSemiannual: 13890, priceRubYearly: 24790,
     priceRubAdditional: 990, priceRubAdditionalSemiannual: 5290, priceRubAdditionalYearly: 9490,
-    maxEmployees: 0, maxDevices: 5, aiEnabled: true,
+    maxEmployees: 0, maxDevices: 5, maxCouriers: 10, aiEnabled: true,
     features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
   "chain-pro": {
@@ -5725,7 +5749,7 @@ const PLAN_CATALOG = {
     isChainPlan: true, customAdditionalPrice: true,
     priceRub: 3990, priceRubSemiannual: 21490, priceRubYearly: 38290,
     priceRubAdditional: 1290, priceRubAdditionalSemiannual: 6890, priceRubAdditionalYearly: 12390,
-    maxEmployees: 0, aiEnabled: true, prioritySupport: true,
+    maxEmployees: 0, maxCouriers: -1, aiEnabled: true, prioritySupport: true,
     features: { reservations: true, loyalty: true, guestApp: true, advancedReports: false },
   },
 };
@@ -5742,7 +5766,7 @@ async function planCatalogDiff() {
     rows.push({ planId, action: before ? "update" : "create", before: before && {
       name: before.name || planId, priceRub: Number(before.priceRub) || 0, archived: before.archived === true,
     }, after: { name: fields.name, priceRub: fields.priceRub, priceRubYearly: fields.priceRubYearly,
-      priceRubAdditional: fields.priceRubAdditional, maxDevices: fields.maxDevices,
+      priceRubAdditional: fields.priceRubAdditional, maxDevices: fields.maxDevices, maxCouriers: fields.maxCouriers,
       guestApp: fields.features.guestApp, ai: fields.aiEnabled, prioritySupport: fields.prioritySupport === true } });
   }
   for (const [planId, p] of plans) {
@@ -8256,6 +8280,9 @@ const telegram = createTelegram({
 // Курьеры и приложение курьера, кабинет «Доставка» — см. courier.js,
 // delivery-admin.js и docs/delivery.md.
 const courier = createCourier({
+  getMailer: () => getAuthMailer(),
+  courierLimit: (root) => courierLimitOf(root),
+  appUrl: `${(process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, "")}/courier/`,
   db,
   admin,
   verifyAuth,
@@ -8269,8 +8296,6 @@ const courier = createCourier({
   // Неверная ссылка или ключ курьера — как неверный пароль для щита (shield объявлен ниже).
   authFailed: (req) => shield.authFailed(req),
   guestPay,
-  // Свободные курьеры: статус самозанятого по ИНН — открытый сервис ФНС.
-  npd: createNpdCheck(),
 });
 courier.setHooks({ event: telegram.deliveryEvent, moved: telegram.courierMoved });
 telegram.setCourierApi(courier);
@@ -8312,26 +8337,11 @@ courier.setHooks({
   moved: telegram.courierMoved,
   services: async (ids) => Object.fromEntries(await Promise.all(ids.map(async (id) => [id, await deliveryServices.connected(id)]))),
   route: (body) => zalMap.route(body),
-  // Свободные курьеры: код для нового пароля — почтой; удалил учётку — акт
-  // владельцу; место заведения отметили в кабинете — карте нужен этот район.
-  mailer: () => getAuthMailer(),
-  papers: { destruction: (items, opts) => legalPapers.destruction(items, opts) },
-  posChanged: () => refreshMapRegions(),
 });
 const COURIER_API = {
-  register: courier.free.handleRegister,
-  signin: courier.free.handleSignin,
-  reset: courier.free.handleReset,
-  "reset-confirm": courier.free.handleResetConfirm,
-  "free/profile": courier.free.handleProfile,
-  "free/update": courier.free.handleUpdate,
-  "free/recheck": courier.free.handleRecheck,
-  "free/nearby": courier.free.handleNearby,
-  "free/venue": courier.free.handleVenue,
-  "free/apply": courier.free.handleApply,
-  "free/leave": courier.free.handleLeave,
-  "free/delete": courier.free.handleDelete,
-  login: courier.handleLogin,
+  "auth/request-code": courier.handleRequestCode,
+  "auth/verify-code": courier.handleVerifyCode,
+  "auth/select": courier.handleSelect,
   demo: courier.handleDemoLogin,
   logout: courier.handleLogout,
   consent: courier.handleConsent,
@@ -9498,18 +9508,13 @@ const ROUTES = {
   // Кабинет → «Доставка»: курьеры, цена и районы, что доставляем.
   "/courierAdminList": courier.handleAdminList,
   "/courierAdminSave": courier.handleAdminSave,
-  "/courierAdminInvite": courier.handleAdminInvite,
+  "/courierAdminWelcome": courier.handleAdminWelcome,
   "/courierAdminEnable": courier.handleAdminEnable,
   "/courierAdminCash": courier.handleAdminCash,
   "/courierAdminAssign": courier.handleAdminAssign,
   "/courierAdminRates": courier.handleAdminRates,
   "/courierAdminReport": courier.handleAdminReport,
   "/courierAdminForget": courier.handleAdminForget,
-  "/courierFreeGet": courier.free.handleAdminGet,
-  "/courierFreeSave": courier.free.handleAdminSave,
-  "/courierFreePos": courier.free.handleAdminPos,
-  "/courierFreeDecide": courier.free.handleAdminDecide,
-  "/courierFreePaid": courier.free.handleAdminPaid,
   "/deliverySettings": deliveryAdmin.handleGet,
   "/deliverySettingsSave": deliveryAdmin.handleSave,
   "/deliveryMenuSave": deliveryAdmin.handleMenuSave,
@@ -9647,6 +9652,9 @@ function runHandler(handler, req, res) {
     // провайдера (см. handleAiProxy и _errorFor в tooken_client.dart).
     sendJson(res, known ? e.status : 500, {
       error: known ? e.message : "Внутренняя ошибка сервера — попробуйте ещё раз чуть позже",
+      // Машинный код причины (COURIER_LIMIT_EXCEEDED и т. п.) — приложению, чтобы показать нужный экран.
+      ...(known && typeof e.code === "string" && /^[A-Z_]{3,40}$/.test(e.code) ? { code: e.code } : {}),
+      ...(known && Number.isFinite(e.retryIn) ? { retryIn: e.retryIn } : {}),
       gateway: true,
     });
   });

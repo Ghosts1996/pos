@@ -66,6 +66,34 @@ function passwordLetter(password, { siteUrl = "https://zalpos.ru/" } = {}) {
   });
 }
 
+/** Код входа в приложение курьера (действует 10 минут). */
+function courierCodeLetter({ code, venue = "", siteUrl = "https://zalpos.ru/" }) {
+  return renderLetter({
+    subject: `${code} — код входа в «Курьер ZalPOS»`,
+    title: "Код для входа",
+    lead: `Введите этот код в приложении «Курьер ZalPOS»${venue ? ` — заведение «${venue}»` : ""}. Код действует 10 минут.`,
+    code: String(code).replace(/^(\d{3})(\d{3})$/, "$1 $2"),
+    note: "Вводя код, вы подписываете простой электронной подписью условия использования приложения и согласие на обработку персональных данных и геопозиции во время смены. Не просили код — ничего не делайте и никому его не сообщайте.",
+    siteUrl,
+    hideRawLink: true,
+  });
+}
+
+/** Курьера добавили в заведении: как войти в приложение. */
+function courierWelcomeLetter({ venue, name = "", appUrl = "https://pii.zalpos.ru/saas/courier/", apkUrl = "", siteUrl = "https://zalpos.ru/" }) {
+  const app = appUrl || "https://pii.zalpos.ru/saas/courier/";
+  const apk = apkUrl || app.replace(/\/courier\/?$/, "/courierApk");
+  return renderLetter({
+    subject: `Вас добавили курьером в «${venue}» — ZalPOS`,
+    title: name ? `${String(name).split(" ")[0]}, добро пожаловать` : "Добро пожаловать",
+    lead: `Администратор заведения «${venue}» добавил вас как курьера в систему ZalPOS. Скачайте приложение «Курьер ZalPOS» и войдите, указав этот адрес почты: код для входа придёт письмом.`,
+    button: "Открыть приложение курьера",
+    link: app,
+    note: `Android: скачать приложение — ${apk}. iPhone: откройте ссылку в Safari и нажмите «Поделиться» → «На экран „Домой“». Не знаете это заведение — просто удалите письмо.`,
+    siteUrl,
+  });
+}
+
 /**
  * Приглашение заведения от менеджера партнёрской программы. Кто приглашает
  * и почему пришло письмо — в самом письме; «Это не я» — отказ от писем
@@ -307,5 +335,5 @@ function createMailer(env = process.env) {
 }
 
 module.exports = {
-  authEmailLetter, passwordLetter, partnerInviteLetter, partnerWelcomeLetter, superAdminGrantedLetter, superAdminRevokedLetter,
+  authEmailLetter, passwordLetter, partnerInviteLetter, courierCodeLetter, courierWelcomeLetter, partnerWelcomeLetter, superAdminGrantedLetter, superAdminRevokedLetter,
   partnerTelegramLetter, passwordChangedLetter, passwordAttackLetter, brandAuthLink, createMailer, AUTH_EMAIL_TYPES: Object.keys(LETTERS) };

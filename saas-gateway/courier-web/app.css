@@ -161,7 +161,7 @@ a { color: inherit; text-decoration: none; }
 .badge.hot { background: var(--brand); color: var(--brand-ink); }
 
 /* ------------------------------------------------------------ нижнее меню */
-.bnav { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; height: var(--nav-h); padding-bottom: env(safe-area-inset-bottom); background: var(--card); border-top: 1px solid var(--line); display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
+.bnav { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; height: var(--nav-h); padding-bottom: env(safe-area-inset-bottom); background: var(--card); border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, 1fr); }
 .bnav button { position: relative; display: grid; place-content: center; justify-items: center; gap: 2px; font-size: 12px; font-weight: 600; color: var(--faint); }
 .bnav button[aria-current="page"] { color: var(--text); }
 .bnav button[aria-current="page"] .ico { color: var(--brand); }
@@ -345,15 +345,78 @@ details.items li { margin: 3px 0; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
-/* Регистрация и вход свободного курьера, страница условий. */
-.auth .field input { font-size: 18px; font-weight: 600; }
-.auth .sec { margin-top: 22px; }
-.msheet .field input { font-size: 18px; font-weight: 600; }
-.tick { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; font-size: 15.5px; line-height: 1.35; }
-.tick input { flex: none; width: 24px; height: 24px; margin-top: 1px; accent-color: var(--brand); }
-.tick a, .doc a { color: var(--blue); text-decoration: underline; }
-.doc h2 { font-size: 20px; margin: 26px 0 8px; }
-.doc p, .doc li { font-size: 15.5px; line-height: 1.5; }
-.alink { display: inline; padding: 0; font: inherit; color: var(--blue); text-decoration: underline; text-align: left; }
-.msheet .only-page { display: none; }
-.msheet .doc h1 { font-size: 22px; line-height: 1.2; margin: 6px 0; }
+/* ---------------------------------------------------------------- вход по почте */
+.screen.auth { background:
+  radial-gradient(120% 60% at 100% 0%, var(--brand-soft) 0%, transparent 60%),
+  radial-gradient(90% 50% at 0% 100%, var(--blue-soft) 0%, transparent 55%), var(--bg); }
+.auth-hero { display: flex; gap: 16px; align-items: center; margin: 8px 2px 18px; }
+.auth-hero .logo { flex: none; width: 64px; height: 64px; border-radius: 20px; }
+.auth-hero h1 { margin: 2px 0 4px; font-size: 28px; }
+.auth-kicker { font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--brand); }
+.auth-sub { margin: 0; color: var(--muted); font-size: 15.5px; line-height: 1.4; }
+.auth-card { background: var(--card); border-radius: 24px; padding: 18px 18px 14px; box-shadow: var(--shadow-1), 0 12px 40px rgba(14, 17, 22, .08); }
+.auth-card .field { margin-top: 2px; }
+.auth-card .box.bad { display: flex; gap: 8px; align-items: flex-start; margin-top: 0; }
+.in-ic { position: relative; }
+.in-ic > .ico { position: absolute; left: 15px; top: 50%; transform: translateY(-50%); color: var(--faint); pointer-events: none; }
+.in-ic input { padding-left: 48px; font-size: 18px; font-weight: 600; }
+.check { display: grid; grid-template-columns: 30px 1fr; gap: 12px; align-items: start; padding: 14px; margin: 6px 0 16px; border-radius: 16px; background: var(--card-2); cursor: pointer; box-shadow: inset 0 0 0 1.5px transparent; transition: box-shadow .15s, background .15s; }
+.check.on { background: var(--brand-soft); box-shadow: inset 0 0 0 1.5px var(--brand); }
+.check input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.check .box-ic { width: 28px; height: 28px; border-radius: 9px; border: 2px solid var(--faint); display: grid; place-items: center; color: transparent; background: var(--card); transition: background .15s, border-color .15s; }
+.check .box-ic .ico { width: 18px; height: 18px; stroke-width: 3; }
+.check.on .box-ic { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.check input:focus-visible + .box-ic { outline: 3px solid var(--blue); outline-offset: 2px; }
+.check-t { font-size: 14.5px; line-height: 1.45; color: var(--text); }
+.check-t a { color: var(--blue); font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
+.caption { margin: 12px 4px 2px; color: var(--muted); font-size: 14px; line-height: 1.45; text-align: center; text-wrap: balance; }
+.caption .ico { width: 15px; height: 15px; vertical-align: -2px; margin-right: 2px; }
+.code-in { text-align: center; font-size: 34px !important; font-weight: 800 !important; letter-spacing: .42em; padding-left: .42em !important; font-variant-numeric: tabular-nums; min-height: 68px !important; }
+.code-in::placeholder { color: var(--line); }
+.resend { text-align: center; margin: 12px 0 4px; color: var(--muted); font-size: 15px; min-height: 44px; display: grid; place-items: center; }
+.resend b { color: var(--text); font-variant-numeric: tabular-nums; }
+.hint { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0 0; }
+.hint .ico { flex: none; width: 16px; height: 16px; margin-top: 2px; }
+.venues { display: grid; gap: 10px; }
+.venue-btn { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 72px; padding: 12px 14px; border-radius: 18px; background: var(--card-2); text-align: left; box-shadow: inset 0 0 0 1.5px var(--line); }
+.venue-btn:active { transform: scale(.99); }
+.venue-btn .vi { width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; background: var(--brand-soft); color: var(--brand); flex: none; }
+.venue-btn b { display: block; font-size: 17px; }
+.chev { font-size: 26px; color: var(--faint); line-height: 1; }
+.auth-feats { margin: 20px 4px 0; }
+.demo { margin: 18px 0 0; border-radius: 18px; background: var(--card); padding: 4px 16px; box-shadow: var(--shadow-1); }
+.demo summary { min-height: 52px; display: flex; align-items: center; font-weight: 700; cursor: pointer; list-style: none; }
+.demo summary::-webkit-details-marker { display: none; }
+.demo summary::after { content: "›"; margin-left: auto; font-size: 24px; color: var(--faint); transition: transform .15s; }
+.demo[open] summary::after { transform: rotate(90deg); }
+.demo[open] { padding-bottom: 16px; }
+.demo .field input { font-size: 18px; }
+.legal { text-align: center; margin: 22px 0 0; }
+.legal a { color: inherit; text-decoration: underline; }
+.spinner.s { width: 18px; height: 18px; border-width: 3px; border-color: rgba(255, 255, 255, .35); border-top-color: currentColor; }
+
+/* ---------------------------------------------------------------- заведение в шапке */
+.sheet-head { flex-wrap: wrap; }
+.venue-line { flex: 1 1 100%; display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 14px; color: var(--muted); }
+.venue-line .ico { width: 16px; height: 16px; color: var(--brand); flex: none; }
+.venue-line b { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.venue-line span { margin-left: auto; white-space: nowrap; }
+.seg2.one { display: flex; align-items: center; justify-content: space-between; padding: 0 14px; min-height: 50px; }
+.seg-title { font-weight: 800; font-size: 16px; display: inline-flex; gap: 8px; align-items: center; }
+.pagehead { margin: 2px 2px 12px; }
+.pagehead h1 { margin: 6px 0 0 !important; }
+.venue-tag { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; background: var(--brand-soft); color: var(--brand); font-weight: 700; font-size: 13.5px; max-width: 100%; }
+.venue-tag .ico { width: 15px; height: 15px; flex: none; }
+@media (prefers-reduced-motion: reduce) { .check, .check .box-ic, .demo summary::after { transition: none; } }
+
+/* ---------------------------------------------------------------- условия (rules.html) */
+.doc h2 { font-size: 20px; margin: 28px 0 8px; letter-spacing: -.01em; }
+.doc p, .doc li { font-size: 15.5px; line-height: 1.55; }
+.doc ul { padding-left: 20px; }
+.doc a:not(.btn) { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; }
+.doc-card { background: var(--brand-soft); border-radius: 18px; padding: 4px 16px; margin-top: 4px; }
+.doc-table { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--card); border-radius: 16px; overflow: hidden; box-shadow: var(--shadow-1); font-size: 14.5px; line-height: 1.5; }
+.doc-table th, .doc-table td { text-align: left; vertical-align: top; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.doc-table tr:last-child th, .doc-table tr:last-child td { border-bottom: 0; }
+.doc-table th { width: 32%; color: var(--muted); font-weight: 700; }
+@media (max-width: 480px) { .doc-table th, .doc-table td { display: block; width: auto; } .doc-table th { padding-bottom: 0; border-bottom: 0; } }
