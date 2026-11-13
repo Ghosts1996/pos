@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../build_info.dart';
 import '../../utils/promo_policy.dart';
 import '../../models/client_models.dart';
 import '../../services/app_scope.dart';
@@ -29,9 +30,19 @@ class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
   bool _excludeTobacco = PromoPolicy.excludeTobacco;
 
   Future<void> _setExcludeTobacco(bool v) async {
+    // SaaS: бонусы на весь чек вместе с кальянами — решение заведения. Перед
+    // включением — предупреждение о законе и подтверждение; время решения
+    // записывается в настройки (excludeTobaccoOffAt).
+    if (kSaasMode && !v && !await _confirmTobaccoBonuses()) return;
     setState(() => _excludeTobacco = v);
     try {
       await PromoPolicy.save(v);
+      if (kSaasMode) {
+        await _doc.set({
+          if (!v) 'excludeTobaccoOffAt': FieldValue.serverTimestamp(),
+          if (v) 'excludeTobaccoOnAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _excludeTobacco = !v);
@@ -39,6 +50,31 @@ class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
           .showSnackBar(SnackBar(content: Text('Не удалось сохранить: ${humanError(e, lower: true)}')));
     }
   }
+  Future<bool> _confirmTobaccoBonuses() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Бонусы и скидки на кальяны'),
+        content: const SingleChildScrollView(
+          child: Text(
+            'Бонусы будут начисляться со всего чека, включая кальяны, а скидки по картам и акциям '
+            'и оплата бонусами — действовать и на них.\n\n'
+            'Закон запрещает стимулировать продажу табака, никотинсодержащей продукции и кальянов, '
+            'в том числе скидками и бонусами (ст. 16 Федерального закона № 15-ФЗ). За нарушение — '
+            'штраф по ст. 14.3.1 КоАП РФ.\n\n'
+            'Включая настройку, заведение подтверждает, что приняло это решение самостоятельно и '
+            'отвечает за соблюдение закона. Выключить можно в любой момент.',
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Понимаю, включить')),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   bool _loading = true;
   bool _saving = false;
   String? _error;
@@ -174,8 +210,12 @@ class _LoyaltySettingsScreenState extends State<LoyaltySettingsScreen> {
                           ? 'Кальяны и табак не получают скидку по картам и акциям, на них не '
                               'начисляются и ими не оплачиваются бонусы — так требует закон о '
                               'запрете стимулирования продажи табака (ст. 16 № 15-ФЗ).'
-                          : 'Выключено: скидки и бонусы действуют и на кальяны. Допустимо, только '
-                              'если в них нет табака и никотина — ответственность на заведении.',
+                          : kSaasMode
+                              ? 'Выключено: бонусы начисляются со всего чека, скидки и оплата бонусами '
+                                  'действуют и на кальяны. Решение и ответственность за соблюдение '
+                                  'ст. 16 № 15-ФЗ — на заведении.'
+                              : 'Выключено: скидки и бонусы действуют и на кальяны. Допустимо, только '
+                                  'если в них нет табака и никотина — ответственность на заведении.',
                       style: TextStyle(fontSize: 12, color: _excludeTobacco ? AppColors.textMuted : AppColors.warning),
                     ),
                   ),
