@@ -8,7 +8,9 @@
  * Настройки — tenants/{t}/settings/delivery (пишет только шлюз из кабинета):
  *   fee, freeFrom, minOrder, etaMin — базовые цены, ₽ и минуты;
  *   zones[] — районы {id, name, fee, minOrder, freeFrom, etaMin}; пустое
- *     поле района (null) — берётся базовое значение;
+ *     поле района (null) — берётся базовое значение; район из списка районов
+ *     города (кабинет → «Районы города») несёт ещё osm (id границы) и poly —
+ *     контур [[[lng, lat], …], …]: гость отметил точку — район выбирается сам;
  *   payAtDoor {cash, card, qr} — что курьер может принять при вручении;
  *   liveInTelegram — живая точка курьера в чате (координаты уходят за рубеж);
  *   courierLink — кнопка «Ссылка курьеру» в карточке для курьеров без приложения;
@@ -22,10 +24,13 @@
 
 /** id «позиции» доставки в строке чека: по нему касса узнаёт услугу. */
 const DELIVERY_ITEM_ID = "zalpos_delivery";
-const MAX_ZONES = 30;
+const MAX_ZONES = 80; // районы города по карте: у Москвы рядом с заведением их бывает много
 const MAX_MARKUP_PCT = 100;
 const MAX_RUB = 100000;
 const DEFAULT_ETA_MIN = 60;
+/** Контур района: не больше стольких точек (их читает каждый заказ). */
+const MAX_POLY_POINTS = 600;
+const { whichContains } = require("./map-districts");
 
 const DEFAULTS = Object.freeze({
   fee: 0,
@@ -118,6 +123,27 @@ function minutes(v, fallback = DEFAULT_ETA_MIN) {
 /** Поле района: число или null («как базовое»). */
 const zoneNum = (v, fn) => (v === null || v === undefined || v === "" ? null : fn(v, null));
 
+/** Контур района из кабинета → безопасный (числа, кольца ≥4 точек) или null. */
+function polyOf(raw) {
+  if (!Array.isArray(raw) || !raw.length || raw.length > 40) return null;
+  const rings = [];
+  let n = 0;
+  for (const r of raw) {
+    if (!Array.isArray(r) || r.length < 4) continue;
+    const ring = [];
+    for (const p of r) {
+      const lng = Number(p && p[0]);
+      const lat = Number(p && p[1]);
+      if (!Number.isFinite(lng) || !Number.isFinite(lat) || Math.abs(lng) > 180 || Math.abs(lat) > 90) return null;
+      ring.push([Math.round(lng * 1e5) / 1e5, Math.round(lat * 1e5) / 1e5]);
+    }
+    n += ring.length;
+    if (n > MAX_POLY_POINTS) return null;
+    rings.push(ring);
+  }
+  return rings.length ? rings : null;
+}
+
 /** id района: из названия латиницей нельзя — берём то, что пришло, или порядковый. */
 function zoneId(raw, i) {
   const s = String(raw || "").trim();
@@ -137,6 +163,7 @@ function normalizeSettings(raw) {
     let id = zoneId(z.id, i);
     while (seen.has(id)) id = `${id}_`;
     seen.add(id);
+    const poly = polyOf(z.poly);
     zones.push({
       id,
       name,
@@ -144,6 +171,7 @@ function normalizeSettings(raw) {
       minOrder: zoneNum(z.minOrder, rub),
       freeFrom: zoneNum(z.freeFrom, rub),
       etaMin: zoneNum(z.etaMin, minutes),
+      ...(poly ? { poly, osm: /^[rw]\d{1,15}$/.test(String(z.osm || "")) ? String(z.osm) : "" } : {}),
     });
     if (zones.length >= MAX_ZONES) break;
   }
@@ -217,8 +245,21 @@ function settingsProblem(input) {
     if (z.etaMin !== undefined && z.etaMin !== null && z.etaMin !== "" && !(Number(z.etaMin) >= 10 && Number(z.etaMin) <= 600)) {
       return `Район «${name}»: время — от 10 до 600 минут`;
     }
+    if (z.poly !== undefined && z.poly !== null && !polyOf(z.poly)) return `Район «${name}»: граница района повреждена — выберите его из списка заново`;
   }
   return "";
+}
+
+/** Точка гостя {lat, lng} → числа или null. */
+function zonePoint(p) {
+  const lat = Number(p && p.lat);
+  const lng = Number(p && p.lng);
+  return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && (lat || lng) ? { lat, lng } : null;
+}
+
+/** Районы для гостя: без контуров (лишний трафик), с отметкой «по карте». */
+function zonesForGuest(zones) {
+  return (zones || []).map(({ poly, osm, ...z }) => ({ ...z, ...(poly ? { area: true } : {}) }));
 }
 
 const fmtRub = (n) => `${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} ₽`;
@@ -231,10 +272,24 @@ const fmtRub = (n) => `${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, 
  *   toFree — сколько добавить до бесплатной доставки (0 — не нужно/нельзя);
  *   short — сколько не хватает до минимального заказа.
  */
-function quote(settings, subtotal, zoneIdIn = "", { legacy = false, distM = null } = {}) {
+function quote(settings, subtotal, zoneIdIn = "", { legacy = false, distM = null, point = null } = {}) {
   const s = normalizeSettings(settings);
   const sum = Math.max(0, Number(subtotal) || 0);
   let zone = null;
+  // Районы города с границами: гость отметил точку — район по точке (сам
+  // выбирать не должен). Точка вне всех районов — не доставляем, если
+  // заведение задало только районы по карте; иначе — район вручную.
+  const at = zonePoint(point);
+  const mapped = s.zones.filter((z) => z.poly);
+  let auto = null;
+  if (at && mapped.length && !legacy) {
+    const i = whichContains(mapped.map((z) => z.poly), at.lat, at.lng);
+    if (i >= 0) auto = mapped[i];
+    else if (mapped.length === s.zones.length && !(s.byKm.on && distM !== null && distM !== undefined)) {
+      return { ok: false, outOfArea: true, error: "Сюда не доставляем: точка вне районов доставки заведения. Проверьте адрес или выберите самовывоз" };
+    }
+  }
+  if (auto) zoneIdIn = auto.id;
   // Цена по расстоянию: гость отметил точку — район выбирать не нужно.
   const d = Number(distM);
   const far = s.byKm.on && !legacy && distM !== null && distM !== undefined && Number.isFinite(d) && d >= 0;
@@ -262,6 +317,7 @@ function quote(settings, subtotal, zoneIdIn = "", { legacy = false, distM = null
     ok: short === 0,
     fee,
     zone: zone ? { id: zone.id, name: zone.name } : null,
+    ...(auto ? { autoZone: true } : {}),
     minOrder,
     freeFrom,
     etaMin,
@@ -314,5 +370,5 @@ function deliveryBlock(item, category, banned) {
 module.exports = {
   DELIVERY_ITEM_ID, DEFAULTS, MAX_ZONES, MAX_MARKUP_PCT,
   REGION_PRESETS, regionPreset, byKmOf,
-  normalizeSettings, settingsProblem, quote, feeLine, isFeeLine, deliveryBlock, fmtRub, deliveryUnit, markupOf,
+  normalizeSettings, settingsProblem, quote, feeLine, isFeeLine, deliveryBlock, fmtRub, deliveryUnit, markupOf, zonesForGuest, MAX_POLY_POINTS,
 };

@@ -32,4 +32,16 @@
     },
   };
   apply(read());
+
+  // Видимая высота окна (без панелей браузера и клавиатуры): Chrome с адресной
+  // строкой снизу закрывал ею нижние вкладки. CSS берёт её из --app-h.
+  var vv = window.visualViewport;
+  function fit() {
+    var h = vv ? vv.height : window.innerHeight;
+    if (h > 200) document.documentElement.style.setProperty("--app-h", Math.round(h) + "px");
+  }
+  fit();
+  if (vv) vv.addEventListener("resize", fit);
+  window.addEventListener("resize", fit);
+  window.addEventListener("orientationchange", function () { setTimeout(fit, 250); });
 })();

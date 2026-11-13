@@ -278,7 +278,7 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
       // Цена по расстоянию — когда гость отметил точку (считает сервер, не телефон).
       // Телефон прислал km — значит гость видел цену по расстоянию; иначе — район или базовая.
       const way = asked && asked.km !== undefined && asked.km !== null && pricing.normalizeSettings(settings).byKm.on ? await distanceTo(settings, geo) : null;
-      const q = pricing.quote(settings, total, asked ? asked.zoneId : "", { legacy: !asked, distM: way ? way.m : null });
+      const q = pricing.quote(settings, total, asked ? asked.zoneId : "", { legacy: !asked, distM: way ? way.m : null, point: geo });
       if (!q.ok) throw new HttpError(409, q.error);
       if (asked && asked.fee !== undefined && asked.fee !== null && Math.round(Number(asked.fee)) !== q.fee) {
         throw new HttpError(409, `Цена доставки изменилась: теперь ${q.fee ? pricing.fmtRub(q.fee) : "бесплатно"} — проверьте заказ и оформите ещё раз`);
@@ -553,7 +553,7 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     }
     sendJson(res, 200, {
       fee: s.fee, freeFrom: s.freeFrom, minOrder: s.minOrder, etaMin: s.etaMin,
-      zones: s.zones,
+      zones: pricing.zonesForGuest(s.zones),
       payAtDoor: s.payAtDoor,
       off,
       markupPct: s.markupPct,
@@ -578,10 +578,13 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     const settings = (await tenantRef(body.tenantId).collection("settings").doc("delivery").get()).data() || {};
     const s = pricing.normalizeSettings(settings);
     const way = s.byKm.on ? await distanceTo(settings, geo) : null;
-    const q = pricing.quote(settings, Math.max(0, Number(body.itemsTotal) || 0), String(body.zoneId || ""), { distM: way ? way.m : null });
+    const q = pricing.quote(settings, Math.max(0, Number(body.itemsTotal) || 0), String(body.zoneId || ""), { distM: way ? way.m : null, point: geo });
     sendJson(res, 200, {
       ok: q.ok, fee: q.fee ?? null, km: q.km ?? null, byKm: !!way, exact: !!(way && way.exact),
       etaMin: q.etaMin ?? null, toFree: q.toFree || 0, short: q.short || 0, tooFar: q.tooFar === true,
+      // Район по точке гостя (районы города по карте): приложение выбирает его само.
+      ...(q.autoZone && q.zone ? { zone: q.zone } : {}),
+      ...(q.outOfArea ? { outOfArea: true } : {}),
       ...(q.error ? { error: q.error } : {}),
     });
   }

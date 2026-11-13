@@ -2562,13 +2562,25 @@ async function screenCheckout() {
         geoMark = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc };
         geoBtn.textContent = '✓ Точка отмечена — убрать';
         geoHint.textContent = `Курьер увидит точку на карте (точность ±${Math.max(5, acc)} м). Адрес и квартиру всё равно укажите.`;
-        // Цена доставки сразу: сервер считает путь по дорогам от заведения.
-        if (byKmOn()) {
+        // Цена доставки сразу: сервер считает путь по дорогам от заведения,
+        // а если заведение задало районы города по карте — находит район гостя.
+        const areaZones = ((info && info.zones) || []).some((z) => z.area);
+        if (byKmOn() || areaZones) {
           const mark = geoMark;
-          gatewayPost('/guestDeliveryQuote', { geo: { lat: mark.lat, lng: mark.lng }, itemsTotal: subtotal() }).then((r) => {
-            if (geoMark !== mark || !r || !r.byKm || !Number.isFinite(Number(r.km))) return;
-            geoKm = Number(r.km);
-            geoHint.textContent = `До вас ${kmText(geoKm)} — цена доставки посчитана и уже в счёте. Адрес и квартиру всё равно укажите.`;
+          gatewayPost('/guestDeliveryQuote', { geo: { lat: mark.lat, lng: mark.lng }, itemsTotal: subtotal(), zoneId }).then((r) => {
+            if (geoMark !== mark || !r) return;
+            if (r.outOfArea) {
+              geoHint.textContent = 'Эта точка вне районов доставки заведения. Проверьте адрес — или выберите район вручную, если везти нужно в другое место.';
+              return;
+            }
+            if (r.zone && r.zone.id) {
+              zoneId = r.zone.id;
+              geoHint.textContent = `Ваш район — ${r.zone.name}: цена доставки уже в счёте. Адрес и квартиру всё равно укажите.`;
+            }
+            if (r.byKm && Number.isFinite(Number(r.km))) {
+              geoKm = Number(r.km);
+              geoHint.textContent = `До вас ${kmText(geoKm)} — цена доставки посчитана и уже в счёте. Адрес и квартиру всё равно укажите.`;
+            }
             paint();
           }).catch(() => {});
         }

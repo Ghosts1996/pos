@@ -278,7 +278,7 @@ timer zalpos-map "*-*-* 04:40:00 Europe/Moscow" "nice -n 15 $NODE_BIN $REPO/saas
 # Код карты обновился, а сборка идёт по-старому — перезапустить её: готовые
 # города и дороги сохраняются, заново пойдёт только недоделанное.
 if map_running; then
-  new_code=$(cat "$REPO/saas-gateway/map-build.js" "$REPO/saas-gateway/map-graph.js" | sha1sum | cut -d' ' -f1)
+  new_code=$(cat "$REPO/saas-gateway/map-build.js" "$REPO/saas-gateway/map-graph.js" "$REPO/saas-gateway/map-districts.js" | sha1sum | cut -d' ' -f1)
   if [[ "$(cat /opt/zalpos-maps/.code 2>/dev/null)" != "$new_code" ]]; then
     echo "код карты обновился — перезапускаю идущую сборку"
     systemctl stop zalpos-map.service 2>/dev/null || true
@@ -288,6 +288,7 @@ if map_running; then
     pkill -x osmium 2>/dev/null || true
     pkill -x pmtiles 2>/dev/null || true
     pkill -f 'map-graph.js build' 2>/dev/null || true
+    pkill -f 'map-districts.js build' 2>/dev/null || true
     rm -f /opt/zalpos-maps/.build.lock
     sleep 2
   fi

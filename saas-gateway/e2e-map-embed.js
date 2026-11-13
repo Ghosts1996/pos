@@ -101,6 +101,35 @@ window.go = () => ZalEmbed.mount(document.getElementById("slot"), window.marks, 
   assert.ok(moved, "карта переехала в новый блок без перезагрузки");
   console.log("  ✓ перерисовка: та же карта, метка сдвинулась");
 
+  // 3б) районы города на карте (кабинет «Цена и районы»): границы с сервера
+  //      карты, нажатие на район — его id, на пустое место — координаты.
+  const dist = zalMap.districts(c.lat, c.lng, 15);
+  if (dist.ok && dist.list.length) {
+    const here = dist.list.find((d) => d.here) || dist.list[0];
+    const got = await page.evaluate(async ({ list, here, c }) => {
+      document.getElementById("wrap").innerHTML = '<div id="slot2" style="height:360px"></div>';
+      window.__area = null; window.__click = null;
+      const api = await ZalEmbed.mount(document.getElementById("slot2"), [{ id: "v", kind: "venue", lat: c.lat, lng: c.lng, label: "Заведение" }], {
+        key: "areas", center: c, areas: list.map((d) => ({ id: d.id, rings: d.rings, on: d.id === here.id, areaKm2: d.areaKm2 })),
+        onArea: (id) => { window.__area = id; }, onClick: (lat, lng) => { window.__click = [lat, lng]; },
+        fitKey: "a", fitPoints: [c], maxZoom: 13,
+      });
+      await new Promise((ok) => setTimeout(ok, 2500));
+      const map = api.map;
+      const src = map.getSource("zal-areas");
+      const n = src ? (src._data && src._data.features ? src._data.features.length : -1) : 0;
+      // Нажатие в точку заведения — внутри «своего» района.
+      const p = map.project([c.lng, c.lat]);
+      map.fire("click", { point: p, lngLat: map.unproject(p), originalEvent: {} });
+      await new Promise((ok) => setTimeout(ok, 200));
+      return { n, area: window.__area, layers: !!map.getLayer("zal-areas-fill") };
+    }, { list: dist.list, here, c });
+    if (shotsDir) await page.screenshot({ path: path.join(shotsDir, "embed-areas.png") });
+    assert.ok(got.layers && got.n === dist.list.length, `районы нарисованы: ${JSON.stringify(got)}`);
+    assert.equal(got.area, here.id, "нажатие по карте — район под пальцем");
+    console.log(`  ✓ районы на карте: ${got.n}, нажатие → «${here.name}»`);
+  } else console.log("  · районов в папке карты нет — проверка районов пропущена");
+
   // 2) тот же адрес, строгая политика страницы бота
   await page.goto(`${BASE}/deliveryAddress`);
   await page.waitForSelector("#m canvas", { timeout: 30000 });

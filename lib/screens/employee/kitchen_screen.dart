@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../../build_info.dart';
 import '../../services/staff_device_service.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -309,6 +310,31 @@ class _KitchenScreenState extends State<KitchenScreen> {
                   ),
                 ),
               ),
+              // SaaS, телефон: «Ждут выдачи» и заказы — одной лентой, карточки
+              // по высоте содержимого (фиксированная высота резала текст при
+              // крупном шрифте и оставляла пустоту в коротких заказах).
+              if (kSaasMode && MediaQuery.sizeOf(context).width < 720)
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                    children: [
+                      if (serving.isNotEmpty) ...[
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+                          child: Text('Ждут выдачи · ${serving.length}',
+                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.success)),
+                        ),
+                        for (final s in serving) Padding(padding: const EdgeInsets.only(bottom: 8), child: _servingCard(s, fit: true)),
+                        const SizedBox(height: 6),
+                      ],
+                      if (tickets.isEmpty)
+                        _empty()
+                      else
+                        for (final x in tickets) Padding(padding: const EdgeInsets.only(bottom: 12), child: _ticket(x, fit: true)),
+                    ],
+                  ),
+                )
+              else ...[
               if (serving.isNotEmpty) _servingStrip(serving),
               Expanded(
                 child: tickets.isEmpty
@@ -327,6 +353,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
                         itemBuilder: (context, i) => _ticket(tickets[i]),
                       ),
               ),
+              ],
             ],
           );
         },
@@ -407,62 +434,71 @@ class _KitchenScreenState extends State<KitchenScreen> {
                 scrollDirection: Axis.horizontal,
                 itemCount: list.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 10),
-                itemBuilder: (context, i) {
-                  final t = list[i];
-                  final ids = t.lines.map((l) => l.lineId).toSet();
-                  return Container(
-                    width: 250,
-                    padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
-                    decoration: BoxDecoration(
-                      color: AppColors.success.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: AppColors.success.withValues(alpha: 0.55)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(t.session.tableName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700)),
-                            ),
-                            TickerBuilder(builder: (context, now) => _minutesChip(now.difference(t.since).inMinutes, warn: 5, danger: 10)),
-                          ],
-                        ),
-                        const SizedBox(height: 2),
-                        Expanded(
-                          child: Text(
-                            t.lines.map((l) => l.toServe > 1 ? '${l.displayName} ×${l.toServe}' : l.displayName).join(', '),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 13, color: AppColors.textMuted),
-                          ),
-                        ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton.icon(
-                            style: TextButton.styleFrom(
-                              foregroundColor: AppColors.success,
-                              visualDensity: VisualDensity.compact,
-                              textStyle: const TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                            onPressed: _busy.contains('served:${t.session.id}') ? null : () => _served(t.session, ids),
-                            icon: const Icon(Icons.room_service_outlined, size: 18),
-                            label: const Text('Выдано'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
+                itemBuilder: (context, i) => _servingCard(list[i]),
               ),
             ),
           ],
         ),
       );
+
+  /// Карточка готового, но не отданного. [fit] (SaaS, телефон): во всю
+  /// ширину, высота по содержимому — состав виден целиком при любом шрифте.
+  Widget _servingCard(KitchenTicket t, {bool fit = false}) {
+    final ids = t.lines.map((l) => l.lineId).toSet();
+    final what = t.lines.map((l) => l.toServe > 1 ? '${l.displayName} ×${l.toServe}' : l.displayName).join(', ');
+    final served = TextButton.icon(
+      style: TextButton.styleFrom(
+        foregroundColor: AppColors.success,
+        visualDensity: VisualDensity.compact,
+        textStyle: const TextStyle(fontWeight: FontWeight.w700),
+      ),
+      onPressed: _busy.contains('served:${t.session.id}') ? null : () => _served(t.session, ids),
+      icon: const Icon(Icons.room_service_outlined, size: 18),
+      label: const Text('Выдано'),
+    );
+    final title = Row(
+      children: [
+        Expanded(
+          child: Text(t.session.tableName,
+              maxLines: fit ? 2 : 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700)),
+        ),
+        TickerBuilder(builder: (context, now) => _minutesChip(now.difference(t.since).inMinutes, warn: 5, danger: 10)),
+      ],
+    );
+    return Container(
+      width: fit ? null : 250,
+      padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: AppColors.success.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.success.withValues(alpha: 0.55)),
+      ),
+      child: fit
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                title,
+                const SizedBox(height: 4),
+                Text(what, style: TextStyle(fontSize: 14, color: AppColors.textMuted)),
+                Align(alignment: Alignment.centerRight, child: served),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                title,
+                const SizedBox(height: 2),
+                Expanded(
+                  child: Text(what, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
+                ),
+                Align(alignment: Alignment.centerRight, child: served),
+              ],
+            ),
+    );
+  }
 
   /// «12 мин» — серым, жёлтым после [warn], красным после [danger].
   Widget _minutesChip(int minutes, {required int warn, required int danger}) {
@@ -492,7 +528,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
         ),
       );
 
-  Widget _ticket(KitchenTicket t) {
+  Widget _ticket(KitchenTicket t, {bool fit = false}) {
     final s = t.session;
     final allIds = t.lines.map((i) => i.lineId).toSet();
     final freshIds = t.lines.where((i) => i.fresh > 0).map((i) => i.lineId).toSet();
@@ -530,10 +566,9 @@ class _KitchenScreenState extends State<KitchenScreen> {
             ],
           ),
           Divider(height: 18, color: AppColors.border),
-          Expanded(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: [
+          _ticketLines(
+            fit,
+            [
                 for (final i in t.lines)
                   InkWell(
                     borderRadius: BorderRadius.circular(8),
@@ -572,8 +607,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
                       ),
                     ),
                   ),
-              ],
-            ),
+            ],
           ),
           const SizedBox(height: 8),
           Row(
@@ -608,6 +642,12 @@ class _KitchenScreenState extends State<KitchenScreen> {
       ),
     );
   }
+
+  /// Строки билета: в сетке — прокрутка внутри карточки, на телефоне (fit) —
+  /// просто колонкой, карточка растёт по содержимому.
+  Widget _ticketLines(bool fit, List<Widget> lines) => fit
+      ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: lines)
+      : Expanded(child: ListView(padding: EdgeInsets.zero, children: lines));
 
   Widget _stateChip(String text, Color color) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),

@@ -71,6 +71,53 @@
       .filter((m) => Number.isFinite(m.lat) && Number.isFinite(m.lng) && Math.abs(m.lat) <= 90 && Math.abs(m.lng) <= 180);
   }
 
+  /* Районы на карте: заливка выбранных (золото), контур остальных; клик по
+     району — opts.onArea(id), по пустому месту — opts.onClick(lat, lng). */
+  function areaFeatures(areas) {
+    return {
+      type: "FeatureCollection",
+      features: (areas || []).filter((a) => Array.isArray(a.rings) && a.rings.length).map((a) => ({
+        type: "Feature",
+        properties: { id: String(a.id), on: a.on ? 1 : 0, here: a.here ? 1 : 0 },
+        // Кольца районов — внешние и дыры вперемешку: MultiPolygon из колец по одному;
+        // заливка «чётное-нечётное» у MapLibre нет, дыры (анклавы) рисуются поверх.
+        geometry: { type: "MultiPolygon", coordinates: a.rings.map((r) => [r]) },
+      })),
+    };
+  }
+  function paintAreas(rec) {
+    const map = rec.api && rec.api.map;
+    if (!map || !rec.areas) return;
+    const apply = () => {
+      const data = areaFeatures(rec.areas);
+      const src = map.getSource("zal-areas");
+      if (src) { src.setData(data); return; }
+      map.addSource("zal-areas", { type: "geojson", data });
+      // Под подписями улиц и маршрутом — названия остаются читаемыми.
+      const before = map.getLayer("zal-route-case") ? "zal-route-case" : map.getLayer("roads_labels") ? "roads_labels" : undefined;
+      map.addLayer({ id: "zal-areas-fill", type: "fill", source: "zal-areas",
+        paint: { "fill-color": ["case", ["==", ["get", "on"], 1], "#D9B66C", "#8A8F98"], "fill-opacity": ["case", ["==", ["get", "on"], 1], 0.32, 0.05] } }, before);
+      map.addLayer({ id: "zal-areas-line", type: "line", source: "zal-areas",
+        paint: { "line-color": ["case", ["==", ["get", "on"], 1], "#B08A3E", "#8A8F98"], "line-width": ["case", ["==", ["get", "on"], 1], 2, 1], "line-opacity": 0.85 } }, before);
+    };
+    if (map.isStyleLoaded()) apply(); else map.once("idle", apply);
+    if (!rec.areaHook) {
+      rec.areaHook = true;
+      // Сменилась тема — стиль перезагрузился, слои районов нужно вернуть.
+      map.on("styledata", () => { if (rec.areas && !map.getSource("zal-areas")) setTimeout(() => paintAreas(rec), 0); });
+      map.on("click", (e) => {
+        const hit = map.getLayer("zal-areas-fill") ? map.queryRenderedFeatures(e.point, { layers: ["zal-areas-fill"] }) : [];
+        if (hit.length && rec.onArea) {
+          // Самый маленький район под пальцем (поселение внутри «остальной части»).
+          const ids = hit.map((f) => String(f.properties.id));
+          const pick = (rec.areas || []).filter((a) => ids.includes(String(a.id))).sort((x, y) => (x.areaKm2 || 0) - (y.areaKm2 || 0))[0];
+          if (pick) return rec.onArea(String(pick.id));
+        }
+        if (rec.onClick) rec.onClick(e.lngLat.lat, e.lngLat.lng);
+      });
+    }
+  }
+
   async function mount(slot, marks, opts = {}) {
     if (!slot) return null;
     const key = opts.key || "default";
@@ -82,7 +129,7 @@
       rec.api.resize();
     }
     if (!rec) {
-      if (!list.length) return null;
+      if (!list.length && !opts.center) return null;
       const box = document.createElement("div");
       box.className = "zal-embed";
       box.style.cssText = "position:relative;width:100%;height:100%;min-height:200px;border-radius:inherit;overflow:hidden";
@@ -95,7 +142,7 @@
         box.innerHTML = '<p style="margin:0;padding:16px;font:14px/1.4 system-ui,sans-serif;opacity:.7">Карта временно недоступна</p>';
         return null;
       }
-      const c = list[0];
+      const c = list[0] || opts.center;
       const api = window.ZalMap.create(box, {
         base: BASE, info: deps.info, workerUrl: deps.workerUrl,
         center: { lat: c.lat, lng: c.lng }, zoom: 14, theme: opts.theme,
@@ -105,12 +152,16 @@
       maps.set(key, rec);
     }
     rec.api.setMarkers(list);
+    rec.onClick = typeof opts.onClick === "function" ? opts.onClick : null;
+    rec.onArea = typeof opts.onArea === "function" ? opts.onArea : null;
+    if (opts.areas) { rec.areas = opts.areas; paintAreas(rec); }
     // Камера — когда появились новые точки (не на каждое обновление, иначе
     // карта прыгает, пока человек её двигает).
-    const fitKey = list.map((m) => m.id).sort().join("|");
+    const fitKey = opts.fitKey || list.map((m) => m.id).sort().join("|");
     if (fitKey !== rec.fitKey) {
       rec.fitKey = fitKey;
-      setTimeout(() => rec.api.fit(list, { padding: opts.padding || 48, maxZoom: opts.maxZoom || 16 }), 50);
+      const pts = opts.fitPoints && opts.fitPoints.length ? opts.fitPoints : list;
+      if (pts.length) setTimeout(() => rec.api.fit(pts, { padding: opts.padding || 48, maxZoom: opts.maxZoom || 16 }), 50);
     }
     return rec.api;
   }

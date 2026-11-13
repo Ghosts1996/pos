@@ -63,7 +63,7 @@ async function main() {
     courierAdminList: courier.handleAdminList, courierAdminSave: courier.handleAdminSave, courierAdminWelcome: courier.handleAdminWelcome, courierAdminForget: courier.handleAdminForget,
     courierAdminEnable: courier.handleAdminEnable, courierAdminCash: courier.handleAdminCash, courierAdminAssign: courier.handleAdminAssign,
     courierAdminRates: courier.handleAdminRates, courierAdminReport: courier.handleAdminReport,
-    deliverySettings: delivery.handleGet, deliverySettingsSave: delivery.handleSave, deliveryMenuSave: delivery.handleMenuSave,
+    deliverySettings: delivery.handleGet, deliverySettingsSave: delivery.handleSave, deliveryMenuSave: delivery.handleMenuSave, deliveryVenuePos: delivery.handleVenuePos,
     deliveryServices: services.handleGet, deliveryServicesSave: services.handleSave, deliveryExtQuote: services.handleQuote,
     deliveryExtCall: services.handleCall, deliveryExtApprove: services.handleApprove, deliveryExtCancel: services.handleCancel,
   };
@@ -154,7 +154,17 @@ draw();
   const external = [];
   page.on("request", (r) => { if (/yandex\.ru|map-widget/.test(r.url())) external.push(r.url()); });
   await page.route("**/map/zal-embed.js", (r) => r.fulfill({ status: 200, contentType: "text/javascript", body:
-    "window.ZalEmbed={mount(slot,marks,o){window.__zm={marks,key:o.key};slot.innerHTML='<div class=\"zal-embed\" style=\"height:100%;background:#e9e4da\">карта</div>';return Promise.resolve({})}};" }));
+    "window.ZalEmbed={mount(slot,marks,o){window.__zm={marks,key:o.key};window.__zma=window.__zma||{};window.__zma[o.key]={marks,areas:o.areas,onArea:o.onArea,onClick:o.onClick};slot.innerHTML='<div class=\"zal-embed\" style=\"height:100%;background:#e9e4da\">карта</div>';return Promise.resolve({})}};" }));
+  // Районы города с сервера карты — подставные: два квадрата у точки заведения.
+  const sq = (lat, lng, d) => [[[lng - d, lat - d], [lng + d, lat - d], [lng + d, lat + d], [lng - d, lat + d], [lng - d, lat - d]]];
+  const districtsAsked = [];
+  await page.route("**/map/districts?**", (r) => {
+    districtsAsked.push(r.request().url());
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, area: { id: "1", name: "Москва" }, list: [
+      { id: "r101", name: "Тверской район", parent: "Центральный административный округ", km: 0, here: true, areaKm2: 7, center: [55.7601, 37.6101], rings: sq(55.7601, 37.6101, 0.01) },
+      { id: "r102", name: "Пресненский район", parent: "Центральный административный округ", km: 2.4, here: false, areaKm2: 12, center: [55.7601, 37.6401], rings: sq(55.7601, 37.6401, 0.01) },
+    ] }) });
+  });
   await page.goto(url);
 
   // «Сейчас»: цифры, карта с метками, заказы, назначение.
@@ -219,15 +229,15 @@ draw();
   await page.fill("#f-dl-fee", "199");
   await page.waitForSelector("text=доставка 199 ₽");
   await page.click("#f-dz-add");
-  await page.fill('tr[data-z] input[data-k="name"]', "Центр");
-  await page.fill('tr[data-z] input[data-k="fee"]', "99");
+  await page.fill('.dz-card[data-z] input[data-k="name"]', "Центр");
+  await page.fill('.dz-card[data-z] input[data-k="fee"]', "99");
   await page.click("#f-dz-add");
-  const rows = await page.$$("tr[data-z]");
+  const rows = await page.$$(".dz-card[data-z]");
   await rows[1].$eval('input[data-k="name"]', (el) => { el.value = "Северный"; });
   await rows[1].$eval('input[data-k="etaMin"]', (el) => { el.value = "90"; });
   // Удаляем первый — второй не должен «съехать» в его поля.
   await rows[0].$eval(".f-dz-del", (el) => el.click());
-  assert.equal(await page.inputValue('tr[data-z] input[data-k="name"]'), "Северный");
+  assert.equal(await page.inputValue('.dz-card[data-z] input[data-k="name"]'), "Северный");
   await page.check("#f-dl-live");
   await page.check("#f-dl-all");
   await shot(page, "c3-price");
@@ -240,10 +250,45 @@ draw();
     assert.equal(d.liveInTelegram, true);
   }
   assert.deepEqual((await db.doc("tenants/P1/settings/delivery").get()).data().venuePos, { lat: 55.7601, lng: 37.6101 }, "координаты точки не затёрты");
+  // Районы города по месту заведения: список, галочка → район с границей, клик по карте.
+  await page.waitForSelector(".dd-row >> text=Тверской район");
+  assert.ok(districtsAsked.some((u) => /lat=55\.7601&lng=37\.6101/.test(u)), "районы — вокруг места заведения");
+  await page.check('.f-dd[data-id="r102"]');
+  await page.waitForSelector('.dz-card >> text=по карте');
+  assert.equal((await page.textContent('.dz-card[data-z="dr102"] .dz-title b')).trim(), "Пресненский район", "название района с карты — текстом, целиком");
+  await page.fill('.dz-card[data-z="dr102"] input[data-k="fee"]', "249");
+  // Нажатие на район на карте — отмечает его (как галочка), повторное — снимает.
+  await page.evaluate(() => window.__zma["dlv-area"].onArea("r101"));
+  await page.waitForSelector('.dz-card[data-z="dr101"]');
+  await page.evaluate(() => window.__zma["dlv-area"].onArea("r101"));
+  await page.waitForFunction(() => !document.querySelector('.dz-card[data-z="dr101"]'));
+  assert.equal(await page.inputValue('.dz-card[data-z="dr102"] input[data-k="fee"]'), "249", "цена района не потерялась при перерисовке");
+  await page.uncheck("#f-dl-all");
+  await shot(page, "c3b-districts");
+  await page.click("#f-dl-price-save");
+  await page.waitForFunction(() => window.toasts.filter((t) => /^Сохранено$/.test(t)).length >= 1);
+  const dz = (await db.doc("tenants/P1/settings/delivery").get()).data().zones.find((z) => z.osm === "r102");
+  assert.ok(dz && dz.fee === 249 && Array.isArray(dz.poly) && dz.poly[0].length === 5, `район с границей сохранён: ${JSON.stringify(dz)}`);
+  // Место заведения: клик по карте → «Новое место» → сохранить; затем ссылка Яндекс Карт.
+  await page.evaluate(() => window.__zma["dlv-area"].onClick(55.7612, 37.6123));
+  await page.waitForSelector("text=Новое место отмечено на карте");
+  await page.click("#f-dl-pos-save");
+  await page.waitForFunction(() => window.toasts.some((t) => /Место заведения сохранено/.test(t)));
+  let sd = (await db.doc("tenants/P1/settings/delivery").get()).data();
+  assert.deepEqual(sd.venuePos, { lat: 55.7612, lng: 37.6123 });
+  assert.equal(sd.venuePosFixed, true, "поставленное вручную место курьеры не сдвинут");
+  await page.fill("#f-dl-pos", "https://yandex.ru/maps/?ll=37.6101%2C55.7601&z=17");
+  await page.click("#f-dl-pos-save");
+  await page.waitForFunction(() => window.toasts.filter((t) => /Место заведения сохранено/.test(t)).length >= 2);
+  sd = (await db.doc("tenants/P1/settings/delivery").get()).data();
+  assert.deepEqual(sd.venuePos, { lat: 55.7601, lng: 37.6101 }, "координаты из ссылки Яндекс Карт");
+  await page.fill("#f-dl-pos", "30.3, 59.9");
+  await page.click("#f-dl-pos-save");
+  await page.waitForSelector("#f-dl-pos-msg >> text=/вне России/");
+
   // Наценка на доставку.
   await page.fill("#f-dl-markup", "15");
   await page.waitForSelector("text=блюдо за 500 ₽ в доставке — 575 ₽");
-  await page.uncheck("#f-dl-all");
   await page.click("#f-dl-price-save");
   await page.waitForFunction(() => window.toasts.filter((t) => /^Сохранено$/.test(t)).length >= 1);
   assert.equal((await db.doc("tenants/P1/settings/delivery").get()).data().markupPct, 15);
@@ -300,8 +345,8 @@ draw();
       const who = await page.evaluate(() => [...document.querySelectorAll("#f-dl-root *")].filter((el) => el.getBoundingClientRect().right > innerWidth + 1).slice(0, 6).map((el) => `${el.tagName}.${el.className}`).join(" | "));
       assert.fail(`«${sub}» на телефоне шире экрана на ${wide}px: ${who}`);
     }
+    await shot(page, `c6-mobile-${sub}`);
   }
-  await shot(page, "c6-mobile-price");
 
   assert.deepEqual(errors, [], "в консоли браузера нет ошибок");
   await browser.close();

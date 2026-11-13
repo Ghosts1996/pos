@@ -1584,3 +1584,26 @@ body:has(.landing-nav) .theme-fab, body:has(.dash-topbar) .theme-fab { display: 
 .dlc-how li { margin: 4px 0; }
 @media (max-width: 560px) { .dlc-today, .dlc-actions { margin-left: 0; } .dlc-sw-t { display: none; } }
 @media (prefers-reduced-motion: reduce) { .dlc-switch .dlc-knob, .dlc-switch .dlc-knob::after, .dlc-bar i { transition: none; } }
+
+/* Доставка → «Цена и районы»: место заведения на карте, районы города,
+   районы доставки карточками (на телефоне таблица уходила за край). */
+.dlv-area-map { height: 320px; border-radius: 14px; overflow: hidden; background: var(--surface-2, rgba(127,127,127,.08)); border: 1px solid var(--border); }
+@media (max-width: 600px) { .dlv-area-map { height: 260px; } }
+.dd-list { max-height: 360px; overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; -webkit-overflow-scrolling: touch; }
+.dd-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: pointer; line-height: 1.35; }
+.dd-row:last-child { border-bottom: 0; }
+.dd-row input { width: 20px; height: 20px; margin: 2px 0 0; flex: none; }
+.dd-row.on { background: color-mix(in srgb, var(--primary) 9%, transparent); }
+.dd-row .grow { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.dz-list { display: grid; gap: 10px; margin-bottom: 12px; }
+.dz-card { border: 1px solid var(--border); border-radius: 14px; padding: 12px; }
+.dz-head { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.dz-head .dz-name { flex: 1 1 auto; min-width: 0; font-weight: 600; }
+.dz-head .chip { flex: none; }
+.dz-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.dz-grid .field { margin: 0; min-width: 0; }
+.dz-grid .field span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dz-grid input { width: 100%; min-width: 0; }
+@media (max-width: 700px) { .dz-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; vertical-align: middle; }
+.dz-head .dz-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; line-height: 1.35; }

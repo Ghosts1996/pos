@@ -11,7 +11,7 @@ const { remoteSaleBanned } = require("./guest-delivery");
 const MANAGE_ROLES = ["owner", "admin", "manager"];
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-function createDeliveryAdmin({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole, requireChainRole, onSaved = () => {} }) {
+function createDeliveryAdmin({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole, requireChainRole, onSaved = () => {}, onVenuePos = () => {} }) {
   const FieldValue = admin.firestore.FieldValue;
   const tenantRef = (t) => db().collection("tenants").doc(t);
 
@@ -67,6 +67,7 @@ function createDeliveryAdmin({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     sendJson(res, 200, {
       settings: pricing.normalizeSettings(raw),
       venuePos: raw.venuePos || null,
+      venuePosFixed: raw.venuePosFixed === true,
       // Ориентир цен для региона точки — кнопка «Подставить цены региона».
       preset: pricing.regionPreset(raw.venuePos),
       deliveryEnabled: v.deliveryEnabled === true,
@@ -103,6 +104,35 @@ function createDeliveryAdmin({ db, admin, verifyAuth, parseJsonBody, sendJson, H
       await tenantRef(ctx.tenantId).collection("meta").doc("venueProfile").set({ deliveryEnabled: body.deliveryEnabled }, { merge: true });
     }
     sendJson(res, 200, { ok: true, points: targets.length, settings: clean });
+  }
+
+  /**
+   * Место заведения на карте (кабинет: точка на карте или координаты из
+   * Яндекс/2ГИС): от него — цена по километрам, районы города и карта курьера.
+   * Поставленное вручную место больше не «учится» по заборам курьеров.
+   * body: { tenantId, lat, lng } или { tenantId, clear: true } — снова учиться.
+   */
+  async function handleVenuePos(req, res) {
+    const body = await parseJsonBody(req);
+    const ctx = await ctxOf(req, body);
+    const ref = tenantRef(ctx.tenantId).collection("settings").doc("delivery");
+    if (body.clear === true) {
+      await ref.set({ venuePos: FieldValue.delete(), venuePosFixed: FieldValue.delete(), pickupPoints: FieldValue.delete() }, { merge: true });
+      try { onSaved([ctx.tenantId]); onVenuePos(); } catch (_) {}
+      return sendJson(res, 200, { ok: true, venuePos: null, preset: null });
+    }
+    const lat = Number(body.lat);
+    const lng = Number(body.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180 || (!lat && !lng)) {
+      throw new HttpError(400, "Координаты не распознаны — например: 59.9357, 30.3258");
+    }
+    // Россия и соседи: широта 40…82, долгота 19…191 (Чукотка — за 180°).
+    const x = lng < 0 ? lng + 360 : lng;
+    if (lat < 40 || lat > 82 || x < 19 || x > 191) throw new HttpError(400, "Точка вне России — проверьте порядок: сначала широта, потом долгота");
+    const venuePos = { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6 };
+    await ref.set({ venuePos, venuePosFixed: true, venuePosAt: admin.firestore.Timestamp.now(), venuePosBy: ctx.uid, pickupPoints: FieldValue.delete() }, { merge: true });
+    try { onSaved([ctx.tenantId]); onVenuePos(); } catch (_) {}
+    sendJson(res, 200, { ok: true, venuePos, preset: pricing.regionPreset(venuePos) });
   }
 
   /**
@@ -159,7 +189,7 @@ function createDeliveryAdmin({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     sendJson(res, 200, { ok: true, changed, menu: await menuOf(ctx.tenantId) });
   }
 
-  return { handleGet, handleSave, handleMenuSave, menuOf };
+  return { handleGet, handleSave, handleMenuSave, handleVenuePos, menuOf };
 }
 
 module.exports = { createDeliveryAdmin };

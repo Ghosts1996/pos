@@ -667,19 +667,153 @@ function dlvCouriersHtml(st) {
     </div>`;
 }
 
+/**
+ * Место заведения и районы города (границы OpenStreetMap с нашего сервера
+ * карты — map-districts.js): точка на карте → список районов вокруг с
+ * галочками → отмеченные становятся районами доставки с границей (poly).
+ */
+const DLV_RADII = [5, 10, 20, 30];
+function dlvAreaHtml(st) {
+  const S = st.settings;
+  const pos = S.venuePos;
+  const dz = st.districts || {};
+  const f = st.form;
+  const chosen = new Set(f.zones.filter((z) => z.osm).map((z) => z.osm));
+  const q = (dz.q || '').trim().toLowerCase();
+  const list = (dz.list || []).filter((d) => !q || d.name.toLowerCase().includes(q) || (d.parent || '').toLowerCase().includes(q));
+  const pending = st.posPending;
+  const status = pos
+    ? (S.venuePosFixed ? 'Место задано вручную.' : 'Место определено по заборам курьеров — проверьте и при необходимости поправьте.')
+    : 'Место не задано — без него не работают районы города и цена по километрам.';
+  let body = '';
+  if (!pos) body = '<p class="small muted" style="margin:0">Сначала поставьте место заведения — появятся районы вокруг.</p>';
+  else if (dz.loading) body = '<div class="spinner"></div>';
+  else if (dz.error) body = `<p class="small" style="margin:0;color:var(--danger)">${esc(dz.error)}</p>`;
+  else if (dz.list) {
+    body = `
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px">
+        <label class="field" style="flex:1 1 200px;margin:0"><span>Найти район</span><input id="f-dd-q" value="${esc(dz.q || '')}" placeholder="Название района или посёлка"></label>
+        <label class="field" style="flex:0 1 150px;margin:0"><span>Вокруг заведения</span><select id="f-dd-km">${DLV_RADII.map((k) => `<option value="${k}" ${k === dz.km ? 'selected' : ''}>до ${k} км</option>`).join('')}</select></label>
+      </div>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px">
+        ${[3, 5, 10].map((k) => `<button class="btn btn-ghost f-dd-near" data-km="${k}" style="width:auto;padding:6px 12px">Все ближе ${k} км</button>`).join('')}
+        ${chosen.size ? '<button class="btn btn-ghost" id="f-dd-none" style="width:auto;padding:6px 12px">Снять все</button>' : ''}
+      </div>
+      <div class="dd-list" role="group" aria-label="Районы рядом с заведением">${list.length ? list.map((d) => `
+        <label class="dd-row${chosen.has(d.id) ? ' on' : ''}">
+          <input type="checkbox" class="f-dd" data-id="${esc(d.id)}" ${chosen.has(d.id) ? 'checked' : ''}>
+          <span class="grow"><b>${esc(d.name)}</b>${d.here ? ' <span class="chip">здесь заведение</span>' : ''}<br>
+            <span class="small muted">${d.parent ? esc(d.parent) + ' · ' : ''}${d.here ? 'вы здесь' : `${String(d.km).replace('.', ',')} км`}</span></span>
+        </label>`).join('') : '<p class="small muted" style="margin:6px 0">Ничего не нашлось.</p>'}</div>
+      <p class="small muted" style="margin:8px 0 0">Отмечено: ${chosen.size}. Районы можно отмечать и нажатием на карту. Цены у отмеченных — ниже, в «Районах доставки»; не забудьте «Сохранить».</p>`;
+  } else body = '<button class="btn btn-ghost" id="f-dd-load" style="width:auto">Показать районы рядом</button>';
+  return `
+    <h2>Место заведения и районы города</h2>
+    <div class="card">
+      <div id="dlvAreaMap" class="dlv-area-map" role="application" aria-label="Карта: место заведения и районы"></div>
+      <p class="small muted" style="margin:8px 0">Нажмите на карту там, где заведение, — или вставьте координаты из Яндекс Карт или 2ГИС (в карточке места: «59.935700, 30.325800»).</p>
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <label class="field" style="flex:1 1 220px;margin:0"><span>Координаты заведения</span><input id="f-dl-pos" inputmode="decimal" value="${esc(pending ? `${pending.lat.toFixed(6)}, ${pending.lng.toFixed(6)}` : pos ? `${pos.lat}, ${pos.lng}` : '')}" placeholder="59.9357, 30.3258"></label>
+        <button class="btn ${pending ? 'btn-primary' : 'btn-ghost'}" id="f-dl-pos-save" style="width:auto">Сохранить место</button>
+      </div>
+      <p class="small" id="f-dl-pos-msg" style="margin:8px 0 0">${pending ? '<b>Новое место отмечено на карте</b> — нажмите «Сохранить место».' : esc(status)}</p>
+      <div style="margin-top:12px">${body}</div>
+    </div>`;
+}
+
+/** Районы вокруг места заведения — с сервера карты (кэш 10 мин у браузера). */
+async function dlvLoadDistricts(st, redraw) {
+  const pos = st.settings && st.settings.venuePos;
+  if (!pos) return;
+  const km = (st.districts && st.districts.km) || 10;
+  st.districts = { ...(st.districts || {}), loading: true, error: '', km };
+  redraw();
+  try {
+    const r = await fetch(`${SAAS_GATEWAY_URL}/map/districts?lat=${pos.lat}&lng=${pos.lng}&km=${km}`).then((x) => x.json());
+    if (!r.ok) {
+      const why = r.reason === 'building' || r.reason === 'noarea'
+        ? 'Карты этого места на сервере ещё нет — она соберётся сама в течение суток после сохранения места. Пока можно добавить районы по названию.'
+        : 'Не удалось получить районы — попробуйте позже.';
+      st.districts = { ...st.districts, loading: false, list: null, error: why };
+    } else {
+      st.districts = { ...st.districts, loading: false, list: r.list, area: r.area, error: '' };
+    }
+  } catch (_) {
+    st.districts = { ...st.districts, loading: false, list: null, error: 'Нет связи с сервером карты — попробуйте позже.' };
+  }
+  redraw();
+}
+
+/** Карта раздела: место заведения, новое место (до сохранения), районы. */
+function dlvAreaMount(st, onArea, onClick) {
+  const slot = $('dlvAreaMap');
+  if (!slot) return;
+  const pos = st.settings && st.settings.venuePos;
+  const pending = st.posPending;
+  const chosen = new Set(st.form.zones.filter((z) => z.osm).map((z) => z.osm));
+  const marks = [];
+  if (pos) marks.push({ id: 'venue', kind: 'venue', lat: pos.lat, lng: pos.lng, label: 'Заведение' });
+  if (pending) marks.push({ id: 'pending', kind: 'guest', lat: pending.lat, lng: pending.lng, label: 'Новое место' });
+  const list = (st.districts && st.districts.list) || [];
+  const areas = list.map((d) => ({ id: d.id, rings: d.rings, on: chosen.has(d.id), areaKm2: d.areaKm2 }));
+  // Камера — на заведение и ближние районы (не на всю область).
+  const near = list.filter((d) => d.km <= 6).map((d) => ({ lat: d.center[0], lng: d.center[1] }));
+  const fitPoints = [...marks, ...near];
+  const go = () => window.ZalEmbed && window.ZalEmbed.mount(slot, marks, {
+    key: 'dlv-area', areas, onArea, onClick,
+    center: pos || pending || { lat: 55.7558, lng: 37.6173 },
+    fitKey: `${pos ? `${pos.lat},${pos.lng}` : '-'}|${pending ? 'p' : ''}|${st.districts && st.districts.area ? st.districts.area.id : ''}|${list.length}`,
+    fitPoints, maxZoom: 14,
+  });
+  if (window.ZalEmbed) return go();
+  if (!dlvEmbedLoading) {
+    dlvEmbedLoading = new Promise((ok, bad) => {
+      const el = document.createElement('script');
+      el.src = `${SAAS_GATEWAY_URL}/map/zal-embed.js`;
+      el.onload = ok;
+      el.onerror = () => { dlvEmbedLoading = null; bad(new Error('карта не загрузилась')); };
+      document.head.appendChild(el);
+    });
+  }
+  dlvEmbedLoading.then(go).catch(() => { const sl = $('dlvAreaMap'); if (sl) sl.innerHTML = '<p class="small muted" style="padding:16px;margin:0">Карта временно недоступна — координаты можно вписать вручную.</p>'; });
+}
+
+/** «59.935700, 30.325800», «59,9357 30,3258», ссылка Яндекс Карт (ll=/pt= — долгота, широта). */
+function dlvParseCoords(text) {
+  const s = String(text || '').trim();
+  const ll = /[?&](?:ll|pt|whatshere%5Bpoint%5D|whatshere\[point\])=(-?\d+(?:\.\d+)?)(?:%2C|,)(-?\d+(?:\.\d+)?)/i.exec(s);
+  if (ll) return { lat: Number(ll[2]), lng: Number(ll[1]) };
+  // Десятичная запятая («59,9357 30,3258») — только если точек в тексте нет:
+  // «59.9357,30.3258» — это уже две координаты через запятую.
+  const norm = s.includes('.') ? s : s.replace(/(\d),(\d)/g, '$1.$2');
+  const m = /(-?\d{1,3}(?:\.\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:\.\d+)?)/.exec(norm);
+  if (!m) return null;
+  const lat = Number(m[1]);
+  const lng = Number(m[2]);
+  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+}
+
 function dlvPriceHtml(st) {
   const S = st.settings;
   if (!S) return '<div class="spinner"></div>';
   if (S.error) return dlvErrorHtml(S.error);
   const f = st.form;
   const num = (v) => (v === null || v === undefined ? '' : v);
-  const zoneRow = (z) => `<tr data-z="${esc(z.id)}">
-      <td><input class="f-dz" data-k="name" id="f-dz-${esc(z.id)}-name" maxlength="40" value="${esc(z.name)}" placeholder="Центр"></td>
-      <td><input class="f-dz" data-k="fee" id="f-dz-${esc(z.id)}-fee" type="number" min="0" step="10" value="${num(z.fee)}" placeholder="${f.fee}"></td>
-      <td><input class="f-dz" data-k="minOrder" id="f-dz-${esc(z.id)}-minOrder" type="number" min="0" step="50" value="${num(z.minOrder)}" placeholder="${f.minOrder}"></td>
-      <td><input class="f-dz" data-k="freeFrom" id="f-dz-${esc(z.id)}-freeFrom" type="number" min="0" step="100" value="${num(z.freeFrom)}" placeholder="${f.freeFrom || '—'}"></td>
-      <td><input class="f-dz" data-k="etaMin" id="f-dz-${esc(z.id)}-etaMin" type="number" min="10" max="600" step="5" value="${num(z.etaMin)}" placeholder="${f.etaMin}"></td>
-      <td><button class="btn btn-ghost f-dz-del" data-z="${esc(z.id)}" style="width:auto;color:var(--danger)" aria-label="Удалить район">✕</button></td></tr>`;
+  // Район — карточкой с подписями у полей: на телефоне таблица обрезалась.
+  const zoneRow = (z) => `<div class="dz-card" data-z="${esc(z.id)}">
+      <div class="dz-head">
+        ${z.poly
+          ? `<div class="dz-title"><b>${esc(z.name)}</b> <span class="chip" title="Граница района — с карты: гость с отмеченной точкой попадёт в него сам">по карте</span></div>`
+          : `<input class="f-dz dz-name" data-k="name" id="f-dz-${esc(z.id)}-name" maxlength="40" value="${esc(z.name)}" placeholder="Название района, например «Центр»" aria-label="Название района">`}
+        <button class="btn btn-ghost f-dz-del" data-z="${esc(z.id)}" style="width:auto;color:var(--danger)" aria-label="Убрать район «${esc(z.name)}»">✕</button>
+      </div>
+      <div class="dz-grid">
+        <label class="field"><span>Доставка, ₽</span><input class="f-dz" data-k="fee" id="f-dz-${esc(z.id)}-fee" type="number" inputmode="numeric" min="0" step="10" value="${num(z.fee)}" placeholder="${f.fee}"></label>
+        <label class="field"><span>Мин. заказ, ₽</span><input class="f-dz" data-k="minOrder" id="f-dz-${esc(z.id)}-minOrder" type="number" inputmode="numeric" min="0" step="50" value="${num(z.minOrder)}" placeholder="${f.minOrder || 'нет'}"></label>
+        <label class="field"><span>Бесплатно от, ₽</span><input class="f-dz" data-k="freeFrom" id="f-dz-${esc(z.id)}-freeFrom" type="number" inputmode="numeric" min="0" step="100" value="${num(z.freeFrom)}" placeholder="${f.freeFrom || 'никогда'}"></label>
+        <label class="field"><span>Время, мин</span><input class="f-dz" data-k="etaMin" id="f-dz-${esc(z.id)}-etaMin" type="number" inputmode="numeric" min="10" max="600" step="5" value="${num(z.etaMin)}" placeholder="${f.etaMin}"></label>
+      </div>
+    </div>`;
   const pay = f.payAtDoor;
   const preview = [
     f.fee ? `доставка ${dlvRub(f.fee)}` : 'доставка бесплатно',
@@ -726,18 +860,18 @@ function dlvPriceHtml(st) {
       </div>
       <p class="small muted" style="margin:8px 0 0">Как в агрегаторах: доставка дороже упаковкой и временем. Гость видит цены доставки при оформлении — до заказа, с пометкой. Своя цена для отдельной позиции — во вкладке «Что доставляем». Самовывоз и зал — без наценки. Заказы, которые касса оформляет по телефону, пока — по ценам зала.</p>
     </div>
-    <h2>Районы</h2>
+    ${dlvAreaHtml(st)}
+    <h2>Районы доставки</h2>
     <div class="card">
-      <p class="small muted" style="margin-top:0">Необязательно. Если районы есть, гость выбирает свой при оформлении. Пустое поле — как базовая цена выше. Старые версии приложения гостя районов не знают — для них базовая цена, её назовут при звонке.</p>
-      ${f.zones.length ? `<div style="overflow-x:auto"><table class="table"><thead><tr><th>Район</th><th>Цена, ₽</th><th>Мин. заказ</th><th>Бесплатно от</th><th>Время, мин</th><th></th></tr></thead>
-        <tbody>${f.zones.map(zoneRow).join('')}</tbody></table></div>` : ''}
-      <button class="btn btn-ghost" id="f-dz-add" style="width:auto">+ Добавить район</button>
+      <p class="small muted" style="margin-top:0">Необязательно. Отметьте районы города выше — или добавьте свой район по названию. Гость, отметивший точку «Где я», попадает в свой район сам; без точки — выбирает район из списка. Пустое поле — как базовая цена. Старые версии приложения гостя районов не знают — для них базовая цена, её назовут при звонке.</p>
+      ${f.zones.length ? `<div class="dz-list">${f.zones.map(zoneRow).join('')}</div>` : '<p class="small muted">Районов нет — для всех адресов действует базовая цена.</p>'}
+      <button class="btn btn-ghost" id="f-dz-add" style="width:auto">+ Свой район по названию</button>
     </div>
     <h2>Оплата при получении</h2>
     <div class="card">
       <label class="row" style="gap:8px;align-items:center;margin:4px 0"><input type="checkbox" id="f-dl-cash" style="width:auto" ${pay.cash ? 'checked' : ''}> Наличными курьеру</label>
       <label class="row" style="gap:8px;align-items:center;margin:4px 0"><input type="checkbox" id="f-dl-card" style="width:auto" ${pay.card ? 'checked' : ''}> Картой — у курьера свой терминал</label>
-      <label class="row" style="gap:8px;align-items:center;margin:4px 0"><input type="checkbox" id="f-dl-qr" style="width:auto" ${pay.qr && S.bankConnected ? 'checked' : ''} ${S.bankConnected ? '' : 'disabled'}> По QR с телефона курьера (СБП, банк заведения)${S.bankConnected ? '' : ' — <span class="muted">подключите банк: Настройки → Интеграции</span>'}</label>
+      <label class="row" style="gap:8px;align-items:flex-start;margin:4px 0"><input type="checkbox" id="f-dl-qr" style="width:auto;margin-top:3px" ${pay.qr && S.bankConnected ? 'checked' : ''} ${S.bankConnected ? '' : 'disabled'}> <span>По QR с телефона курьера (СБП, банк заведения)${S.bankConnected ? '' : ' — <span class="muted">подключите банк: Настройки → Интеграции</span>'}</span></label>
       <p class="small" style="border-left:3px solid var(--primary);padding-left:10px;line-height:1.55;margin-bottom:0">
         <b>Чек (54-ФЗ).</b> «Доставка» встаёт в чек отдельной позицией — услуга, без скидок. При оплате курьеру чек нужен <b>в момент оплаты</b>:
         курьер отмечает оплату — касса сразу получает сигнал «пробейте чек», гостю уходит электронный чек. Распечатать чек заранее нельзя.
@@ -1096,7 +1230,7 @@ function bindDeliveryTab(tenantId, redraw) {
     st.form.markupPct = n('f-dl-markup');
     if ($('f-dl-km-on')) st.form.byKm = { on: $('f-dl-km-on').checked, baseKm: n('f-dl-km-base'), perKm: n('f-dl-km-per'), maxKm: n('f-dl-km-max') };
     document.querySelectorAll('.f-dz').forEach((inp) => {
-      const z = st.form.zones.find((x) => x.id === inp.closest('tr').dataset.z);
+      const z = st.form.zones.find((x) => x.id === inp.closest('[data-z]').dataset.z);
       if (!z) return;
       const v = inp.value.trim();
       z[inp.dataset.k] = inp.dataset.k === 'name' ? v : v === '' ? null : Number(v);
@@ -1128,6 +1262,73 @@ function bindDeliveryTab(tenantId, redraw) {
   }
   if ($('f-dz-add')) $('f-dz-add').onclick = () => { syncForm(); st.form.zones.push({ id: `n${Date.now().toString(36)}${dlvSeq++}`, name: '', fee: null, minOrder: null, freeFrom: null, etaMin: null }); redraw(); };
   document.querySelectorAll('.f-dz-del').forEach((b) => { b.onclick = () => { syncForm(); st.form.zones = st.form.zones.filter((z) => z.id !== b.dataset.z); redraw(); }; });
+
+  // ----- Место заведения и районы города
+  const districtById = (id) => ((st.districts && st.districts.list) || []).find((d) => d.id === id);
+  const setDistrict = (id, want) => {
+    const d = districtById(id);
+    if (!d) return;
+    const has = st.form.zones.some((z) => z.osm === id);
+    if (want === undefined) want = !has;
+    if (want && !has) {
+      st.form.zones.push({ id: `d${id}`.slice(0, 32), name: d.name.slice(0, 40), osm: id, poly: d.rings, fee: null, minOrder: null, freeFrom: null, etaMin: null });
+    } else if (!want && has) {
+      st.form.zones = st.form.zones.filter((z) => z.osm !== id);
+    }
+  };
+  if (st.sub === 'price' && st.settings && !st.settings.error && st.form && $('dlvAreaMap')) {
+    dlvAreaMount(st,
+      (id) => { syncForm(); setDistrict(id); redraw(); },
+      (lat, lng) => { syncForm(); st.posPending = { lat, lng }; redraw(); });
+    if (st.settings.venuePos && !st.districts) dlvLoadDistricts(st, redraw);
+  }
+  if ($('f-dd-load')) $('f-dd-load').onclick = () => dlvLoadDistricts(st, redraw);
+  if ($('f-dd-q')) {
+    $('f-dd-q').oninput = (e) => {
+      st.districts.q = e.target.value;
+      const pos = e.target.selectionStart;
+      syncForm();
+      redraw();
+      const el = $('f-dd-q');
+      if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (_) {} }
+    };
+  }
+  if ($('f-dd-km')) $('f-dd-km').onchange = (e) => { syncForm(); st.districts.km = Number(e.target.value) || 10; dlvLoadDistricts(st, redraw); };
+  document.querySelectorAll('.f-dd').forEach((cb) => { cb.onchange = () => { syncForm(); setDistrict(cb.dataset.id, cb.checked); redraw(); }; });
+  document.querySelectorAll('.f-dd-near').forEach((b) => {
+    b.onclick = () => {
+      syncForm();
+      const km = Number(b.dataset.km);
+      const pick = ((st.districts && st.districts.list) || []).filter((d) => d.here || d.km <= km);
+      pick.forEach((d) => setDistrict(d.id, true));
+      toast(`Отмечено районов: ${pick.length}. Проверьте цены и нажмите «Сохранить»`);
+      redraw();
+    };
+  });
+  if ($('f-dd-none')) $('f-dd-none').onclick = () => { syncForm(); st.form.zones = st.form.zones.filter((z) => !z.osm); redraw(); };
+  if ($('f-dl-pos-save')) {
+    $('f-dl-pos-save').onclick = async () => {
+      syncForm();
+      const msg = $('f-dl-pos-msg');
+      const c = dlvParseCoords($('f-dl-pos').value);
+      if (!c) { msg.textContent = 'Не понял координаты — например: 59.9357, 30.3258'; msg.style.color = 'var(--danger)'; return; }
+      $('f-dl-pos-save').disabled = true;
+      try {
+        const r = await callSaasGateway('deliveryVenuePos', { tenantId, lat: c.lat, lng: c.lng });
+        st.settings.venuePos = r.data.venuePos;
+        st.settings.venuePosFixed = true;
+        st.settings.preset = r.data.preset;
+        st.posPending = null;
+        st.districts = null; // районы — вокруг нового места
+        toast('Место заведения сохранено');
+        redraw();
+      } catch (e) {
+        msg.textContent = e.message || 'Не удалось сохранить место';
+        msg.style.color = 'var(--danger)';
+        $('f-dl-pos-save').disabled = false;
+      }
+    };
+  }
   if ($('f-dl-price-save')) {
     $('f-dl-price-save').onclick = async () => {
       syncForm();
@@ -3938,10 +4139,12 @@ function applyLegalMode(status) {
     // тарифа), вход курьера по почте и коду с согласием-ПЭП. № 8 (13 ноября
     // 2026 г.) — оператор данных курьера — заведение, платформа — по его
     // поручению; курьер сам удаляет данные и отзывает согласие в приложении.
+    // № 9 (14 ноября 2026 г.) — карты и маршруты свои (OpenStreetMap, сервер
+    // в РФ), сторонним сервисам — только по нажатию «Открыть в …».
     // Свой вход включили позже — от его даты.
-    const ed7 = new Date('2026-11-13T00:00:00+03:00');
+    const ed7 = new Date('2026-11-14T00:00:00+03:00');
     const from = since > ed7 ? since : ed7;
-    LEGAL_EDITION = `Редакция № 8 от ${from.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Moscow' })}`;
+    LEGAL_EDITION = `Редакция № 9 от ${from.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Moscow' })}`;
   }
 }
 const xborderConsentHtml = () => (AUTH_IN_RF ? '' : ', в том числе на их трансграничную передачу');
@@ -4135,7 +4338,7 @@ function screenLegalPrivacy() {
         'Данные не передаются третьим лицам, кроме случаев, предусмотренных законом, и поставщиков инфраструктуры, указанных в разделе 6, действующих на условиях конфиденциальности.',
         `При оплате тарифа email плательщика и сведения о платеже передаются платёжному сервису ${PAYMENT_SERVICE} для приёма оплаты и отправки чека; данные банковской карты вводятся на странице платёжного сервиса и Оператору не передаются. При оплате по счёту реквизиты плательщика используются для выставления счёта и формирования чека с ИНН покупателя в приложении «Мой налог» (сведения о чеке передаются в ФНС России в силу Федерального закона № 422-ФЗ).`,
         'Доставку заказа может выполнять курьер заведения или, по выбору заведения, российская служба доставки, с которой у заведения заключён договор (например, Яндекс Доставка, Достависта). Службе доставки передаются только сведения, нужные для доставки: имя и номер телефона Гостя, адрес и точка доставки, комментарий к доставке, номер и стоимость заказа. Пока курьер (заведения или службы) везёт заказ, Гость видит его местоположение на карте.',
-        'Карты и маршруты в приложениях и кабинете показывает сервис «Яндекс Карты» (ООО «Яндекс», Российская Федерация): чтобы нарисовать карту и маршрут, ему передаются координаты или адреса точек (заведение, курьер, место доставки) — без имён и телефонов.',
+        'Карты, районы и маршруты в приложениях и кабинете — собственные: их рисует и считает сервер Платформы в Российской Федерации по открытым картографическим данным OpenStreetMap; координаты и адреса точек (заведение, курьер, место доставки) сторонним картографическим сервисам не передаются. Только если курьер или сотрудник сам нажмёт «Открыть в Яндекс Картах», «Навигатор» или «2ГИС», выбранному им сервису (ООО «Яндекс», ООО «ДубльГИС», Российская Федерация) передаются адрес или координаты точки — без имён и телефонов.',
         'Если заведение подключило ИИ-помощников, запросы к ним обрабатывает провайдер ИИ, выбранный заведением, по договору заведения с этим провайдером. Провайдеру передаются текст вопроса и сведения, нужные для ответа (меню, занятость столов, брони); имена гостей заменяются первой буквой, телефоны и email гостей не передаются. Гостям не следует сообщать в чате ИИ-помощника свои персональные данные.',
       ])}
       ${legalSection('6. Место хранения и трансграничная передача', [
@@ -9232,6 +9435,7 @@ function watchAdminPartners() {
             <button class="btn-link f-pa-letter" data-email="${esc(p.email)}">Письмо для входа</button>
             ${!p.request && p.summary.unpaid > 0 ? `<button class="btn-link f-pa-pay" data-id="${esc(p.id)}" data-amount="${p.summary.unpaid}">Выплатить без запроса ${fmtMoney(p.summary.unpaid)}</button>` : ''}
             <button class="btn-link f-pa-status" data-id="${esc(p.id)}" data-status="${p.status === 'active' ? 'stopped' : 'active'}">${p.status === 'active' ? 'Приостановить' : 'Возобновить'}</button>
+            <button class="btn-link f-pa-remove" data-id="${esc(p.id)}" style="color:var(--danger)">Удалить</button>
           </div>
           ${editId === p.id ? editHtml(p) : ''}
           ${openId === p.id ? detailHtml(p) : ''}
@@ -9318,6 +9522,20 @@ function watchAdminPartners() {
       };
     });
     document.querySelectorAll('.f-pa-status').forEach((el) => { el.onclick = act(async (b) => { await save(partnerOf(b.dataset.id), { status: b.dataset.status }); }); });
+    // Удалить менеджера: вход в кабинет и бот закрываются, новые начисления
+    // прекращаются; выплаты, акты и договор остаются в истории (бухгалтерия).
+    // Добавить снова с той же почтой — вернётся с прежней ссылкой.
+    document.querySelectorAll('.f-pa-remove').forEach((el) => {
+      el.onclick = act(async (b) => {
+        const p = partnerOf(b.dataset.id);
+        const owe = p.summary.unpaid > 0 || p.request;
+        const msg = `Удалить менеджера ${p.name || p.email}?\n\nВход в кабинет менеджера и бот закроются, новые начисления прекратятся. Выплаты, акты и договор останутся в истории — они нужны для налоговой.`
+          + (owe ? `\n\n⚠ Менеджеру начислено к выплате ${fmtMoney(p.summary.unpaid)} — по договору их нужно выплатить.` : '');
+        if (!confirm(msg)) return;
+        await save(p, { status: 'removed' });
+        toast('Менеджер удалён');
+      });
+    });
     document.querySelectorAll('.f-pa-pay').forEach((el) => {
       el.onclick = act(async (b) => {
         const note = prompt(`Отметить выплату ${fmtMoney(b.dataset.amount)}? Комментарий (например, «перевод на карту 24.10»):`, '');
@@ -9519,6 +9737,12 @@ function screenSuperAdmin() {
           </select>
           <button class="btn btn-ghost" id="f-export-tenants-csv" style="width:auto">Экспорт в CSV</button>
         </div>
+        <div class="row" style="margin:-4px 0 14px;flex-wrap:wrap;gap:14px;align-items:center">
+          <label class="row small" style="gap:6px;align-items:center;margin:0"><input type="checkbox" id="f-tenant-show-demo" style="width:auto"> <span>Показать демо <span id="f-tenant-demo-n" class="muted"></span></span></label>
+          <label class="row small" style="gap:6px;align-items:center;margin:0"><input type="checkbox" id="f-tenant-show-deleted" style="width:auto"> <span>Показать удалённые <span id="f-tenant-deleted-n" class="muted"></span></span></label>
+          <button class="btn btn-ghost" id="f-tenant-purge-demos" style="width:auto;color:var(--danger)">Удалить все демо</button>
+        </div>
+        <p class="small muted" style="margin:-6px 0 14px">Демо удаляются сами через 3 дня. Удалённые заведения — без данных: их можно убрать из списка совсем.</p>
         <div id="admin-body"><div class="spinner"></div></div>
       </div>
 
@@ -10835,7 +11059,15 @@ function watchAllTenants() {
     if (!body || !body.isConnected) return;
     const term = ($('f-tenant-search')?.value || '').trim().toLowerCase();
     const statusFilter = $('f-tenant-status-filter')?.value || '';
-    let filtered = allTenants.filter((t) =>
+    // Демо и удалённые не захламляют список: показываются по галочке.
+    const showDemo = !!$('f-tenant-show-demo')?.checked;
+    const showDeleted = !!$('f-tenant-show-deleted')?.checked || statusFilter === 'deleted';
+    const demoN = allTenants.filter((t) => t.demo).length;
+    const deletedN = allTenants.filter((t) => !t.demo && t.status === 'deleted').length;
+    if ($('f-tenant-demo-n')) $('f-tenant-demo-n').textContent = demoN ? `(${demoN})` : '';
+    if ($('f-tenant-deleted-n')) $('f-tenant-deleted-n').textContent = deletedN ? `(${deletedN})` : '';
+    if ($('f-tenant-purge-demos')) $('f-tenant-purge-demos').hidden = !demoN;
+    let filtered = allTenants.filter((t) => (showDemo || !t.demo) && (showDeleted || t.status !== 'deleted' || t.demo)).filter((t) =>
       (!term || (t.name || '').toLowerCase().includes(term) || (t.slug || '').toLowerCase().includes(term) ||
         (t.ownerEmail || '').toLowerCase().includes(term)) &&
       (!statusFilter || t.status === statusFilter));
@@ -10899,7 +11131,10 @@ function watchAllTenants() {
             ${t.demo ? `
               <button class="btn-ghost f-tenant-delete-demo" data-id="${esc(t.id)}"
                 style="width:auto;color:var(--danger)">Удалить</button>
-            ` : ''}
+            ` : `
+              <button class="btn-ghost f-tenant-delete" data-id="${esc(t.id)}" data-slug="${esc(t.slug || t.id)}" data-name="${esc(t.name || t.id)}"
+                data-gone="${t.status === 'deleted' ? '1' : ''}" style="width:auto;color:var(--danger)">${t.status === 'deleted' ? 'Убрать из списка' : 'Удалить'}</button>
+            `}
           </div>
         </div>
         ${plans.length ? `
@@ -10928,6 +11163,9 @@ function watchAllTenants() {
     });
     document.querySelectorAll('.f-tenant-delete-demo').forEach((el) => {
       el.onclick = () => deleteDemoTenant(el.dataset.id);
+    });
+    document.querySelectorAll('.f-tenant-delete').forEach((el) => {
+      el.onclick = () => deleteTenantForever(el.dataset.id, el.dataset.slug, el.dataset.name, el.dataset.gone === '1');
     });
     document.querySelectorAll('.f-tenant-plan').forEach((el) => {
       el.onchange = () => changeTenantPlan(el.dataset.id, el.value);
@@ -10967,6 +11205,17 @@ function watchAllTenants() {
   // обработчик заменяется, а не копится.
   $('f-tenant-search').oninput = draw;
   $('f-tenant-status-filter').onchange = draw;
+  $('f-tenant-show-demo').onchange = draw;
+  $('f-tenant-show-deleted').onchange = draw;
+  $('f-tenant-purge-demos').onclick = async () => {
+    if (!confirm('Удалить все демо-заведения сейчас? Демо, созданные за последний час, останутся — ими могут пользоваться прямо сейчас.')) return;
+    try {
+      const r = await callSaasGateway('adminPurgeDemos', {});
+      toast(`Удалено демо: ${r.data.deleted}${r.data.kept ? ` · оставлено свежих: ${r.data.kept}` : ''}`);
+    } catch (e) {
+      toast(`Не удалось удалить демо: ${e?.message || e}`);
+    }
+  };
 
   getDocs(collection(state.db, 'plans')).then((snap) => {
     plans = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -11693,6 +11942,26 @@ async function changeTenantPlan(tenantId, planId) {
   }
 }
 
+/**
+ * Удалить настоящее заведение (или убрать из списка уже удалённое). Подтверждение —
+ * адрес заведения и пароль. Сервер перед удалением сохраняет копию на 30 дней.
+ */
+async function deleteTenantForever(tenantId, slug, name, gone) {
+  const ask = gone
+    ? `Убрать «${name}» из списка совсем? Данных у него уже нет.\n\nДля подтверждения введите адрес заведения: ${slug}`
+    : `Удалить «${name}» безвозвратно — меню, чеки, гостей, сотрудников, курьеров?\nКопия данных сохранится на сервере 30 дней.\n\nДля подтверждения введите адрес заведения: ${slug}`;
+  const typed = prompt(ask, '');
+  if (typed === null) return;
+  if (typed.trim().toLowerCase() !== String(slug).toLowerCase()) { toast('Адрес не совпал — заведение не удалено'); return; }
+  if (!(await reauthenticate('удалить заведение безвозвратно'))) return;
+  try {
+    const r = await callSaasGateway('adminDeleteTenant', { tenantId, confirm: typed.trim() });
+    toast(gone ? 'Убрано из списка' : `Заведение удалено${r.data.backup ? ' · копия на сервере 30 дней' : ''}`);
+  } catch (e) {
+    toast(`Не удалось удалить: ${e?.message || e}`);
+  }
+}
+
 async function deleteDemoTenant(tenantId) {
   if (!confirm('Удалить это демо-заведение безвозвратно вместе со всеми данными?')) return;
   if (!(await reauthenticate('удалить заведение безвозвратно'))) return;
@@ -12250,7 +12519,8 @@ async function loadSecurityPlatform() {
     !wh.lastReceivedAt ? 'unknown' : whAge > 45 * DAY ? 'warn' : 'ok',
     !wh.lastReceivedAt ? `Уведомлений от ${payName} ещё не было` : whAge > 45 * DAY ? `От ${payName} давно не было уведомлений` : `Уведомления об оплатах от ${payName} доходят`,
     `${wh.lastReceivedAt ? `Последнее: ${fmtMs(wh.lastReceivedAt)}${wh.lastEvent ? ` (${esc(wh.lastEvent)})` : ''}. ` : ''}${wh.lastPaymentAt ? `Последний платёж: ${fmtMs(wh.lastPaymentAt)}. ` : ''}`
-      + payHint));
+      + payHint + '<div id="f-sec-rk-out"></div>',
+    '<button type="button" class="btn btn-ghost" id="f-sec-rk-check" style="width:auto">Проверить Робокассу</button>'));
   if (rk && st.robokassaTest) {
     rows.push(checkRowHtml('warn', 'Робокасса в тестовом режиме',
       'Платежи тестовые, деньги не списываются. После активации магазина уберите <code>ROBOKASSA_TEST=1</code> и впишите боевые пароли №1 и №2 в <code>/etc/saas-gateway.env</code>.'));
@@ -12351,6 +12621,26 @@ async function loadSecurityPlatform() {
     };
   };
 
+  // «Проверить Робокассу»: сервер спрашивает Робокассу подписями (пароли не уходят).
+  if ($('f-sec-rk-check')) {
+    $('f-sec-rk-check').onclick = async () => {
+      const btn = $('f-sec-rk-check');
+      const out = $('f-sec-rk-out');
+      btn.disabled = true; btn.textContent = 'Проверяю…';
+      try {
+        const r = (await callSaasGateway('robokassaCheck', {})).data;
+        const icon = { ok: '✅', warn: '⚠️', bad: '⛔' };
+        out.innerHTML = `<div style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:12px">
+          <div style="font-weight:600;margin-bottom:6px">${r.ok ? '✅ Робокасса настроена правильно' : '⛔ Есть ошибки — оплата картой не пройдёт'}</div>
+          ${r.checks.map((c) => `<div style="margin:6px 0">${icon[c.level] || '•'} <b>${esc(c.title)}</b><br><span class="muted">${esc(c.text)}</span></div>`).join('')}
+          ${r.payUrl ? `<div style="margin-top:6px"><a href="${esc(r.payUrl)}" target="_blank" rel="noopener">Открыть страницу оплаты на 1 ₽</a> <span class="muted">— только посмотреть, не оплачивайте</span></div>` : ''}
+        </div>`;
+      } catch (e) {
+        out.innerHTML = `<p class="small" style="color:var(--danger)">Проверка не удалась: ${esc(e?.message || String(e))}</p>`;
+      }
+      btn.disabled = false; btn.textContent = 'Проверить ещё раз';
+    };
+  }
   box.querySelectorAll('.f-sec-certs').forEach((el) => {
     el.onclick = async () => {
       el.disabled = true; el.textContent = 'Проверяю…';

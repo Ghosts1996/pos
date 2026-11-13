@@ -2239,6 +2239,89 @@ function robokassaConfig() {
   };
 }
 
+/**
+ * «Проверить Робокассу» (панель платформы → Безопасность → Платформа):
+ * настройки на сервере, логин и пароль №2 — запросом состояния
+ * несуществующего счёта (OpStateExt: «счёт не найден» = логин, пароль и
+ * подпись верны), пароль №1 — открытием страницы оплаты на 1 ₽ (без оплаты).
+ * Пароли наружу не уходят — только подписи.
+ */
+async function robokassaSelfCheck({ fetchImpl = fetch } = {}) {
+  const checks = [];
+  const push = (level, title, text) => checks.push({ level, title, text });
+  const login = String(process.env.ROBOKASSA_LOGIN || "").trim();
+  const p1 = String(process.env.ROBOKASSA_PASSWORD1 || "");
+  const p2 = String(process.env.ROBOKASSA_PASSWORD2 || "");
+  const algo = String(process.env.ROBOKASSA_HASH || "md5").trim().toLowerCase();
+  const test = process.env.ROBOKASSA_TEST === "1";
+  const missing = [!login && "ROBOKASSA_LOGIN", !p1 && "ROBOKASSA_PASSWORD1", !p2 && "ROBOKASSA_PASSWORD2"].filter(Boolean);
+  if (missing.length) {
+    push("bad", "Настройки Робокассы не заданы", `Не хватает в /etc/saas-gateway.env: ${missing.join(", ")}.`);
+    return { ok: false, checks };
+  }
+  if (!ROBOKASSA_HASHES.includes(algo)) {
+    push("bad", "Неизвестный алгоритм подписи", `ROBOKASSA_HASH=${algo} — нужен один из: ${ROBOKASSA_HASHES.join(", ")} (как в «Технических настройках» магазина).`);
+    return { ok: false, checks };
+  }
+  push("ok", "Настройки на сервере есть", `Магазин «${login}», подпись ${algo.toUpperCase()}${test ? ", тестовый режим (ROBOKASSA_TEST=1)" : ""}.`);
+  const get = async (url) => {
+    const r = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(12000), headers: { "User-Agent": "ZalPOS-check" } });
+    return { status: r.status, url: r.url || url, text: await r.text() };
+  };
+  const code = (xml, block) => { const m = new RegExp(`<${block}>\\s*<Code>(\\d+)</Code>`, "i").exec(xml); return m ? Number(m[1]) : null; };
+  const descr = (xml) => { const m = /<Description>([^<]{1,200})<\/Description>/i.exec(xml); return m ? m[1] : ""; };
+
+  // Логин и пароль №2: состояние счёта, которого точно нет.
+  const inv = String(2000000000 + Math.floor(Math.random() * 100000000));
+  const state = async (a) => {
+    const q = new URLSearchParams({ MerchantLogin: login, InvoiceID: inv, Signature: robokassaHash(a, `${login}:${inv}:${p2}`) });
+    const r = await get(`https://auth.robokassa.ru/Merchant/WebService/Service.asmx/OpStateExt?${q}`);
+    return { c: code(r.text, "Result"), d: descr(r.text) };
+  };
+  try {
+    let s = await state(algo);
+    let viaMd5 = false;
+    if (s.c === 1 && algo !== "md5") { const m = await state("md5"); if (m.c === 3 || m.c === 0) { s = m; viaMd5 = true; } }
+    if (s.c === 3 || s.c === 0) {
+      push("ok", "Логин и пароль №2 верные", `Робокасса ответила «счёт не найден» на проверочный запрос — значит, магазин и пароль №2 приняты${viaMd5 ? " (для запросов состояния Робокасса берёт MD5)" : ""}. Уведомления об оплате (Result URL) сервер проверит этим же паролем.`);
+    } else if (s.c === 1) {
+      push("bad", "Пароль №2 не подходит", `Робокасса: «неверная подпись». Проверьте пароль №2 в /etc/saas-gateway.env и алгоритм подписи (сейчас ${algo.toUpperCase()}) — они должны совпадать с «Техническими настройками» магазина${test ? "; в тестовом режиме — тестовые пароли" : ""}.`);
+    } else if (s.c === 2) {
+      push("bad", "Магазин не найден", `Робокасса не знает магазин «${login}» — проверьте ROBOKASSA_LOGIN (идентификатор магазина) и что магазин активирован.`);
+    } else {
+      push("warn", "Робокасса ответила непонятно", `Код ${s.c === null ? "—" : s.c}${s.d ? `: ${s.d}` : ""}.`);
+    }
+  } catch (e) {
+    push("warn", "Нет связи с Робокассой", `Запрос состояния не прошёл: ${String(e && e.message || e).slice(0, 120)}. Попробуйте позже.`);
+  }
+
+  // Пароль №1: страница оплаты на 1 ₽ (ничего не списывается, пока не оплатить).
+  const out = "1.00";
+  const params = new URLSearchParams({ MerchantLogin: login, OutSum: out, InvId: "0", Description: "Проверка настроек ZalPOS — не оплачивайте", SignatureValue: robokassaHash(algo, `${login}:${out}:0:${p1}`), ...(test ? { IsTest: "1" } : {}) });
+  const payUrl = `${ROBOKASSA_PAY_URL}?${params}`;
+  try {
+    const r = await get(payUrl);
+    const errCode = (/ErrorCode=(\d+)/i.exec(r.url) || /ErrorCode=(\d+)/i.exec(r.text) || [])[1];
+    const sigBad = /SignatureValue|неверн[а-я]* (?:контрольн|подпис)|wrong signature/i.test(r.text) && /ошибк|error/i.test(r.text);
+    if (errCode || sigBad || r.status >= 400) {
+      push("bad", "Пароль №1 не подходит", `Страница оплаты открылась с ошибкой${errCode ? ` (код ${errCode})` : ""}: проверьте пароль №1 и алгоритм подписи${test ? " (в тестовом режиме — тестовый пароль №1)" : ""}. Гости и заведения не смогут оплатить картой.`);
+    } else {
+      push("ok", "Страница оплаты открывается", "Ссылка на оплату с паролем №1 принята Робокассой без ошибки подписи. Можно открыть её и посмотреть — платить не нужно.");
+    }
+  } catch (e) {
+    push("warn", "Не удалось открыть страницу оплаты", `${String(e && e.message || e).slice(0, 120)}. Откройте ссылку ниже сами.`);
+  }
+  push("ok", "Адреса для «Технических настроек» Робокассы",
+    `Result URL: ${process.env.PUBLIC_GATEWAY_URL || "https://pii.zalpos.ru/saas"}/robokassaResult (метод GET или POST). Success URL и Fail URL — страницы zalpos.ru (их подставляет сам сервер в ссылке на оплату).`);
+  return { ok: !checks.some((c) => c.level === "bad"), checks, payUrl };
+}
+
+async function handleRobokassaCheck(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  sendJson(res, 200, await robokassaSelfCheck());
+}
+
 function robokassaHash(algo, str) {
   return crypto.createHash(algo).update(str, "utf8").digest("hex");
 }
@@ -2613,7 +2696,7 @@ async function markPastDue(id, subRef, isChain = false) {
  *  заведения (status: deleted) и подписка (cancelled) остаются для истории,
  *  в отличие от демо. skipSubscription — для точки сети: своей подписки у
  *  неё нет, подписку сети отменяет purgeChainData. */
-async function purgeTenantData(tenantId, { skipSubscription = false } = {}) {
+async function purgeTenantData(tenantId, { skipSubscription = false, reason = "grace_period_expired" } = {}) {
   const firestore = db();
   const tenantRef = firestore.collection("tenants").doc(tenantId);
 
@@ -2635,7 +2718,7 @@ async function purgeTenantData(tenantId, { skipSubscription = false } = {}) {
   }
   await writeAuditLog({
     tenantId, actorId: null, action: "tenantDataPurged",
-    metadata: { reason: "grace_period_expired", graceDays: GRACE_PERIOD_DAYS },
+    metadata: { reason, ...(reason === "grace_period_expired" ? { graceDays: GRACE_PERIOD_DAYS } : {}) },
   });
 }
 
@@ -3093,6 +3176,8 @@ async function sweepTenantBuilds() {
     }
   }
   if (removedFiles) console.log(`saas-gateway: удалено старых сборок: ${removedFiles}, освобождено ${Math.round(freedBytes / 1048576)} МБ`);
+  // Копии удалённых заведений — 30 дней, дальше место на диске важнее.
+  pruneDeletedBackups();
   return { removedFiles, freedBytes };
 }
 
@@ -5220,6 +5305,113 @@ async function handleDeleteDemoTenant(req, res) {
   sendJson(res, 200, { ok: true });
 }
 
+/**
+ * Удалить любое заведение из панели платформы (не только демо). Подтверждение —
+ * адрес заведения (slug) и недавний вход. Перед удалением — копия данных на
+ * сервере (BACKUP_DIR/deleted, 30 дней): удалили по ошибке — восстанавливается
+ * restore-backup.js. Данные гостей в справочнике РФ стираются, владельцу
+ * платформы уходит акт об уничтожении. Уже удалённое (status: deleted) —
+ * убирается из списка совсем.
+ */
+const DELETED_BACKUP_DAYS = 30;
+function pruneDeletedBackups() {
+  const dir = path.join(BACKUP_DIR, "deleted");
+  let files = [];
+  try { files = fs.readdirSync(dir); } catch (_) { return; }
+  for (const f of files) {
+    try {
+      const st = fs.statSync(path.join(dir, f));
+      if (Date.now() - st.mtimeMs > DELETED_BACKUP_DAYS * 86400000) fs.unlinkSync(path.join(dir, f));
+    } catch (_) {}
+  }
+}
+async function backupBeforeDelete(tenantId) {
+  const docs = {};
+  await exportTenant(tenantId, docs, 500000);
+  const dir = path.join(BACKUP_DIR, "deleted");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const file = `tenant-${tenantId}-${new Date().toISOString().replace(/[:.]/g, "-")}.json.gz`;
+  const payload = zlib.gzipSync(JSON.stringify({ format: 1, createdAt: new Date().toISOString(), reason: "deleted by super admin", docs }));
+  fs.writeFileSync(path.join(dir, file), payload, { mode: 0o600 });
+  pruneDeletedBackups();
+  return { file, docs: Object.keys(docs).length, bytes: payload.length };
+}
+
+async function handleAdminDeleteTenant(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  requireRecentAuth(decoded);
+  const { tenantId, confirm } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
+  const firestore = db();
+  const ref = firestore.collection("tenants").doc(tenantId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpError(404, "Заведение не найдено");
+  const data = snap.data() || {};
+  const want = String(data.slug || tenantId).toLowerCase();
+  if (String(confirm || "").trim().toLowerCase() !== want) {
+    throw new HttpError(400, `Для подтверждения введите адрес заведения: ${want}`);
+  }
+  const label = await tenantLabel(tenantId, data);
+  if (data.demo === true) {
+    await purgeDemoTenant(tenantId);
+  } else if (data.status === "deleted") {
+    // Данные уже стёрты — убрать и сам документ, чтобы не висел в списке.
+    await ref.delete();
+    if (!data.chainId) await firestore.collection("subscriptions").doc(tenantId).delete().catch(() => {});
+  } else {
+    const backup = await backupBeforeDelete(tenantId);
+    const chainId = data.chainId || null;
+    // Имена и телефоны гостей — в справочнике в РФ: стереть, пока заведение есть.
+    if (pii.enabled()) {
+      const points = chainId ? await firestore.collection("tenants").where("chainId", "==", chainId).get() : null;
+      const lastPoint = !!chainId && points.docs.every((d) => d.id === tenantId || (d.data() || {}).status === "deleted");
+      await pii.call({ tenantId, kind: "pii_purge", ...(lastPoint ? { chain: true } : {}) }).catch((e) => {
+        console.error(`saas-gateway: справочник ${tenantId} не стёрт:`, e.message || e);
+      });
+    }
+    await purgeTenantData(tenantId, { skipSubscription: !!chainId, reason: "deleted_by_super_admin" });
+    await courier.purgeRoot(`t_${tenantId}`).catch(() => {});
+    if (chainId) {
+      const left = (await firestore.collection("tenants").where("chainId", "==", chainId).get()).docs
+        .filter((d) => (d.data() || {}).status !== "deleted");
+      if (!left.length) {
+        await purgeChainData(chainId);
+        await courier.purgeRoot(`c_${chainId}`).catch(() => {});
+      }
+    }
+    legalPapers.destruction([{
+      subject: `Персональные данные гостей, сотрудников и курьеров заведения «${String(data.name || tenantId).trim()}»`,
+      categories: [...GUEST_PD_CATEGORIES, "имена и телефоны сотрудников", "данные курьеров заведения"],
+      processor: `Заведение «${String(data.name || tenantId).trim()}» (Заказчик Платформы)`,
+    }], { reason: "Удаление заведения с Платформы по решению Исполнителя" });
+    await writeAuditLog({ tenantId, actorId: decoded.uid, action: "tenantDeletedBySuperAdmin", metadata: { backup: backup.file, docs: backup.docs } });
+    await writeSecurityEvent(req, decoded, "tenantDeletedBySuperAdmin", { tenantId, metadata: label });
+    return sendJson(res, 200, { ok: true, backup: backup.file, docs: backup.docs });
+  }
+  await writeAuditLog({ tenantId, actorId: decoded.uid, action: data.demo === true ? "demoTenantDeletedBySuperAdmin" : "tenantRemovedBySuperAdmin" });
+  await writeSecurityEvent(req, decoded, data.demo === true ? "demoTenantDeletedBySuperAdmin" : "tenantRemovedBySuperAdmin", { tenantId, metadata: label });
+  sendJson(res, 200, { ok: true });
+}
+
+/** Удалить сразу все демо-заведения (кроме созданных за последний час — ими сейчас пользуются). */
+async function handleAdminPurgeDemos(req, res) {
+  const decoded = await verifyAuth(req);
+  await requireSuperAdmin(decoded);
+  const snap = await db().collection("tenants").where("demo", "==", true).get();
+  const hourAgo = Date.now() - 3600 * 1000;
+  let n = 0;
+  for (const d of snap.docs) {
+    const created = d.data().createdAt;
+    const ms = created && typeof created.toMillis === "function" ? created.toMillis() : 0;
+    if (ms > hourAgo) continue;
+    await purgeDemoTenant(d.id);
+    n++;
+  }
+  await writeSecurityEvent(req, decoded, "demoTenantsPurgedBySuperAdmin", { metadata: { count: n } });
+  sendJson(res, 200, { ok: true, deleted: n, kept: snap.size - n });
+}
+
 // ------------------------------------------------ бэкап заведения или сети
 //
 // Кнопка «Скачать бэкап» в кабинете (владелец — своё заведение или сеть) и
@@ -6092,7 +6284,8 @@ async function runCertificateCheck() {
     });
     chains.docs.forEach((d) => {
       const c = d.data();
-      if (c.slug && c.status !== "deleted") slugs.add(c.slug);
+      // Демо-сети живут 3 дня на общем сертификате демо — их не проверяем.
+      if (c.slug && c.status !== "deleted" && c.demo !== true && !/^demo-/.test(c.slug)) slugs.add(c.slug);
     });
     const hosts = [GATEWAY_PUBLIC_HOST, ...[...slugs].sort().map((slug) => `${slug}.${GUEST_BASE_DOMAIN}`)];
     const results = [];
@@ -8325,6 +8518,8 @@ async function refreshMapRegions() {
 const deliveryAdmin = createDeliveryAdmin({
   db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole, requireChainRole,
   onSaved: (ids) => { telegram.forgetDeliverySettings(ids); courier.forgetCache(); },
+  // Место заведения поставили вручную — карту и районы вокруг соберёт map-build.
+  onVenuePos: () => { refreshMapRegions(); },
 });
 // Курьеры служб доставки (Яндекс Доставка, Достависта) — delivery-services.js.
 const deliveryServices = createDeliveryServices({
@@ -9519,6 +9714,7 @@ const ROUTES = {
   "/courierAdminForget": courier.handleAdminForget,
   "/deliverySettings": deliveryAdmin.handleGet,
   "/deliverySettingsSave": deliveryAdmin.handleSave,
+  "/deliveryVenuePos": deliveryAdmin.handleVenuePos,
   "/deliveryMenuSave": deliveryAdmin.handleMenuSave,
   "/deliveryServices": deliveryServices.handleGet,
   "/deliveryServicesSave": deliveryServices.handleSave,
@@ -9570,6 +9766,8 @@ const ROUTES = {
   "/changeTenantPlan": handleChangeTenantPlan,
   "/grantBonusPeriod": handleGrantBonusPeriod,
   "/deleteDemoTenant": handleDeleteDemoTenant,
+  "/adminDeleteTenant": handleAdminDeleteTenant,
+  "/adminPurgeDemos": handleAdminPurgeDemos,
   "/getDownloadUrl": handleGetDownloadUrl,
   // Проверка обновлений: гостю без входа, кассе — участнику заведения.
   "/appUpdate": handleAppUpdate,
@@ -9589,6 +9787,7 @@ const ROUTES = {
   "/deletePlan": handleDeletePlan,
   "/securityStatus": handleSecurityStatus,
   "/runCertificateCheck": handleRunCertificateCheck,
+  "/robokassaCheck": handleRobokassaCheck,
   "/runBackup": handleRunBackup,
   "/downloadBackup": handleDownloadBackup,
   "/reprovisionDomain": handleReprovisionDomain,
@@ -9867,4 +10066,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines });
+Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck });

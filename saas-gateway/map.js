@@ -18,6 +18,7 @@ const path = require("path");
 const zlib = require("zlib");
 const { openPmtiles } = require("./map-tiles");
 const { createRouter } = require("./map-router");
+const districtsLib = require("./map-districts");
 
 const STATIC = {
   "maplibre-gl-csp.js": ["map-web", "text/javascript; charset=utf-8"],
@@ -172,6 +173,43 @@ function createMap({
     fs.createReadStream(f.gz ? `${f.file}.gz` : f.file).on("error", () => res.destroy()).pipe(res);
   }
 
+  /**
+   * Районы вокруг точки заведения (административные границы OpenStreetMap,
+   * собирает map-build.js → districts-<район>.json). Для кабинета: список с
+   * галочками и ценами, контуры — для карты и для цены доставки по точке гостя.
+   * → { ok, area, list: [{ id, name, parent, km, here, areaKm2, center, rings }] }
+   *   или { ok: false, reason: "noarea" | "building" }.
+   */
+  const districtsCache = new Map(); // id района карты → { mtime, data }
+  function districtsData(id) {
+    const file = path.join(dir, `districts-${id}.json`);
+    let st;
+    try { st = fs.statSync(file); } catch (_) { return null; }
+    const hit = districtsCache.get(id);
+    if (hit && hit.mtime === st.mtimeMs) return hit.data;
+    let data = null;
+    try { data = JSON.parse(fs.readFileSync(file, "utf8")); } catch (_) { return null; }
+    districtsCache.set(id, { mtime: st.mtimeMs, data });
+    while (districtsCache.size > 3) districtsCache.delete(districtsCache.keys().next().value);
+    return data;
+  }
+  function districts(lat, lng, km = 20) {
+    lat = Number(lat); lng = Number(lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return { ok: false, reason: "point" };
+    const radius = Math.max(3, Math.min(60, Number(km) || 20));
+    const own = areas().filter((a) => lng >= a.bbox[0] && lng <= a.bbox[2] && lat >= a.bbox[1] && lat <= a.bbox[3]);
+    if (!own.length) return { ok: false, reason: "noarea" };
+    // Ближайший к центру района карты — точнее (район карты — круг вокруг города).
+    own.sort((a, b) => Math.hypot(a.center[0] - lat, a.center[1] - lng) - Math.hypot(b.center[0] - lat, b.center[1] - lng));
+    const area = own.find((a) => districtsData(a.id)) || null;
+    if (!area) return { ok: false, reason: "building" };
+    const list = districtsLib.near(districtsData(area.id), lat, lng, radius).map((d) => ({
+      id: d.id, name: d.name, parent: d.parent, km: d.km, here: d.here, areaKm2: d.areaKm2, rest: d.rest,
+      center: d.center, rings: districtsLib.compactRings(d.rings, 220),
+    }));
+    return { ok: true, area: { id: area.id, name: area.name }, list };
+  }
+
   /** Итог последней сборки карты (map-build.js): когда, получилось ли, ошибки. */
   function buildStatus() {
     try {
@@ -292,6 +330,14 @@ function createMap({
       const v = (/(?:^|&)v=([0-9a-f]{1,20})(?:&|$)/.exec(query) || [])[1] || "";
       return sendTile(req, res, z, x, y, v);
     }
+    if (rel === "districts") {
+      const q = new URLSearchParams(query);
+      const raw = Buffer.from(JSON.stringify(districts(q.get("lat"), q.get("lng"), q.get("km"))));
+      const gz = acceptsGzip(req);
+      const body = gz ? zlib.gzipSync(raw) : raw;
+      res.writeHead(200, headers("application/json; charset=utf-8", { "Cache-Control": "public, max-age=600", ...(gz ? { "Content-Encoding": "gzip" } : {}), "Content-Length": body.length, Vary: "Accept-Encoding" }));
+      return res.end(req.method === "HEAD" ? undefined : body);
+    }
     m = /^graph\/([0-9-]{3,20})\.graph$/.exec(rel);
     if (m) return sendGraph(req, res, m[1]);
     m = /^fonts\/([^/]{1,200})\/(\d{1,5})-(\d{1,5})\.pbf$/.exec(rel);
@@ -348,7 +394,7 @@ function createMap({
     return router.close();
   }
 
-  return { serve, info, route, saveRegions, close };
+  return { serve, info, route, saveRegions, districts, close };
 }
 
 module.exports = { createMap };

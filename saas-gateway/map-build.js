@@ -432,13 +432,19 @@ function buildRoads(regions, { force, dryRun }) {
     const raw = path.join(DIR, `roads-${id}.graph`);
     return fs.existsSync(raw) ? raw : null;
   };
-  const todo = regions.filter((r) => {
+  const roadsDue = (r) => {
     const m = meta[r.id];
     return force || !m || JSON.stringify(m.bbox) !== JSON.stringify(r.bbox) || !graphFile(r.id) || daysSince(m.at) > ROADS_MAX_DAYS;
-  });
-  // Графы районов, которых больше нет, — убрать.
+  };
+  // Районы города (границы из OpenStreetMap) — вместе с дорогами; у районов,
+  // собранных до появления районов, — отдельным проходом без пересборки дорог.
+  const districtsFile = (id) => path.join(DIR, `districts-${id}.json`);
+  const todo = regions.filter((r) => roadsDue(r) || !fs.existsSync(districtsFile(r.id)));
+  // Графы и районы городов, которых больше нет, — убрать.
   const keep = new Set(regions.map((r) => r.id));
   for (const f of fs.readdirSync(DIR)) {
+    const dm = /^districts-([0-9-]+)\.json$/.exec(f);
+    if (dm && !keep.has(dm[1]) && !dryRun) { fs.unlinkSync(path.join(DIR, f)); log(`районы: убрал ${f}`); continue; }
     const m = /^roads-([0-9-]+)\.graph(\.gz)?$/.exec(f);
     if (m && !keep.has(m[1]) && !dryRun) { fs.unlinkSync(path.join(DIR, f)); delete meta[m[1]]; log(`дороги: убрал ${f}`); }
   }
@@ -489,7 +495,14 @@ function buildRoads(regions, { force, dryRun }) {
         // координаты в линиях (индекс по узлам района, ~0,3 ГБ). Обрывки
         // дорог на краю района пропускаются.
         const hash = ["--hash-memory=200"];
-        run("osmconvert", [pbf, `-b=${r.bbox.join(",")}`, "--complete-ways", ...hash, `-o=${cut}`], { heavy: true });
+        // --complete-boundaries: границы районов приходят целыми (для списка районов).
+        run("osmconvert", [pbf, `-b=${r.bbox.join(",")}`, "--complete-boundaries", ...hash, `-o=${cut}`], { heavy: true });
+        try {
+          buildDistricts(osmium, cut, r, work, hash);
+        } catch (e) {
+          log(`!! районы: ${r.name || r.id} — ${e.message}`); // не мешает дорогам
+        }
+        if (!roadsDue(r)) { fs.unlinkSync(cut); log(`районы: ${r.name || r.id} готовы (дороги свежие)`); continue; }
         run("osmfilter", [cut, "--keep=highway=", "--drop-relations", "--drop-author", ...hash, `-o=${roadsO5m}`], { heavy: true });
         fs.unlinkSync(cut);
         run("osmconvert", [roadsO5m, ...hash, `-o=${roads}`], { heavy: true });
@@ -522,6 +535,25 @@ function buildRoads(regions, { force, dryRun }) {
   }
   if (failed.length) throw new Error(`не собраны ${failed.length}: ${failed.slice(0, 5).join("; ")}`);
   return { done };
+}
+
+/**
+ * Районы города: административные границы из уже вырезанного района →
+ * districts-<район>.json (см. map-districts.js). Без районов доставка
+ * работает как раньше — по районам, которые заведение назвало само.
+ */
+function buildDistricts(osmium, cut, r, work, hash) {
+  const bo5m = path.join(work, `bnd-${r.id}.o5m`);
+  const bpbf = path.join(work, `bnd-${r.id}.osm.pbf`);
+  const bjson = path.join(work, `bnd-${r.id}.geojson`);
+  try {
+    run("osmfilter", [cut, "--keep=", "--keep-relations=boundary=administrative", "--drop-author", ...hash, `-o=${bo5m}`], { heavy: true });
+    run("osmconvert", [bo5m, ...hash, `-o=${bpbf}`], { heavy: true });
+    run(osmium, ["export", bpbf, "-f", "geojson", "-a", "type,id", "--overwrite", "-o", bjson], { heavy: true });
+    run(process.execPath, ["--max-old-space-size=640", path.join(__dirname, "map-districts.js"), "build", bjson, path.join(DIR, `districts-${r.id}.json`), r.bbox.join(",")], { heavy: true });
+  } finally {
+    for (const f of [bo5m, bpbf, bjson]) { try { fs.unlinkSync(f); } catch (_) {} }
+  }
 }
 
 /* ------------------------------ запуск ------------------------------ */
@@ -561,7 +593,7 @@ function main() {
   // если код карты обновился (иначе старая сборка доделает по-старому).
   try {
     const sum = crypto.createHash("sha1");
-    for (const f of ["map-build.js", "map-graph.js"]) sum.update(fs.readFileSync(path.join(__dirname, f)));
+    for (const f of ["map-build.js", "map-graph.js", "map-districts.js"]) sum.update(fs.readFileSync(path.join(__dirname, f)));
     fs.writeFileSync(path.join(DIR, ".code"), sum.digest("hex"));
   } catch (_) {}
   if (!dryRun) cleanLeftovers();

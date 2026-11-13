@@ -451,6 +451,39 @@ async function main() {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
+  // «Проверить Робокассу»: подставная Робокасса — ответы на подпись.
+  {
+    const keep = { ...process.env };
+    Object.assign(process.env, { ROBOKASSA_LOGIN: "shop1", ROBOKASSA_PASSWORD1: "pass1", ROBOKASSA_PASSWORD2: "pass2", ROBOKASSA_HASH: "md5" });
+    const md5 = (s) => require("crypto").createHash("md5").update(s).digest("hex");
+    const seen = [];
+    const fake = (opts = {}) => async (url) => {
+      seen.push(url);
+      const u = new URL(url);
+      if (/OpStateExt/.test(url)) {
+        const inv = u.searchParams.get("InvoiceID");
+        const ok = u.searchParams.get("Signature") === md5(`shop1:${inv}:${opts.p2 || "pass2"}`);
+        return { status: 200, url, text: async () => `<OperationStateResponse><Result><Code>${ok ? 3 : 1}</Code><Description>${ok ? "Счёт не найден" : "Неверная подпись"}</Description></Result></OperationStateResponse>` };
+      }
+      const ok = u.searchParams.get("SignatureValue") === md5(`shop1:1.00:0:${opts.p1 || "pass1"}`);
+      return ok ? { status: 200, url, text: async () => "<html><form>Оплата 1 ₽</form></html>" }
+        : { status: 200, url: "https://auth.robokassa.ru/Merchant/Error?ErrorCode=29", text: async () => "<html>Ошибка</html>" };
+    };
+    let r = await server.robokassaSelfCheck({ fetchImpl: fake() });
+    check("Робокасса: верные пароли — всё зелёное", r.ok && r.checks.filter((c) => c.level === "ok").length >= 3 && /Робокасс/.test(r.payUrl || "") === false && r.payUrl.includes("IsTest") === false);
+    check("Робокасса: пароли не уходят наружу", seen.every((u) => !u.includes("pass1") && !u.includes("pass2")));
+    r = await server.robokassaSelfCheck({ fetchImpl: fake({ p2: "other" }) });
+    check("Робокасса: неверный пароль №2", !r.ok && r.checks.some((c) => c.level === "bad" && /Пароль №2/.test(c.title)));
+    r = await server.robokassaSelfCheck({ fetchImpl: fake({ p1: "other" }) });
+    check("Робокасса: неверный пароль №1", !r.ok && r.checks.some((c) => c.level === "bad" && /Пароль №1/.test(c.title) && /29/.test(c.text)));
+    r = await server.robokassaSelfCheck({ fetchImpl: async () => { throw new Error("ECONNREFUSED"); } });
+    check("Робокасса: нет связи — предупреждение, не ошибка", r.ok && r.checks.some((c) => c.level === "warn" && /связи/.test(c.title)));
+    delete process.env.ROBOKASSA_PASSWORD2;
+    r = await server.robokassaSelfCheck({ fetchImpl: fake() });
+    check("Робокасса: не задан пароль — сказано, какой", !r.ok && r.checks[0].text.includes("ROBOKASSA_PASSWORD2"));
+    for (const k of ["ROBOKASSA_LOGIN", "ROBOKASSA_PASSWORD1", "ROBOKASSA_PASSWORD2", "ROBOKASSA_HASH"]) { if (k in keep) process.env[k] = keep[k]; else delete process.env[k]; }
+  }
+
   server.close();
   console.log(`\nsaas-gateway: smoke-тесты валидации — ${passed} прошли, ${failed} упали`);
   process.exit(failed ? 1 : 0);
