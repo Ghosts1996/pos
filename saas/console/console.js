@@ -2597,7 +2597,7 @@ function handleAuthChange(user) {
     if (Array.isArray(cached) && cached.length && cached.every((t) => t && typeof t.id === 'string')) {
       state.tenants = cached;
       state.tenantsLoaded = true;
-      if (!state.activeTenantId || !cached.some((t) => t.id === state.activeTenantId)) state.activeTenantId = cached[0].id;
+      state.activeTenantId = pickVenue(cached);
     }
   } catch (_) { /* приватный режим */ }
   state.partner = null;
@@ -2675,8 +2675,8 @@ function watchMemberships() {
     try { localStorage.setItem(`${TENANTS_CACHE_KEY}:${state.uid}`, JSON.stringify(list)); } catch (_) { /* приватный режим */ }
     if (!list.length) {
       state.activeTenantId = null;
-    } else if (!state.activeTenantId || !list.some((t) => t.id === state.activeTenantId)) {
-      state.activeTenantId = list[0].id;
+    } else {
+      state.activeTenantId = pickVenue(list);
     }
     route();
   }, () => {
@@ -2705,6 +2705,22 @@ const PUBLIC_ROUTES = {
 // откроется на вкладке «Оплата». Запоминаем в localStorage — вход по ссылке
 // из письма возвращает на #/ и адрес теряет.
 const PENDING_TAB_KEY = 'zalpos-pending-tab';
+// Открытый раздел кабинета и выбранное заведение — в памяти вкладки
+// (sessionStorage): после обновления страницы открывается тот же раздел, а не «Обзор».
+const LAST_TAB_KEY = 'zalpos-tab';
+const LAST_VENUE_KEY = 'zalpos-venue';
+function rememberTab(tab) { try { sessionStorage.setItem(LAST_TAB_KEY, tab); } catch (_) {} }
+function rememberedTab() { try { return sessionStorage.getItem(LAST_TAB_KEY) || ''; } catch (_) { return ''; } }
+function rememberVenue() {
+  try { if (state.uid && state.activeTenantId) sessionStorage.setItem(`${LAST_VENUE_KEY}:${state.uid}`, state.activeTenantId); } catch (_) {}
+}
+/** Заведение для кабинета: выбранное раньше в этой вкладке, иначе первое. */
+function pickVenue(list) {
+  if (state.activeTenantId && list.some((t) => t.id === state.activeTenantId)) return state.activeTenantId;
+  let saved = '';
+  try { saved = sessionStorage.getItem(`${LAST_VENUE_KEY}:${state.uid}`) || ''; } catch (_) {}
+  return list.some((t) => t.id === saved) ? saved : list[0].id;
+}
 
 // ---------- ЧАТ ПОДДЕРЖКИ (круглая кнопка в углу) ----------
 // Для посетителей сайта и вошедших без своего заведения (support-chat.js) —
@@ -2794,6 +2810,7 @@ function route() {
     if (location.hash === '#/forgot') return screenForgot();
     return screenLanding();
   }
+  if (!isAccountRoute(location.hash)) history.replaceState(null, '', location.pathname + '#/');
   if (location.hash.startsWith('#/invoice/')) {
     return screenBankInvoice(location.hash.slice('#/invoice/'.length));
   }
@@ -2829,6 +2846,12 @@ function route() {
     return screenPartner();
   }
   return screenDashboardOrOnboarding();
+}
+
+/** Адреса, которые у вошедшего открывают свой экран; остальные (#/login, #/signup, старые ссылки) — кабинет «#/». */
+function isAccountRoute(h) {
+  return h === '' || h === '#' || h === '#/' || h === '#/admin' || h === '#/partner' || h === '#/onboarding'
+    || h.startsWith('#/invoice/') || h.startsWith('#/act/');
 }
 
 function screenNotPartner() {
@@ -5160,6 +5183,7 @@ const FAQ_ITEMS = [
 function screenDashboard() {
   screenEl().classList.add('has-tabbar');
   markScreen();
+  rememberVenue();
   // Переключатель заведения — в боковом меню, доступен с любой вкладки.
   screenEl().innerHTML = `<div id="dash-body"><div class="spinner"></div></div>`;
   watchDashboardData(state.activeTenantId);
@@ -5340,7 +5364,10 @@ function watchDashboardData(tenantId) {
     const pending = window.localStorage.getItem(PENDING_TAB_KEY);
     if (pending) {
       window.localStorage.removeItem(PENDING_TAB_KEY);
-      if (DASHBOARD_NAV.some((t) => t.id === pending)) activeTab = pending;
+      if (DASHBOARD_NAV.some((t) => t.id === pending)) { activeTab = pending; rememberTab(pending); }
+    } else {
+      const last = rememberedTab();
+      if (DASHBOARD_NAV.some((t) => t.id === last)) activeTab = last;
     }
   } catch (_) {}
   // Открытые статьи инструкции: экран перерисовывается целиком при каждом
@@ -7081,6 +7108,7 @@ function watchDashboardData(tenantId) {
         e.preventDefault();
         if (activeTab !== el.dataset.tab) window.scrollTo(0, 0);
         activeTab = el.dataset.tab;
+        rememberTab(activeTab);
         // Ссылка на конкретную статью: инструкция откроется с поиском по ней.
         if (el.dataset.guideQ) guidePendingQuery = el.dataset.guideQ;
         draw();
