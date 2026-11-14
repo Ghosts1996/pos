@@ -1,5 +1,8 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../data/app_db.dart';
+import '../../services/app_scope.dart';
 import '../../services/egais_service.dart';
 import '../../utils/human_error.dart';
 
@@ -23,6 +26,12 @@ class _EgaisWaybillsScreenState extends State<EgaisWaybillsScreen> {
   final Set<String> _busy = {};
   final Map<String, String> _done = {};
 
+  /// Ответы, уже отправленные по накладным (с любой кассы заведения):
+  /// settings/egaisActs.acts[<номер справки>] = {kind, at}. Второй акт по той
+  /// же накладной ЕГАИС отклонит, а кассир решит, что приёмка не прошла.
+  DocumentReference<Map<String, dynamic>> get _actsRef => AppScope.col('settings').doc('egaisActs');
+  Map<String, dynamic> _acts = const {};
+
   @override
   void initState() {
     super.initState();
@@ -36,6 +45,10 @@ class _EgaisWaybillsScreenState extends State<EgaisWaybillsScreen> {
     });
     try {
       final list = await widget.service.waybills(widget.docs);
+      try {
+        final d = await _actsRef.get();
+        _acts = Map<String, dynamic>.from((d.data()?['acts'] as Map?) ?? const {});
+      } catch (_) {}
       if (mounted) setState(() => _list = list);
     } catch (e) {
       if (mounted) setState(() => _error = humanError(e));
@@ -61,6 +74,24 @@ class _EgaisWaybillsScreenState extends State<EgaisWaybillsScreen> {
     );
     if (ok != true) return;
     setState(() => _busy.add(wb.url));
+    final kind = !accept ? 'rejected' : real.isEmpty ? 'accepted' : 'differences';
+    // Занять накладную транзакцией: две кассы, нажавшие разом, не отправят два акта.
+    String? taken;
+    try {
+      taken = await AppDb.instance.runTransaction<String?>((tx) async {
+        final snap = await tx.get(_actsRef);
+        final acts = (snap.data()?['acts'] as Map?) ?? const {};
+        if (acts[wb.regId] != null) return 'Ответ по этой накладной уже отправлен с другой кассы — ждите квитанцию ЕГАИС во входящих.';
+        tx.set(_actsRef, {'acts': {wb.regId: {'kind': kind, 'at': FieldValue.serverTimestamp(), 'number': wb.number}}}, SetOptions(merge: true));
+        return null;
+      });
+    } catch (e) {
+      taken = 'Нет связи с сервером — ответ не отправлен, попробуйте ещё раз.';
+    }
+    if (taken != null) {
+      if (mounted) setState(() { _busy.remove(wb.url); _done[wb.url] = taken!; });
+      return;
+    }
     try {
       final reply = await widget.service.sendAct(wb, accept: accept, real: real);
       if (!mounted) return;
@@ -68,6 +99,8 @@ class _EgaisWaybillsScreenState extends State<EgaisWaybillsScreen> {
           ? 'Отказ отправлен в УТМ${reply.isEmpty ? '' : ' (запрос $reply)'} — ждите квитанцию ЕГАИС во входящих.'
           : 'Акт отправлен в УТМ${reply.isEmpty ? '' : ' (запрос $reply)'} — ждите квитанцию ЕГАИС во входящих.');
     } catch (e) {
+      // УТМ не принял — снимаем отметку, ответить можно снова.
+      await _actsRef.set({'acts': {wb.regId: FieldValue.delete()}}, SetOptions(merge: true)).catchError((Object _) {});
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
       }
@@ -126,6 +159,12 @@ class _EgaisWaybillsScreenState extends State<EgaisWaybillsScreen> {
     }
   }
 
+  static String _answeredText(Object? a) {
+    final kind = a is Map ? a['kind'] : null;
+    final what = kind == 'rejected' ? 'Отказ' : kind == 'differences' ? 'Акт расхождений' : 'Приёмка';
+    return '$what уже отправлен(а) в УТМ — ждите квитанцию ЕГАИС во входящих.';
+  }
+
   static String _fmt(num v) => v == v.roundToDouble() ? v.toInt().toString() : v.toString().replaceAll('.', ',');
 
   @override
@@ -163,6 +202,8 @@ class _EgaisWaybillsScreenState extends State<EgaisWaybillsScreen> {
                                         style: TextStyle(fontSize: 13))
                                   else if (_done[wb.url] != null)
                                     Text(_done[wb.url]!, style: const TextStyle(fontSize: 13))
+                                  else if (_acts[wb.regId] != null)
+                                    Text(_answeredText(_acts[wb.regId]), style: const TextStyle(fontSize: 13))
                                   else if (_busy.contains(wb.url))
                                     const LinearProgressIndicator()
                                   else

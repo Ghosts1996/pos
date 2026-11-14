@@ -882,6 +882,23 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   // Оформление: заголовок и подписи жирным, пользовательский текст экранирован.
   assert.equal(tgmod.fmtTg("📊 Кафе <А&Б> — итоги\n\nВыручка: 100 ₽\nТоп продаж:\n1. Чай <b> — 100 ₽"),
     "<b>📊 Кафе &lt;А&amp;Б&gt; — итоги</b>\n\n<b>Выручка:</b> 100 ₽\n<b>Топ продаж:</b>\n1. Чай &lt;b&gt; — 100 ₽");
+  // Смена кассы закрыта с расхождением наличных — сигнал владельцу (следит сервер).
+  {
+    const ts = (ms) => ({ toMillis: () => ms });
+    const at = Date.parse("2026-11-14T20:30:00Z");
+    const base = { status: "closed", closedAt: ts(at), closingExpectedCash: 15000, zNumber: 12 };
+    const opt = { venue: "Кафе", tz: "Europe/Moscow", since: at - 1000 };
+    const short = tgmod.cashCloseAlert({ ...base, closingCountedCash: 13800 }, opt);
+    assert.ok(/НЕДОСТАЧЕЙ 1\s200 ₽/.test(short) && /Z-отчёт №12/.test(short) && /23:30/.test(short), short);
+    assert.ok(/излишком 500 ₽/.test(tgmod.cashCloseAlert({ ...base, closingCountedCash: 15500 }, opt)));
+    assert.equal(tgmod.cashCloseAlert({ ...base, closingCountedCash: 14999.5 }, opt), null, "копейки округления — не сигнал");
+    assert.equal(tgmod.cashCloseAlert({ ...base, closingCountedCash: 15000 }, opt), null, "сошлось — тишина");
+    assert.equal(tgmod.cashCloseAlert({ ...base, status: "open", closingCountedCash: 0 }, opt), null, "смена открыта");
+    assert.equal(tgmod.cashCloseAlert({ status: "closed", closedAt: ts(at) }, opt), null, "без пересчёта — не о чем сигналить");
+    assert.equal(tgmod.cashCloseAlert({ ...base, closingCountedCash: 0 }, { ...opt, since: at + 1 }), null, "закрыта до запуска бота — не повторяем");
+    assert.ok(/Точка 2 · смена/.test(tgmod.cashCloseAlert({ ...base, closingCountedCash: 0 }, { ...opt, label: "Точка 2" })));
+  }
+
   console.log("SIM OK");
   process.exit(0);
 })().catch((e) => { console.error("SIM FAIL", e); process.exit(1); });

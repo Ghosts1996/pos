@@ -75,7 +75,7 @@ test("лимит устройств: третья касса при лимите
   assert.equal(deny && deny.code, "device-limit");
   assert.equal(await dataWriteGate(store, { uid: "owner" }, w("tenants/lim/sessions/s")), null, "кабинет владельца — не устройство");
   await set("tenants/lim/devices/d4", { status: "removed", createdAt: T(now - 4 * H) });
-  assert.equal((await dataWriteGate(store, { uid: "d4" }, w("tenants/lim/sessions/s"))).code, "permission-denied");
+  assert.equal((await dataWriteGate(store, { uid: "d4" }, w("tenants/lim/sessions/s"))).code, "device-disabled");
 });
 
 test("смена без интернета: время нажатия принимается до 48 ч, с отметкой доставки; без отметки — нет", async () => {

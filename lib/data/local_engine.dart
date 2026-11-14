@@ -1027,7 +1027,7 @@ class LocalEngine {
             _retryDelay = min(_retryDelay * 2, 30);
             return;
           }
-          if (e.code == 'subscription-blocked' || e.code == 'device-limit') {
+          if (e.code == 'subscription-blocked' || e.code == 'device-limit' || e.code == 'device-disabled') {
             // Подписка не оплачена или касса сверх лимита тарифа: записи
             // (чеки, закрытые без связи) не выбрасываем — ждут оплаты или
             // освободившегося места и уходят сами. Касса в это время
@@ -1056,7 +1056,7 @@ class LocalEngine {
                 return;
               } on FirebaseException catch (err) {
                 // Блокировка подписки — как нет связи: повтор позже, не терять.
-                final wait = err.code == 'unavailable' || err.code == 'subscription-blocked' || err.code == 'device-limit';
+                final wait = err.code == 'unavailable' || err.code == 'subscription-blocked' || err.code == 'device-limit' || err.code == 'device-disabled';
                 if (!wait) {
                   debugPrint('local-db: транзакция после конфликта отклонена: $err');
                   if (b.accepted.isCompleted) lastRejected.value = _rejectText(err);

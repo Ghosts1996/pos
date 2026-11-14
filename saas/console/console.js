@@ -2578,8 +2578,8 @@ async function boot() {
   let authBackend = status.auth;
   try {
     if (authBackend) localStorage.setItem('zalAuthBackend', authBackend);
-    else authBackend = localStorage.getItem('zalAuthBackend') || 'firebase';
-  } catch (_) { authBackend = authBackend || 'firebase'; }
+    else authBackend = localStorage.getItem('zalAuthBackend') || 'own';
+  } catch (_) { authBackend = authBackend || 'own'; }
   try {
     state.auth = await initAuth({ gateway: SAAS_GATEWAY_URL, backend: authBackend, firebaseApp });
     state.db = await openDb(firebaseApp, { gateway: SAAS_GATEWAY_URL, auth: state.auth, status });
@@ -4148,7 +4148,20 @@ function screenLanding() {
   });
 
   let modeSet = false;
-  sub(onSnapshot(collection(state.db, 'plans'), (snap) => {
+  // Лендинг рисуется раньше, чем откроется база (медленная связь, VPN):
+  // подписку на тарифы ставим, когда база готова, и только пока лендинг на
+  // экране; не открылась за 40 с — честная надпись вместо упавшего скрипта.
+  const plansBox = $('landing-plans');
+  const watchPlans = (tries = 0) => {
+    if (!plansBox || !document.body.contains(plansBox)) return;
+    if (!state.db) {
+      if (tries < 130) { setTimeout(() => watchPlans(tries + 1), 300); return; }
+      plansBox.innerHTML = '<p class="small muted">Тарифы не загрузились — нет связи с сервером. Проверьте интернет (или выключите VPN) и обновите страницу.</p>';
+      return;
+    }
+    subscribePlans();
+  };
+  const subscribePlans = () => sub(onSnapshot(collection(state.db, 'plans'), (snap) => {
     latestPlans = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     const hasChain = sellablePlans(latestPlans, true).length > 0;
     const toggle = $('landing-pricing-toggle');
@@ -4164,6 +4177,7 @@ function screenLanding() {
     const body = $('landing-plans');
     if (body) body.innerHTML = '<p class="small muted">Тарифы недоступны.</p>';
   }));
+  watchPlans();
 }
 
 // ---------- ПУБЛИЧНЫЕ СТРАНИЦЫ (оферта, конфиденциальность, статус, FAQ) ----------

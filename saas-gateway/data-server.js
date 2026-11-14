@@ -340,7 +340,15 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     if (deny) return sendJson(res, deny.status || 402, { error: deny.error, code: deny.code || "subscription-blocked" });
     try {
       sendJson(res, 200, { results: secure.commit(auth, body.writes, { key: body.key }) });
-    } catch (e) { fail(res, e); }
+    } catch (e) {
+      // Касса такую пачку больше не повторит (кроме конфликта транзакции —
+      // её она переделает сама): сохраняем, чтобы не потерять чеки.
+      const code = e && e.code;
+      if (g.onRejected && code !== "aborted" && code !== "unauthenticated") {
+        try { g.onRejected(auth, body.writes, e); } catch (_) { /* карантин — не повод ронять ответ */ }
+      }
+      fail(res, e);
+    }
   }
 
   // ---- подписки: POST /db/session — сессия; GET /db/listen?sid= — поток; POST /db/listen — добавить/убрать.
@@ -576,6 +584,14 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
     },
     handleListen,
     sessions,
+    /** Остановка сервера: закрыть потоки (SSE) — иначе они держат его до таймаута. */
+    closeStreams() {
+      for (const s of sessions.values()) {
+        if (!s.res) continue;
+        try { s.res.end(); } catch (_) { /* уже закрыт */ }
+        s.res = null;
+      }
+    },
   };
 }
 

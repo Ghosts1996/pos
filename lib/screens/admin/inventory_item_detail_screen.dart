@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models/employee.dart';
+import '../../build_info.dart';
 import '../../models/inventory_models.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
@@ -417,6 +418,42 @@ class InventoryItemDetailScreen extends StatelessWidget {
   }
 
   Future<void> _confirmDelete(BuildContext context, FirestoreService fs, InventoryItem item) async {
+    // SaaS: позиция в действующих техкартах — удаление молча выключило бы
+    // списание этих блюд (себестоимость и остатки поедут). Предлагаем
+    // выключить позицию: история и техкарты останутся.
+    if (kSaasMode) {
+      List<String> usedIn = const [];
+      try {
+        final menu = await fs.menuItemsStream().first.timeout(const Duration(seconds: 10));
+        usedIn = [for (final m in menu) if (stockIdsFor([m]).contains(item.id)) m.name];
+      } catch (_) {}
+      if (usedIn.isNotEmpty) {
+        if (!context.mounted) return;
+        final names = usedIn.take(5).map((n) => '«$n»').join(', ');
+        final off = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            scrollable: true,
+            title: const Text('Позиция есть в техкартах'),
+            content: Text(
+                '«${item.name}» списывается при продаже: $names${usedIn.length > 5 ? ' и ещё ${usedIn.length - 5}' : ''}. '
+                'Если удалить её, эти блюда перестанут списывать продукт, и остатки с себестоимостью разойдутся с жизнью.\n\n'
+                'Выключите позицию — она пропадёт из списков и инвентаризаций, а техкарты и история останутся. '
+                'Удалить можно, когда уберёте её из техкарт.'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Выключить')),
+            ],
+          ),
+        );
+        if (off == true) {
+          await fs.setInventoryItemActive(item.id, false);
+          if (context.mounted) Navigator.of(context).pop();
+        }
+        return;
+      }
+      if (!context.mounted) return;
+    }
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(

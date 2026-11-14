@@ -1604,7 +1604,20 @@ async function handleCreateBuildJob(req, res) {
  * автообновлении (runAppRolloutTick, rolloutSha — коммит, ради которого
  * собираем). Права проверяет вызывающий.
  */
-async function startTenantBuild(tenantId, { requestedBy, rolloutSha = null }) {
+const buildStarting = new Set();
+async function startTenantBuild(tenantId, opts) {
+  // Проверка «сборка уже идёт» и запись новой — не одна операция: два
+  // нажатия в одну секунду (или кнопка + автообновление) запускали две
+  // сборки. Сервер один — замок в памяти закрывает это окно.
+  if (buildStarting.has(tenantId)) throw new HttpError(409, "Сборка уже запускается — дождитесь её завершения, прежде чем запускать новую");
+  buildStarting.add(tenantId);
+  try {
+    return await startTenantBuildLocked(tenantId, opts);
+  } finally {
+    buildStarting.delete(tenantId);
+  }
+}
+async function startTenantBuildLocked(tenantId, { requestedBy, rolloutSha = null }) {
   const firestore = db();
   // У точки сети подписка общая — subscriptions/{chainId}.
   const tenantDoc = await firestore.collection("tenants").doc(tenantId).get();
@@ -9069,10 +9082,23 @@ function flushAllStores() {
   try { if (dataStore) dataStore.flushSync(); } catch (e) { console.error(`сервер данных: запись: ${e.message || e}`); }
   try { shield.flush(); } catch (_) { /* баны — не данные, не страшно */ }
 }
+// Остановка (systemd restart при обновлении): новые подключения не берём,
+// начатые запросы — оплаты, закрытия чеков — дорабатывают до 10 с, потоки
+// данных (SSE) закрываем сразу (клиенты переподключатся сами), потом данные
+// на диск и выход. Второй сигнал — выходим сразу.
+let stopping = false;
 for (const sig of ["SIGTERM", "SIGINT"]) {
-  process.once(sig, () => {
-    flushAllStores();
-    process.exit(0);
+  process.on(sig, () => {
+    if (stopping) { flushAllStores(); process.exit(0); }
+    stopping = true;
+    const done = () => { flushAllStores(); process.exit(0); };
+    const timer = setTimeout(done, 10000);
+    timer.unref();
+    try {
+      server.close(() => { clearTimeout(timer); done(); });
+      if (typeof server.closeIdleConnections === "function") server.closeIdleConnections();
+      if (dataApi && typeof dataApi.closeStreams === "function") dataApi.closeStreams();
+    } catch (_) { done(); }
   });
 }
 
@@ -9169,6 +9195,52 @@ const shield = createShield({
 const WRITE_GATE_TTL_MS = 30 * 1000;
 const writeGateDevices = new Map();
 const OPERATIONAL = new Set(["trial", "active"]);
+const GUEST_COLLECTIONS = new Set(["guestOrders", "waiterCalls", "reviews", "tips", "waitlist", "clients", "reservations", "giftCardClaims", "sessionClaims", "adsConsents"]);
+const GUEST_DOC_MAX = 32 * 1024;
+
+/**
+ * Записи, которые сервер не принял (нет прав, сбой), касса больше не
+ * повторяет — а это могут быть чеки, пробитые без связи. Не теряем их:
+ * пачка ложится в state/rejected/<заведение>.jsonl (до 20 МБ на заведение),
+ * владельцу — сигнал в бот заведения не чаще раза в час. Поддержка
+ * восстанавливает их по файлу. Пишем только для своих: участника
+ * заведения или его устройства — чужой мусор сюда не попадёт.
+ */
+const REJECTED_DIR = process.env.REJECTED_DIR || path.join(__dirname, "state", "rejected");
+const REJECTED_MAX_BYTES = 20 * 1024 * 1024;
+const rejectedAlertAt = new Map();
+function quarantineRejected(store, auth, writes, err) {
+  try {
+    if (!auth || !auth.uid || !Array.isArray(writes) || !writes.length) return;
+    const byTenant = new Map();
+    for (const w of writes) {
+      const m = /^tenants\/([^/]+)\//.exec(String((w && w.path) || ""));
+      if (!m) continue;
+      if (!byTenant.has(m[1])) byTenant.set(m[1], []);
+      byTenant.get(m[1]).push(w);
+    }
+    for (const [tid, list] of byTenant) {
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(tid)) continue;
+      const mine = store.raw(`tenants/${tid}/devices/${auth.uid}`) || store.raw(`tenantMembers/${tid}_${auth.uid}`);
+      if (!mine) continue;
+      fs.mkdirSync(REJECTED_DIR, { recursive: true, mode: 0o700 });
+      const file = path.join(REJECTED_DIR, `${tid}.jsonl`);
+      let size = 0;
+      try { size = fs.statSync(file).size; } catch (_) { /* файла ещё нет */ }
+      const line = JSON.stringify({ at: new Date().toISOString(), uid: auth.uid, code: (err && err.code) || "internal", error: String((err && err.message) || err).slice(0, 300), writes: list }) + "\n";
+      if (size + line.length > REJECTED_MAX_BYTES) continue;
+      fs.appendFileSync(file, line, { mode: 0o600 });
+      const last = rejectedAlertAt.get(tid) || 0;
+      if (Date.now() - last > 3600 * 1000 && list.some((w) => /\/(sessions|shifts|cashOps|inventoryMovements|staffShifts)\//.test(String(w.path)))) {
+        rejectedAlertAt.set(tid, Date.now());
+        telegram.ownerAlert(tid, `⚠️ Касса прислала изменения, которые сервер не принял (${(err && err.code) === "permission-denied" ? "нет прав" : "сбой"}): ${list.length} шт. Они сохранены на сервере — ничего не потеряно. Напишите в поддержку ZalPOS, чтобы их восстановили, и проверьте в кабинете «Устройства» и права сотрудников.`)
+          .catch(() => {});
+      }
+    }
+  } catch (e) {
+    console.error(`карантин записей: ${e.message || e}`);
+  }
+}
 async function dataWriteGate(store, auth, writes) {
   if (!auth || !auth.uid || !Array.isArray(writes)) return null;
   const tenants = new Set();
@@ -9177,6 +9249,14 @@ async function dataWriteGate(store, auth, writes) {
     if (m) tenants.add(m[1]);
   }
   if (!tenants.size || store.raw(`superAdmins/${auth.uid}`)) return null;
+  // Что пишет гость (вызов, заказ со стола, отзыв, бронь, профиль) — не
+  // больше GUEST_DOC_MAX: мегабайтный «комментарий» вешал бы кассу и кухню.
+  for (const w of writes) {
+    const m = /^tenants\/[^/]+\/([^/]+)\//.exec(String((w && w.path) || "")) || /^chains\/[^/]+\/(clients)\//.exec(String((w && w.path) || ""));
+    if (m && GUEST_COLLECTIONS.has(m[1]) && w.data && JSON.stringify(w.data).length > GUEST_DOC_MAX) {
+      return { status: 400, code: "invalid-argument", error: "Слишком длинный текст — сократите комментарий" };
+    }
+  }
   for (const tid of tenants) {
     const t = store.raw(`tenants/${tid}`);
     if (!t) continue;
@@ -9189,7 +9269,9 @@ async function dataWriteGate(store, auth, writes) {
     if (!mine) continue;
     const max = Math.max(0, Math.floor(Number((store.raw(`tenants/${tid}/public/features`) || {}).maxDevices) || 0));
     const inactive = (d) => d.status === "disabled" || d.status === "removed";
-    if (inactive(mine)) return { status: 403, code: "permission-denied", error: "Устройство отключено владельцем заведения" };
+    // Отключённая касса записи не теряет: они ждут в очереди устройства и
+    // уйдут, если владелец вернёт его (а не выбрасываются, как отказ прав).
+    if (inactive(mine)) return { status: 403, code: "device-disabled", error: "Устройство отключено владельцем заведения — записи сохранены на кассе и уйдут, если его вернут в кабинете («Устройства»)" };
     if (!max) continue;
     let cached = writeGateDevices.get(tid);
     if (!cached || Date.now() - cached.at > WRITE_GATE_TTL_MS) {
@@ -9225,6 +9307,7 @@ function dataApiOrNull() {
         // запуск — 300 за 10 минут с адреса хватает и большому залу.
         newSession: (req) => shield.hit("dbSession", req, 300, 10 * 60 * 1000),
         canWrite: (auth, writes) => dataWriteGate(localDataStore(), auth, writes),
+        onRejected: (auth, writes, err) => quarantineRejected(localDataStore(), auth, writes, err),
       },
     });
   }

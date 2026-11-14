@@ -652,7 +652,7 @@ function createPartners(deps) {
         mailed = true;
       } catch (e) {
         mailError = String(e.message || e).slice(0, 200);
-        console.error(`partners: письмо менеджеру ${email}: ${mailError}`);
+        console.error(`partners: письмо менеджеру ${String(email).replace(/^(.)[^@]*@/, "$1***@")}: ${mailError}`);
       }
     }
     sendJson(res, 200, { ok: true, id: ref.id, code, mailed, mailError });

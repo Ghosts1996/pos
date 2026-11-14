@@ -695,8 +695,8 @@ async function boot() {
     let authBackend = status.auth;
     try {
       if (authBackend) localStorage.setItem('zalAuthBackend', authBackend);
-      else authBackend = localStorage.getItem('zalAuthBackend') || 'firebase';
-    } catch (_) { authBackend = authBackend || 'firebase'; }
+      else authBackend = localStorage.getItem('zalAuthBackend') || 'own';
+    } catch (_) { authBackend = authBackend || 'own'; }
     auth = await initAuth({ gateway: GATEWAY, backend: authBackend, firebaseApp });
     state.db = await openDb(firebaseApp, { gateway: GATEWAY, auth, status });
   } catch (_) {

@@ -526,6 +526,30 @@ function alertText(venueName, a) {
   }
 }
 
+/** Недостача, при которой сигналим владельцу: копейки округления — не повод. */
+const CASH_ALERT_MIN = 1;
+
+/**
+ * Сигнал о закрытии смены кассы с расхождением наличных (касса пишет в
+ * смену ожидаемую и пересчитанную сумму) — null, если сигналить не о чем:
+ * смена не закрыта, закрыта до запуска бота, не пересчитывали, сошлось.
+ * Имени кассира нет — кто закрыл, видно в Z-отчёте на кассе.
+ */
+function cashCloseAlert(sh, { venue, label = "", tz, since = 0 } = {}) {
+  if (!sh || sh.status !== "closed") return null;
+  const closed = sh.closedAt && typeof sh.closedAt.toMillis === "function" ? sh.closedAt.toMillis() : Number(sh.closedAt) || 0;
+  if (!closed || closed <= since) return null;
+  if (typeof sh.closingExpectedCash !== "number" || typeof sh.closingCountedCash !== "number") return null;
+  const diff = Math.round((sh.closingCountedCash - sh.closingExpectedCash) * 100) / 100;
+  if (Math.abs(diff) < CASH_ALERT_MIN) return null;
+  const at = hhmm(new Date(closed), tz);
+  const where = label ? `${label} · ` : "";
+  const z = sh.zNumber ? ` (Z-отчёт №${sh.zNumber})` : "";
+  return diff < 0
+    ? `🚨 ${venue}. ${where}смена кассы закрыта в ${at} с НЕДОСТАЧЕЙ ${rub(-diff)}${z}: по кассе должно быть ${rub(sh.closingExpectedCash)}, насчитали ${rub(sh.closingCountedCash)}`
+    : `⚠️ ${venue}. ${where}смена кассы закрыта в ${at} с излишком ${rub(diff)}${z}: по кассе ${rub(sh.closingExpectedCash)}, насчитали ${rub(sh.closingCountedCash)} — проверьте, все ли продажи пробиты`;
+}
+
 /** Карточка заказа с собой/доставки — без имени, телефона и адреса гостя. */
 /**
  * Текст карточки. Ни имени, ни телефона, ни адреса гостя (152-ФЗ) — их
@@ -1230,6 +1254,15 @@ ${courierMap}`);
       chat_id: card.chatId, text, reply_to_message_id: card.messageId, disable_notification: !/⚠️|✅/.test(text),
       ...(card.threadId ? { message_thread_id: card.threadId } : {}),
     }).catch((e) => console.error(`telegram delivery event (${tid}): ${e.message}`));
+  }
+
+  /** Сигнал владельцам точки в их личные чаты (если бот заведения подключён и сигналы не выключены). */
+  async function ownerAlert(tid, text) {
+    const bot = botForPoint(tid);
+    if (!bot || (bot.cfg.notify && bot.cfg.notify.alerts === false)) return false;
+    const chats = ownerChats(bot.cfg);
+    for (const c of chats) await say(bot, c.id, text);
+    return chats.length > 0;
   }
 
   const dsetCache = new Map();
@@ -2600,6 +2633,23 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         }
       }, (e) => { console.error(`telegram audit (${tid}):`, e.message); bot.broken = Date.now(); }));
 
+    // Смена кассы закрыта с расхождением наличных — владельцу сразу. Следит
+    // сервер, а не касса: изменённый или старый клиент сигнал не «забудет».
+    const shiftsSince = admin.firestore.Timestamp.fromMillis(Date.now() - 36 * 3600 * 1000);
+    const cashSeen = new Set();
+    unsubs.push(t.collection("shifts").where("closedAt", ">=", shiftsSince)
+      .onSnapshot(async (snap) => {
+        if (!on("alerts")) return;
+        const venue = await venueOf(tid).catch(() => ({}));
+        for (const ch of snap.docChanges()) {
+          if (ch.type === "removed" || cashSeen.has(ch.doc.id)) continue;
+          const text = cashCloseAlert(ch.doc.data(), { venue: venue.name || "Заведение", label: label(), tz: venue.timezone, since: bot.startedAt.toMillis() });
+          if (!text) continue;
+          cashSeen.add(ch.doc.id);
+          for (const c of owners()) await say(bot, c.id, text);
+        }
+      }, (e) => { console.error(`telegram cash close (${tid}):`, e.message); bot.broken = Date.now(); }));
+
     // Смены сотрудников: начало и конец — владельцу, с ролью и временем.
     const dayAgo = admin.firestore.Timestamp.fromMillis(Date.now() - 36 * 3600 * 1000);
     unsubs.push(t.collection("staffShifts").where("startedAt", ">=", dayAgo)
@@ -2786,14 +2836,14 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
   return {
     handleSetup, handleStatus, handleLinkCode, handleAccess, handleNotify, handleUnlink, handleJoinChain, handleAddress, handleWho, handleHook,
     handleCourierPage, handleCourierPing, start,
-    deliveryEvent, courierMoved, setCourierApi: (api_) => { courierApi = api_; },
+    deliveryEvent, ownerAlert, courierMoved, setCourierApi: (api_) => { courierApi = api_; },
     // Кабинет сохранил настройки доставки — бот берёт их сразу, а не через минуту.
     forgetDeliverySettings: (ids) => { for (const id of ids || []) dsetCache.delete(id); },
   };
 }
 
 module.exports = {
-  createTelegram, buildSummary, buildChainSummary, alertText, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
+  createTelegram, buildSummary, buildChainSummary, alertText, cashCloseAlert, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
   deliveryCardText, deliveryKeyboard, salesStats, addressSig, courierSig, whoSig, roleLabel, allowedList, parseAllowed, staleCashText, menuKeyboard,
   secretKey, fmtTg, stripHtml,
 };

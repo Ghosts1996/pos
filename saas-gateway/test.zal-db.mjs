@@ -74,7 +74,7 @@ const other = await Z.openDb({}, { gateway, auth: authAs("ownerA") });
 await test("выбор хранилища по серверу", async () => {
   assert.ok(Z.isOwnServer(db));
   const fsDb = await Z.openDb({}, { gateway: "http://127.0.0.1:1", auth: authAs("x") });
-  assert.deepStrictEqual(fsDb, { firestore: true }, "сервер недоступен — Firestore, как раньше");
+  assert.ok(Z.isOwnServer(fsDb), "сервер недоступен — своя база (ждём свой сервер), не Google");
 });
 
 await test("чтение, запрос, отказ в чужих данных", async () => {

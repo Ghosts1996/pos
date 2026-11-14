@@ -58,6 +58,13 @@ service cloud.firestore {
       return isSuperAdmin() || (isMember(tenantId) && memberRole(tenantId) in roles);
     }
 
+    // Текст гостя (комментарий, имя) — разумной длины: мегабайтный
+    // «комментарий» по QR вешал бы экраны кассы и кухни.
+    function guestTextOk(d) {
+      return d.get('comment', '') is string && d.get('comment', '').size() <= 500 &&
+        d.get('guestName', '') is string && d.get('guestName', '').size() <= 80;
+    }
+
     // Любой сотрудник заведения (все роли, кроме отсутствия членства).
     function isStaff(tenantId) {
       return hasRole(tenantId, ['owner', 'admin', 'manager', 'employee']);
@@ -782,7 +789,8 @@ service cloud.firestore {
         (isTenantGuest(tenantId) && resource.data.clientUid == request.auth.uid);
       allow create: if isTenantGuest(tenantId) &&
         request.resource.data.clientUid == request.auth.uid &&
-        ownsSession(tenantId, request.resource.data.get('sessionId', ''));
+        ownsSession(tenantId, request.resource.data.get('sessionId', '')) &&
+        guestTextOk(request.resource.data);
       allow update, delete: if isStaff(tenantId);
     }
 
@@ -797,6 +805,7 @@ service cloud.firestore {
         request.resource.data.items is list &&
         request.resource.data.items.size() > 0 &&
         request.resource.data.items.size() <= 50 &&
+        guestTextOk(request.resource.data) &&
         // Кому заказ: кальян — кальянщику, блюда и напитки — официанту.
         request.resource.data.get('targetPosition', '') in ['', 'waiter', 'hookah_master', 'bartender'];
       allow update, delete: if isStaff(tenantId);

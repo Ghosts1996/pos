@@ -8,6 +8,8 @@
 //
 // POST /__offline {"on": true} — «пропал интернет»: запросы обрываются,
 // поток подписок закрывается; {"on": false} — связь вернулась.
+// POST /__gate {"code": "subscription-blocked"} — сервер отказывает в записи,
+// как боевой при неоплате/отключённой кассе (402/403 с этим кодом); {} — снять.
 
 const http = require("http");
 const fs = require("fs");
@@ -49,6 +51,7 @@ const seeded = (async () => {
 })();
 
 let offline = false;
+let gate = null;
 // Сколько следующих /db/commit применить, но ответ «потерять» (обрыв связи
 // после записи) — касса повторит пачку, сервер не должен применить её дважды.
 let dropReplies = 0;
@@ -62,11 +65,17 @@ const server = http.createServer(async (req, res) => {
       if (offline) { for (const s of streams) s.destroy(); streams.clear(); }
       return sendJson(res, 200, { offline });
     }
+    if (url === "/__gate") {
+      const code = (await parseJsonBody(req)).code;
+      gate = typeof code === "string" && code ? code : null;
+      return sendJson(res, 200, { gate });
+    }
     if (url === "/__dropReply") {
       dropReplies = Number((await parseJsonBody(req)).count) || 0;
       return sendJson(res, 200, { dropReplies });
     }
     if (offline) return req.socket.destroy();
+    if (url === "/db/commit" && gate) return sendJson(res, gate === "device-disabled" ? 403 : 402, { error: "запись закрыта (стенд)", code: gate });
     if (url === "/db/commit" && dropReplies > 0) {
       dropReplies--;
       const lost = { writeHead() {}, end() { req.socket.destroy(); } };

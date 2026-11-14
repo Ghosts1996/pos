@@ -68,4 +68,40 @@ void main() {
     expect(TimeCafe.roundMinutes, 1);
     expect(TimeCafe.stopCheck, 0);
   });
+
+  test('крайние значения: 0, 1, 59, 60, 61 мин, 25 ч, часы планшета «убежали»', () {
+    // Поминутно, 300 ₽/ч, первый час 400 ₽, без минимума и стоп-чека.
+    TimeCafe.apply({'enabled': true, 'pricePerHour': 300, 'firstHourPrice': 400, 'roundMinutes': 1});
+    final perMinute = <Duration, double>{
+      Duration.zero: 7, // одна минута — меньше шага не бывает: 400/60 ≈ 6,67 → 7
+      const Duration(seconds: 1): 7,
+      const Duration(minutes: 1): 7,
+      const Duration(minutes: 59): 393, // 59 × 6,67 = 393,3 → 393
+      const Duration(minutes: 60): 400,
+      const Duration(minutes: 60, seconds: 1): 405, // 61-я минута уже по 5 ₽
+      const Duration(minutes: 61): 405,
+      const Duration(hours: 25): 7600, // 400 + 24 × 300 — через полночь и смену кассы
+      const Duration(minutes: -5): 7, // начало «в будущем» — минимум, а не минус
+    };
+    perMinute.forEach((sat, cost) => expect(TimeCafe.costPerGuest(sat), cost, reason: '$sat'));
+    // Шаг 60 минут: 61 минута — уже два часа.
+    TimeCafe.apply({'enabled': true, 'pricePerHour': 300, 'roundMinutes': 60});
+    expect(TimeCafe.billedMinutes(const Duration(minutes: 60)), 60);
+    expect(TimeCafe.billedMinutes(const Duration(minutes: 61)), 120);
+    expect(TimeCafe.costPerGuest(const Duration(minutes: 61)), 600);
+    // Шаг 5 минут, минимум 30, стоп-чек 1000: 25 часов упираются в стоп-чек.
+    TimeCafe.apply({'enabled': true, 'pricePerHour': 250, 'roundMinutes': 5, 'minMinutes': 30, 'stopCheck': 1000});
+    expect(TimeCafe.costPerGuest(const Duration(minutes: 1)), 125, reason: 'минимум 30 мин');
+    expect(TimeCafe.costPerGuest(const Duration(minutes: 59)), 250, reason: '59 → 60 мин');
+    expect(TimeCafe.costPerGuest(const Duration(hours: 25)), 1000);
+    final l = TimeCafe.line(const Duration(hours: 25), 2);
+    expect(l.total, 2000);
+    expect(l.name, contains('стоп-чек'));
+    // Суммы — целые рубли, без копеечных хвостов при любом времени.
+    for (var m = 0; m <= 26 * 60; m += 7) {
+      final c = TimeCafe.costPerGuest(Duration(minutes: m));
+      expect(c, c.roundToDouble(), reason: '$m мин');
+      expect(c >= 0, isTrue);
+    }
+  });
 }

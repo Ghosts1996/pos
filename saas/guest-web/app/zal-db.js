@@ -340,8 +340,9 @@ export async function dataBackend(gateway) {
     } catch (_) { /* повторим */ }
     await new Promise((res) => setTimeout(res, 800 * (i + 1)));
   }
-  // Данные уже были на своём сервере — к Google не возвращаемся.
-  return { backend: memo.get() || 'firestore', offline: true };
+  // Данные платформы — на своём сервере (с 25.10.2026): без ответа
+  // сервера к Google не ходим, ждём свой.
+  return { backend: memo.get() || 'local', offline: true };
 }
 
 /** Хранилище страницы: Firestore или свой сервер (по ответу сервера).

@@ -324,6 +324,106 @@ void main() {
     expect(await fs.closeSessionWithPayment(sid3, 'stale1', cash: 0, card: 0, comp: 0, closedWithoutPayment: true), isTrue);
   }, skip: skip, timeout: const Timeout(Duration(minutes: 2)));
 
+  test('офлайн-апокалипсис: часы без связи, 20 чеков, отмены, склад; тем временем тариф истёк — ничего не теряется (SaaS)', () async {
+    final fs = FirestoreService();
+    final run = DateTime.now().millisecondsSinceEpoch;
+    final inv = 'apoInv$run';
+    await db.doc('tenants/$_tenant/inventoryItems/$inv').set({'name': 'Чай', 'unit': 'pcs', 'quantity': 100, 'active': true, 'category': ''});
+    final tea = MenuItem(id: 'apoTea$run', categoryId: 'c1', name: 'Чай', price: 200, inventoryItemId: inv, weight: 1, weightUnit: InventoryUnit.pcs);
+    final cake = MenuItem(id: 'apoCake$run', categoryId: 'c1', name: 'Торт с очень длинным названием для проверки чеков и бегунков кухни на узком экране', price: 350);
+    await db.doc('tenants/$_tenant/menuItems/${tea.id}').set(tea.toMap());
+    await db.doc('tenants/$_tenant/menuItems/${cake.id}').set(cake.toMap());
+    final tables = [for (var i = 0; i < 20; i++) TableModel(id: 'apo${run}_$i', name: 'А$i', x: 0.05 * i, y: 0.5)];
+    for (final t in tables) {
+      await fs.addTable(t);
+    }
+    await fs.tablesStream().firstWhere((l) => tables.every((t) => l.any((x) => x.id == t.id))).timeout(const Duration(seconds: 15));
+    // Всё нужное — в памяти устройства, как у кассы, которая работала с утра.
+    await db.doc('tenants/$_tenant/menuItems/${tea.id}').get();
+    await db.doc('tenants/$_tenant/menuItems/${cake.id}').get();
+    await db.doc('tenants/$_tenant/inventoryItems/$inv').get();
+    await db.doc('tenants/$_tenant/meta/shiftState').get(const GetOptions(source: Source.server));
+    await engine.waitForPendingWrites();
+    addTearDown(() async {
+      NetStatus.online.value = true;
+      await http.post(Uri.parse('$_url/__offline'), body: jsonEncode({'on': false}));
+      await http.post(Uri.parse('$_url/__gate'), body: jsonEncode({}));
+    });
+
+    // Интернет пропал.
+    await http.post(Uri.parse('$_url/__offline'), body: jsonEncode({'on': true}));
+    NetStatus.online.value = false;
+    final ids = <String>[];
+    for (var i = 0; i < 20; i++) {
+      final sid = await fs.openSession(table: tables[i], employeeName: 'Офлайн Кассир').timeout(const Duration(seconds: 5));
+      await fs.addOrderItem(sid, tea, qty: 1).timeout(const Duration(seconds: 5));
+      await fs.addOrderItem(sid, cake, qty: 1).timeout(const Duration(seconds: 5));
+      ids.add(sid);
+    }
+    // Двум столам торт отменили до оплаты.
+    for (final sid in ids.take(2)) {
+      final s = await fs.sessionStream(sid).firstWhere((x) => x != null && x.orderItems.length == 2).timeout(const Duration(seconds: 5));
+      await fs.removeOrderItem(sid, s!.orderItems.firstWhere((i) => i.menuItemId == cake.id).lineId).timeout(const Duration(seconds: 5));
+    }
+    // Трём столам счёт разделили без связи (своя база: отложенная транзакция) — чай отдельным чеком.
+    final splits = <int, String>{};
+    for (final i in [3, 4, 5]) {
+      final s = await fs.sessionStream(ids[i]).firstWhere((x) => x != null && x.orderItems.length == 2).timeout(const Duration(seconds: 5));
+      final teaLine = s!.orderItems.firstWhere((x) => x.menuItemId == tea.id);
+      splits[i] = await fs
+          .splitOffItems(sessionId: ids[i], tableId: tables[i].id, moveQty: {FirestoreService.splitKey(teaLine): 1}, employeeName: 'Офлайн Кассир')
+          .timeout(const Duration(seconds: 5), onTimeout: () => throw StateError('разделение без связи ждёт сервер'));
+    }
+    // Все чеки закрыли: наличные и карта вперемешку.
+    for (final e in splits.entries) {
+      final s = await fs.sessionStream(e.value).firstWhere((x) => x != null && x.orderItems.isNotEmpty).timeout(const Duration(seconds: 5));
+      expect(await fs.closeSessionWithPayment(e.value, tables[e.key].id, cash: 200, card: 0, comp: 0, orderItems: s!.orderItems, employeeName: 'Офлайн Кассир', expectedTotal: 200)
+          .timeout(const Duration(seconds: 5)), isTrue);
+    }
+    for (var i = 0; i < 20; i++) {
+      final split = splits.containsKey(i);
+      final lines = i < 2 || split ? 1 : 2;
+      final s = await fs.sessionStream(ids[i]).firstWhere((x) => x != null && x.orderItems.length == lines).timeout(const Duration(seconds: 5));
+      final total = i < 2 ? 200.0 : split ? 350.0 : 550.0;
+      final ok = await fs
+          .closeSessionWithPayment(ids[i], tables[i].id, cash: i.isEven ? total : 0, card: i.isEven ? 0 : total, comp: 0, orderItems: s!.orderItems, employeeName: 'Офлайн Кассир', expectedTotal: total)
+          .timeout(const Duration(seconds: 5), onTimeout: () => throw StateError('касса без связи ждёт сервер'));
+      expect(ok, isTrue);
+    }
+
+    // Пока касса была без связи, у заведения кончился оплаченный период.
+    await http.post(Uri.parse('$_url/__gate'), body: jsonEncode({'code': 'subscription-blocked'}));
+    await http.post(Uri.parse('$_url/__offline'), body: jsonEncode({'on': false}));
+    NetStatus.online.value = true;
+    engine.reconnectNow();
+    await Future<void>.delayed(const Duration(seconds: 3));
+    expect(engine.pending, isNotEmpty, reason: 'сервер не принял — записи ждут в очереди, а не выброшены');
+    expect(engine.lastRejected.value, isNull, reason: 'кассе не показываем «не принял»: это ожидание оплаты');
+    for (final sid in [...ids, ...splits.values]) {
+      expect((await db.doc('tenants/$_tenant/sessions/$sid').get(const GetOptions(source: Source.cache))).data()!['status'], 'closed');
+    }
+
+    // Владелец оплатил — очередь уходит сама.
+    await http.post(Uri.parse('$_url/__gate'), body: jsonEncode({}));
+    engine.reconnectNow();
+    await engine.waitForPendingWrites().timeout(const Duration(seconds: 120));
+    var cash = 0.0, card = 0.0;
+    for (final sid in [...ids, ...splits.values]) {
+      final d = (await db.doc('tenants/$_tenant/sessions/$sid').get(const GetOptions(source: Source.server))).data()!;
+      expect(d['status'], 'closed', reason: sid);
+      cash += (d['paymentCash'] as num?)?.toDouble() ?? 0;
+      card += (d['paymentCard'] as num?)?.toDouble() ?? 0;
+    }
+    expect(cash + card, 2 * 200 + 18 * 550, reason: 'все 23 чека (20 + 3 разделённых) на сервере, без потерь и дублей');
+    expect((await db.doc('tenants/$_tenant/inventoryItems/$inv').get(const GetOptions(source: Source.server))).data()!['quantity'], 80);
+    final moves = await db.collection('tenants/$_tenant/inventoryMovements').where('itemId', isEqualTo: inv).get(const GetOptions(source: Source.server));
+    expect(moves.docs.length, 20, reason: 'по строке журнала склада на чек с чаем, без задвоения');
+    for (final t in tables) {
+      expect((await db.doc('tenants/$_tenant/tables/${t.id}').get(const GetOptions(source: Source.server))).data()!['status'], 'free');
+    }
+    expect(engine.lastRejected.value, isNull);
+  }, skip: harnessOnly, timeout: const Timeout(Duration(minutes: 4)));
+
   test('Z-отчёты: сквозные номера, необнуляемый итог; открытие смены их не сбрасывает', () async {
     NetStatus.online.value = true;
     final fs = FirestoreService();
