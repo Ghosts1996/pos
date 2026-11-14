@@ -8002,7 +8002,10 @@ async function handleSendAuthEmail(req, res) {
     throw new HttpError(400, "Проверьте адрес почты");
   }
   if (authMailer === undefined) authMailer = createMailer();
-  if (!authMailer) throw new HttpError(503, "Почта платформы не настроена");
+  if (!authMailer) {
+    mailDownAlert("почта сервера не настроена (SMTP в /etc/saas-gateway.env)");
+    throw new HttpError(503, "Почта платформы не настроена");
+  }
   if (type === "verifyEmail" || type === "password") {
     const decoded = await verifyAuth(req);
     if (String(decoded.email || "").toLowerCase() !== email) {
@@ -8036,8 +8039,25 @@ async function handleSendAuthEmail(req, res) {
   }
   // Ссылка ведёт на страницы кабинета на zalpos.ru, а не на страницу Google.
   const letter = authEmailLetter(type, brandAuthLink(link, CONSOLE_URL), { siteUrl: CONSOLE_URL });
-  await authMailer.send({ to: email, ...letter });
+  try {
+    await authMailer.send({ to: email, ...letter });
+  } catch (e) {
+    mailDownAlert(String((e && e.message) || e).slice(0, 200));
+    throw new HttpError(503, "Письмо не отправилось — почта сервера временно недоступна, попробуйте через пару минут");
+  }
   sendJson(res, 200, { ok: true });
+}
+
+/** Почта не работает — без неё не зарегистрироваться владельцу и не войти
+ *  курьеру: тревога администраторам платформы в бот (не чаще раза в час). */
+let mailDownAt = 0;
+function mailDownAlert(why) {
+  console.error(`почта: ${why}`);
+  if (Date.now() - mailDownAt < 3600 * 1000) return;
+  mailDownAt = Date.now();
+  try {
+    supportBot.notifyAdmins(`📭 <b>Почта сервера не отправляет письма</b>\nБез неё новые владельцы не подтвердят почту при регистрации, курьеры не получат код входа.\n<i>${String(why).replace(/[<>&]/g, "")}</i>\nПроверьте SMTP в /etc/saas-gateway.env.`);
+  } catch (_) { /* бот ещё не запущен */ }
 }
 
 /** Письмо-уведомление: не дошло — не мешает самому действию. */
@@ -9015,15 +9035,38 @@ async function startSupportBot() {
 }
 
 // Остановка сервиса — дописать последние изменения хранилища на диск.
+function flushAllStores() {
+  try { supportDb.flushSync(); } catch (e) { console.error(`support-bot: запись хранилища: ${e.message || e}`); }
+  try { partnersDb.flushSync(); } catch (e) { console.error(`partners: запись хранилища: ${e.message || e}`); }
+  try { if (dataStore) dataStore.flushSync(); } catch (e) { console.error(`сервер данных: запись: ${e.message || e}`); }
+  try { shield.flush(); } catch (_) { /* баны — не данные, не страшно */ }
+}
 for (const sig of ["SIGTERM", "SIGINT"]) {
   process.once(sig, () => {
-    try { supportDb.flushSync(); } catch (e) { console.error(`support-bot: запись хранилища: ${e.message || e}`); }
-    try { partnersDb.flushSync(); } catch (e) { console.error(`partners: запись хранилища: ${e.message || e}`); }
-    try { if (dataStore) dataStore.flushSync(); } catch (e) { console.error(`сервер данных: запись: ${e.message || e}`); }
-    try { shield.flush(); } catch (_) { /* баны — не данные, не страшно */ }
+    flushAllStores();
     process.exit(0);
   });
 }
+
+// Забытый catch в фоновой задаче (письмо, бот, сборка) не должен ронять
+// весь сервер: по умолчанию Node завершает процесс, и у всех заведений
+// на время перезапуска рвётся связь кассы и кабинета. Отклонённое
+// обещание состояние не портит — пишем в журнал и работаем дальше.
+let unhandledCount = 0;
+// Только у настоящего сервера: тесты, подключающие server.js, должны падать на ошибках.
+if (require.main === module) process.on("unhandledRejection", (reason) => {
+  unhandledCount++;
+  if (unhandledCount <= 50 || unhandledCount % 100 === 0) {
+    console.error(`saas-gateway: необработанная ошибка №${unhandledCount} (сервер продолжает работу):`, (reason && (reason.stack || reason.message)) || reason);
+  }
+});
+// Исключение вне обещаний — состояние процесса может быть испорчено:
+// сначала сохраняем данные на диск, потом выходим (systemd перезапустит).
+if (require.main === module) process.on("uncaughtException", (err) => {
+  console.error("saas-gateway: критическая ошибка, сохраняю данные и перезапускаюсь:", (err && (err.stack || err.message)) || err);
+  flushAllStores();
+  process.exit(1);
+});
 
 const supportBot = createSupportBot({
   db: () => supportRouter,

@@ -4997,7 +4997,10 @@ function screenAuth() {
         }, { merge: true });
         linkOwnerInRussia(cred.user);
         // Без подтверждения почты заведение не создать — защита от регистрации на чужой адрес.
-        try { await sendAuthEmail('verifyEmail', cred.user.email, () => sendEmailVerification(cred.user)); } catch (_) {}
+        // Письмо не ушло (почта сервера недоступна) — экран подтверждения
+        // скажет об этом честно, а не «мы отправили».
+        state.verifyMailError = '';
+        try { await sendAuthEmail('verifyEmail', cred.user.email, () => sendEmailVerification(cred.user)); } catch (e) { state.verifyMailError = e?.message || String(e); }
         // Пароль сгенерирован случайно — по этому письму владелец задаст свой.
         try { await sendAuthEmail('passwordReset', email, () => sendPasswordResetEmail(state.auth, email)); } catch (_) {}
       }
@@ -5022,7 +5025,8 @@ function screenVerifyEmail() {
   screenEl().innerHTML = `
     <div class="brand">ZalPOS</div>
     <h1>Подтвердите почту</h1>
-    <p class="muted">Мы отправили письмо со ссылкой на <b>${esc(email)}</b>.
+    ${state.verifyMailError ? `<div class="card" style="border-color:var(--danger);background:var(--danger-soft)"><p class="small" style="margin:0;color:var(--danger)"><b>Письмо пока не отправилось.</b> ${esc(state.verifyMailError)}. Нажмите «Отправить письмо ещё раз» через минуту. Если не помогает — напишите нам в чат поддержки на сайте.</p></div>` : ''}
+    <p class="muted">${state.verifyMailError ? 'Письмо придёт' : 'Мы отправили письмо'} со ссылкой на <b>${esc(email)}</b>.
     Перейдите по ней, потом вернитесь сюда и нажмите «Проверить» —
     создание заведения открывается только после этого. Если регистрировались
     только что — придёт и второе письмо, со ссылкой, чтобы задать пароль для
@@ -5059,6 +5063,7 @@ function screenVerifyEmail() {
       await sendAuthEmail('verifyEmail', state.auth.currentUser.email,
         () => sendEmailVerification(state.auth.currentUser));
       msgEl.textContent = 'Письмо отправлено ещё раз.';
+      if (state.verifyMailError) { state.verifyMailError = ''; screenVerifyEmail(); $('f-verify-msg').textContent = 'Письмо отправлено — проверьте почту (и папку «Спам»).'; }
     } catch (e) {
       msgEl.textContent = `Не удалось отправить: ${e?.message || e}`;
     } finally {

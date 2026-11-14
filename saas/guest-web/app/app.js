@@ -1801,6 +1801,9 @@ async function placeOrder(items, redraw, isTobacco = (i) => TOBACCO_RE.test(i.na
 /// закрепляется за первым, кто его занял (документ sessionClaims), и
 /// второму телефону база просто откажет в записи. Секрет стола есть только
 /// на наклейке: без него чужой чек удалённо не занять.
+/** Стол, к которому гость шёл, пока не было номера (см. bindToTable). */
+const BIND_AFTER_PHONE = 'zalBindAfterPhone';
+
 async function bindToTable(tableId, tableKey = '') {
   screenEl().innerHTML = `<h1>Открываем стол…</h1><div class="spinner"></div>`;
   try {
@@ -1809,14 +1812,22 @@ async function bindToTable(tableId, tableKey = '') {
     // ссылке watchProfile() ещё не получил первый снапшот.
     const own = await getDoc(doc(state.loyaltyRoot, 'clients', state.uid));
     // Режим rf: номера в документе нет, есть отметка phoneOnFile.
-    if (!(own.exists() && hasPhoneOnFile(own.data()))) {
+    // Номер только что сохранили на этом телефоне — сервер мог ещё не
+    // успеть отметить его в профиле: не гоняем гостя по кругу.
+    const savedHere = !!(state.ownPd && state.ownPd.phone);
+    if (!savedHere && !(own.exists() && hasPhoneOnFile(own.data()))) {
+      // Стол запоминаем: после сохранения номера в профиле вернём гостя
+      // сюда сам, без повторного сканирования QR.
+      try { sessionStorage.setItem(BIND_AFTER_PHONE, JSON.stringify({ t: tableId, k: tableKey, at: Date.now() })); } catch (_) {}
       screenEl().innerHTML = `
         <h1>Сначала укажите номер</h1>
         <p class="muted small">Чтобы сесть за стол, добавьте номер телефона в профиле —
-          это нужно, чтобы кассир мог найти вас при брони и переносе бонусов.</p>
-        <a class="btn btn-primary" href="#/profile">Открыть профиль</a>`;
+          это нужно, чтобы кассир мог найти вас при брони и переносе бонусов.
+          После сохранения вернём вас за стол сами.</p>
+        <a class="btn btn-primary" href="#/profile">Указать номер</a>`;
       return;
     }
+    try { sessionStorage.removeItem(BIND_AFTER_PHONE); } catch (_) {}
 
     const t = await getDoc(doc(state.root, 'tables', tableId));
     if (!t.exists()) return failBind('Такого стола нет. Отсканируйте код ещё раз.');
@@ -4013,6 +4024,16 @@ async function saveProfile() {
       try { await setDoc(doc(state.loyaltyRoot, 'phoneIndex', phone), { uid: state.uid }); } catch (_) {}
     }
     toast('Сохранено');
+    // Гость пришёл сюда с QR стола без номера — номер есть, ведём за стол.
+    if (patch.phone) {
+      let pending = null;
+      try { pending = JSON.parse(sessionStorage.getItem(BIND_AFTER_PHONE) || 'null'); } catch (_) { pending = null; }
+      if (pending && pending.t && Date.now() - (pending.at || 0) < 30 * 60 * 1000) {
+        try { sessionStorage.removeItem(BIND_AFTER_PHONE); } catch (_) {}
+        toast('Номер сохранён — открываем ваш стол');
+        location.hash = `#/t/${encodeURIComponent(pending.t)}${pending.k ? `/${encodeURIComponent(pending.k)}` : ''}`;
+      }
+    }
   } catch (e) {
     toast(String((e && e.message) || '').startsWith('Согласие')
       ? e.message : 'Не удалось сохранить: проверьте интернет и попробуйте снова');
