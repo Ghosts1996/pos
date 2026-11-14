@@ -60,6 +60,7 @@ const { createTenantCache, guestMenu } = require("./tenant-cache");
 const { createPartners } = require("./partners");
 const { createOpenApi } = require("./open-api");
 const { createGuestMarketing, rootKeyOf: guestRootKey } = require("./guest-marketing");
+const { createRushHour } = require("./rush-hour");
 const { createShield } = require("./shield");
 const { createPiiInternal } = require("./pii-internal");
 const { createPiiMigrate } = require("./pii-migrate");
@@ -2893,6 +2894,25 @@ async function runEnforceGracePeriod() {
  * platformStatus/cronJobs, проверяем раз в час. С setInterval(24 ч) каждый
  * деплой сбрасывал отсчёт, и при частых обновлениях задачи не шли вообще.
  */
+// «Час пик»: пятница/суббота 20:00–02:00 по поясам заведений — тяжёлые фоновые
+// задачи ждут, весь сервер — кассам, кухне и курьерам (rush-hour.js).
+const rushHour = createRushHour({
+  listTimezones: async () => {
+    const tenants = await db().collection("tenants").get();
+    const tzs = new Set();
+    for (const t of tenants.docs.slice(0, 5000)) {
+      const d = t.data() || {};
+      if (d.isDemo || d.deletedAt) continue;
+      const g = await db().collection("tenants").doc(t.id).collection("settings").doc("general").get();
+      const tz = g.exists ? String(g.data().timezone || "") : "";
+      if (tz) tzs.add(tz);
+    }
+    return [...tzs];
+  },
+});
+// Задачи, которые идут и в час пик: деньги (продление подписок).
+const RUSH_ESSENTIAL_JOBS = new Set(["billing"]);
+
 function scheduleDailyJob(name, intervalMs, run, firstDelayMs = 5 * 60 * 1000) {
   const ref = () => db().collection("platformStatus").doc("cronJobs");
   // Время последнего запуска — в памяти: базу читаем один раз после
@@ -2901,6 +2921,10 @@ function scheduleDailyJob(name, intervalMs, run, firstDelayMs = 5 * 60 * 1000) {
   const tick = async () => {
     try {
       if (known !== null && Date.now() - known < intervalMs - 60 * 60 * 1000) return;
+      if (!RUSH_ESSENTIAL_JOBS.has(name)) {
+        await rushHour.refresh();
+        if (rushHour.shouldDefer(name)) return; // повторим через час, после 02:00
+      }
       const last = (await ref().get()).data()?.[name]?.toMillis?.() ?? 0;
       known = last;
       if (Date.now() - last < intervalMs - 60 * 60 * 1000) return;
@@ -6456,6 +6480,7 @@ function scheduleFirestoreBackup() {
   const tick = async () => {
     try {
       if (known !== null && Date.now() - known < BACKUP_INTERVAL_MS - 60 * 60 * 1000) return;
+      if (rushHour.shouldDefer("backup")) return; // копия читает всю базу — после часа пик
       const st = (await db().collection("platformStatus").doc("backup").get()).data() || {};
       const last = st.lastRunAt && st.lastRunAt.toMillis ? st.lastRunAt.toMillis() : 0;
       known = last;
@@ -7582,6 +7607,25 @@ const AI_EXTRA_VENDOR_DEFAULTS = {
 const AI_EXTRA_SLOT = /^extra:([A-Za-z0-9_-]{1,24})$/;
 const AI_PROXY_PATHS = new Set(["chat/completions", "messages", "v1/messages"]);
 const AI_PROXY_LIMIT = 30; // запросов гостя
+const AI_GUEST_DAILY_LIMIT = 20; // вопросов гостя ИИ-помощнику в сутки
+
+/** Сутки по Москве: «2026-11-14». */
+function mskDay(now = Date.now()) {
+  return new Date(now + 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/** Счётчик вопросов гостя за сутки (aiGuestDaily — клиентам закрыт правилами). */
+async function takeGuestAiQuota(firestore, uid, now = Date.now()) {
+  const ref = firestore.collection("aiGuestDaily").doc(`${uid}_${mskDay(now)}`);
+  await firestore.runTransaction(async (tx) => {
+    const cur = await tx.get(ref);
+    const n = cur.exists ? Number(cur.data().count) || 0 : 0;
+    if (n >= AI_GUEST_DAILY_LIMIT) {
+      throw new HttpError(429, `ИИ-помощник отвечает гостю до ${AI_GUEST_DAILY_LIMIT} раз в сутки — лимит на сегодня исчерпан, спросите официанта`);
+    }
+    tx.set(ref, { uid, day: mskDay(now), count: n + 1, expireAt: admin.firestore.Timestamp.fromMillis(now + 3 * 86400000) }, { merge: true });
+  });
+}
 const AI_PROXY_STAFF_LIMIT = 400; // запросов кассы (сотрудник, агенты)
 // Модели ключа (для замены пропавшей модели): ключ+адрес → { at, ids }.
 const aiModelsCache = new Map();
@@ -7765,6 +7809,9 @@ async function handleAiProxy(req, res) {
     if (!ses.exists || ses.data().status !== "active") {
       throw new HttpError(403, "ИИ-помощник доступен, пока за столом открыт счёт");
     }
+    // Не больше AI_GUEST_DAILY_LIMIT вопросов гостя в сутки (по Москве) —
+    // счётчик на сервере, переживает перезапуск; ИИ оплачивает заведение.
+    await takeGuestAiQuota(firestore, decoded.uid);
   }
   const useChain = !!(chainSettingsDoc && chainSettingsDoc.exists);
   const [settingsDoc, secretsDoc] = useChain
@@ -8538,6 +8585,7 @@ const zalMap = createMap({
 });
 /** Точки заведений с доставкой — чтобы map-build.js собрал карту вокруг них. */
 async function refreshMapRegions() {
+  if (rushHour.shouldDefer("mapRegions")) return;
   try {
     const tenants = await db().collection("tenants").get();
     const points = [];
@@ -8759,6 +8807,12 @@ async function supportAdminDigest(kind) {
     const free = os.freemem();
     lines.push(`${free / total < 0.1 ? "⚠️ " : ""}Память: занято ${mb(total - free)} из ${mb(total)} · сервис ${mb(process.memoryUsage().rss)}`);
     lines.push(`Нагрузка (1/5/15 мин): ${os.loadavg().map((x) => x.toFixed(2)).join(" / ")} · ядер ${os.cpus().length}`);
+    {
+      const rh = rushHour.status(nowMs);
+      lines.push(rh.rush
+        ? `🔥 Час пик: фоновые задачи ждут до 02:00${rh.deferred.length ? ` (${rh.deferred.map(esc).join(", ")})` : ""}`
+        : "Час пик (пт/сб 20:00–02:00): сейчас нет — фоновые задачи идут");
+    }
     try {
       const st = fs.statfsSync(__dirname);
       const freeB = st.bavail * st.bsize;
@@ -9542,7 +9596,7 @@ async function runFirestorePurge() {
 function scheduleFirestorePurge() {
   const tick = () => {
     const st = firestorePurgeState();
-    if (st && st.phase !== "done" && DATA_LOCAL) runFirestorePurge().catch(() => {});
+    if (st && st.phase !== "done" && DATA_LOCAL && !rushHour.shouldDefer("firestorePurge")) runFirestorePurge().catch(() => {});
   };
   setTimeout(tick, 15 * 60 * 1000);
   setInterval(tick, 24 * 60 * 60 * 1000);
@@ -9613,7 +9667,7 @@ async function runFirebaseExit() {
   }
 }
 function scheduleFirebaseExit() {
-  const tick = () => { runFirebaseExit().catch(() => {}); };
+  const tick = () => { if (!rushHour.shouldDefer("firebaseExit")) runFirebaseExit().catch(() => {}); };
   setTimeout(tick, 10 * 60 * 1000).unref();
   setInterval(tick, 6 * 60 * 60 * 1000).unref();
 }
@@ -10318,4 +10372,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, dataWriteGate, localDataStore });
+Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, dataWriteGate, localDataStore });

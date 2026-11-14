@@ -18,6 +18,7 @@ import {
   dataBackend, openDb, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot,
   collection, query, where, orderBy, limit, Timestamp, deleteField, writeBatch, increment,
 } from './zal-db.js';
+import { savingsEstimate, planTableRows } from './savings.js';
 
 // saas-gateway — сервер платформы (saas-gateway/README.md), живёт на том же
 // домене, что и pii-gateway, по пути /saas/.
@@ -3820,8 +3821,30 @@ function screenLanding() {
           <div class="pricing-included-title">Во всех тарифах</div>
           <ul class="pricing-chips" id="landing-pricing-chips"></ul>
         </div>
+        <div class="plan-table-wrap" id="landing-plan-table" aria-label="Все тарифы в одной таблице"></div>
         <p class="pricing-note">Оплачивается отдельно и не нам: онлайн-касса и ОФД, если пробиваете фискальные чеки, эквайринг банка,
         а для продажи алкоголя ещё УТМ и электронная подпись.</p>
+        <div class="savings-calc" id="landing-calc">
+          <div class="savings-calc-head">
+            <h3>Сколько вы сэкономите за год</h3>
+            <p>Подставьте свои цифры: сколько платите за кассу сейчас и сколько заказов идёт через агрегаторы доставки.
+            Процент с продаж ZalPOS не берёт.</p>
+          </div>
+          <div class="savings-calc-grid">
+            <label class="calc-field"><span>Устройств с кассой: <b id="calc-tills-v">2</b></span>
+              <input type="range" id="calc-tills" min="1" max="15" step="1" value="2"></label>
+            <label class="calc-field"><span>Платите за кассу и учёт сейчас, ₽ в месяц</span>
+              <input type="number" id="calc-current" min="0" step="100" value="5000" inputmode="numeric"></label>
+            <label class="calc-field"><span>Заказы через агрегаторы доставки, ₽ в месяц: <b id="calc-delivery-v">300 000</b></span>
+              <input type="range" id="calc-delivery" min="0" max="3000000" step="10000" value="300000"></label>
+            <label class="calc-field"><span>Комиссия агрегатора, %: <b id="calc-commission-v">25</b></span>
+              <input type="range" id="calc-commission" min="0" max="40" step="1" value="25"></label>
+            <label class="calc-field"><span>Сколько этих заказов перейдёт в свою доставку и QR, %: <b id="calc-share-v">30</b></span>
+              <input type="range" id="calc-share" min="0" max="100" step="5" value="30"></label>
+          </div>
+          <div class="savings-calc-result" id="calc-result" aria-live="polite"></div>
+          <p class="savings-calc-note">Расчёт по вашим цифрам. Не учтены эквайринг, ОФД и оплата своих курьеров — их вы платите и сейчас.</p>
+        </div>
       </div>
     </section>
 
@@ -4011,7 +4034,42 @@ function screenLanding() {
     ? window.localStorage.getItem('selectedBillingPeriod') : 'monthly';
   let latestPlans = [];
 
+  const renderPlanTable = () => {
+    const box = $('landing-plan-table');
+    if (!box) return;
+    const rows = planTableRows(latestPlans);
+    box.innerHTML = rows.length ? `<table class="plan-table">
+      <thead><tr><th>Тариф</th><th>₽ в месяц</th><th>₽ за год</th><th>Устройств с кассой</th><th>Курьеров</th><th>ИИ</th><th>Доп. точка сети</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr><th scope="row">${esc(r.name)}</th><td>${esc(r.month)}</td><td>${esc(r.year)}</td>
+        <td>${esc(r.devices)}</td><td>${esc(r.couriers)}</td><td>${esc(r.ai)}</td><td>${esc(r.extra)}</td></tr>`).join('')}</tbody>
+    </table>` : '';
+  };
+  const renderCalc = () => {
+    const out = $('calc-result');
+    if (!out) return;
+    const v = (id) => Number(($(id) || {}).value) || 0;
+    const r = savingsEstimate({ tills: v('calc-tills'), currentMonthly: v('calc-current'), deliveryMonthly: v('calc-delivery'),
+      commissionPct: v('calc-commission'), sharePct: v('calc-share') }, latestPlans);
+    const rub = (n) => `${Math.round(n).toLocaleString('ru-RU')} ₽`;
+    [['calc-tills-v', v('calc-tills')], ['calc-delivery-v', v('calc-delivery').toLocaleString('ru-RU')],
+      ['calc-commission-v', v('calc-commission')], ['calc-share-v', v('calc-share')]].forEach(([id, t]) => { if ($(id)) $(id).textContent = String(t); });
+    if (!r.plan) { out.innerHTML = '<p class="small muted">Тарифы загружаются…</p>'; return; }
+    out.innerHTML = `
+      <div class="calc-total"><span>Экономия за год</span><b>${r.totalYear > 0 ? rub(r.totalYear) : '0 ₽'}</b></div>
+      <div class="calc-lines">
+        <div><span>Подходящий тариф</span><b>${esc(r.plan.name || r.plan.id)} · ${rub(r.ourMonthly)}/мес</b></div>
+        <div><span>Разница в подписке за год</span><b>${r.subscriptionYear >= 0 ? rub(r.subscriptionYear) : `−${rub(-r.subscriptionYear)}`}</b></div>
+        <div><span>Комиссия, которую не отдадите агрегатору</span><b>${rub(r.commissionYear)}</b></div>
+      </div>`;
+  };
+  ['calc-tills', 'calc-current', 'calc-delivery', 'calc-commission', 'calc-share'].forEach((id) => {
+    const el = $(id);
+    if (el) el.addEventListener('input', renderCalc);
+  });
+
   const renderLandingPlans = () => {
+    renderPlanTable();
+    renderCalc();
     const plans = sellablePlans(latestPlans, false);
     const chainPlans = sellablePlans(latestPlans, true);
     const body = $('landing-plans');
