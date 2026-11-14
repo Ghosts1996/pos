@@ -16,6 +16,10 @@ import '../../services/chestny_znak_api_service.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
 import '../../utils/adaptive.dart';
+import '../../utils/voice_order.dart';
+import '../../build_info.dart';
+import '../../widgets/ai_voice_input.dart';
+import '../../widgets/voice_order_sheet.dart';
 import '../../widgets/modifier_picker_sheet.dart';
 import '../../widgets/void_item_dialog.dart';
 
@@ -51,6 +55,56 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
   late final Stream<List<MenuItem>> _items = _fs.menuItemsStream();
   late final Stream<SessionModel?> _sessionUpdates = _fs.sessionStream(widget.session.id);
   bool _scanBusy = false;
+
+  /// Доступные позиции меню на экране — по ним разбирается голосовой заказ.
+  List<MenuItem> _menuNow = const [];
+
+  /// Голосовой заказ (только SaaS): телефон распознаёт речь сам, на
+  /// устройстве; фраза разбирается по меню, кассир проверяет и подтверждает.
+  Future<void> _onVoice(String text) async {
+    final parsed = parseVoiceOrder<MenuItem>(text, _menuNow, (i) => i.name);
+    if (parsed.isEmpty) {
+      _showSnack('Не нашёл в меню: «$text»');
+      return;
+    }
+    final picked = await showModalBottomSheet<List<VoiceOrderLine<MenuItem>>>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => VoiceOrderSheet(heard: text, parsed: parsed),
+    );
+    if (picked == null || picked.isEmpty || !mounted) return;
+    var added = 0;
+    for (final line in picked) {
+      if (line.item.hasModifiers) {
+        // Добавки выбираются на каждую порцию отдельно — как при нажатии «+».
+        for (var n = 0; n < line.qty; n++) {
+          if (await _add(line.item)) added++;
+        }
+        continue;
+      }
+      try {
+        await _fs.addOrderItem(widget.session.id, line.item, qty: line.qty, employeeId: widget.employeeId);
+        added += line.qty;
+      } catch (e) {
+        _showSnack('Не удалось добавить «${line.item.name}»: ${humanError(e, lower: true)}');
+      }
+    }
+    if (added > 0) _showSnack('Добавлено голосом: $added шт.');
+  }
+
+  void _onVoiceError(String code) {
+    if (code == 'error_no_match' || code == 'error_speech_timeout') {
+      _showSnack('Не расслышал — нажмите на микрофон и скажите ещё раз');
+    } else if (code.contains('language') || code.contains('server') || code.contains('network')) {
+      // Звук не отправляем в облако — нужен офлайн-пакет русского языка.
+      _showSnack('Голосовой ввод работает без интернета: в настройках телефона скачайте русский язык для офлайн-распознавания речи');
+    } else if (code.contains('permission')) {
+      _showSnack('Разрешите доступ к микрофону в настройках телефона');
+    } else {
+      _showSnack('Голосовой ввод не сработал ($code)');
+    }
+  }
 
   /// Общий обработчик для обоих способов сканирования — HID-сканера
   /// (see [HidScannerListener] в build()) и камеры (см. кнопку в AppBar).
@@ -192,6 +246,14 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
           // (USB/Bluetooth "пистолет", эмулирующий клавиатуру) продолжает
           // работать одинаково на всех платформах без этой кнопки — она
           // только для сканирования именно КАМЕРОЙ устройства.
+          if (kSaasMode && !isWindowsApp)
+            AiVoiceInput(
+              onDevice: true,
+              tooltip: 'Заказ голосом: «два латте и пицца маргарита»',
+              color: Theme.of(context).colorScheme.onSurface,
+              onResult: _onVoice,
+              onError: _onVoiceError,
+            ),
           if (!isWindowsApp)
             IconButton(
               tooltip: 'Сканировать камерой',
@@ -226,6 +288,7 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
             builder: (context, itemSnap) {
               if (!itemSnap.hasData) return const Center(child: CircularProgressIndicator());
               final allAvailable = itemSnap.data!.where((i) => i.available).toList();
+              _menuNow = allAvailable;
 
               if (categories.isEmpty) {
                 return const Center(child: Text('Меню пока пустое'));

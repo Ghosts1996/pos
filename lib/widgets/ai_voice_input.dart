@@ -21,12 +21,25 @@ class AiVoiceInput extends StatefulWidget {
   final Color color;
   final String localeId;
 
+  /// Распознавать только на самом устройстве: звук не уходит ни в какой
+  /// облачный сервис (152-ФЗ — без передачи за рубеж). Если на телефоне нет
+  /// офлайн-пакета языка, распознавание сообщит ошибку через [onError].
+  final bool onDevice;
+
+  /// Ошибка распознавания (код движка, например `error_language_unavailable`).
+  final void Function(String error)? onError;
+
+  final String? tooltip;
+
   AiVoiceInput({
     super.key,
     required this.onResult,
     this.onPartial,
     Color? color,
     this.localeId = 'ru_RU',
+    this.onDevice = false,
+    this.onError,
+    this.tooltip,
   }) : color = color ?? AppColors.primary;
 
   @override
@@ -57,8 +70,9 @@ class _AiVoiceInputState extends State<AiVoiceInput> {
             }
           }
         },
-        onError: (_) {
+        onError: (e) {
           if (mounted) setState(() => _listening = false);
+          widget.onError?.call(e.errorMsg);
         },
       );
       if (mounted) setState(() => _available = ok);
@@ -79,6 +93,7 @@ class _AiVoiceInputState extends State<AiVoiceInput> {
       listenOptions: SpeechListenOptions(
         partialResults: true,
         cancelOnError: true,
+        onDevice: widget.onDevice,
         localeId: widget.localeId,
       ),
       onResult: (r) {
@@ -102,7 +117,7 @@ class _AiVoiceInputState extends State<AiVoiceInput> {
   @override
   Widget build(BuildContext context) {
     return IconButton(
-      tooltip: _listening ? 'Идёт запись — нажмите, чтобы остановить' : 'Сказать голосом',
+      tooltip: _listening ? 'Идёт запись — нажмите, чтобы остановить' : (widget.tooltip ?? 'Сказать голосом'),
       onPressed: _available ? _toggle : null,
       icon: Icon(
         _listening ? Icons.mic : Icons.mic_none,

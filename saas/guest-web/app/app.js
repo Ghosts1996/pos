@@ -1506,7 +1506,8 @@ function screenMenu() {
       ${menuLangBar()}
       <input id="menuSearch" class="msearch" type="search" placeholder="Поиск по меню" value="${esc(search)}">
       ${body}
-      ${atTable ? cartBlock(items) : deliveryOn() ? cartBlock(items, true) : `
+      ${atTable ? cartBlock(items, false, upsellBlock(pickUpsell(regular, state.cart, (i) => !hasMods(i))))
+    : deliveryOn() ? cartBlock(items, true, upsellBlock(pickUpsell(regular, state.cart, (i) => !hasMods(i) && canTakeAway(i)))) : `
         <p class="small muted">Чтобы заказать из приложения, откройте свой
         стол — отсканируйте QR-код на столе камерой телефона.</p>`}
     `;
@@ -1554,7 +1555,44 @@ function screenMenu() {
   }, () => {}));
 }
 
-function cartBlock(items = [], delivery = false) {
+// «Отлично подойдёт к вашему заказу»: до трёх позиций из ДРУГИХ разделов меню,
+// чем уже в корзине (к горячему — напиток или десерт), самые популярные первыми
+// (popularRank — хиты заведения за 30 дней), по одной из раздела. allowed —
+// можно ли заказать её сейчас (табак, алкоголь навынос и т. п. не предлагаем).
+function pickUpsell(items, cart, allowed, limit = 3) {
+  const inCart = new Set(Object.keys(cart || {}).map((k) => String(k).split('|')[0]));
+  if (!inCart.size) return [];
+  const cartCats = new Set(items.filter((i) => inCart.has(i.id)).map((i) => i.categoryId || ''));
+  const rank = (i) => (Number(i.popularRank) > 0 ? Number(i.popularRank) : 1000);
+  const pool = items
+    .filter((i) => !inCart.has(i.id) && i.available !== false && Number(i.price) > 0 && !cartCats.has(i.categoryId || '') && allowed(i))
+    .sort((a, b) => rank(a) - rank(b) || Number(a.price) - Number(b.price));
+  const out = [];
+  const usedCats = new Set();
+  for (const i of pool) {
+    if (usedCats.has(i.categoryId || '')) continue;
+    usedCats.add(i.categoryId || '');
+    out.push(i);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function upsellBlock(list) {
+  if (!list.length) return '';
+  return `
+    <div class="upsell" aria-label="Отлично подойдёт к вашему заказу">
+      <div class="upsell-title">Отлично подойдёт к вашему заказу</div>
+      <div class="upsell-row">${list.map((i) => `
+        <div class="upsell-card">
+          ${i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
+          <div class="upsell-name">${esc(trMenu(i.name))}</div>
+          <div class="upsell-foot"><b>${money(i.price)}</b><button data-plus="${esc(i.id)}" aria-label="Добавить: ${esc(i.name)}">+</button></div>
+        </div>`).join('')}</div>
+    </div>`;
+}
+
+function cartBlock(items = [], delivery = false, upsell = '') {
   const ids = Object.keys(state.cart);
   if (!ids.length) {
     return delivery ? `<p class="small muted">Соберите заказ — его можно забрать самому или заказать доставку.</p>` : '';
@@ -1567,7 +1605,7 @@ function cartBlock(items = [], delivery = false) {
     const it = items.find((i) => i.id === id);
     return sum + (it ? priceWith(it, mods) : 0) * state.cart[key];
   }, 0);
-  return `
+  return `${upsell}
     <div class="card">
       <div style="font-weight:600;margin-bottom:8px">Ваш заказ: ${count} ${plural(count, 'позиция', 'позиции', 'позиций')} · ${money(total)}</div>
       <div class="small muted" style="margin-bottom:12px">
