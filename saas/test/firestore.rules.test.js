@@ -1545,6 +1545,13 @@ describe("Чаевые: гость выбирает, кому из смены, �
   });
 
   it("гость читает только свои чаевые к чеку; касса — все и отмечает оплату", async () => {
+    // В той же смене — чаевые другого гостя: запрос без своего clientUid
+    // обязан получить отказ (а не отдать чужое и не отфильтровать молча).
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenants/tenantA/tips/other1"), {
+        amount: 200, clientUid: "guestB", status: "pending", sessionId: "sess1",
+      });
+    });
     const g = ctxFor("guestA");
     await assertSucceeds(getDocs(query(collection(g, "tenants/tenantA/tips"),
       where("sessionId", "==", "sess1"), where("clientUid", "==", "guestA"))));

@@ -4,12 +4,18 @@
 //   LOCAL_DB_URL=http://127.0.0.1:8787 flutter test test/local_db_cashier_flow_test.dart
 // Без LOCAL_DB_URL тест пропускается.
 
+// ignore_for_file: invalid_use_of_visible_for_testing_member — это тест (папка вне test/, её запускают отдельно)
+@Timeout(Duration(minutes: 15))
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/harness_lock.dart';
 import 'package:hookah_pos/build_info.dart';
 import 'package:hookah_pos/data/app_db.dart';
 import 'package:hookah_pos/data/local_engine.dart';
@@ -24,26 +30,13 @@ import 'package:hookah_pos/services/firestore_service.dart';
 import 'package:hookah_pos/services/net_status.dart';
 import 'package:http/http.dart' as http;
 
-/// Вход: подставной токен стенда (test-data-harness.js) или настоящий вход
-/// в эмулятор Firebase Auth (AUTH_EMU=127.0.0.1:9099, AUTH_EMAIL, AUTH_PASSWORD)
-/// — тогда проверяется сам saas-gateway (server.js).
+/// Вход: подставной токен стенда (test-data-harness.js).
 class _TestAuth implements EngineAuth {
   _TestAuth(this.uid);
   @override
-  String uid;
-  String? _idToken;
+  final String uid;
   @override
-  Future<String?> token({bool force = false}) async {
-    final emu = Platform.environment['AUTH_EMU'];
-    if (emu == null) return 'test:$uid';
-    if (_idToken != null && !force) return _idToken;
-    final r = await http.post(Uri.parse('http://$emu/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': Platform.environment['AUTH_EMAIL'], 'password': Platform.environment['AUTH_PASSWORD'], 'returnSecureToken': true}));
-    final j = jsonDecode(r.body) as Map;
-    uid = j['localId'] as String;
-    return _idToken = j['idToken'] as String;
-  }
+  Future<String?> token({bool force = false}) async => 'test:$uid';
 
   @override
   Stream<String> get uidChanges => const Stream.empty();
@@ -53,14 +46,16 @@ final _url = Platform.environment['LOCAL_DB_URL'] ?? '';
 final _tenant = Platform.environment['LOCAL_DB_TENANT'] ?? 'tenantA';
 
 void main() {
-  final skip = _url.isEmpty ? 'нет LOCAL_DB_URL' : null;
+  // Стенд общий — занимаем целиком, пока идут тесты этого файла.
+  requireSaasHarness(url: _url);
+  useHarnessExclusively(_url);
   late LocalEngine engine;
   late LocalFirestore db;
 
   setUpAll(() {
     FieldValueRecorder.install();
     final dir = Directory.systemTemp.createTempSync('cashier');
-    engine = LocalEngine(baseUrl: _url, storageDir: dir, auth: _TestAuth(Platform.environment['AUTH_EMU'] != null ? 'ownerE2E' : 'ownerA'));
+    engine = LocalEngine(baseUrl: _url, storageDir: dir, auth: _TestAuth('ownerA'));
     engine.start();
     db = LocalFirestore(engine);
     AppDb.debugUse(db, engine: engine);
@@ -68,7 +63,7 @@ void main() {
   });
   tearDownAll(() async {
     engine.dispose();
-    if (_url.isNotEmpty && Platform.environment['AUTH_EMU'] == null) {
+    if (_url.isNotEmpty) {
       await http.post(Uri.parse('$_url/__offline'), body: jsonEncode({'on': false}));
     }
   });
@@ -117,9 +112,8 @@ void main() {
     await fs.closeShift(shiftId, 'Тест Кассир');
     final shift = await db.doc('tenants/$_tenant/shifts/$shiftId').get(const GetOptions(source: Source.server));
     expect(shift.data()!['status'], 'closed');
-  }, skip: skip, timeout: const Timeout(Duration(minutes: 2)));
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
-  final harnessOnly = Platform.environment['AUTH_EMU'] != null ? 'обрыв связи — только на стенде' : skip;
   test('без интернета чек закрывается по памяти устройства и уходит на сервер потом', () async {
     final fs = FirestoreService();
     final shiftId = await fs.openShiftIfNeeded('Тест Кассир');
@@ -155,7 +149,7 @@ void main() {
     expect((await db.doc('tenants/$_tenant/sessions/$s2').get(const GetOptions(source: Source.server))).data()!['tableId'], 'flow3');
     expect((await db.doc('tenants/$_tenant/sessions/$part').get(const GetOptions(source: Source.server))).exists, isTrue);
     await fs.closeShift(shiftId, 'Тест Кассир');
-  }, skip: harnessOnly, timeout: const Timeout(Duration(minutes: 2)));
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('касса знает, что связи нет: чек со складом закрывается и после связи записан один раз (SaaS)', () async {
     final fs = FirestoreService();
@@ -196,7 +190,7 @@ void main() {
     final t = (await db.doc('tenants/$_tenant/tables/flowOff').get(const GetOptions(source: Source.server))).data()!;
     expect(t['status'], 'free');
     expect(engine.lastRejected.value, isNull);
-  }, skip: harnessOnly, timeout: const Timeout(Duration(minutes: 2)));
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('смена сотрудника без интернета: в табель — время нажатия, не время возврата связи (SaaS)', () async {
     final fs = FirestoreService();
@@ -231,7 +225,7 @@ void main() {
     expect(end.difference(tappedOut).inSeconds.abs(), lessThan(2), reason: 'уход — момент нажатия, а не возврата связи');
     expect((d['endSyncedAt'] as Timestamp).toDate().isAfter(end.add(const Duration(seconds: 3))), isTrue);
     expect(engine.lastRejected.value, isNull);
-  }, skip: harnessOnly, timeout: const Timeout(Duration(minutes: 2)));
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('кухня, разделение и пересадка, повторное открытие, касса, Z-отчёт', () async {
     // Прошлый тест обрывал связь; в приложении её восстановит NetStatus.start().
@@ -284,7 +278,7 @@ void main() {
     expect(z, isNotNull);
     await fs.closeShift(shiftId, 'Тест Кассир');
     expect(await fs.currentOpenShift(), isNull);
-  }, skip: skip, timeout: const Timeout(Duration(minutes: 2)));
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('стол, «зависший» на закрытом чеке, освобождается и открывает новый чек (SaaS)', () async {
     NetStatus.online.value = true;
@@ -322,7 +316,7 @@ void main() {
     final t3 = await db.doc('tenants/$_tenant/tables/stale1').get(const GetOptions(source: Source.server));
     expect(List<String>.from(t3.data()!['activeSessionIds'] as List), [sid3]);
     expect(await fs.closeSessionWithPayment(sid3, 'stale1', cash: 0, card: 0, comp: 0, closedWithoutPayment: true), isTrue);
-  }, skip: skip, timeout: const Timeout(Duration(minutes: 2)));
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('офлайн-апокалипсис: часы без связи, 20 чеков, отмены, склад; тем временем тариф истёк — ничего не теряется (SaaS)', () async {
     final fs = FirestoreService();
@@ -422,7 +416,7 @@ void main() {
       expect((await db.doc('tenants/$_tenant/tables/${t.id}').get(const GetOptions(source: Source.server))).data()!['status'], 'free');
     }
     expect(engine.lastRejected.value, isNull);
-  }, skip: harnessOnly, timeout: const Timeout(Duration(minutes: 4)));
+  }, timeout: const Timeout(Duration(minutes: 4)));
 
   test('Z-отчёты: сквозные номера, необнуляемый итог; открытие смены их не сбрасывает', () async {
     NetStatus.online.value = true;
@@ -446,5 +440,5 @@ void main() {
     expect((b['state'] as Map)['lastZ'], a['zNumber'], reason: 'открытие смены не стёрло счётчик');
     expect(((b['z'] as Map)['salesTotal'] as num) - ((b['z'] as Map)['refundsTotal'] as num? ?? 0), 250, reason: 'в Z только чеки этой смены');
     expect(((b['z'] as Map)['grandTotal'] as num) - ((a['z'] as Map)['grandTotal'] as num), 250);
-  }, skip: skip, timeout: const Timeout(Duration(minutes: 2)));
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }

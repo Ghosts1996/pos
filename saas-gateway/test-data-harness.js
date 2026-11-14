@@ -8,6 +8,10 @@
 //
 // POST /__offline {"on": true} — «пропал интернет»: запросы обрываются,
 // поток подписок закрывается; {"on": false} — связь вернулась.
+// POST /__lock {"owner": "<файл теста>"} — занять стенд (ответ приходит, когда
+// стенд свободен; flutter test гоняет файлы параллельно, а «выдёрнутый
+// интернет» одного файла ломал бы другой); POST /__unlock — освободить.
+// Владелец, не освободивший стенд за 10 минут, теряет его сам.
 // POST /__gate {"code": "subscription-blocked"} — сервер отказывает в записи,
 // как боевой при неоплате/отключённой кассе (402/403 с этим кодом); {} — снять.
 
@@ -52,6 +56,21 @@ const seeded = (async () => {
 
 let offline = false;
 let gate = null;
+let lock = null; // { owner, at }
+const lockWaiters = []; // { owner, res }
+const LOCK_STALE_MS = 10 * 60 * 1000;
+function grantNext() {
+  if (lock && Date.now() - lock.at > LOCK_STALE_MS) lock = null;
+  while (!lock && lockWaiters.length) {
+    const w = lockWaiters.shift();
+    if (w.res.writableEnded || w.res.destroyed) continue;
+    lock = { owner: w.owner, at: Date.now() };
+    // Новый владелец начинает с чистого стенда: связь есть, запись открыта.
+    offline = false; gate = null;
+    sendJson(w.res, 200, { lock: w.owner });
+  }
+}
+setInterval(grantNext, 5000).unref();
 // Сколько следующих /db/commit применить, но ответ «потерять» (обрыв связи
 // после записи) — касса повторит пачку, сервер не должен применить её дважды.
 let dropReplies = 0;
@@ -64,6 +83,18 @@ const server = http.createServer(async (req, res) => {
       offline = (await parseJsonBody(req)).on === true;
       if (offline) { for (const s of streams) s.destroy(); streams.clear(); }
       return sendJson(res, 200, { offline });
+    }
+    if (url === "/__lock") {
+      const owner = String((await parseJsonBody(req)).owner || "");
+      if (lock && lock.owner === owner) { lock.at = Date.now(); return sendJson(res, 200, { lock: owner }); }
+      lockWaiters.push({ owner, res });
+      return grantNext();
+    }
+    if (url === "/__unlock") {
+      const owner = String((await parseJsonBody(req)).owner || "");
+      if (lock && lock.owner === owner) { lock = null; offline = false; gate = null; }
+      sendJson(res, 200, { ok: true });
+      return grantNext();
     }
     if (url === "/__gate") {
       const code = (await parseJsonBody(req)).code;

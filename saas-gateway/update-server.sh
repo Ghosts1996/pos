@@ -4,8 +4,8 @@
 #   bash /root/pos-deploy/saas-gateway/update-server.sh
 #
 # Что делает: веб-версия гостя, saas-gateway (новое демо, оплаты и т.п.),
-# pii-gateway со схемой базы, сайт zalpos.ru (Firebase Hosting — если на
-# сервере есть вошедший firebase CLI). Сертификаты и nginx не трогает —
+# pii-gateway со схемой базы, сайт zalpos.ru (на этом сервере; Firebase не
+# используется). Сертификаты и nginx не трогает —
 # это делает migrate-domain.sh, его хватило запустить один раз.
 # То же самое делает автообновление (auto-deploy.sh) после каждого пуша.
 set -euo pipefail
@@ -182,33 +182,18 @@ if [[ -d /opt/zalpos-site ]]; then
   else
     echo "!! сайт не собран — работает прежняя версия; повторите: bash $REPO/saas-gateway/build-site.sh"
   fi
-  # Домен ещё смотрит на Firebase (A-запись не переключена) — посетители
-  # получают копию оттуда: выкладываем туда ту же версию, пока DNS не сменят.
-  only=firestore
+  # Firebase (Google, США) не используется: ни сайт, ни правила базы туда не
+  # выкладываются — правила работают на этом сервере (saas/firestore.rules),
+  # трансграничной передачи нет. Проверяем только, что домен смотрит сюда.
   here="$(getent ahostsv4 pii.zalpos.ru | awk 'NR==1{print $1}' || true)"
   there="$(getent ahostsv4 zalpos.ru | awk '{print $1}' | sort -u | tr '\n' ' ' || true)"
   if [[ -n "$here" && -n "$there" && "$there" != "$here " ]]; then
-    echo "!! zalpos.ru указывает на: ${there}— а этот сервер: $here. Посетители открывают копию с Firebase (в России она медленная)."
+    echo "!! zalpos.ru указывает на: ${there}— а этот сервер: $here."
     echo "!! У регистратора домена (раздел DNS): A-запись «@» и «www» → $here, прочие A-записи удалите."
-    echo "   Пока DNS не переключён — выкладываю эту же версию и на Firebase Hosting."
-    only=hosting,firestore
-  fi
-  if command -v firebase >/dev/null; then
-    (cd "$REPO/saas" && firebase deploy --only "$only" --non-interactive) || echo "Firebase ($only) не выложен — данные на этом сервере, сайт на нём собран"
-  fi
-elif command -v firebase >/dev/null; then
-  say "Сайт zalpos.ru (Firebase Hosting), правила и индексы базы"
-  if (cd "$REPO/saas" && firebase deploy --only hosting,firestore --non-interactive); then
-    echo "ok"
-    # Новые и изменённые страницы (инструкция, блог) — сразу Яндексу и IndexNow.
-    node "$REPO/saas/scripts/build-blog.mjs" --announce --state=/var/lib/zalpos-blog/sitemap-announced || true
-  else
-    echo "не вышло — выполните вручную: cd $REPO/saas && firebase login && firebase deploy --only hosting,firestore"
   fi
 else
-  say "Сайт zalpos.ru (Firebase Hosting), правила и индексы базы"
-  echo "firebase CLI на сервере нет — сайт обновите вручную: cd $REPO/saas && firebase deploy --only hosting,firestore"
-  echo "или перенесите сайт на этот сервер: bash $REPO/saas-gateway/move-site-to-server.sh"
+  say "Сайт zalpos.ru"
+  echo "сайт ещё не на этом сервере — перенесите: bash $REPO/saas-gateway/move-site-to-server.sh"
 fi
 
 # Блог выходит по расписанию (даты в saas/blog/posts): раз в день в 7:07 по

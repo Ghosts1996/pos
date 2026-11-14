@@ -284,7 +284,11 @@ class AppUpdateService {
       if (info == null) return 'У вас последняя версия (${buildPhrase(currentBuild)})';
       hiddenUntil.value = null; // «Позже» больше не прячет плашку
       await checkNow();
-      return 'Вышла новая версия — ${buildPhrase(info.buildNumber)} (у вас ${buildPhrase(currentBuild)}). '
+      // SaaS: «Вышла новая версия 1.0.043 (у вас 1.0.042)» — без «версия — версия».
+      final whatsNew = kSaasMode
+          ? 'Вышла новая версия ${versionOf(info.buildNumber)} (у вас ${versionOf(currentBuild)}). '
+          : 'Вышла новая версия — ${buildPhrase(info.buildNumber)} (у вас ${buildPhrase(currentBuild)}). ';
+      return '$whatsNew'
           '${autoDownload ? 'Она уже загружается — когда загрузится, нажмите «Установить» на плашке вверху экрана.' : 'Нажмите «Обновить» на плашке вверху экрана.'}';
     } on _UpdateError catch (e) {
       return 'Не удалось проверить: ${e.message}';

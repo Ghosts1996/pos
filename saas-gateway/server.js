@@ -160,8 +160,12 @@ function getFirebaseApp() {
 // DATA_BACKEND=local; DATA_BACKEND=firestore — принудительно старый режим.
 const DATA_DB_FILE = process.env.DATA_DB_FILE || path.join(__dirname, "state", "data.sqlite");
 const DATA_ACTIVE_MARK = `${DATA_DB_FILE}.active`;
+// Без ключа Google (новый сервер, Firebase не нужен) — тоже своя база:
+// иначе любой запрос к данным падал бы с 500 на попытке войти в Firebase.
+const GOOGLE_CREDS = !!(process.env.FIREBASE_SERVICE_ACCOUNT_B64 || process.env.GOOGLE_APPLICATION_CREDENTIALS
+  || process.env.FIRESTORE_EMULATOR_HOST);
 const DATA_LOCAL = process.env.DATA_BACKEND === "local"
-  || (process.env.DATA_BACKEND !== "firestore" && fs.existsSync(DATA_ACTIVE_MARK));
+  || (process.env.DATA_BACKEND !== "firestore" && (fs.existsSync(DATA_ACTIVE_MARK) || !GOOGLE_CREDS));
 let dataStore = null;
 function localDataStore() {
   if (!dataStore) dataStore = require("./data-server").createDataStore({ admin, file: DATA_DB_FILE });
@@ -169,7 +173,9 @@ function localDataStore() {
 }
 function db() {
   if (DATA_LOCAL) {
-    // Вход (Firebase Auth) остаётся у Google — приложение Firebase нужно и здесь.
+    // Данные — свой сервер в РФ. Ключ Firebase (если ещё задан) нужен только
+    // заданию удаления старой копии в Google; уберите FIREBASE_SERVICE_ACCOUNT_B64
+    // из /etc/saas-gateway.env, когда удаление завершено.
     if (!firebaseApp && process.env.FIREBASE_SERVICE_ACCOUNT_B64) getFirebaseApp();
     return localDataStore();
   }
@@ -296,6 +302,7 @@ let authOwnCache = { at: 0, on: false };
 function authOwn() {
   if (process.env.AUTH_BACKEND === "own") return true;
   if (process.env.AUTH_BACKEND === "firebase") return false;
+  if (!GOOGLE_CREDS && !process.env.FIREBASE_AUTH_EMULATOR_HOST) return true;
   if (Date.now() - authOwnCache.at > 3000) authOwnCache = { at: Date.now(), on: fs.existsSync(AUTH_OWN_MARK) };
   return authOwnCache.on;
 }
@@ -307,25 +314,6 @@ function firebaseAuthOrNull() {
     return null;
   }
 }
-/** Ключ Web API Firebase — только для одноразовой проверки старого пароля при переносе. */
-let firebaseWebApiKey = process.env.FIREBASE_WEB_API_KEY || "";
-async function firebasePasswordCheck(email, password) {
-  if (!firebaseWebApiKey) {
-    try {
-      const r = await fetch(`${CONSOLE_URL.replace(/\/?$/, "/")}__/firebase/init.json`, { signal: AbortSignal.timeout(8000) });
-      firebaseWebApiKey = (await r.json()).apiKey || "";
-    } catch (_) {}
-  }
-  if (!firebaseWebApiKey) return null;
-  const base = process.env.FIREBASE_AUTH_EMULATOR_HOST ? `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com` : "https://identitytoolkit.googleapis.com";
-  const r = await fetch(`${base}/v1/accounts:signInWithPassword?key=${encodeURIComponent(firebaseWebApiKey)}`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, returnSecureToken: false }), signal: AbortSignal.timeout(10000),
-  });
-  if (!r.ok) return null;
-  const j = await r.json().catch(() => ({}));
-  return j.localId || null;
-}
 let ownAuthInst = null;
 function ownAuth() {
   if (!ownAuthInst) {
@@ -335,7 +323,6 @@ function ownAuth() {
       store: createLocalDb({ admin, file: AUTH_DB_FILE }),
       secretKey: () => tgSecretKey(),
       firebaseAuth: firebaseAuthOrNull,
-      firebasePasswordCheck,
     });
     ownAuthInst.setSiteUrl(CONSOLE_URL);
   }
@@ -382,8 +369,11 @@ async function verifyIdTokenAny(idToken) {
       throw new HttpError(401, "Сеанс истёк или недействителен — войдите заново");
     }
   }
+  // Ключа Google нет (Firebase не используется) — чужой токен просто не принимаем.
+  const fbAuth = firebaseAuthOrNull();
+  if (!fbAuth) throw new HttpError(401, "Сеанс истёк или недействителен — войдите заново");
   try {
-    const decoded = await getFirebaseApp().auth().verifyIdToken(idToken);
+    const decoded = await fbAuth.verifyIdToken(idToken);
     if (authOwn()) noteFirebaseToken(decoded.uid);
     return decoded;
   } catch (e) {
@@ -696,29 +686,6 @@ async function handleChainPointJoin(req, res) {
   await batch.commit();
   await writeAuditLog({ tenantId, actorId: decoded.uid, action: "deviceJoinedFromChain", metadata: { fromTenantId: own.tenantId } });
   sendJson(res, 200, { ok: true, tenantId });
-}
-
-// ------------------------------------------------------ firebaseConfig
-
-let cachedWebConfig;
-function getFirebaseWebConfig() {
-  if (cachedWebConfig !== undefined) return cachedWebConfig;
-  const raw = process.env.FIREBASE_WEB_CONFIG_JSON;
-  cachedWebConfig = raw ? JSON.parse(raw) : null;
-  return cachedWebConfig;
-}
-
-/**
- * Публичный веб-конфиг Firebase (не секрет). Гостевой веб живёт на
- * поддоменах {slug}.zalpos.ru, а /__/firebase/init.json хостинга не отдаёт
- * CORS для чужого origin, поэтому раздаём конфиг отсюда.
- */
-async function handleFirebaseWebConfig(req, res) {
-  const config = getFirebaseWebConfig();
-  if (!config) {
-    throw new HttpError(500, "FIREBASE_WEB_CONFIG_JSON не настроен на сервере — см. README.md");
-  }
-  sendJson(res, 200, config);
 }
 
 // -------------------------------------------------- publicGuestApk
@@ -6510,8 +6477,6 @@ function scheduleFirestoreBackup() {
  * передаёт ли nginx настоящий IP.
  */
 const SECURITY_SECRETS_BASE = [
-  ["FIREBASE_SERVICE_ACCOUNT_B64", "Сервисный ключ Firebase"],
-  ["FIREBASE_WEB_CONFIG_JSON", "Веб-конфиг Firebase (гостевой веб)"],
   ["GITHUB_PAT", "GitHub: токен для сборки APK"],
   ["BUILD_CALLBACK_SECRET", "Секрет ответа сборки APK"],
 ];
@@ -6579,11 +6544,13 @@ async function handleSecurityStatus(req, res) {
   ]);
   let rules = { status: "unknown" };
   try {
-    const ruleset = await getFirebaseApp().securityRules().getFirestoreRuleset();
-    const source = (ruleset.source || []).map((f) => f.content).join("\n");
+    // Правила, по которым работает свой сервер данных, — из файла на сервере
+    // в РФ; к Google (Firebase Rules API) не обращаемся.
+    const source = rulesSource();
     rules = {
       status: RULES_FEATURE_MARKERS.every((m) => source.includes(m)) ? "ok" : "outdated",
-      updatedAt: ruleset.createTime || null,
+      updatedAt: null,
+      local: true,
     };
   } catch (e) {
     rules = { status: "unknown", error: String(e.message || e).slice(0, 200) };
@@ -6592,7 +6559,7 @@ async function handleSecurityStatus(req, res) {
   const b = billing.exists ? billing.data() : {};
   const lp = lastPayment && !lastPayment.empty ? lastPayment.docs[0].data() : null;
   sendJson(res, 200, {
-    secrets: [...SECURITY_SECRETS_BASE.slice(0, 2), ...BILLING_SECRETS, ...SECURITY_SECRETS_BASE.slice(2)]
+    secrets: [...BILLING_SECRETS, ...SECURITY_SECRETS_BASE]
       .map(([key, label]) => ({ key, label, set: !!(process.env[key] && String(process.env[key]).trim()) })),
     billingProvider: "robokassa",
     robokassaTest: process.env.ROBOKASSA_TEST === "1",
@@ -7463,9 +7430,9 @@ async function handleRestoreGuestSession(req, res) {
   }
   // Токен — для того входа, на котором работает приложение: новые версии
   // присылают auth ("own" | "firebase"), старые его не знают и ждут токен Firebase.
-  const fb = firebaseAuthOrNull();
-  const wantFirebase = body.auth === "firebase" || (body.auth !== "own" && authOwn() && fb);
-  const token = await (wantFirebase && fb ? fb : authApi()).createCustomToken(uid);
+  // Только свой вход: токен Firebase (вход в Google) не выдаём никому —
+  // трансграничной передачи нет; старые версии приложения обновляются.
+  const token = await authApi().createCustomToken(uid);
   await ref.set({
     restoredAt: admin.firestore.FieldValue.serverTimestamp(),
     restoreCount: admin.firestore.FieldValue.increment(1),
@@ -8307,12 +8274,9 @@ async function handleAuthBackend(req, res) {
     return sendJson(res, 200, { ok: true, backend: "own", imported: imp, stats: await ownAuth().migrationStats() });
   }
   if (action === "disable") {
-    if ((await ownAuth().migrationStats()).firebaseDeleted > 0) {
-      throw new HttpError(409, "Пользователи уже удалены из Firebase — вернуться на вход Firebase нельзя");
-    }
-    try { fs.unlinkSync(AUTH_OWN_MARK); } catch (_) {}
-    authOwnCache = { at: 0, on: false };
-    return sendJson(res, 200, { ok: true, backend: authOwn() ? "own" : "firebase" });
+    // Вход через Firebase (Google, США) — трансграничная передача, а платформа
+    // её не ведёт (уведомление РКН от 14.11.2026): вернуться на него нельзя.
+    throw new HttpError(409, "Вход через Firebase выключен навсегда: данные людей не передаются за рубеж");
   }
   if (action === "purgeFirebase") {
     if (!authOwn()) throw new HttpError(412, "Сначала включите свой вход");
@@ -10111,7 +10075,6 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/guestDemoApk") return runHandler(handleGuestDemoApk, req, res);
   if (req.method === "GET" && (urlPath === "/courierApk" || urlPath === "/zcApk")) return runHandler(handleCourierApk, req, res);
   if (req.method === "GET" && urlPath === "/windowsDemo") return runHandler(handleWindowsDemo, req, res);
-  if (req.method === "GET" && urlPath === "/firebaseConfig") return runHandler(handleFirebaseWebConfig, req, res);
   // Адрес доставки для курьера — по подписанной ссылке из карточки в Telegram.
   if (req.method === "GET" && urlPath === "/deliveryAddress") return runHandler(telegram.handleAddress, req, res);
   // Геолокация курьера по подписанной ссылке из карточки: страница и приём координат.

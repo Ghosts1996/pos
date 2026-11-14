@@ -1,6 +1,6 @@
 # saas-gateway
 
-Серверная часть платформы ZalPOS (проект Firebase `saas-3bdc8`) на том же
+Серверная часть платформы ZalPOS на том же
 сервере, что и `pii-gateway/`. Здесь всё, что нельзя доверить клиенту и
 нельзя держать в Cloud Functions без тарифа Blaze.
 
@@ -32,8 +32,7 @@
   устройства, резервные копии, сертификаты), запросы по персональным данным.
 - **Гость:** `aiProxy` (ИИ-помощник без доступа гостя к ключам),
   `deleteGuestData`, `registerGuestRecovery` / `restoreGuestSession`.
-- **Прочее:** `GET firebaseConfig` (публичный веб-конфиг для гостевого веба),
-  `sendAuthEmail` (письма входа в оформлении ZalPOS), суточный пересчёт
+- **Прочее:** `sendAuthEmail` (письма входа в оформлении ZalPOS), суточный пересчёт
   лимитов тарифа и хитов меню.
 
 Все изменения подписок и тарифов из панели идут только через сервис и
@@ -75,43 +74,22 @@ cd saas-gateway
 
 Скрипт поставит Node.js 20 (если его ещё нет — на этом сервере он уже
 должен быть, ставили для `pii-gateway`), скопирует сервис в
-`/opt/saas-gateway`, спросит сервисный ключ Firebase, GitHub-токен и секрет
+`/opt/saas-gateway`, спросит GitHub-токен и секрет
 обратного вызова — и запустит всё как systemd-сервис (`saas-gateway`,
 слушает `127.0.0.1:8081`).
 
 По ходу скрипт попросит:
-1. **Сервисный аккаунт Firebase проекта `saas-3bdc8`** (не `hoocah-pos`!) в
-   base64. Получить: Firebase Console → проект `saas-3bdc8` → Project
-   settings → Service accounts → Generate new private key → скачается
-   JSON. Дальше как и с pii-gateway: вставить содержимое файла в
-   `cat > /tmp/key.json`, затем `base64 -w0 /tmp/key.json`, вставить вывод
-   в скрипт, потом `rm -f /tmp/key.json`.
-2. **GitHub personal access token** (fine-grained,
+Firebase (Google, США) не нужен: вход и данные — на этом сервере в РФ
+(`DATA_BACKEND=local`, `AUTH_BACKEND=own` скрипт пишет сам).
+
+1. **GitHub personal access token** (fine-grained,
    github.com/settings/tokens?type=beta) с правами ТОЛЬКО "Actions: read
    and write" на репозиторий `Ghosts1996/pos` — нужен, чтобы сервис мог
    сам запускать сборку APK.
-3. **Секрет обратного вызова** (`BUILD_CALLBACK_SECRET`) — придумайте
+2. **Секрет обратного вызова** (`BUILD_CALLBACK_SECRET`) — придумайте
    случайную строку (`openssl rand -hex 24`) и запомните: то же самое
    значение нужно прописать в GitHub как секрет репозитория с тем же
    именем (см. ниже).
-4. **Публичный веб-конфиг Firebase** (`FIREBASE_WEB_CONFIG_JSON`) — НЕ
-   секрет (те же ключи видны в исходнике любой веб-страницы с Firebase).
-   Получить: Firebase Console → `saas-3bdc8` → Project settings → General
-   → Your apps → веб-приложение (значок `</>`) → «SDK setup and
-   configuration» → переключатель «Config» → скопировать объект целиком
-   в одну строку. Нужен, чтобы `saas/guest-web/` на поддоменах
-   `{slug}.zalpos.ru` мог инициализировать Firebase — см. `firebaseConfig`
-   выше и докстринг `handleFirebaseWebConfig` в `server.js`.
-
-**Если сервис уже установлен раньше** (обновляете существующий, а не
-ставите с нуля) — `setup.sh` повторно не запускать, просто добавить
-строки в уже существующий `/etc/saas-gateway.env`:
-
-```bash
-echo 'FIREBASE_WEB_CONFIG_JSON={"apiKey":"...","authDomain":"...",...}' >> /etc/saas-gateway.env
-systemctl restart saas-gateway
-```
-
 **Обновление КОДА самого сервиса** (`server.js` и т.п. поменялся, а не
 только переменные окружения) — `/opt/saas-gateway` не git-репозиторий сам
 по себе (`setup.sh` копирует файлы туда один раз), поэтому `git pull`

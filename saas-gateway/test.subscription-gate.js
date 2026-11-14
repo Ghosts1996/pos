@@ -7,7 +7,7 @@ const os = require("os");
 const path = require("path");
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subgate-"));
 Object.assign(process.env, {
-  PORT: "8099", DATA_BACKEND: "local", DATA_DB_FILE: path.join(dir, "data.sqlite"), AUTH_DB_FILE: path.join(dir, "auth.json"),
+  PORT: "8099", DATA_BACKEND: "local", DATA_DB_FILE: path.join(dir, "data.sqlite"), SUPPORT_DB_FILE: path.join(dir, "support-db.json"), AUTH_DB_FILE: path.join(dir, "auth.json"),
   BACKUP_DIR: path.join(dir, "backups"), DATA_AUTO_MIGRATE: "0",
 });
 const assert = require("assert/strict");

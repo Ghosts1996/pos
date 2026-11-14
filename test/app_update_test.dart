@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hookah_pos/build_info.dart';
 import 'package:hookah_pos/services/app_update_service.dart';
 import 'package:hookah_pos/widgets/app_update_banner.dart';
 import 'package:http/http.dart' as http;
@@ -284,7 +285,8 @@ void main() {
   group('«Проверить обновления» из меню', () {
     test('последняя версия — так и говорим, с номером сборки', () async {
       final svc = _svc(_FakeServer(latest: 42), dir);
-      expect(await svc.checkManually(), 'У вас последняя версия (сборка 42)');
+      // Касса SaaS говорит «версия 1.0.042», сборка одного заведения — «сборка 42».
+      expect(await svc.checkManually(), 'У вас последняя версия (${buildPhrase(42)})');
       expect(svc.state.value.phase, AppUpdatePhase.none);
     });
 
@@ -292,7 +294,8 @@ void main() {
       final svc = _svc(_FakeServer(latest: 43), dir);
       svc.later();
       final text = await svc.checkManually();
-      expect(text, contains('сборка 43'));
+      expect(text, contains(kSaasMode ? 'Вышла новая версия 1.0.043 (у вас 1.0.042)' : 'сборка 43'));
+      expect(text, isNot(contains('версия — версия')));
       expect(svc.state.value.phase, AppUpdatePhase.available);
       expect(svc.visibleFor(svc.state.value), isTrue);
     });

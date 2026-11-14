@@ -25,7 +25,7 @@ Object.assign(process.env, {
     type: "service_account", project_id: "demo-zal", client_email: "t@demo-zal.iam.gserviceaccount.com",
     private_key: privateKey.export({ type: "pkcs8", format: "pem" }),
   })).toString("base64"),
-  DATA_BACKEND: "local", DATA_DB_FILE: path.join(dir, "data.sqlite"), AUTH_DB_FILE: path.join(dir, "auth.json"),
+  DATA_BACKEND: "local", DATA_DB_FILE: path.join(dir, "data.sqlite"), SUPPORT_DB_FILE: path.join(dir, "support-db.json"), AUTH_DB_FILE: path.join(dir, "auth.json"),
   BACKUP_DIR: path.join(dir, "backups"), FIRESTORE_PURGE_FILE: path.join(dir, "purge.json"), DATA_AUTO_MIGRATE: "0",
 });
 

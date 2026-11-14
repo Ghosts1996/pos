@@ -12,18 +12,24 @@ Module._load = function (request, parent, isMain) {
   return origLoad.apply(this, arguments);
 };
 const testDir = path.join(__dirname, "..", "saas", "test");
-const Mocha = require(require.resolve("mocha", { paths: [testDir] }));
+let mochaPath;
+try {
+  mochaPath = require.resolve("mocha", { paths: [testDir] });
+} catch (_) {
+  // Не пропускаем молча: без mocha тест правил доступа — провал.
+  console.error("rules-local: нет mocha — выполните: cd saas/test && npm ci");
+  process.exit(1);
+}
+const Mocha = require(mochaPath);
 const mocha = new Mocha({ timeout: 20000, reporter: process.env.RULES_REPORTER || "dot" });
 mocha.addFile(path.join(testDir, "firestore.rules.test.js"));
-// Известное расхождение с Firestore: там запрос отклоняется целиком, если
-// правила нельзя доказать по условиям запроса («правила — не фильтр»);
-// здесь каждый документ проверяется отдельно, и запрос отдаёт только
-// разрешённые. Чужих данных не утекает — только форма отказа другая.
-const KNOWN = ["гость читает только свои чаевые к чеку; касса — все и отмечает оплату"];
+// Без исключений: каждый тест правил должен пройти на своём сервере данных.
+// Запрос с чужим документом в выдаче отклоняется целиком (data-server.js
+// queryDocs), как «правила — не фильтр» в Firestore.
 const failed = [];
 const runner = mocha.run(() => {
-  const real = failed.filter((t) => !KNOWN.includes(t));
-  if (failed.length !== real.length) console.log(`\nизвестное расхождение с Firestore (правила как фильтр): ${failed.length - real.length}`);
-  process.exitCode = real.length ? 1 : 0;
+  if (failed.length) console.error(`\nrules-local: упало ${failed.length}`);
+  else console.log("\nrules-local: все тесты правил прошли");
+  process.exitCode = failed.length ? 1 : 0;
 });
 runner.on("fail", (test) => failed.push(test.title));

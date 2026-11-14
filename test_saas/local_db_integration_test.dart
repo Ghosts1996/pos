@@ -2,7 +2,11 @@
 // с правилами saas/firestore.rules). Запуск вручную:
 //   node saas-gateway/test-data-harness.js 8787 &
 //   LOCAL_DB_URL=http://127.0.0.1:8787 flutter test test/local_db_integration_test.dart
-// Без LOCAL_DB_URL тесты пропускаются.
+// Без LOCAL_DB_URL тесты не пропускаются, а падают с подсказкой.
+
+// ignore_for_file: invalid_use_of_visible_for_testing_member — это тест (папка вне test/, её запускают отдельно)
+@Timeout(Duration(minutes: 15))
+library;
 
 import 'dart:async';
 import 'dart:convert';
@@ -10,6 +14,8 @@ import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/harness_lock.dart';
 import 'package:http/http.dart' as http;
 import 'package:hookah_pos/data/local_engine.dart';
 import 'package:hookah_pos/data/local_firestore.dart';
@@ -32,7 +38,9 @@ Future<T> _until<T>(Stream<T> s, bool Function(T) ok, {Duration timeout = const 
     s.firstWhere(ok).timeout(timeout);
 
 void main() {
-  final skip = _url.isEmpty ? 'нет LOCAL_DB_URL' : null;
+  // Стенд общий — занимаем целиком, пока идут тесты этого файла.
+  requireSaasHarness(url: _url);
+  useHarnessExclusively(_url);
   late Directory tmp;
   final engines = <LocalEngine>[];
 
@@ -67,7 +75,7 @@ void main() {
     expect(filtered.docs.map((d) => d.id), isNot(contains('t1')));
     await expectLater(db.doc('tenants/tenantB/tables/t1').get(),
         throwsA(isA<FirebaseException>().having((e) => e.code, 'code', 'permission-denied')));
-  }, skip: skip);
+  });
 
   test('живая подписка: запись с другого устройства, своя запись видна сразу', () async {
     final a = open('ownerA');
@@ -92,7 +100,7 @@ void main() {
     await write;
     final fromB = await b.doc('tenants/tenantA/tables/t1').get();
     expect(fromB.data()!['name'], mark);
-  }, skip: skip);
+  });
 
   test('служебные значения: время сервера, увеличение, массивы, удаление поля', () async {
     final db = open('ownerA');
@@ -107,7 +115,7 @@ void main() {
     expect(s.data()!['at'], isA<Timestamp>());
     await ref.set({'when': DateTime.fromMillisecondsSinceEpoch(5000)}, SetOptions(merge: true));
     expect((await ref.get()).data()!['when'], Timestamp.fromMillisecondsSinceEpoch(5000));
-  }, skip: skip);
+  });
 
   test('транзакции с двух устройств не теряют увеличений', () async {
     final a = open('ownerA');
@@ -121,7 +129,7 @@ void main() {
         });
     await Future.wait([inc(a), inc(b), inc(a), inc(b)]);
     expect((await a.doc('tenants/tenantA/tables/cnt').get(const GetOptions(source: Source.server))).data()!['n'], 4);
-  }, skip: skip);
+  });
 
   test('без интернета: запись в очередь, чтение из памяти, транзакция — unavailable', () async {
     final a = open('ownerA');
@@ -143,7 +151,7 @@ void main() {
     a.engine.reconnectNow();
     await write.timeout(const Duration(seconds: 20));
     expect((await b.doc('tenants/tenantA/tables/off').get()).data()!['name'], 'Офлайн');
-  }, skip: skip);
+  });
 
   test('память устройства и очередь записей переживают перезапуск', () async {
     final dir = Directory('${tmp.path}/restart')..createSync();
@@ -166,7 +174,7 @@ void main() {
     await again.waitForPendingWrites().timeout(const Duration(seconds: 20));
     final check = open('ownerA');
     expect((await check.doc('tenants/tenantA/tables/later').get()).data()!['name'], 'После перезапуска');
-  }, skip: skip);
+  });
 
   test('ответ потерялся после записи: повтор пачки не удваивает увеличение', () async {
     final a = open('ownerA');
@@ -178,7 +186,7 @@ void main() {
     final fresh = open('ownerA');
     final after = (await fresh.doc('tenants/tenantA/tables/t1').get(const GetOptions(source: Source.server))).data()!['visits'] as num;
     expect(after, before + 1, reason: 'пачка дошла дважды, применилась один раз');
-  }, skip: skip);
+  });
 
   test('без связи сохранили, сервер потом отклонил — кассир видит предупреждение', () async {
     final a = open('ownerA');
@@ -195,7 +203,7 @@ void main() {
     }
     expect(a.engine.lastRejected.value, contains('нет прав'));
     expect(a.engine.unsent.value, 0);
-  }, skip: skip);
+  });
 
   test('отказ сервера снимает запись и возвращает ошибку', () async {
     final a = open('ownerA');
@@ -203,7 +211,7 @@ void main() {
         throwsA(isA<FirebaseException>().having((e) => e.code, 'code', 'permission-denied')));
     expect(a.engine.pending, isEmpty);
     expect(a.engine.view('tenants/tenantB/tables/x').exists, isFalse);
-  }, skip: skip);
+  });
 
   test('транзакция без интернета: в очередь; другое устройство успело изменить — пересчёт по серверу', () async {
     final a = open('ownerA');
@@ -227,5 +235,5 @@ void main() {
     await a.engine.waitForPendingWrites().timeout(const Duration(seconds: 20));
     expect((await b.doc(ref).get(const GetOptions(source: Source.server))).data()!['n'], 6,
         reason: 'увеличение A пересчитано по свежим данным, а не затёрло 5');
-  }, skip: skip);
+  });
 }

@@ -27,21 +27,7 @@ cp -a "$REPO/saas/console/." "$STAGE/"
 # поисковикам без выполнения скриптов. Не вышло — сайт работает как раньше.
 node "$REPO/saas/scripts/prerender-landing.mjs" "$STAGE/index.html" || echo "!! текст лендинга не вписан — главная покажет его после загрузки"
 
-# Настройки Firebase для кабинета — только на случай возврата к Firebase
-# (сейчас вход и данные на этом сервере). Ключи в репозиторий не кладём:
-# берём прежний файл или один раз у Firebase Hosting проекта.
-mkdir -p "$STAGE/__/firebase"
-if [[ -s "$DEST/__/firebase/init.json" ]]; then
-  cp "$DEST/__/firebase/init.json" "$STAGE/__/firebase/init.json"
-else
-  PROJECT="$(node -e 'try{process.stdout.write(require(process.argv[1]).projects.default||"")}catch(_){}' "$REPO/saas/.firebaserc")"
-  if [[ -n "$PROJECT" ]] && curl -fsS --max-time 15 "https://$PROJECT.web.app/__/firebase/init.json" -o "$STAGE/__/firebase/init.json.tmp"; then
-    mv "$STAGE/__/firebase/init.json.tmp" "$STAGE/__/firebase/init.json"
-  else
-    rm -f "$STAGE/__/firebase/init.json.tmp"
-    echo "!! настройки Firebase не получены — кабинет работает и без них (вход и данные на этом сервере)"
-  fi
-fi
+# Настроек Firebase на сайте нет: вход и данные — только этот сервер в РФ.
 
 # Служебные файлы сборки наружу не нужны.
 find "$STAGE" -mindepth 1 -name '.*' -not -name '.well-known' -prune -exec rm -rf {} +

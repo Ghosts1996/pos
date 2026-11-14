@@ -1,23 +1,18 @@
+// ignore_for_file: invalid_use_of_visible_for_testing_member — это тест (папка вне test/, её запускают отдельно)
 // SaaS-сборка без Firebase (Google, США): вход и данные — только свой сервер
 // в РФ, Firebase не запускается (трансграничной передачи нет).
-// Запуск: flutter test --dart-define=SAAS_MODE=true --dart-define=SAAS_GATEWAY_URL=http://127.0.0.1:9 test/saas_no_firebase_test.dart
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hookah_pos/build_info.dart';
 import 'package:hookah_pos/firebase_options.dart';
 import 'package:hookah_pos/services/app_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/harness_lock.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  final saas = kSaasMode && kSaasGatewayUrl.isNotEmpty;
+  requireSaasHarness(harness: false);
 
-  test('обычная сборка (hookah-pos) — Firebase как раньше', () {
-    if (saas) return;
-    expect(DefaultFirebaseOptions.useFirebase, isTrue);
-  });
-
-  test('SaaS: Firebase не запускается, вход свой с первой строки — без Firebase.initializeApp ничего не падает', () async {
-    if (!saas) return;
+  test('Firebase не запускается, вход свой с первой строки — без Firebase.initializeApp ничего не падает', () async {
     SharedPreferences.setMockInitialValues({});
     expect(DefaultFirebaseOptions.useFirebase, isFalse);
     expect(DefaultFirebaseOptions.isConfigured, isTrue, reason: 'касса стартует без ключей Firebase');

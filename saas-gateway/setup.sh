@@ -24,12 +24,8 @@ fi
 chown -R saas-gateway:saas-gateway /opt/saas-gateway
 
 echo "== 3/4: настройка окружения =="
-echo "Вставьте содержимое JSON-ключа сервисного аккаунта Firebase проекта saas-3bdc8"
-echo "(ИМЕННО saas-3bdc8, не hoocah-pos!) — Firebase Console -> saas-3bdc8 -> Project"
-echo "settings -> Service accounts -> Generate new private key, закодированное в"
-echo "base64 одной строкой. Как получить: base64 -w0 файл.json"
-read -rp "FIREBASE_SERVICE_ACCOUNT_B64=" FIREBASE_B64
-
+echo "Firebase (Google, США) не нужен: вход и данные — на этом сервере в РФ,"
+echo "трансграничной передачи персональных данных нет."
 echo
 echo "GitHub personal access token (fine-grained) с правами ТОЛЬКО 'Actions:"
 echo "read and write' на репозиторий Ghosts1996/pos — создаётся на"
@@ -46,25 +42,12 @@ echo "как секрет репозитория BUILD_CALLBACK_SECRET."
 read -rsp "BUILD_CALLBACK_SECRET=" BUILD_CALLBACK_SECRET
 echo
 
-echo
-echo "Публичный веб-конфиг Firebase проекта saas-3bdc8 (НЕ секрет — те же"
-echo "ключи видны в исходнике любой веб-страницы с Firebase) — нужен, чтобы"
-echo "веб-версия гостя (saas/guest-web/) на поддоменах {slug}.zalpos.ru"
-echo "могла инициализировать Firebase: zalpos.ru/__/firebase/init.json"
-echo "для чужого поддомена не отдаёт CORS, поэтому раздаём его сами отсюда."
-echo "Получить: Firebase Console -> saas-3bdc8 -> Project settings -> General"
-echo "-> Your apps -> веб-приложение (</>) -> SDK setup and configuration ->"
-echo "переключатель 'Config' -> скопировать объект целиком в ОДНУ строку,"
-echo "например: {\"apiKey\":\"...\",\"authDomain\":\"...\",\"projectId\":\"saas-3bdc8\",...}"
-read -rp "FIREBASE_WEB_CONFIG_JSON=" FIREBASE_WEB_CONFIG_JSON
-echo
-
 cat > /etc/saas-gateway.env <<ENV
 PORT=8081
-FIREBASE_SERVICE_ACCOUNT_B64=${FIREBASE_B64}
+DATA_BACKEND=local
+AUTH_BACKEND=own
 GITHUB_PAT=${GITHUB_PAT}
 BUILD_CALLBACK_SECRET=${BUILD_CALLBACK_SECRET}
-FIREBASE_WEB_CONFIG_JSON=${FIREBASE_WEB_CONFIG_JSON}
 ENV
 chmod 600 /etc/saas-gateway.env
 

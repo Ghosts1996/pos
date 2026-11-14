@@ -9,7 +9,7 @@ const path = require("path");
 const http = require("http");
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "idor-"));
 Object.assign(process.env, {
-  PORT: "8097", DATA_BACKEND: "local", AUTH_BACKEND: "own", DATA_DB_FILE: path.join(dir, "data.sqlite"),
+  PORT: "8097", DATA_BACKEND: "local", AUTH_BACKEND: "own", DATA_DB_FILE: path.join(dir, "data.sqlite"), SUPPORT_DB_FILE: path.join(dir, "support-db.json"),
   AUTH_DB_FILE: path.join(dir, "auth.json"), BACKUP_DIR: path.join(dir, "backups"), DATA_AUTO_MIGRATE: "0",
   REJECTED_DIR: path.join(dir, "rejected"), GITHUB_PAT: "",
   TELEGRAM_SECRET_KEY: process.env.TELEGRAM_SECRET_KEY || "idor-secret-key-0123456789abcdef",
@@ -149,6 +149,23 @@ async function main() {
   const jobs = (await store.collection("buildJobs").where("tenantId", "==", "tenA").get()).docs.map((d) => d.data());
   const queued = jobs.filter((j) => j.status === "queued").length;
   check("сборка: два нажатия разом — в очереди не больше одной сборки (3 приложения)", queued <= 3, `${b1.status} ${b2.status} ${JSON.stringify(jobs.map((j) => j.status))}`);
+  // ---- 6. Фото меню — на своём сервере (не в Supabase/Firebase): своё — сохраняется байт в байт, чужое — отказ.
+  const png = Buffer.from("89504E470D0A1A0A0000000D4948445200000001000000010806000000" + "1F15C4890000000D4944415478DA63F8FFFF3F0005FE02FEA7A6C9A40000000049454E44AE426082", "hex");
+  const upload = (token, tid) => new Promise((resolve, reject) => {
+    const req = http.request({ hostname: "127.0.0.1", port: 8097, method: "POST", path: `/uploadMenuImage?tenantId=${tid}&folder=items&entityId=cake`,
+      headers: { "Content-Type": "image/png", "Content-Length": png.length, Authorization: `Bearer ${token}` } }, (res) => {
+      let raw = ""; res.on("data", (c) => (raw += c)); res.on("end", () => { let json = null; try { json = JSON.parse(raw); } catch (_) {} resolve({ status: res.statusCode, json }); });
+    });
+    req.on("error", reject); req.end(png);
+  });
+  const up = await upload(a.idToken, "tenA");
+  const stored = path.join(__dirname, "branding-uploads", "tenA", "menu", "items", "cake.png");
+  check("фото меню: загрузка своему заведению — путь /branding/… на своём сервере", up.status === 200 && up.json && up.json.path === "/branding/tenA/menu/items/cake.png", JSON.stringify(up));
+  check("фото меню: файл на диске сервера совпадает байт в байт", fs.existsSync(stored) && fs.readFileSync(stored).equals(png));
+  const upB = await upload(a.idToken, "tenB");
+  check("фото меню: в чужое заведение — отказ", upB.status === 403 || upB.status === 404, String(upB.status));
+  fs.rmSync(path.join(__dirname, "branding-uploads", "tenA"), { recursive: true, force: true });
+
   console.log(`idor: ${passed} passed, ${failed} failed`);
   fs.rmSync(dir, { recursive: true, force: true });
   process.exit(failed ? 1 : 0);

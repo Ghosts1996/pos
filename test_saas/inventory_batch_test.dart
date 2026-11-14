@@ -2,9 +2,15 @@
 // стоп-лист — одним чтением меню сразу по всем продуктам.
 // Запуск: flutter test --dart-define=SAAS_MODE=true test/inventory_batch_test.dart
 
+// ignore_for_file: invalid_use_of_visible_for_testing_member — это тест (папка вне test/, её запускают отдельно)
+@Timeout(Duration(minutes: 15))
+library;
+
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/harness_lock.dart';
 import 'package:hookah_pos/data/app_db.dart';
 import 'package:hookah_pos/data/local_engine.dart';
 import 'package:hookah_pos/data/local_firestore.dart';
@@ -23,6 +29,9 @@ class _OfflineAuth implements EngineAuth {
 }
 
 void main() {
+  // Стенд общий — занимаем целиком, пока идут тесты этого файла.
+  requireSaasHarness(url: Platform.environment['LOCAL_DB_URL'] ?? '');
+  useHarnessExclusively(Platform.environment['LOCAL_DB_URL'] ?? '');
   late LocalEngine engine;
   late LocalFirestore db;
 
@@ -140,7 +149,7 @@ void main() {
         throwsA(anything));
     expect(q((await live.doc('tenants/tenantA/inventoryItems/$beans').get()).data()), closeTo(0.964, 1e-9));
     e.dispose();
-  }, skip: url.isEmpty ? 'нет LOCAL_DB_URL' : null);
+  });
 }
 
 class _OwnerA implements EngineAuth {

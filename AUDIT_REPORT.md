@@ -27,7 +27,7 @@
 Автотесты сейчас: `cd saas-gateway && npm test` — 30+ наборов (все зелёные), Flutter — 639 тестов
 (`flutter test`, зелёные), браузерные — `e2e-courier.js`, `e2e-delivery-cabinet.js`,
 `e2e-courier-offline.js`, `e2e-map-embed.js`, гонки касс — `tool/race_devices.sh`
-(`test/local_db_race_device_test.dart`).
+(`tool/local_db_race_device_test.dart`).
 
 ## 1. Найденные проблемы
 
@@ -54,8 +54,8 @@
 |---|---|
 | 3 кассы одновременно закрывают один стол — оплата одна, склад раз, стол свободен | `tool/race_devices.sh` (3 процесса кассы, одна миллисекунда) — зелёный |
 | Позиции с 3 устройств не теряются; закрытие против добавления; лимит чеков стола | там же |
-| Касса без связи против кассы онлайн — без дублей оплаты и списаний | там же + `test/local_db_cashier_flow_test.dart` |
-| «Зависший» стол на закрытом чеке освобождается сам | `test/local_db_cashier_flow_test.dart` |
+| Касса без связи против кассы онлайн — без дублей оплаты и списаний | там же + `test_saas/local_db_cashier_flow_test.dart` |
+| «Зависший» стол на закрытом чеке освобождается сам | `test_saas/local_db_cashier_flow_test.dart` |
 | 3 курьера жмут «Беру» — заказ одному; два «Вручил» — наличные раз; назначение против «Беру» | `saas-gateway/test.courier.js` |
 | Курьер: только свои заказы, после вручения телефон/адрес не видны, работа без связи | `test.courier.js`, `e2e-courier.js`, `e2e-courier-offline.js` |
 | Онлайн-оплата: повторное уведомление банка не удваивает оплату | `guest-pay.js` `markPaid` — транзакция со сменой `pending → paid` (чтение кода), `test.pay.js` |

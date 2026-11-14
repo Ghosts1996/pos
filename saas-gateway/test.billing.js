@@ -2,6 +2,8 @@
 // Срок подписки при оплате: пробные дни бесплатны и не пересчитываются по
 // цене, оплаченные при смене тарифа — пересчитываются. Запуск: node test.billing.js
 process.env.PORT = "8099"; // как smoke-тесты: без бота и фоновых задач
+process.env.DATA_DB_FILE = require("path").join(require("fs").mkdtempSync(require("path").join(require("os").tmpdir(), "billing-")), "data.sqlite");
+process.env.SUPPORT_DB_FILE = require("path").join(require("path").dirname(process.env.DATA_DB_FILE), "support-db.json");
 const assert = require("assert");
 const server = require("./server.js");
 const { periodCarry, paidDaysLeft } = server;

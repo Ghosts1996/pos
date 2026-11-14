@@ -4,6 +4,15 @@
 // отклоняться до обращения к ним, поэтому тесты идут без секретов.
 
 process.env.PORT = "8099";
+// Своя база и свой вход во временной папке (как на боевом сервере, без Firebase).
+{
+  const os = require("os"), fs = require("fs"), path = require("path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "smoke-"));
+  process.env.DATA_BACKEND = process.env.DATA_BACKEND || "local";
+  process.env.DATA_DB_FILE = process.env.DATA_DB_FILE || path.join(dir, "data.sqlite");
+  process.env.SUPPORT_DB_FILE = process.env.SUPPORT_DB_FILE || path.join(dir, "support-db.json");
+  process.env.AUTH_DB_FILE = process.env.AUTH_DB_FILE || path.join(dir, "auth-db.json");
+}
 const server = require("./server.js");
 const http = require("http");
 

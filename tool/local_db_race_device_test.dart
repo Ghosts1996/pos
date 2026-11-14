@@ -1,10 +1,12 @@
+// ignore_for_file: invalid_use_of_visible_for_testing_member — это тест (папка вне test/, её запускают отдельно)
 // Несколько касс одновременно: этот файл запускают сразу в нескольких
 // процессах (у каждого свой движок и своя память устройства), все они
 // жмут кнопки в одну и ту же миллисекунду. Оркестратор — tool/race_devices.sh:
 //   node saas-gateway/test-data-harness.js 8787 &
 //   bash tool/race_devices.sh
 //   (и node tool/race_proxy.js — «интернет» одной кассы)
-// Без RACE_ROLE тест пропускается (в обычном flutter test его нет).
+// Лежит рядом с оркестратором, а не в test/: обычный flutter test его не
+// берёт (и не показывает пропущенным) — запускает только tool/race_devices.sh.
 
 import 'dart:async';
 import 'dart:convert';

@@ -1,3 +1,4 @@
+// ignore_for_file: invalid_use_of_visible_for_testing_member — это тест (папка вне test/, её запускают отдельно)
 // Заказ гостя в сборке платформы: части (официанту, кальянщику) — одной
 // записью, повтор той же корзины (ответ потерялся, второе нажатие) — не
 // второй заказ. Запуск: flutter test --dart-define=SAAS_MODE=true test/guest_order_once_test.dart
@@ -5,6 +6,8 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/harness_lock.dart';
 import 'package:hookah_pos/build_info.dart';
 import 'package:hookah_pos/data/app_db.dart';
 import 'package:hookah_pos/data/local_engine.dart';
@@ -23,6 +26,7 @@ class _OfflineAuth implements EngineAuth {
 }
 
 void main() {
+  requireSaasHarness(harness: false);
   test('повтор той же корзины — тот же заказ, части одной записью', () async {
     FieldValueRecorder.install();
     final engine = LocalEngine(baseUrl: 'http://127.0.0.1:9', storageDir: Directory.systemTemp.createTempSync('go'), auth: _OfflineAuth());
@@ -56,5 +60,5 @@ void main() {
       expect((await db.collection('tenants/t1/guestOrders').get()).docs, isNotEmpty);
     }
     engine.dispose();
-  }, skip: kSaasMode ? null : 'только для сборки платформы (--dart-define=SAAS_MODE=true)');
+  });
 }

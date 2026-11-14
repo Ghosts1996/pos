@@ -17,7 +17,6 @@ const { createPlatform } = require("./platform");
  *   PORT — по умолчанию 8080, слушаем только 127.0.0.1, снаружи nginx;
  *   PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD — локальный Postgres;
  *   FIREBASE_SERVICE_ACCOUNT_B64 — ключ проекта hoocah-pos (одно заведение);
- *   SAAS_FIREBASE_SERVICE_ACCOUNT_B64 — ключ проекта платформы saas-3bdc8;
  *   PII_INTERNAL_TOKEN — общий секрет с saas-gateway (ставит update-server.sh);
  *     с ним вход и данные платформы — через saas-gateway (platform.js);
  *   SAAS_INTERNAL_URL — адрес saas-gateway, по умолчанию http://127.0.0.1:8081.
@@ -50,19 +49,12 @@ function getFirebaseApp() {
   return firebaseApp;
 }
 
-// Гости SaaS-заведений живут в проекте платформы: без его ключа их
-// ID-токены не проходят проверку (aud другого проекта).
-let saasApp;
+// Firebase платформы (Google, США) не используется: вход и данные гостей
+// SaaS-заведений — только через saas-gateway этого сервера в РФ
+// (трансграничной передачи нет, уведомление РКН от 14.11.2026). Запасного
+// пути в Google нет — сервер платформы не ответил, значит 503.
 function getSaasApp() {
-  if (saasApp !== undefined) return saasApp;
-  const b64 = process.env.SAAS_FIREBASE_SERVICE_ACCOUNT_B64;
-  if (!b64) {
-    saasApp = null;
-    return null;
-  }
-  const serviceAccount = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
-  saasApp = admin.initializeApp({ credential: admin.credential.cert(serviceAccount) }, "saas");
-  return saasApp;
+  return null;
 }
 
 // Вход и данные платформы — через saas-gateway этого сервера (platform.js):
@@ -181,7 +173,7 @@ async function handleRegisterGuestProfile(req, res, body) {
     fbApp = platform.available() ? platform : null;
     if (!fbApp) {
       return sendJson(res, 503, {
-        error: "pii-gateway не подключён к проекту платформы: задайте SAAS_FIREBASE_SERVICE_ACCOUNT_B64 (см. README.md)",
+        error: "pii-gateway не подключён к серверу платформы: нужен PII_INTERNAL_TOKEN (его ставит update-server.sh)",
       });
     }
   }

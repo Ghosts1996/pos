@@ -12712,10 +12712,10 @@ async function loadSecurityPlatform() {
   if (st.rules?.status === 'ok') {
     rows.push(checkRowHtml('ok', 'Правила базы актуальны', `Включая защиту завершённых сеансов супер-админов${st.rules.updatedAt ? ` · опубликованы ${esc(new Date(st.rules.updatedAt).toLocaleString('ru-RU'))}` : ''}.`));
   } else if (st.rules?.status === 'outdated') {
-    rows.push(checkRowHtml('bad', 'В базе старые правила доступа', 'Опубликуйте актуальные: <code>firebase deploy --only firestore:rules --project saas-3bdc8</code> — без этого часть защит панели не работает.'));
+    rows.push(checkRowHtml('bad', 'Сервер работает по старым правилам доступа', 'Обновите сервер (push в production) — правила лежат в saas/firestore.rules и подхватываются при перезапуске; без этого часть защит не действует.'));
   } else {
     rows.push(checkRowHtml('unknown', 'Не удалось проверить правила базы',
-      `Сервер не смог прочитать опубликованные правила (Firebase Rules API). Проверьте вручную, что выполнено <code>firebase deploy --only firestore:rules</code>.${st.rules?.error ? `<br><span class="muted">${esc(st.rules.error.slice(0, 160))}</span>` : ''}`));
+      `Сервер не смог прочитать файл правил saas/firestore.rules — проверьте, что обновление сервера прошло.${st.rules?.error ? `<br><span class="muted">${esc(st.rules.error.slice(0, 160))}</span>` : ''}`));
   }
 
   // Секреты
@@ -13014,7 +13014,7 @@ async function loadAuthBackend() {
         + 'Раз в сутки сервер сам удаляет из Firebase тех, кто уже перешёл и 14 дней не входил по-старому; кассы и приложения на старой версии остаются там, пока не обновятся (обновления приходят сами).',
       '<button type="button" class="btn btn-ghost" id="f-auth-purge" style="width:auto">Удалить вошедших из Firebase</button>'
         + ' <button type="button" class="btn btn-ghost" id="f-auth-purge-all" style="width:auto">Удалить всех из Firebase</button>'
-        + (s.firebaseDeleted ? '' : ' <button type="button" class="btn btn-ghost" id="f-auth-firebase" style="width:auto">Вернуть вход Firebase</button>'));
+        );
   }
   const act = async (action, label, extra = {}) => {
     if (!(await reauthenticate(label))) return;
@@ -13037,9 +13037,6 @@ async function loadAuthBackend() {
       + 'Кассы и приложения на старой версии войдут заново после обновления. Вернуться на вход Firebase будет нельзя.'))) {
       act('purgeFirebase', 'Удаление всех пользователей из Firebase', { includePending: true });
     }
-  };
-  if ($('f-auth-firebase')) $('f-auth-firebase').onclick = async () => {
-    if ((await uiConfirm('Вернуть вход через Firebase? Свои входы продолжат работать до истечения.'))) act('disable', 'Возврат входа Firebase');
   };
 }
 
