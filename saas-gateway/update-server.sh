@@ -297,9 +297,9 @@ if ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?FIREBASE_SERVICE_ACCOUNT_B64[[:
 elif [[ -f "$ex" ]] && grep -Eq '"done":[[:space:]]*true' "$ex"; then
   bash "$REPO/saas-gateway/firebase-key-cleanup.sh"
 else
-  phase="$(grep -Eo '"firestore":[[:space:]]*"[a-z]+"' "$ex" 2>/dev/null | grep -Eo '[a-z]+"$' | tr -d '"')"
-  left="$(grep -Eo '"authLeft":[[:space:]]*[0-9]+' "$ex" 2>/dev/null | grep -Eo '[0-9]+$')"
-  err="$(grep -Eo '"error":[[:space:]]*"[^"]{0,200}' "$ex" 2>/dev/null | sed -E 's/^"error":[[:space:]]*"//')"
+  phase="$(grep -Eo '"firestore":[[:space:]]*"[a-z]+"' "$ex" 2>/dev/null | grep -Eo '[a-z]+"$' | tr -d '"' || true)"
+  left="$(grep -Eo '"authLeft":[[:space:]]*[0-9]+' "$ex" 2>/dev/null | grep -Eo '[0-9]+$' || true)"
+  err="$(grep -Eo '"error":[[:space:]]*"[^"]{0,200}' "$ex" 2>/dev/null | sed -E 's/^"error":[[:space:]]*"//' || true)"
   case "$phase" in backup) phase="копируются сюда";; delete) phase="удаляются";; check) phase="проверка, что пусто";; done) phase="удалены";; esac
   echo "идёт: данные в Google — ${phase:-ещё не начато (через 10 мин после запуска)}, учётных записей в Google — ${left:-?}${err:+; заметка: $err}"
 fi
