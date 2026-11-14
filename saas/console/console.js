@@ -7133,6 +7133,16 @@ function watchDashboardData(tenantId) {
               <input type="file" id="f-imp-file" multiple accept=".xlsx,.xls,.ods,.xml,.htm,.html,.csv,.txt,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet"></label>
             ${imp.busy ? '<p class="small muted">Читаю файл…</p>' : ''}
             ${imp.error ? `<p class="small" style="color:var(--danger)">${esc(imp.error)}</p>` : ''}
+          </div>
+          <div class="card" style="margin-top:10px">
+            <div class="small" style="font-weight:600;margin-bottom:4px">Меню на фото или в PDF — распознает ИИ</div>
+            <p class="small muted" style="margin-top:0">Сфотографируйте страницы меню (ровно, при хорошем свете) или загрузите PDF —
+            ИИ вашего заведения (раздел «ИИ») распознает разделы, названия, цены и граммовку. Дальше — обычный предпросмотр,
+            где всё можно поправить. До ${MENU_AI_PAGES} снимков или страниц за раз.</p>
+            <label class="field"><span>Фото меню (JPEG, PNG, WebP) или PDF</span>
+              <input type="file" id="f-imp-ai" multiple accept="image/jpeg,image/png,image/webp,image/heic,image/*,application/pdf,.pdf"></label>
+            ${imp.aiBusy ? `<p class="small muted">${esc(imp.aiBusy)}</p>` : ''}
+            ${imp.aiError ? `<p class="small" style="color:var(--danger)">${esc(imp.aiError)}</p>` : ''}
           </div>${history}`;
       }
       if (imp.step === 'queue') {
@@ -7520,6 +7530,43 @@ function watchDashboardData(tenantId) {
             }
           } catch (err) {
             imp = { step: 'pick', error: `Не получилось прочитать файл: ${err?.message || err}` };
+          }
+          draw();
+        };
+      }
+      if ($('f-imp-ai')) {
+        $('f-imp-ai').onchange = async (e) => {
+          const files = [...(e.target.files || [])].slice(0, MENU_AI_PAGES);
+          if (!files.length) return;
+          imp = { step: 'pick', aiBusy: 'Готовлю снимки…' };
+          draw();
+          try {
+            const pages = await menuPhotoPages(files, (t) => { imp.aiBusy = t; draw(); });
+            if (!pages.length) throw new Error('не нашли ни одной картинки или страницы PDF');
+            const rows = [['Категория', 'Название', 'Цена', 'Описание']];
+            const seen = new Set();
+            const failed = [];
+            for (let i = 0; i < pages.length; i++) {
+              imp.aiBusy = `Распознаю ${pages.length > 1 ? `снимок ${i + 1} из ${pages.length}` : 'снимок'}… (до минуты на каждый)`;
+              draw();
+              try {
+                const { data } = await callSaasGateway('menuImportAi', { tenantId, pages: [pages[i]] });
+                for (const r of (data.rows || []).slice(1)) {
+                  const key = r.slice(0, 3).join('|').toLowerCase();
+                  if (!seen.has(key)) { seen.add(key); rows.push(r); }
+                }
+              } catch (err) {
+                if (err.status === 412 || err.status === 429) throw err;
+                failed.push(`снимок ${i + 1}: ${err.message || err}`);
+              }
+            }
+            if (rows.length < 2) throw new Error(failed.join('; ') || 'позиций с ценами не нашлось');
+            imp = { step: 'map', fileName: `Меню с ${pages.length > 1 ? `${pages.length} снимков` : 'снимка'} — распознано ИИ`,
+              sheets: [{ name: 'Меню', rows }], sheetIdx: 0, update: false };
+            toMap('menu');
+            if (failed.length) imp.error = `Часть снимков не распознана: ${failed.join('; ')}`;
+          } catch (err) {
+            imp = { step: 'pick', aiError: `Не получилось распознать меню: ${err?.message || err}` };
           }
           draw();
         };
@@ -8749,6 +8796,80 @@ function watchDashboardData(tenantId) {
 // что можно удешевлять. Выручка «Сегодня» — по счетам, как в Z-отчёте и в
 // боте, а не по суммам оплат (предоплата, переплата, ошибка ввода их
 // разводят). Сверка трёх формул — saas-gateway/test.revenue-parity.js.
+// ---- ИИ-импорт меню: фото и страницы PDF → JPEG до ~0,9 МБ (лимит одного
+// запроса к API). PDF рисует pdf.js (vendor/pdfjs, грузится только здесь).
+const MENU_AI_PAGES = 10;
+const MENU_AI_MAX_B64 = 900000;
+
+async function canvasToJpegB64(canvas) {
+  for (const q of [0.85, 0.75, 0.65, 0.55, 0.45]) {
+    const url = canvas.toDataURL('image/jpeg', q);
+    const b64 = url.slice(url.indexOf(',') + 1);
+    if (b64.length <= MENU_AI_MAX_B64) return b64;
+  }
+  // Очень мелкий шрифт и огромная страница — уменьшаем ещё.
+  const c2 = document.createElement('canvas');
+  c2.width = Math.round(canvas.width * 0.7);
+  c2.height = Math.round(canvas.height * 0.7);
+  c2.getContext('2d').drawImage(canvas, 0, 0, c2.width, c2.height);
+  return canvasToJpegB64(c2);
+}
+
+function fitCanvas(w, h, max = 2000) {
+  const k = Math.min(1, max / Math.max(w, h));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w * k));
+  c.height = Math.max(1, Math.round(h * k));
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, c.width, c.height);
+  return { c, ctx, k };
+}
+
+let pdfjsLib = null;
+async function loadPdfJs() {
+  if (pdfjsLib) return pdfjsLib;
+  pdfjsLib = await import('./vendor/pdfjs/pdf.min.js');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdfjs/pdf.worker.min.js', import.meta.url).href;
+  return pdfjsLib;
+}
+
+async function menuPhotoPages(files, progress) {
+  const pages = [];
+  for (const file of files) {
+    if (pages.length >= MENU_AI_PAGES) break;
+    if (file.size > 40 * 1024 * 1024) throw new Error(`${file.name}: больше 40 МБ`);
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+    if (isPdf) {
+      progress(`Открываю PDF «${file.name}»…`);
+      const pdfjs = await loadPdfJs();
+      const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+      for (let n = 1; n <= doc.numPages && pages.length < MENU_AI_PAGES; n++) {
+        progress(`Готовлю страницу ${n} из ${doc.numPages}…`);
+        const page = await doc.getPage(n);
+        const base = page.getViewport({ scale: 1 });
+        const scale = Math.min(3, 2000 / Math.max(base.width, base.height));
+        const vp = page.getViewport({ scale });
+        const { c, ctx } = fitCanvas(vp.width, vp.height, 4000);
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        pages.push({ mediaType: 'image/jpeg', data: await canvasToJpegB64(c) });
+      }
+      continue;
+    }
+    progress(`Готовлю снимок «${file.name}»…`);
+    let bmp;
+    try {
+      bmp = await createImageBitmap(file);
+    } catch (_) {
+      throw new Error(`${file.name}: браузер не открыл картинку — сохраните её как JPEG или PNG`);
+    }
+    const { c, ctx } = fitCanvas(bmp.width, bmp.height);
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    pages.push({ mediaType: 'image/jpeg', data: await canvasToJpegB64(c) });
+  }
+  return pages;
+}
+
 // ---- «Для бухгалтера»: месяц → Excel (accounting-export.js).
 function accMonthOptions() {
   const now = new Date();

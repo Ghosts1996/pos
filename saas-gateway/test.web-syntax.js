@@ -10,7 +10,8 @@ const root = path.join(__dirname, "..", "saas");
 const files = [];
 (function walk(dir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (e.name === "node_modules") continue;
+    // node_modules и vendor/ — сторонние библиотеки как есть (pdf.js и т. п.).
+    if (e.name === "node_modules" || e.name === "vendor") continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) walk(p);
     else if (/\.(m?js|html)$/.test(e.name)) files.push(p);

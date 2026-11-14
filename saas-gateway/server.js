@@ -8014,6 +8014,83 @@ async function translateMenu(tenantId, lang, { complete = venueAiComplete, vendo
   try { return await job; } finally { menuTranslateJobs.delete(key); }
 }
 
+// ---- ИИ-импорт меню из фото и PDF («Перенос данных» кабинета). Браузер
+// уменьшает фото и превращает страницы PDF в картинки; здесь — ИИ заведения
+// распознаёт категории, названия, цены и выход (граммовку), а кабинет
+// показывает обычный предпросмотр переноса, где всё можно поправить.
+const MENU_AI_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MENU_AI_MAX_PAGES = 10;
+const menuAiLimiter = new Map(); // точка → { count, resetAt }
+
+/** Ответ ИИ → строки таблицы для «Переноса данных» (первая — заголовки). */
+function menuAiRows(parsed) {
+  const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed && parsed.items) ? parsed.items : [];
+  const rows = [["Категория", "Название", "Цена", "Описание"]];
+  const seen = new Set();
+  for (const it of list.slice(0, 1500)) {
+    if (!it || typeof it !== "object") continue;
+    const name = String(it.name || "").replace(/\s+/g, " ").trim().slice(0, 120);
+    const price = Number(String(it.price ?? "").replace(/\s/g, "").replace(",", ".").replace(/[^0-9.]/g, ""));
+    if (!name || !Number.isFinite(price) || price <= 0 || price > 1000000) continue;
+    const category = String(it.category || "").replace(/\s+/g, " ").trim().slice(0, 60) || "Меню";
+    const weight = String(it.weight || "").replace(/\s+/g, " ").trim().slice(0, 40);
+    const desc = String(it.description || "").replace(/\s+/g, " ").trim().slice(0, 260);
+    const key = `${category.toLowerCase()}|${name.toLowerCase()}|${price}`;
+    if (seen.has(key)) continue; // одна и та же позиция на двух снимках
+    seen.add(key);
+    rows.push([category, name, String(Math.round(price * 100) / 100), [weight, desc].filter(Boolean).join(" · ")]);
+  }
+  return rows;
+}
+
+const MENU_AI_PROMPT = "На снимке — меню кафе или ресторана (или его часть). Выпиши ВСЕ позиции с ценой. "
+  + "Ответь ТОЛЬКО JSON-массивом объектов: {\"category\": раздел меню как в меню, \"name\": название, "
+  + "\"price\": цена числом в рублях, \"weight\": выход/граммовка/объём как в меню (например «300 г», «0,5 л») или \"\", "
+  + "\"description\": состав или описание из меню или \"\"}. Не придумывай позиций и цен, которых нет на снимке. "
+  + "Если у позиции несколько цен (размеры), сделай отдельную позицию на каждый размер с размером в названии.";
+
+async function handleMenuImportAi(req, res, { complete = venueAiComplete, vendorOf = venueAiVendor } = {}) {
+  const decoded = await verifyAuth(req);
+  const body = await parseJsonBody(req, 1048576);
+  const { tenantId } = body;
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
+  await requireTenantRole(tenantId, decoded.uid, ["owner", "manager"]);
+  const pages = Array.isArray(body.pages) ? body.pages : [];
+  if (!pages.length) throw new HttpError(400, "Нет снимков меню");
+  if (pages.length > MENU_AI_MAX_PAGES) throw new HttpError(400, `Не больше ${MENU_AI_MAX_PAGES} снимков или страниц за раз`);
+  for (const p of pages) {
+    if (!p || !MENU_AI_TYPES.has(p.mediaType) || typeof p.data !== "string" || !/^[A-Za-z0-9+/=]+$/.test(p.data)) {
+      throw new HttpError(400, "Снимок должен быть картинкой JPEG, PNG или WebP");
+    }
+    if (p.data.length > 960000) throw new HttpError(413, "Снимок больше 0,9 МБ — уменьшите его");
+  }
+  const now = Date.now();
+  const lim = menuAiLimiter.get(tenantId);
+  if (!lim || lim.resetAt <= now) menuAiLimiter.set(tenantId, { count: pages.length, resetAt: now + 3600000 });
+  else if (lim.count + pages.length > 60) throw new HttpError(429, "За час можно распознать до 60 снимков — продолжите позже");
+  else lim.count += pages.length;
+  const vendor = await vendorOf(tenantId);
+  if (!vendor) throw new HttpError(412, "Подключите ИИ в разделе «ИИ» кабинета — распознавание меню идёт через ваш ключ");
+  const all = [];
+  const failed = [];
+  for (let i = 0; i < pages.length; i++) {
+    try {
+      const text = await complete(vendor, {
+        system: "Ты аккуратно переносишь меню заведения в таблицу. Отвечай только JSON.",
+        content: [{ type: "text", text: MENU_AI_PROMPT }, { type: "image", mediaType: pages[i].mediaType, data: pages[i].data }],
+        maxTokens: 8000, heavy: true,
+      });
+      const parsed = extractJson(text);
+      all.push(...(Array.isArray(parsed) ? parsed : Array.isArray(parsed.items) ? parsed.items : []));
+    } catch (e) {
+      failed.push(`снимок ${i + 1}: ${String(e.message || e).slice(0, 120)}`);
+    }
+  }
+  const rows = menuAiRows(all);
+  if (rows.length < 2) throw new HttpError(422, failed.length ? `ИИ не распознал меню (${failed.join("; ")})` : "На снимках не нашлось позиций с ценами — сфотографируйте меню ближе и ровнее");
+  sendJson(res, 200, { rows, failed });
+}
+
 async function handleGuestMenuTranslate(req, res) {
   await verifyAuth(req); // любой вошедший гость (в т.ч. анонимный)
   const { tenantId, lang, probe } = await parseJsonBody(req);
@@ -10256,6 +10333,7 @@ const ROUTES = {
   "/restoreGuestSession": handleRestoreGuestSession,
   "/aiProxy": handleAiProxy,
   "/guestMenuTranslate": handleGuestMenuTranslate,
+  "/menuImportAi": (req, res) => handleMenuImportAi(req, res),
   "/aiKeyProbe": handleAiKeyProbe,
   "/grantSuperAdmin": handleGrantSuperAdmin,
   "/revokeSuperAdmin": handleRevokeSuperAdmin,
@@ -10513,4 +10591,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, dataWriteGate, localDataStore });
+Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, dataWriteGate, localDataStore });
