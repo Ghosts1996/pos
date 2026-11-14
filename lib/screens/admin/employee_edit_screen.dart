@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../utils/pin_hash.dart';
+import '../../build_info.dart';
 import '../../models/employee.dart';
 import '../../models/pay_terms.dart';
 import '../../models/staff_shift_model.dart';
@@ -48,6 +49,7 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
   late final _hookahPercent = TextEditingController(text: _numOrEmpty(_emp?.hookahPercentRate ?? 0));
   late final _barPercent = TextEditingController(text: _numOrEmpty(_emp?.barPercentRate ?? 0));
   late bool _checkExcludesHookah = _emp?.checkPercentExcludesHookah ?? false;
+  late bool _trainee = _emp?.trainee ?? false;
   late final List<_StepState> _revenueSteps = [
     for (final s in (_emp?.revenueSteps ?? const <RevenueStep>[])) _StepState.from(s),
   ];
@@ -152,6 +154,7 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
         barPercentRate: _parse(_barPercent),
         tipsLink: _tipsLink.text.trim(),
         revenueSteps: _revenueSteps.map((s) => s.toStep()).whereType<RevenueStep>().toList(),
+        trainee: kSaasMode && _trainee,
       );
 
   String? _validate(Employee e) {
@@ -311,6 +314,17 @@ class _EmployeeEditScreenState extends State<EmployeeEditScreen> {
               const SizedBox(height: 10),
               _hint(Icons.info_outline, AppConstants.positionHint(_position, hookahVenue: _hookahVenue)),
             ]),
+            if (kSaasMode)
+              _section('Стажёр', Icons.school_outlined, [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _trainee,
+                  onChanged: (v) => setState(() => _trainee = v),
+                  title: const Text('Учебный режим'),
+                  subtitle: const Text('Касса работает как обычно, но чеки стажёра учебные: без фискального чека и ОФД, '
+                      'без списания склада, бонусов гостю и процентов. В выручку, Z-отчёт, кабинет и бота не попадают.'),
+                ),
+              ]),
             _section('Чаевые', Icons.volunteer_activism_outlined, [
               TextField(
                 controller: _tipsLink,

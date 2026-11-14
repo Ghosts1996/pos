@@ -798,6 +798,24 @@ void main() {
       expect(restored.subscription.status, original.subscription.status);
     });
 
+    test('возможности тарифа: из plans/{planId}.features и через кэш без связи', () {
+      final flags = FeatureFlags.fromPlan({
+        'features': {'guestApp': true, 'delivery': false, 'junk': 'да'},
+      });
+      expect(flags.isEnabled('guestApp'), isTrue);
+      expect(flags.isEnabled('delivery', defaultValue: true), isFalse);
+      expect(flags.plan.containsKey('junk'), isFalse, reason: 'только булевы');
+      expect(FeatureFlags.fromPlan(null).plan, isEmpty);
+      final base = buildConfig(status: TenantStatus.active, subStatus: 'active');
+      final withPlan = TenantConfig(
+        tenant: base.tenant, member: base.member, branding: base.branding, session: base.session,
+        features: flags, subscription: base.subscription,
+      );
+      final restored = tenantConfigFromCacheMap(tenantConfigToCacheMap(withPlan));
+      expect(restored.features.isEnabled('guestApp'), isTrue);
+      expect(restored.features.isEnabled('delivery', defaultValue: true), isFalse);
+    });
+
     test('round-trip сохраняет pastDueSince — иначе офлайн-кэш не смог бы '
         'посчитать обратный отсчёт до удаления данных на экране блокировки', () {
       final since = DateTime(2026, 1, 10);

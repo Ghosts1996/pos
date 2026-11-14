@@ -441,4 +441,55 @@ void main() {
     expect(((b['z'] as Map)['salesTotal'] as num) - ((b['z'] as Map)['refundsTotal'] as num? ?? 0), 250, reason: 'в Z только чеки этой смены');
     expect(((b['z'] as Map)['grandTotal'] as num) - ((a['z'] as Map)['grandTotal'] as num), 250);
   }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('стажёр: учебный чек — без склада, вне отчётов; мульти-склад: продажа убирает из цеха (SaaS)', () async {
+    final fs = FirestoreService();
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final inv = 'trInv$stamp';
+    // Молоко: всего 10 шт, на баре 4 (перемещено в кабинете).
+    await db.doc('tenants/$_tenant/inventoryItems/$inv').set({
+      'name': 'Молоко', 'unit': 'pcs', 'quantity': 10, 'active': true, 'category': '', 'zones': {'bar': 4},
+    });
+    await db.doc('tenants/$_tenant/menuCategories/trBar').set({'name': 'Кофе', 'order': 0, 'kind': 'bar'});
+    final latte = MenuItem(id: 'trLatte$stamp', categoryId: 'trBar', name: 'Латте', price: 200, inventoryItemId: inv, weight: 1, weightUnit: InventoryUnit.pcs);
+    await db.doc('tenants/$_tenant/menuItems/${latte.id}').set(latte.toMap());
+    final table = TableModel(id: 'trT$stamp', name: 'Стол У', x: 0.2, y: 0.7);
+    await fs.addTable(table);
+    await fs.tablesStream().firstWhere((l) => l.any((t) => t.id == table.id)).timeout(const Duration(seconds: 8));
+    final from = DateTime.now().subtract(const Duration(minutes: 1));
+
+    // 1. Учебный чек стажёра: закрыт, помечен training, склад и цех не тронуты.
+    final trainId = await fs.openSession(table: table, employeeName: 'Стажёр');
+    await fs.addOrderItem(trainId, latte, qty: 3);
+    final ts = await fs.sessionStream(trainId).firstWhere((s) => s != null && s.orderItems.isNotEmpty).timeout(const Duration(seconds: 8));
+    expect(await fs.closeSessionWithPayment(trainId, table.id, cash: 600, card: 0, comp: 0, orderItems: ts!.orderItems,
+        employeeName: 'Стажёр', expectedTotal: 600, training: true), isTrue);
+    await engine.waitForPendingWrites();
+    await Future<void>.delayed(const Duration(seconds: 1));
+    final closed = (await db.doc('tenants/$_tenant/sessions/$trainId').get(const GetOptions(source: Source.server))).data()!;
+    expect(closed['status'], 'closed');
+    expect(closed['training'], isTrue);
+    var stock = (await db.doc('tenants/$_tenant/inventoryItems/$inv').get(const GetOptions(source: Source.server))).data()!;
+    expect(stock['quantity'], 10, reason: 'учебный чек склад не списывает');
+    expect((stock['zones'] as Map)['bar'], 4);
+    final inReports = await fs.closedSessionsInRange(from, DateTime.now().add(const Duration(minutes: 1)));
+    expect(inReports.any((s) => s.id == trainId), isFalse, reason: 'учебного чека нет в X/Z-отчёте, зарплате и истории');
+
+    // 2. Обычный чек: склад −3, из бара −3 (латте — бар по виду раздела).
+    final realId = await fs.openSession(table: table, employeeName: 'Тест Кассир');
+    await fs.addOrderItem(realId, latte, qty: 3);
+    final rs = await fs.sessionStream(realId).firstWhere((s) => s != null && s.orderItems.isNotEmpty).timeout(const Duration(seconds: 8));
+    expect(await fs.closeSessionWithPayment(realId, table.id, cash: 600, card: 0, comp: 0, orderItems: rs!.orderItems,
+        employeeName: 'Тест Кассир', expectedTotal: 600), isTrue);
+    await engine.waitForPendingWrites();
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    do {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      stock = (await db.doc('tenants/$_tenant/inventoryItems/$inv').get(const GetOptions(source: Source.server))).data()!;
+    } while ((stock['quantity'] != 7 || (stock['zones'] as Map)['bar'] != 1) && DateTime.now().isBefore(deadline));
+    expect(stock['quantity'], 7);
+    expect((stock['zones'] as Map)['bar'], 1, reason: 'продажа латте убрала 3 из бара');
+    final shown = await fs.closedSessionsInRange(from, DateTime.now().add(const Duration(minutes: 1)));
+    expect(shown.any((s) => s.id == realId), isTrue);
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }

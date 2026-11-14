@@ -19,6 +19,7 @@ import '../../services/venue_service.dart';
 import '../../services/app_scope.dart';
 import '../../models/fiscal_receipt.dart';
 import '../../build_info.dart';
+import '../../services/app_lock.dart';
 import '../../models/delivery_status.dart';
 import '../../utils/adaptive.dart';
 import '../../utils/promo_policy.dart';
@@ -136,6 +137,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
   /// Касса подключена — чек пробивается по умолчанию: по 54-ФЗ он нужен
   /// при каждой оплате. Без кассы тумблер выключен.
   bool _printFiscalReceipt = kassaService.isAvailable;
+
+  /// Учебный режим (SaaS): чек закрывает стажёр. Ни фискального чека, ни
+  /// терминала банка, ни бонусов гостя, ни списания склада — только тренировка.
+  late final bool _training = kSaasMode && (AppLock.instance.employee?.trainee ?? false);
 
   /// Кальяны — отдельным бумажным чеком. По умолчанию — как в
   /// «Интеграциях», но кассир переключает для этого счёта: гости просят то
@@ -457,6 +462,11 @@ class _PaymentScreenState extends State<PaymentScreen> {
   /// сотруднику останется только нажать «Оплатить» ниже, как обычно.
   Future<void> _payViaTerminal() async {
     if (_terminalBusy || _busy) return;
+    if (_training) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Учебный режим: терминал банка не вызывается — впишите сумму в поле вручную')));
+      return;
+    }
     final cashTyped = _revealed.contains(_cash);
     final terminalTyped = _revealed.contains(_terminal);
     final received = _terminalReceived;
@@ -578,7 +588,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       final split = _tipsSplit;
       // Чек покупателю пробил агрегатор — своей кассой не пробиваем. Без
       // оплаты денег не было — и расчёта, который надо фискализировать, тоже.
-      final fiscal = _printFiscalReceipt && !_aggIssuesReceipt && !_closeWithoutPayment;
+      final fiscal = !_training && _printFiscalReceipt && !_aggIssuesReceipt && !_closeWithoutPayment;
       final agg = _aggAmount > 0.004 ? _aggChoice : null;
       final tipsVia = split.cash >= _tipsTotal - 0.004
           ? 'cash'
@@ -609,7 +619,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
         employeeName: widget.session.employeeName,
         expectedTotal: widget.session.totalWithDiscount,
         seenDiscountPercent: widget.session.discountPercent,
-        loyaltyClientUid: _clientUid,
+        loyaltyClientUid: _training ? '' : _clientUid,
+        training: _training,
       );
       if (!closed) {
         // Чек за это время закрыли с другой кассы: эта оплата не записана.
@@ -630,7 +641,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       }
       // Кешбэк и реферальная награда. Обе операции идемпотентны:
       // повторный вызов с тем же чеком ничего не начислит.
-      if (_clientUid.isNotEmpty && !_closeWithoutPayment) {
+      if (_clientUid.isNotEmpty && !_closeWithoutPayment && !_training) {
         // Кешбэк начисляется ТОЛЬКО с реально полученных денег: наличные,
         // карта, терминал. Поле «за счёт заведения» сюда не входит — в нём
         // лежат в том числе сами бонусы и сертификат, и начисление с них
@@ -993,6 +1004,22 @@ class _PaymentScreenState extends State<PaymentScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (_training)
+                Container(
+                  key: const ValueKey('training-banner'),
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.warning.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.warning),
+                  ),
+                  child: const Text(
+                    'Учебный режим (стажёр): чек не фискальный и в ОФД не уходит, склад не списывается, '
+                    'бонусы гостю не начисляются, в выручку и отчёты не попадает. Деньги с гостя не берите.',
+                  ),
+                ),
               Text('К оплате: ${_fmt(_due)} ${AppConstants.currencySymbol}',
                   style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w500)),
               if (_guestPaid > 0.004)
@@ -1023,7 +1050,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   ),
                 ),
               const SizedBox(height: 16),
-              if (!_closeWithoutPayment) ...[
+              if (!_closeWithoutPayment && !_training) ...[
                 BonusRedeemPanel(
                   sessionId: widget.session.id,
                   // Бонусами можно оплатить только то, что не кальяны.
@@ -1142,7 +1169,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   child: _toggleRow('Кальяны — отдельным чеком', _splitHookah, (v) => setState(() => _splitHookah = v),
                       hint: _splitHookah ? 'Два чека: «Кальяны» и «Кухня и бар»' : 'Всё одним общим чеком'),
                 ),
-              _toggleRow('Распечатать фискальный чек', _printFiscalReceipt,
+              if (!_training)
+                _toggleRow('Распечатать фискальный чек', _printFiscalReceipt,
                   (v) => setState(() => _printFiscalReceipt = v),
                   hint: _aggIssuesReceipt && _printFiscalReceipt
                       ? 'Касса чек не пробьёт: его пробивает агрегатор (${_aggChoice!.label})'

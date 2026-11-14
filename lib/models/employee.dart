@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/constants.dart';
 import 'pay_terms.dart';
 import '../services/people_directory.dart';
+import '../build_info.dart';
 
 class Employee {
   final String id;
@@ -86,7 +87,13 @@ class Employee {
     this.payHistory = const [],
     this.tipsLink = '',
     this.revenueSteps = const [],
+    this.trainee = false,
   }) : _name = name;
+
+  /// Стажёр (только SaaS): учится на настоящей кассе. Его чеки — учебные:
+  /// без фискального чека и ОФД, без списания склада, без бонусов гостю и
+  /// процентов, не попадают в выручку, Z-отчёт, кабинет и бота (`training`).
+  final bool trainee;
 
   /// Текущие условия оплаты.
   PayTerms get payTerms => PayTerms(
@@ -158,6 +165,7 @@ class Employee {
             .whereType<Map>()
             .map((m) => RevenueStep.fromMap(Map<String, dynamic>.from(m)))
             .toList(),
+        trainee: kSaasMode && data['trainee'] == true,
       );
 
   Map<String, dynamic> toMap() => {
@@ -182,6 +190,7 @@ class Employee {
         // Пустой список пишется тоже: update не трогает отсутствующие поля,
         // и удалённый последний шаг остался бы в базе.
         'revenueSteps': [for (final s in revenueSteps) s.toMap()],
+        if (kSaasMode) 'trainee': trainee,
       };
 
   Employee copyWith({
@@ -205,6 +214,7 @@ class Employee {
     double? barPercentRate,
     String? tipsLink,
     List<RevenueStep>? revenueSteps,
+    bool? trainee,
   }) {
     return Employee(
       id: id,
@@ -229,6 +239,7 @@ class Employee {
       payHistory: payHistory,
       tipsLink: tipsLink ?? this.tipsLink,
       revenueSteps: revenueSteps ?? this.revenueSteps,
+      trainee: trainee ?? this.trainee,
     );
   }
 }

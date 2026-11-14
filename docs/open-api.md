@@ -54,11 +54,11 @@ https://pii.zalpos.ru/saas/api/v1/<метод>
   "subtotal": 700, "discountPercent": 0, "paid": 700,
   "payments": { "cash": 500, "card": 0, "terminal": 200, "aggregator": 0, "comp": 0 },
   "tips": { "cash": 50, "card": 0 },
-  "withoutPayment": false, "fiscal": true, "refunded": false, "refundedAt": null
+  "withoutPayment": false, "training": false, "fiscal": true, "refunded": false, "refundedAt": null
 }
 ```
 
-`orderType`: `hall` (зал), `takeaway`, `delivery`. У заказа агрегатора ещё есть поля `aggregator` и `aggregatorCommission` (%).
+`orderType`: `hall` (зал), `takeaway`, `delivery`. `training: true` — учебный чек стажёра: без фискального чека и денег, в выручку не входит (пропускайте его при расчётах). У заказа агрегатора ещё есть поля `aggregator` и `aggregatorCommission` (%).
 
 ### Смена (`/shifts`)
 

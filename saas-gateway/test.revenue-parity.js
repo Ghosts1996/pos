@@ -20,10 +20,22 @@ assert.equal(Math.round(st.refundSum * 100) / 100, fx.expected.refunds, "бот:
 assert.equal(Math.round(st.revenue * 100) / 100, fx.expected.revenue, "бот: выручка");
 assert.equal(st.checks, fx.expected.checks, "бот: чеков");
 
+// 1а. Учебный чек стажёра (training) — не выручка и не возврат: бот считает так же.
+const withTraining = Object.assign([...fx.sessions.map((s) => ({ ...s })),
+  { id: "train1", status: "closed", training: true, closedAt: fx.period.from, refunded: true, refundedAt: fx.period.from,
+    orderItems: [{ name: "Учебный латте", price: 9999, qty: 3 }], paymentCash: 29997 }], { period: fx.period });
+const st2 = salesStats(withTraining, fx.excludeTobacco);
+assert.equal(Math.round(st2.revenue * 100) / 100, fx.expected.revenue, "бот: учебный чек не в выручке");
+assert.equal(st2.checks, fx.expected.checks, "бот: учебный чек не считается");
+assert.equal(st2.refunds, st.refunds, "бот: учебный возврат не считается");
+
 // 2. Кабинет — функция sessionBill из console.js как есть.
 const consoleSrc = fs.readFileSync(path.join(__dirname, "..", "saas", "console", "console.js"), "utf8");
 const m = /const BILL_TOBACCO_RE = [^\n]+\nfunction sessionBill\([\s\S]*?\n}\n/.exec(consoleSrc);
 assert.ok(m, "в console.js есть sessionBill");
+// «Обзор» кабинета пропускает учебные чеки так же, как «закрытые без оплаты».
+assert.ok(consoleSrc.includes("if (s.closedWithoutPayment || s.training === true) continue;"), "кабинет: учебные чеки вне выручки");
+assert.ok(consoleSrc.includes("!s.closedWithoutPayment && s.training !== true) revenue -="), "кабинет: учебные возвраты вне выручки");
 const consoleBill = new Function(`${m[0]}; return sessionBill;`)();
 const inP = (v) => v >= fx.period.from && v < fx.period.to;
 let sales = 0, refunds = 0, checks = 0;

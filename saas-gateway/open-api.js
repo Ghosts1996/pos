@@ -177,6 +177,7 @@ function checkOut(id, d) {
     ...(d.aggregator ? { aggregator: String(d.aggregator), aggregatorCommission: num(d.aggregatorCommission) } : {}),
     tips: { cash: round2(d.tipsCash), card: round2(d.tipsCard) },
     withoutPayment: d.closedWithoutPayment === true,
+    training: d.training === true,
     fiscal: d.fiscalReceiptPrinted === true,
     refunded: d.refunded === true,
     refundedAt: iso(d.refundedAt),

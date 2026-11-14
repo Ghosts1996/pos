@@ -447,6 +447,18 @@ class FeatureFlags {
     this.tenant = const {},
   });
 
+  /// Возможности тарифа из `plans/{planId}.features` (только булевы).
+  factory FeatureFlags.fromPlan(Map<String, dynamic>? planDoc) {
+    final f = planDoc?['features'];
+    return FeatureFlags(plan: {
+      if (f is Map)
+        for (final e in f.entries)
+          if (e.value is bool) '${e.key}': e.value as bool,
+    });
+  }
+
+  Map<String, bool> toCacheMap() => plan;
+
   bool isEnabled(String key, {bool defaultValue = false}) {
     if (tenant.containsKey(key)) return tenant[key]!;
     if (plan.containsKey(key)) return plan[key]!;

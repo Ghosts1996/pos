@@ -95,7 +95,7 @@ const TEXT_LIMIT = 3900;
 const KEEP_DAYS = 15;
 const CACHE_DIR = process.env.TELEGRAM_CACHE_DIR || path.join(__dirname, "telegram-cache");
 // Поля чека, нужные отчётам. Имён, телефонов и адресов гостей в копии нет.
-const SALE_FIELDS = ["status", "tableId", "orderType", "refunded", "refundCashOut", "closedWithoutPayment", "discountPercent",
+const SALE_FIELDS = ["status", "tableId", "orderType", "refunded", "refundCashOut", "closedWithoutPayment", "training", "discountPercent",
   "paymentCash", "paymentCard", "paymentTerminal", "terminalBank", "paymentComp", "paymentAggregator", "tipsCash"];
 const msOf = (v) => { const d = toDate(v); return d ? d.getTime() : 0; };
 function saleOf(id, d) {
@@ -353,6 +353,8 @@ function salesStats(sessions, excludeTobacco = true, period = sessions && sessio
     // не принёс — как и в кабинете (там только status == "closed").
     // Отменённый и снова открытый чек — не продажа (как в Z-отчёте кассы).
     if (s.status === "cancelled" || s.status === "active") continue;
+    // Учебный чек стажёра — не продажа и не возврат (касса его тоже не считает).
+    if (s.training === true) continue;
     const bill = sessionBill(s, excludeTobacco);
     if (period) {
       // Старые чеки без даты возврата — возврат в день закрытия, как раньше.
@@ -548,6 +550,27 @@ function cashCloseAlert(sh, { venue, label = "", tz, since = 0 } = {}) {
   return diff < 0
     ? `🚨 ${venue}. ${where}смена кассы закрыта в ${at} с НЕДОСТАЧЕЙ ${rub(-diff)}${z}: по кассе должно быть ${rub(sh.closingExpectedCash)}, насчитали ${rub(sh.closingCountedCash)}`
     : `⚠️ ${venue}. ${where}смена кассы закрыта в ${at} с излишком ${rub(diff)}${z}: по кассе ${rub(sh.closingExpectedCash)}, насчитали ${rub(sh.closingCountedCash)} — проверьте, все ли продажи пробиты`;
+}
+
+/**
+ * Сторож 24-часовой смены ККТ (54-ФЗ): фискальная смена длится не больше
+ * 24 часов, потом регистратор перестаёт пробивать чеки. За час до срока —
+ * предупреждение, после срока — тревога. null — писать нечего.
+ */
+const SHIFT_WARN_MS = 23 * 3600 * 1000;
+const SHIFT_LIMIT_MS = 24 * 3600 * 1000;
+function longShiftAlert(sh, { venue, label = "", tz, now = Date.now() } = {}) {
+  if (!sh || sh.status !== "open") return null;
+  const opened = sh.openedAt && typeof sh.openedAt.toMillis === "function" ? sh.openedAt.toMillis() : Number(sh.openedAt) || 0;
+  if (!opened) return null;
+  const age = now - opened;
+  if (age < SHIFT_WARN_MS) return null;
+  const where = label ? `${label} · ` : "";
+  const since = hhmm(new Date(opened), tz);
+  if (age >= SHIFT_LIMIT_MS) {
+    return { level: "expired", text: `🚨 ${venue}. ${where}кассовая смена открыта больше 24 часов (с ${since}): регистратор уже не пробивает чеки. Закройте смену Z-отчётом на кассе и откройте новую.` };
+  }
+  return { level: "soon", text: `⏰ ${venue}. ${where}кассовая смена открыта ${Math.floor(age / 3600000)} ч (с ${since}). По закону смена ККТ — не больше 24 часов: закройте её Z-отчётом до ${hhmm(new Date(opened + SHIFT_LIMIT_MS), tz)}, иначе касса перестанет пробивать чеки.` };
 }
 
 /** Карточка заказа с собой/доставки — без имени, телефона и адреса гостя. */
@@ -2202,7 +2225,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         // Чек прошлой смены, возвращённый в этой, — не продажа этой смены
         // (выданные наличные — в «возвратах наличными» из операций кассы).
         if (msOf(s.closedAt) < shift.openedAt.getTime()) continue;
-        if (s.closedWithoutPayment) continue;
+        if (s.closedWithoutPayment || s.training === true) continue;
         if (s.refunded && !s.refundCashOut) continue;
         sales += Number(s.paymentCash) || 0;
         tips += Number(s.tipsCash) || 0;
@@ -2650,6 +2673,29 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         }
       }, (e) => { console.error(`telegram cash close (${tid}):`, e.message); bot.broken = Date.now(); }));
 
+    // Сторож 24-часовой смены ККТ: открытая смена кассы — за час до суток
+    // предупреждение владельцу, после суток — тревога. По одному разу на смену.
+    let openShifts = [];
+    const longSeen = new Set();
+    const checkLong = async () => {
+      if (!on("alerts") || !openShifts.length) return;
+      const venue = await venueOf(tid).catch(() => ({}));
+      for (const sh of openShifts) {
+        const a = longShiftAlert(sh, { venue: venue.name || "Заведение", label: label(), tz: venue.timezone });
+        if (!a || longSeen.has(`${sh.id}:${a.level}`)) continue;
+        longSeen.add(`${sh.id}:${a.level}`);
+        for (const c of owners()) await say(bot, c.id, a.text);
+      }
+    };
+    unsubs.push(t.collection("shifts").where("status", "==", "open")
+      .onSnapshot((snap) => {
+        openShifts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        checkLong().catch(() => {});
+      }, (e) => { console.error(`telegram long shift (${tid}):`, e.message); bot.broken = Date.now(); }));
+    const longTimer = setInterval(() => { checkLong().catch(() => {}); }, 10 * 60 * 1000);
+    if (longTimer.unref) longTimer.unref();
+    unsubs.push(() => clearInterval(longTimer));
+
     // Смены сотрудников: начало и конец — владельцу, с ролью и временем.
     const dayAgo = admin.firestore.Timestamp.fromMillis(Date.now() - 36 * 3600 * 1000);
     unsubs.push(t.collection("staffShifts").where("startedAt", ">=", dayAgo)
@@ -2843,7 +2889,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
 }
 
 module.exports = {
-  createTelegram, buildSummary, buildChainSummary, alertText, cashCloseAlert, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
+  createTelegram, buildSummary, buildChainSummary, alertText, cashCloseAlert, longShiftAlert, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
   deliveryCardText, deliveryKeyboard, salesStats, addressSig, courierSig, whoSig, roleLabel, allowedList, parseAllowed, staleCashText, menuKeyboard,
   secretKey, fmtTg, stripHtml,
 };

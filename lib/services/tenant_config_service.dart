@@ -143,13 +143,22 @@ class TenantConfigService {
       if (tenant.chainId != null) _db.collection('chains').doc(tenant.chainId).get(),
     ]);
     final chainDoc = tenant.chainId != null ? results[3] : null;
+    // Возможности тарифа: plans/{planId}.features. Не прочиталось — касса
+    // работает как раньше (без флагов тарифа), ограничения держит сервер.
+    final planId = SubscriptionInfo.fromMap(results[2].data(), subscriptionId).planId;
+    Map<String, dynamic>? planDoc;
+    try {
+      planDoc = (await _db.collection('plans').doc(planId).get()).data();
+    } catch (_) {
+      planDoc = null;
+    }
 
     final config = TenantConfig(
       tenant: tenant,
       member: member,
       branding: BrandingConfig.fromMap(results[1].data()),
       session: SessionSettings.fromMap(results[0].data()),
-      features: const FeatureFlags(), // TODO(features): подтянуть plans/{planId}.features, когда появится экран тарифов
+      features: FeatureFlags.fromPlan(planDoc),
       subscription: SubscriptionInfo.fromMap(results[2].data(), subscriptionId),
       chain: (chainDoc != null && chainDoc.exists) ? ChainInfo.fromDoc(chainDoc) : null,
     );
@@ -198,6 +207,7 @@ Map<String, dynamic> tenantConfigToCacheMap(TenantConfig c) => {
       },
       if (c.chain != null)
         'chain': {'id': c.chain!.id, 'name': c.chain!.name, 'status': c.chain!.status.id},
+      if (c.features.plan.isNotEmpty) 'planFeatures': c.features.toCacheMap(),
       'member': {
         'tenantId': c.member.tenantId,
         'userId': c.member.userId,
@@ -272,7 +282,7 @@ TenantConfig tenantConfigFromCacheMap(Map<String, dynamic> m) {
     ),
     branding: BrandingConfig.fromMap(m['branding'] as Map<String, dynamic>?),
     session: SessionSettings.fromMap(m['session'] as Map<String, dynamic>?),
-    features: const FeatureFlags(),
+    features: FeatureFlags.fromPlan({'features': m['planFeatures']}),
     subscription: SubscriptionInfo(
       tenantId: sub?['tenantId'] as String? ?? t['id'] as String,
       planId: sub?['planId'] as String? ?? 'start',

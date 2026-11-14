@@ -486,6 +486,8 @@ class SessionModel {
   final String _guestContact;
   String get guestContact => Pd.extra('session', id, 'guestContact', _guestContact);
   final bool closedWithoutPayment; // стол закрыт без фактической оплаты
+  /// Учебный чек стажёра (SaaS): без ОФД, склада и бонусов, вне выручки и отчётов.
+  final bool training;
   final bool receiptPrinted;
   final bool fiscalReceiptPrinted;
 
@@ -561,6 +563,7 @@ class SessionModel {
     this.deliveryOpen = false,
     String guestContact = '',
     this.closedWithoutPayment = false,
+    this.training = false,
     this.receiptPrinted = false,
     this.fiscalReceiptPrinted = false,
     this.tipsCash = 0,
@@ -627,6 +630,7 @@ class SessionModel {
       deliveryOpen: data['deliveryOpen'] == true,
       guestContact: asText(data['guestContact']),
       closedWithoutPayment: data['closedWithoutPayment'] ?? false,
+      training: data['training'] == true,
       receiptPrinted: data['receiptPrinted'] ?? false,
       fiscalReceiptPrinted: data['fiscalReceiptPrinted'] ?? false,
       tipsCash: (data['tipsCash'] ?? 0).toDouble(),
@@ -682,6 +686,7 @@ class SessionModel {
       if (paymentAggregator > 0) 'aggregatorCommission': aggregatorCommission,
       if (Pd.mirror) 'guestContact': guestContact,
       'closedWithoutPayment': closedWithoutPayment,
+      if (training) 'training': true,
       'receiptPrinted': receiptPrinted,
       'fiscalReceiptPrinted': fiscalReceiptPrinted,
       'tipsCash': tipsCash,

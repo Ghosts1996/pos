@@ -898,6 +898,23 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
     assert.equal(tgmod.cashCloseAlert({ ...base, closingCountedCash: 0 }, { ...opt, since: at + 1 }), null, "закрыта до запуска бота — не повторяем");
     assert.ok(/Точка 2 · смена/.test(tgmod.cashCloseAlert({ ...base, closingCountedCash: 0 }, { ...opt, label: "Точка 2" })));
   }
+  // Сторож 24-часовой смены ККТ: за час — предупреждение со сроком, после суток — тревога.
+  {
+    const ts = (ms) => ({ toMillis: () => ms });
+    const opened = Date.parse("2026-11-14T07:00:00Z"); // 10:00 по Москве
+    const sh = { status: "open", openedAt: ts(opened) };
+    const o = (h) => ({ venue: "Кафе", tz: "Europe/Moscow", now: opened + h * 3600e3 });
+    assert.equal(tgmod.longShiftAlert(sh, o(22.9)), null, "до 23 часов тишина");
+    const soon = tgmod.longShiftAlert(sh, o(23.2));
+    assert.equal(soon.level, "soon");
+    assert.ok(/открыта 23 ч \(с 10:00\)/.test(soon.text) && /до 10:00/.test(soon.text), soon.text);
+    const late = tgmod.longShiftAlert(sh, o(25));
+    assert.equal(late.level, "expired");
+    assert.ok(/больше 24 часов/.test(late.text) && /не пробивает/.test(late.text), late.text);
+    assert.equal(tgmod.longShiftAlert({ ...sh, status: "closed" }, o(30)), null, "закрытая смена — не о чем");
+    assert.equal(tgmod.longShiftAlert({ status: "open" }, o(30)), null, "без времени открытия — молчим");
+    assert.ok(/Точка 2 · кассовая/.test(tgmod.longShiftAlert(sh, { ...o(23.5), label: "Точка 2" }).text));
+  }
 
   console.log("SIM OK");
   process.exit(0);

@@ -19,7 +19,9 @@ import '../../utils/hall_layout.dart';
 import '../../widgets/ai_assistant_sheet.dart';
 import '../../widgets/plan_upsell.dart';
 import '../../widgets/employee_drawer.dart';
+import '../../build_info.dart';
 import '../../widgets/guest_requests_banner.dart';
+import '../../widgets/shift_age_banner.dart';
 import '../../widgets/hall_drawing_builder.dart';
 import '../../widgets/hall_plan_view.dart';
 import '../../widgets/offline_banner.dart';
@@ -197,6 +199,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
       drawer: EmployeeDrawer(employee: widget.employee),
       body: Column(
         children: [
+          if (kSaasMode) const ShiftAgeBanner(),
           GuestRequestsBanner(
             employee: widget.employee,
             onOpenTable: (tableId, sessionId) async {

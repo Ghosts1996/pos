@@ -1113,7 +1113,11 @@ class FirestoreService {
     double? expectedTotal,
     double? seenDiscountPercent,
     String loyaltyClientUid = '',
+    bool training = false,
   }) async {
+    // Учебный чек стажёра (только SaaS): закрывается как обычно, но без
+    // списания склада; фискальный чек и бонусы не делает экран оплаты.
+    final isTraining = kSaasMode && training;
     // 1. Закрываем чек. Транзакция с проверкой статуса делает закрытие
     //    идемпотентным: повторное «Оплатить» после сбоя сети не спишет
     //    склад второй раз.
@@ -1155,6 +1159,7 @@ class FirestoreService {
       'tipsCash': tipsCash,
       'tipsCard': tipsCard,
       if (loyaltyClientUid.isNotEmpty) 'loyaltyClientUid': loyaltyClientUid,
+      if (isTraining) 'training': true,
     };
     // Телефон или email для электронного чека — в справочник в РФ.
     if (guestContact.isNotEmpty) {
@@ -1208,7 +1213,7 @@ class FirestoreService {
     final local = db is LocalFirestore ? db : null;
     if (offline && local != null && kSaasMode) {
       try {
-        final stock = await _offlineSaleWrites(orderItems, employeeName);
+        final stock = isTraining ? const <void Function(Transaction tx)>[] : await _offlineSaleWrites(orderItems, employeeName);
         var runs = 0;
         outcome = await local.runTransactionOffline<_CloseOutcome>((tx) async {
           final first = runs++ == 0;
@@ -1298,7 +1303,7 @@ class FirestoreService {
       }
       // Остальное — после возвращения связи, не задерживая кассира.
       // Склад уже списан в самой транзакции закрытия (stockInClose).
-      unawaited(_afterClose(sessionId, tableId, alreadyClosed || stockInClose, orderItems, employeeName).catchError((Object _) {}));
+      unawaited(_afterClose(sessionId, tableId, alreadyClosed || stockInClose || isTraining, orderItems, employeeName).catchError((Object _) {}));
       return !alreadyClosed;
     }
     // Чек уже закрыт и оплата записана: сбой дальше (стол, склад) — не
@@ -1308,7 +1313,7 @@ class FirestoreService {
         final doc = await tx.get(tableRef);
         tx.update(tableRef, freed(doc.data()));
       });
-      await _afterClose(sessionId, tableId, alreadyClosed, orderItems, employeeName);
+      await _afterClose(sessionId, tableId, alreadyClosed || isTraining, orderItems, employeeName);
     } catch (e) {
       debugPrint('closeSessionWithPayment: чек $sessionId закрыт, но после закрытия ошибка: $e');
     }
@@ -1892,7 +1897,8 @@ class FirestoreService {
         .where('closedAt', isLessThan: Timestamp.fromDate(end))
         .orderBy('closedAt', descending: true)
         .get();
-    return snap.docs.map((d) => SessionModel.fromDoc(d)).toList();
+    // Учебные чеки стажёра (SaaS) — не выручка: в отчёты, Z, зарплату не идут.
+    return snap.docs.map((d) => SessionModel.fromDoc(d)).where((s) => !(kSaasMode && s.training)).toList();
   }
 
   // ---------- СМЕНЫ (КАССА) ----------
@@ -2156,7 +2162,7 @@ class FirestoreService {
         .where('refundedAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
         .where('refundedAt', isLessThan: Timestamp.fromDate(end))
         .get();
-    return snap.docs.map((d) => SessionModel.fromDoc(d)).toList();
+    return snap.docs.map((d) => SessionModel.fromDoc(d)).where((s) => !(kSaasMode && s.training)).toList();
   }
 
   // ---------- ЗАРПЛАТА: ПРЕМИИ, ШТРАФЫ, ВЫПЛАТЫ ----------

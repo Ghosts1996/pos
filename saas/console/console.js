@@ -8832,11 +8832,12 @@ function watchDashboardData(tenantId) {
         let revenue = 0;
         let checks = 0;
         for (const s of sales) {
-          if (s.closedWithoutPayment) continue;
+          // Учебный чек стажёра — не выручка (как в Z-отчёте кассы и в боте).
+          if (s.closedWithoutPayment || s.training === true) continue;
           checks++;
           revenue += sessionBill(s, excludeTobacco);
         }
-        for (const s of refunds) if (s.refunded === true && !s.closedWithoutPayment) revenue -= sessionBill(s, excludeTobacco);
+        for (const s of refunds) if (s.refunded === true && !s.closedWithoutPayment && s.training !== true) revenue -= sessionBill(s, excludeTobacco);
         onChange({ revenue: Math.round(revenue * 100) / 100, checks });
       };
       const col = collection(state.db, 'tenants', tid, 'sessions');
