@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <!-- Скрипты — только свои (и библиотеки Firebase, пока данные у Firebase):
      внедрённая ссылка на чужой скрипт браузером не выполнится. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://pii.zalpos.ru https://zalpos.ru https://*.googleapis.com https://www.gstatic.com; media-src 'self' blob: https://pii.zalpos.ru; worker-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://pii.zalpos.ru https://zalpos.ru; media-src 'self' blob: https://pii.zalpos.ru; worker-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Стол</title>
 <!--
@@ -285,41 +285,26 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ slug: slug }),
       }).then((r) => r.json().then((j) => ({ ok: r.ok, json: j })));
-      var configPromise = fetch(GATEWAY + '/firebaseConfig')
-        .then((r) => r.json().then((j) => ({ ok: r.ok, json: j })));
 
       var resolveResult = await resolvePromise;
       if (!resolveResult.ok || !resolveResult.json || !resolveResult.json.tenantId) return;
       var tenantId = resolveResult.json.tenantId;
 
-      var configResult = await configPromise;
-      if (!configResult.ok || !configResult.json || !configResult.json.projectId) return;
 
       // Брендинг читается без входа — анонимный аккаунт на каждый заход не
       // заводим. У точки сети — брендинг сети, как в app.js.
       var chainId = resolveResult.json.chainId;
       var brandingPath = chainId ? 'chains/' + chainId + '/branding/config' : 'tenants/' + tenantId + '/branding/config';
       var b;
-      // Данные на собственном сервере платформы — читаем оттуда.
-      var status = await fetch(GATEWAY + '/db/status').then((r) => r.json()).catch(() => ({}));
-      if (status.backend === 'local') {
-        var got = await fetch(GATEWAY + '/db/get', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ paths: [brandingPath] }),
-        }).then((r) => r.json());
-        var d = got && got.docs && got.docs[0];
-        if (!d || !d.exists) return;
-        b = d.data;
-      } else {
-        var { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
-        var { getFirestore, doc, getDoc } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
-        var app = initializeApp(configResult.json);
-        var db = getFirestore(app);
-        var snap = await getDoc(doc(db, brandingPath));
-        if (!snap.exists()) return;
-        b = snap.data();
-      }
+      // Данные — только на своём сервере в РФ (Google не используется).
+      var got = await fetch(GATEWAY + '/db/get', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: [brandingPath] }),
+      }).then((r) => r.json());
+      var d = got && got.docs && got.docs[0];
+      if (!d || !d.exists) return;
+      b = d.data;
       if (window.applyBrandPalette) window.applyBrandPalette(b);
       if (b.appName) {
         document.getElementById('brand-opening').textContent = b.appName;

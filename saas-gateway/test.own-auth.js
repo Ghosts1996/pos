@@ -13,13 +13,13 @@ let failed = 0;
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
 
-function harness({ firebase = null } = {}) {
+function harness({ firebase = null, legacyLookups = true } = {}) {
   const store = createLocalDb({ admin });
   let clock = Date.UTC(2026, 9, 24, 12);
   const key = crypto.randomBytes(32);
   const fbChecks = [];
   const auth = createOwnAuth({
-    store, secretKey: () => key, now: () => clock,
+    store, secretKey: () => key, now: () => clock, legacyLookups,
     firebaseAuth: () => firebase,
     firebasePasswordCheck: async (email, password) => {
       fbChecks.push(email);
@@ -207,6 +207,30 @@ test("фасад Admin Auth: создать, найти по почте, изм�
   await assert.rejects(adm.getUser(u.uid), (e) => e.code === "auth/user-not-found");
   const g = await adm.getUsers([{ uid: u.uid }]);
   assert.strictEqual(g.notFound.length, 1);
+});
+
+test("по умолчанию в Google о человеке не спрашиваем: ни почту при регистрации, ни пароль при входе (нет трансграничной передачи)", async () => {
+  const calls = [];
+  const fb = fakeFirebase([{ uid: "fbOld", email: "old@test.ru", _password: "oldpass123" }]);
+  for (const k of ["getUser", "getUserByEmail", "verifyIdToken"]) {
+    const f = fb[k];
+    if (f) fb[k] = async (...a) => { calls.push(k); return f(...a); };
+  }
+  const { auth, fbChecks } = harness({ firebase: fb, legacyLookups: false });
+  // Регистрация новой почты — без запроса в Firebase.
+  await auth.signUp("new@test.ru", "secret-123456");
+  // Записи, перенесённые раньше без пароля (importAllFromFirebase по кнопке владельца), — вход
+  // по старому паролю не проверяется в Google: подсказка «Забыли пароль?».
+  await auth.importAllFromFirebase();
+  calls.length = 0;
+  await assert.rejects(() => auth.signIn("old@test.ru", "oldpass123"), (e) => e.code === "auth/password-reset-required" && /Забыли пароль/.test(e.message));
+  await assert.rejects(() => auth.signIn("nobody@test.ru", "whatever1"), (e) => e.code === "auth/invalid-credential");
+  // Ссылка «Забыли пароль?» — со своего сервера, новый пароль работает.
+  const link = await auth.adminAuth().generatePasswordResetLink("old@test.ru");
+  assert.ok(link.startsWith("https://zalpos.ru/#/auth?mode=resetPassword"));
+  await assert.rejects(() => auth.exchange("firebase-token"), (e) => e.code === "auth/operation-not-allowed");
+  assert.deepStrictEqual(calls, [], "к Firebase не обращались");
+  assert.deepStrictEqual(fbChecks, [], "пароль в Google не отправлялся");
 });
 
 (async () => {

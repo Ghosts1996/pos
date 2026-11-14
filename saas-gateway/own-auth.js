@@ -70,7 +70,14 @@ function createOwnAuth({
   firebaseAuth = () => null,
   firebasePasswordCheck = async () => null, // (email, password) => uid | null
   randomUid = () => b64u(crypto.randomBytes(21)).replace(/[-_]/g, "x").slice(0, 28),
+  // Спрашивать Firebase (Google, США) о конкретном человеке — почта при
+  // регистрации, пароль при входе, перенос сессии. По умолчанию ВЫКЛЮЧЕНО:
+  // это трансграничная передача персональных данных, а платформа её не
+  // ведёт (уведомление РКН от 14.11.2026). Удаление старой копии в Google
+  // (purgeFirebase) — отдельно, по кнопке владельца.
+  legacyLookups = false,
 } = {}) {
+  const lookupFirebase = () => (legacyLookups ? firebaseAuth() : null);
   const users = () => store.collection("authUsers");
   const emails = () => store.collection("authEmails");
   const refreshCol = () => store.collection("authRefresh");
@@ -202,7 +209,7 @@ function createOwnAuth({
     if (bad) throw authError("weak-password", bad);
     if (await uidByEmail(e)) throw authError("email-already-in-use", "Аккаунт с этой почтой уже есть — войдите");
     // Почта могла остаться только в Firebase (ещё не перенесена) — тогда это вход, а не регистрация.
-    const fb = firebaseAuth();
+    const fb = lookupFirebase();
     let inFirebase = false;
     if (fb) { try { await fb.getUserByEmail(e); inFirebase = true; } catch (_) { inFirebase = false; } }
     if (inFirebase) throw authError("email-already-in-use", "Аккаунт с этой почтой уже есть — войдите");
@@ -218,8 +225,13 @@ function createOwnAuth({
     if (u && u.pwHash) {
       if (!checkPassword(password, u.pwHash)) throw authError("invalid-credential", "Неверная почта или пароль");
     } else {
-      // Пароль ещё у Firebase (аккаунт перенесён без пароля или не перенесён):
-      // проверяем один раз и сохраняем свой хеш — дальше Google не нужен.
+      // Пароль ещё у Firebase (аккаунт перенесён без пароля): в Google почту
+      // и пароль не отправляем — человек задаёт новый пароль письмом с
+      // нашего сервера.
+      if (!legacyLookups) {
+        if (u && !u.disabled) throw authError("password-reset-required", "Для этой почты нужно задать новый пароль: нажмите «Забыли пароль?» — письмо придёт с сервера ZalPOS в России");
+        throw authError("invalid-credential", "Неверная почта или пароль");
+      }
       const fbUid = await firebasePasswordCheck(e, password).catch(() => null);
       if (!fbUid || (uid && fbUid !== uid)) throw authError("invalid-credential", "Неверная почта или пароль");
       if (!u) u = await importFirebaseUser(fbUid);
@@ -239,7 +251,7 @@ function createOwnAuth({
   async function importFirebaseUser(uid, fbRecord = null) {
     const have = await userDoc(uid);
     if (have) return have;
-    const fb = firebaseAuth();
+    const fb = lookupFirebase();
     let r = fbRecord;
     if (!r && fb) { try { r = await fb.getUser(uid); } catch (_) { r = null; } }
     if (!r) return null;
@@ -254,8 +266,8 @@ function createOwnAuth({
 
   /** Приложение меняет прежний вход Firebase на свой — с тем же uid. */
   async function exchange(firebaseIdToken, { device = "" } = {}) {
-    const fb = firebaseAuth();
-    if (!fb) throw authError("operation-not-allowed", "Перенос входа недоступен");
+    const fb = lookupFirebase();
+    if (!fb) throw authError("operation-not-allowed", "Перенос прежнего входа выключен — войдите паролем или через «Забыли пароль?»");
     let d;
     try { d = await fb.verifyIdToken(String(firebaseIdToken || "")); } catch (_) { throw authError("invalid-credential", "Прежний вход недействителен — войдите заново"); }
     const u = (await userDoc(d.uid)) || (await importFirebaseUser(d.uid));
@@ -318,7 +330,7 @@ function createOwnAuth({
       let uid = await uidByEmail(e);
       let u = uid ? await userDoc(uid) : null;
       if (!u) {
-        const fb = firebaseAuth();
+        const fb = lookupFirebase();
         let fbr = null;
         if (fb) { try { fbr = await fb.getUserByEmail(e); } catch (_) { fbr = null; } }
         u = fbr ? await importFirebaseUser(fbr.uid, fbr) : await putUser(randomUid(), { email: e, provider: "password", createdAt: now() });
@@ -357,7 +369,7 @@ function createOwnAuth({
       getUserByEmail: async (email) => {
         let uid = await uidByEmail(email);
         if (!uid) {
-          const fb = firebaseAuth();
+          const fb = lookupFirebase();
           if (fb) { try { const r = await fb.getUserByEmail(normEmail(email)); uid = (await importFirebaseUser(r.uid, r)).uid; } catch (_) { uid = null; } }
         }
         if (!uid) throw authError("user-not-found", "Пользователь не найден");
@@ -423,7 +435,7 @@ function createOwnAuth({
     const e = normEmail(email);
     let uid = await uidByEmail(e);
     if (!uid && type !== "signIn") {
-      const fb = firebaseAuth();
+      const fb = lookupFirebase();
       if (fb) { try { const r = await fb.getUserByEmail(e); uid = (await importFirebaseUser(r.uid, r)).uid; } catch (_) { uid = null; } }
       if (!uid) throw authError("user-not-found", "Пользователь не найден");
     }

@@ -5,6 +5,8 @@ import '../app_scope.dart';
 import 'package:http/http.dart' as http;
 import 'ai_settings.dart';
 import '../app_auth.dart';
+import '../../build_info.dart';
+import '../../utils/pii_scrub.dart';
 
 /// Одно сообщение диалога в формате OpenAI Chat Completions.
 class AiMessage {
@@ -137,7 +139,12 @@ class TookenClient {
           'Authorization': 'Bearer ${ep.apiKey}',
         };
 
-  Future<http.Response> _post(AiEndpoint ep, String path, Map<String, dynamic> body, Duration timeout) async {
+  /// SaaS: провайдеры ИИ — за рубежом; телефоны, почты, номера карт и
+  /// документов вычищаются ещё на устройстве (и повторно на сервере).
+  static Object? _scrub(Object? body) => kSaasMode ? PiiScrub.payload(body) : body;
+
+  Future<http.Response> _post(AiEndpoint ep, String path, Map<String, dynamic> raw, Duration timeout) async {
+    final body = _scrub(raw);
     if (_viaProxy) {
       final token = await AppAuth.instance.currentUser?.getIdToken();
       return _http
@@ -705,7 +712,7 @@ class TookenClient {
     final isAnthropic = _formatOf(ep) == 'anthropic';
     final request = http.Request('POST', Uri.parse('${ep.baseUrl}/${_chatPath(ep)}'))
       ..headers.addAll(_headersFor(ep))
-      ..body = jsonEncode(
+      ..body = jsonEncode(_scrub(
         isAnthropic
             ? _anthropicBody(
                 messages: messages,
@@ -721,7 +728,7 @@ class TookenClient {
                 'max_tokens': maxTokens ?? s.maxTokens,
                 'stream': true,
               },
-      );
+      ));
 
     final resp = await _http.send(request);
     if (resp.statusCode >= 400) {

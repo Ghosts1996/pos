@@ -3,6 +3,7 @@
 const http = require("http");
 const crypto = require("crypto");
 const fs = require("fs");
+const { scrubAiPayload } = require("./pii-scrub");
 const path = require("path");
 const os = require("os");
 
@@ -7831,8 +7832,11 @@ async function handleAiProxy(req, res) {
   if (fixed) payload.model = fixed;
   // Через aiKeys.aiFetch: переадресации не выполняются (адрес проверен
   // выше), при AI_UPSTREAM_PROXY — через прокси платформы за рубежом.
+  // Провайдеры ИИ — за рубежом: телефоны, почты, номера карт и документов
+  // вычищаются здесь, на сервере в РФ (pii-scrub.js), — без трансграничной
+  // передачи персональных данных.
   const send = () => aiKeys.aiFetch(`${vendor.baseUrl}/${upstreamPath}`, {
-    method: "POST", headers, body: JSON.stringify(payload), timeoutMs: 60000,
+    method: "POST", headers, body: JSON.stringify(scrubAiPayload(payload)), timeoutMs: 60000,
   });
   let upstream;
   try {

@@ -1,4 +1,5 @@
 "use strict";
+const { scrubAiPayload } = require("./pii-scrub");
 /**
  * ИИ бота поддержки: несколько провайдеров и ключей по порядку, лёгкая и
  * сильная модель у каждого, переключение, когда у ключа закончились токены.
@@ -242,7 +243,10 @@ function createAiRouter({ fetchImpl, now = () => Date.now(), getKey, onStatus = 
   const restingUntil = (p) => Number((status.get(p.id) || {}).until) || 0;
   const usable = (p) => p.enabled && !!getKey(p) && !!p.baseUrl;
 
-  async function callOnce(p, model, messages, { maxTokens, temperature }) {
+  async function callOnce(p, model, rawMessages, { maxTokens, temperature }) {
+    // Провайдеры ИИ — за рубежом: телефоны, почты, номера карт и документов
+    // вычищаются на сервере в РФ (pii-scrub.js) — без трансграничной передачи.
+    const messages = scrubAiPayload(rawMessages);
     const key = getKey(p);
     let url;
     let init;

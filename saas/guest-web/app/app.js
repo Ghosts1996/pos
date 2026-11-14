@@ -672,20 +672,8 @@ async function boot() {
   // Приложение Firebase — только если вход или данные ещё у Firebase.
   // Не zalpos.ru/__/firebase/init.json: для поддомена это чужой origin, и
   // Firebase Hosting не отдаёт на него CORS.
-  let appPromise = null;
-  const firebaseApp = () => {
-    if (!appPromise) {
-      appPromise = (async () => {
-        const res = await netFetch(`${GATEWAY}/firebaseConfig`);
-        const config = await res.json();
-        if (!res.ok || !config || !config.projectId) throw new Error('нет настроек Firebase');
-        const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
-        return initializeApp(config);
-      })();
-      appPromise.catch(() => { appPromise = null; });
-    }
-    return appPromise;
-  };
+  // Firebase (Google, США) не используется: вход и данные — свой сервер в РФ.
+  const firebaseApp = null;
 
   let auth;
   try {

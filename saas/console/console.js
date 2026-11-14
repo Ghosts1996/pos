@@ -2502,7 +2502,7 @@ function authErrorMessage(e) {
   };
   // Защита сервера (shield.js) сама объясняет: вход по паролю закрыт из-за
   // подбора, адрес сети закрыт на время или слишком много попыток.
-  if ((e?.code === 'auth/password-locked' || e?.code === 'auth/too-many-requests') && e?.message && !e.message.startsWith('auth/')) return e.message;
+  if ((e?.code === 'auth/password-locked' || e?.code === 'auth/too-many-requests' || e?.code === 'auth/password-reset-required') && e?.message && !e.message.startsWith('auth/')) return e.message;
   return map[e?.code] || `Не удалось выполнить: ${e?.message || e}`;
 }
 
@@ -2529,21 +2529,9 @@ function businessDayStartIn(tz, now = new Date()) {
 // ---------- ЗАПУСК ----------
 
 /** Приложение Firebase — создаётся, только если вход или данные ещё у Firebase. */
-let firebaseAppPromise = null;
-function firebaseApp() {
-  if (!firebaseAppPromise) {
-    firebaseAppPromise = (async () => {
-      // Настройки проекта отдаёт хостинг — ключи не вшиваем в код.
-      const res = await fetch('/__/firebase/init.json');
-      const config = await res.json();
-      if (!config || !config.projectId) throw new Error('нет настроек Firebase');
-      const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
-      return initializeApp(config);
-    })();
-    firebaseAppPromise.catch(() => { firebaseAppPromise = null; });
-  }
-  return firebaseAppPromise;
-}
+// Firebase (Google, США) платформа не использует: вход и данные — только
+// свой сервер в РФ, трансграничной передачи нет.
+const firebaseApp = null;
 
 const STATUS_CACHE_KEY = 'zalStatus';
 async function boot() {
@@ -4594,11 +4582,10 @@ function screenStatus() {
         <div style="width:10px;height:10px;border-radius:50%;background:#3DD68C;flex:none"></div>
         <div class="small">Платформа работает на серверах в России: резервная копия каждый час в другом городе, в зашифрованном виде, постоянный контроль работы и защита от взлома</div>
       </div>
-      <p class="small muted" style="margin-top:12px">Отдельный мониторинг аптайма поверх инфраструктуры провайдера мы не ведём — актуальный статус смотрите на официальной странице провайдера:</p>
-      <a class="btn btn-ghost" href="https://status.firebase.google.com/" target="_blank" rel="noopener">Открыть страницу статуса провайдера ↗</a>
+      <p class="small muted" style="margin-top:12px">Сервер сам следит за работой каждые 2 минуты и восстанавливает зависшие службы; о сбоях мы узнаём сразу. Данные не передаются за рубеж.</p>
     </div>
     <div class="card">
-      <div class="small muted">Если у провайдера всё штатно, а вход в консоль или касса не открывается — это, скорее всего, проблема на нашей стороне. Опишите это в поддержке, указав код заведения и время сбоя.</div>
+      <div class="small muted">Если вход в кабинет или касса не открывается — напишите в поддержку, указав код заведения и время сбоя. Касса при этом продолжает работать без интернета.</div>
     </div>
   `);
 }

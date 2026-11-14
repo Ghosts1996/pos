@@ -6,10 +6,8 @@
 //
 // Файл одинаковый в saas/console/ и saas/guest-web/app/ (тест следит).
 //
-// Библиотека Firestore загружается, только если данные ещё в Firestore:
-// со своим сервером страница не обращается к Google вовсе.
-
-const FIRESTORE_URL = 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+// Библиотека Firestore (Google) не загружается никогда: данные — только на
+// своём сервере в РФ.
 let F = null;
 
 /** Метка времени — как у Firestore (seconds, nanoseconds, toDate, toMillis…). */
@@ -348,11 +346,9 @@ export async function dataBackend(gateway) {
 /** Хранилище страницы: Firestore или свой сервер (по ответу сервера).
  *  app — приложение Firebase или функция, которая его создаёт (только для Firestore). */
 export async function openDb(app, { gateway, auth, status }) {
-  const backend = (status || (await dataBackend(gateway))).backend;
-  if (backend !== 'local') {
-    if (!F) F = await import(FIRESTORE_URL);
-    return F.getFirestore(typeof app === 'function' ? await app() : app);
-  }
+  // Данные — только свой сервер в РФ; Firestore (Google) не загружается
+  // никогда, даже если сервер не ответил (трансграничной передачи нет).
+  if (!status) dataBackend(gateway).catch(() => {});
   const db = new LocalDb(gateway, auth);
   // Другой вход — новая сессия с его правами.
   if (auth && auth.onAuthStateChanged) {

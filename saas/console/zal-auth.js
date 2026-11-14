@@ -10,12 +10,10 @@
 //
 // Файл одинаковый в saas/console/ и saas/guest-web/app/ (тест следит).
 
-const FB_AUTH_URL = 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 let FA = null;
 
 const OWN = Symbol('zalOwnAuth');
 const STORE_KEY = 'zalAuth:v1';
-const EXCHANGED_KEY = 'zalAuthExchanged';
 
 const authErr = (code, message) => Object.assign(new Error(message || code), { code, name: 'FirebaseError' });
 const isOwn = (x) => !!(x && x[OWN]);
@@ -202,52 +200,16 @@ class OwnAuth {
   }
 }
 
-/** Был ли в этом браузере вход Firebase (без загрузки самой библиотеки). */
-async function hadFirebaseSession() {
-  try {
-    if (indexedDB.databases) {
-      const list = await indexedDB.databases();
-      return list.some((d) => d.name === 'firebaseLocalStorageDb');
-    }
-  } catch (_) {}
-  return true; // не узнать — проверим самой библиотекой (один раз)
-}
-
-/** Прежний вход Firebase → свой, с тем же uid. Один раз на браузер. */
-async function exchangeFirebaseSession(auth, firebaseApp) {
-  if (flag.get(EXCHANGED_KEY) || !firebaseApp || !(await hadFirebaseSession())) return;
-  try {
-    const app = await firebaseApp();
-    if (!FA) FA = await import(FB_AUTH_URL);
-    const fa = FA.getAuth(app);
-    const user = await new Promise((resolve) => {
-      const off = FA.onAuthStateChanged(fa, (u) => { off(); resolve(u); });
-      setTimeout(() => resolve(null), 8000);
-    });
-    if (user) {
-      const r = await auth._post('/auth/exchange', { idToken: await user.getIdToken() });
-      await auth._signedIn(r, { email: user.email, createdAt: user.metadata && user.metadata.creationTime ? Date.parse(user.metadata.creationTime) : null });
-      await FA.signOut(fa).catch(() => {});
-    }
-    flag.set(EXCHANGED_KEY, String(Date.now()));
-  } catch (e) {
-    // Нет связи — попробуем при следующем открытии; вход Firebase просрочен — забываем.
-    if (e && e.code !== 'auth/network-request-failed') flag.set(EXCHANGED_KEY, String(Date.now()));
-  }
-}
-
 /**
  * Вход страницы. backend — 'own' или 'firebase' (из /db/status),
  * firebaseApp — async () => приложение Firebase (создаётся только при нужде).
  */
-export async function initAuth({ gateway, backend, firebaseApp }) {
-  if (backend === 'own') {
-    const auth = new OwnAuth(gateway);
-    if (!auth.currentUser) await exchangeFirebaseSession(auth, firebaseApp);
-    return auth;
-  }
-  if (!FA) FA = await import(FB_AUTH_URL);
-  return FA.getAuth(await firebaseApp());
+export async function initAuth({ gateway, backend, firebaseApp }) { // eslint-disable-line no-unused-vars
+  // Вход — только свой сервер в РФ. Firebase (Google, США) не загружается
+  // никогда: трансграничной передачи нет (уведомление РКН от 14.11.2026).
+  // Старые сессии Firebase не переносим через Google — человек входит
+  // паролем или «Забыли пароль?».
+  return new OwnAuth(gateway);
 }
 
 export const isOwnAuth = (auth) => isOwn(auth);
