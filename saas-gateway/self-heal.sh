@@ -7,7 +7,8 @@
 #   * файлы сайта пропали — сайт собирается заново (build-site.sh);
 #   * сертификату осталось меньше 14 дней — продление (раз в сутки);
 #   * на диске меньше 1 ГБ — чистка журналов systemd и кэша apt;
-#   * fail2ban остановился — запуск; порты баз снаружи закрыты (server-shield.sh).
+#   * fail2ban остановился — запуск; порты баз снаружи закрыты (server-shield.sh);
+#   * из Google всё удалено (firebase-exit) — ключ Firebase убирается из настроек.
 # Пока идёт обновление сервера, сторож ничего не делает. В журнал
 # (/var/log/zalpos-heal.log) пишет только то, что сделал или заметил.
 set -u
@@ -101,6 +102,9 @@ if command -v openssl >/dev/null && command -v certbot >/dev/null; then
     if certbot renew --quiet; then log "ok: продление прошло"; else log "!! продление не прошло: /var/log/letsencrypt/letsencrypt.log"; fi
   fi
 fi
+
+# Firebase: в Google пусто (state/firebase-exit.json) — убрать ключ из настроек.
+bash "$REPO/saas-gateway/firebase-key-cleanup.sh"
 
 # Место на диске.
 free_mb="$(df -Pm / | awk 'NR==2{print $4}')"

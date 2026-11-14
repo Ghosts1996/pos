@@ -287,6 +287,23 @@ systemctl start --no-block zalpos-map.service && echo "сборка карты �
 say "Защита сервера"
 bash "$REPO/saas-gateway/server-shield.sh" || echo "!! защита сервера настроилась не полностью — повторится при следующем обновлении"
 
+say "Firebase (Google) — уход до конца"
+# Сервер сам удаляет старую копию данных и учётные записи из Google
+# (firebase-exit в server.js); когда там пусто — ключ Firebase убирается из
+# настроек (firebase-key-cleanup.sh, его же раз в 2 минуты зовёт сторож).
+ex=/opt/saas-gateway/state/firebase-exit.json
+if ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?FIREBASE_SERVICE_ACCOUNT_B64[[:space:]]*=' /etc/saas-gateway.env 2>/dev/null; then
+  echo "ok: ключа Firebase в настройках нет"
+elif [[ -f "$ex" ]] && grep -Eq '"done":[[:space:]]*true' "$ex"; then
+  bash "$REPO/saas-gateway/firebase-key-cleanup.sh"
+else
+  phase="$(grep -Eo '"firestore":[[:space:]]*"[a-z]+"' "$ex" 2>/dev/null | grep -Eo '[a-z]+"$' | tr -d '"')"
+  left="$(grep -Eo '"authLeft":[[:space:]]*[0-9]+' "$ex" 2>/dev/null | grep -Eo '[0-9]+$')"
+  err="$(grep -Eo '"error":[[:space:]]*"[^"]{0,200}' "$ex" 2>/dev/null | sed -E 's/^"error":[[:space:]]*"//')"
+  case "$phase" in backup) phase="копируются сюда";; delete) phase="удаляются";; check) phase="проверка, что пусто";; done) phase="удалены";; esac
+  echo "идёт: данные в Google — ${phase:-ещё не начато (через 10 мин после запуска)}, учётных записей в Google — ${left:-?}${err:+; заметка: $err}"
+fi
+
 say "Копия данных в другом городе"
 # Предел 100 минут: зависший запуск systemd остановит сам, и следующий пойдёт.
 timer zalpos-offsite "*-*-* *:17:00" "/bin/bash $REPO/saas-gateway/offsite-backup.sh >> /var/log/zalpos-offsite.log 2>&1" "Копия данных ZalPOS в хранилище S3" 100min

@@ -31,6 +31,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zalauth-"));
 const port = 8099; // как smoke: без ботов и фоновых задач
 const srv = spawn(process.execPath, [path.join(here, "server.js")], {
   env: { ...process.env, PORT: String(port), AUTH_BACKEND: "own", AUTH_DB_FILE: path.join(dir, "auth-db.json"),
+    DATA_DB_FILE: path.join(dir, "data.sqlite"), SUPPORT_DB_FILE: path.join(dir, "support-db.json"),
     TELEGRAM_SECRET_KEY: "test-secret-key-for-zal-auth-0123456789", DATA_AUTO_MIGRATE: "0" },
   stdio: ["ignore", "pipe", "pipe"],
 });

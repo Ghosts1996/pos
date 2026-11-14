@@ -9548,6 +9548,76 @@ function scheduleFirestorePurge() {
   setInterval(tick, 24 * 60 * 60 * 1000);
 }
 
+/**
+ * Уход из Firebase до конца — сам, без кнопок (просьба владельца 14.11.2026
+ * «сам убери»). Пока на сервере есть ключ Google: (1) старая копия данных в
+ * Firestore — полная проверенная копия сюда, затем удаление (runFirestorePurge);
+ * (2) учётные записи Firebase Authentication — сначала все переносятся в свой
+ * вход (uid и почта сохраняются), затем удаляются у Google. Когда у Google не
+ * осталось ни документов, ни учётных записей — state/firebase-exit.json
+ * {done: true}; по нему сторож сервера (self-heal.sh) убирает ключ Firebase из
+ * /etc/saas-gateway.env и перезапускает службу. Лимит удалений Firebase —
+ * продолжаем на следующий день.
+ */
+const FB_EXIT_FILE = process.env.FIREBASE_EXIT_FILE || path.join(path.dirname(FS_PURGE_FILE), "firebase-exit.json");
+function firebaseExitState() {
+  try { return JSON.parse(fs.readFileSync(FB_EXIT_FILE, "utf8")); } catch (_) { return null; }
+}
+let firebaseExitRunning = null;
+async function runFirebaseExit() {
+  if (firebaseExitRunning) return firebaseExitRunning;
+  firebaseExitRunning = (async () => {
+    const prev = firebaseExitState() || {};
+    if (prev.done) return prev;
+    if (!process.env.FIREBASE_SERVICE_ACCOUNT_B64) return prev;
+    // Сначала данные и вход должны жить здесь, а справочник ПДн — читать отсюда.
+    if (!DATA_LOCAL || !authOwn() || !process.env.PII_INTERNAL_TOKEN) return prev;
+    const st = { ...prev, startedAt: prev.startedAt || new Date().toISOString(), checkedAt: new Date().toISOString(), error: null };
+    try {
+      if (!firestorePurgeState()) {
+        saveFirestorePurge({ phase: "backup", startedAt: new Date().toISOString(), by: "auto", deleted: 0 });
+        console.log("firebase-exit: начинаю удаление старой копии данных из Google (копия — на этом сервере)");
+      }
+      const fp = await runFirestorePurge();
+      st.firestore = fp ? fp.phase : null;
+      if (fp && fp.error) st.error = fp.error;
+      const fb = firebaseAuthOrNull();
+      if (fb) {
+        const r = await ownAuth().purgeFirebase({ includePending: true });
+        st.authDeleted = (st.authDeleted || 0) + r.deleted;
+        const page = await fb.listUsers(1);
+        st.authLeft = page.users.length;
+      } else {
+        st.authLeft = 0;
+      }
+      if (st.firestore === "done" && st.authLeft === 0) {
+        st.done = true;
+        st.doneAt = new Date().toISOString();
+        console.log("firebase-exit: в Google ничего не осталось — сторож сервера уберёт ключ Firebase");
+        try {
+          supportBot.notifyAdmins("✅ <b>Firebase убран</b>\nСтарая копия данных и учётные записи в Google удалены (копия — на сервере в РФ). Ключ Firebase сервер уберёт сам в течение нескольких минут.");
+        } catch (_) { /* бот ещё не запущен */ }
+      }
+    } catch (e) {
+      st.error = String(e.message || e).slice(0, 300);
+      console.error(`firebase-exit: ${e.stack || e}`);
+    }
+    fs.mkdirSync(path.dirname(FB_EXIT_FILE), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(FB_EXIT_FILE, JSON.stringify(st, null, 1), { mode: 0o600 });
+    return st;
+  })();
+  try {
+    return await firebaseExitRunning;
+  } finally {
+    firebaseExitRunning = null;
+  }
+}
+function scheduleFirebaseExit() {
+  const tick = () => { runFirebaseExit().catch(() => {}); };
+  setTimeout(tick, 10 * 60 * 1000).unref();
+  setInterval(tick, 6 * 60 * 60 * 1000).unref();
+}
+
 async function handleDataMigrateStatus(req, res) {
   const decoded = await verifyAuth(req);
   await requireSuperAdmin(decoded);
@@ -10169,6 +10239,7 @@ if (process.env.PORT !== "8099") {
   setInterval(refreshMapRegions, 6 * 3600 * 1000).unref();
   startSupportBot().catch((e) => console.error("support-bot: запуск:", e.message || e));
   partners.start();
+  scheduleFirebaseExit();
 }
 
 if (DATA_LOCAL && process.env.FIREBASE_SERVICE_ACCOUNT_B64) getFirebaseApp();
@@ -10247,4 +10318,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, dataWriteGate, localDataStore });
+Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, dataWriteGate, localDataStore });
