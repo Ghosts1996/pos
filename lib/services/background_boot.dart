@@ -13,7 +13,7 @@ import 'app_auth.dart';
 /// наперегонки. Данные — в памяти, без папки устройства (её ведёт
 /// приложение). true — вход есть.
 Future<bool> bootBackgroundIsolate() async {
-  if (Firebase.apps.isEmpty) {
+  if (DefaultFirebaseOptions.useFirebase && Firebase.apps.isEmpty) {
     await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   }
   await AppDb.init(background: true);

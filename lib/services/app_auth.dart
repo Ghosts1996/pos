@@ -25,10 +25,13 @@ class AppAuth {
   AppAuth._();
   static final AppAuth instance = AppAuth._();
 
-  static const _prefBackend = 'auth_backend_v1';
   static const _prefSession = 'own_auth_session_v1';
 
-  bool _own = false;
+  bool _own = _saasOwn;
+
+  /// SaaS-сборка со своим сервером: Firebase не используется с первой же
+  /// строки — движок данных подписывается на [uidChanges] ещё до [init].
+  static bool get _saasOwn => kSaasMode && kSaasGatewayUrl.isNotEmpty && !kIsWeb;
   _OwnSession? _session;
   AppUser? _user;
   SharedPreferences? _prefs;
@@ -63,69 +66,17 @@ class AppAuth {
   /// сохранённый свой вход. Обмен входа Firebase и новый вход делает само
   /// приложение — иначе два изолята делали бы это наперегонки.
   Future<void> init({bool restoreOnly = false}) async {
-    if (!kSaasMode || kSaasGatewayUrl.isEmpty || kIsWeb) return;
+    if (!_saasOwn) return;
     try {
       _prefs = await SharedPreferences.getInstance();
     } catch (_) {}
-    final cached = _prefs?.getString(_prefBackend);
-    var backend = cached ?? 'firebase';
-    final fresh = await _fetchBackend(cached == null ? const Duration(seconds: 4) : const Duration(milliseconds: 1500));
-    if (fresh != null) {
-      backend = fresh;
-      try {
-        await _prefs?.setString(_prefBackend, fresh);
-      } catch (_) {}
-    }
-    if (backend != 'own' || !AppDb.isLocal) return;
+    // SaaS: вход — только свой сервер платформы в РФ. Firebase (Google, США)
+    // не запускается вовсе: трансграничной передачи нет (уведомление РКН от
+    // 14.11.2026). Прежний вход Firebase через Google не переносим — после
+    // обновления касса и гость входят заново (код приглашения, PIN, почта).
+    _own = true;
     _session = _readSession();
-    if (_session != null) {
-      _own = true;
-      _user = AppUser._own(this, _session!);
-      return;
-    }
-    if (restoreOnly) {
-      _own = true;
-      return;
-    }
-    // Своего входа ещё нет — меняем прежний вход Firebase на свой (тот же uid).
-    final fbUser = _fb.currentUser ?? await _fb.authStateChanges().first.timeout(const Duration(seconds: 8), onTimeout: () => null);
-    if (fbUser == null) {
-      _own = true;
-      return;
-    }
-    String? fbToken;
-    try {
-      fbToken = await fbUser.getIdToken();
-    } on FirebaseAuthException catch (e) {
-      // Вход Firebase мёртв — менять нечего, дальше свой вход с нуля.
-      if (e.code != 'network-request-failed') {
-        _own = true;
-        await _fb.signOut().catchError((Object _) {});
-        return;
-      }
-    } catch (_) {}
-    if (fbToken == null) return; // нет связи — этот запуск на прежнем входе
-    try {
-      final r = await _post('/auth/exchange', {'idToken': fbToken});
-      _own = true;
-      await _signedIn(r);
-      await _fb.signOut().catchError((Object _) {});
-    } on FirebaseAuthException catch (e) {
-      if (e.code == 'network-request-failed' || e.code == 'too-many-requests' || e.code == 'internal-error') return;
-      _own = true;
-      await _fb.signOut().catchError((Object _) {});
-    }
-  }
-
-  static Future<String?> _fetchBackend(Duration timeout) async {
-    try {
-      final r = await http.get(Uri.parse('$kSaasGatewayUrl/db/status')).timeout(timeout);
-      if (r.statusCode != 200) return null;
-      final a = (jsonDecode(r.body) as Map)['auth'];
-      return a == 'own' || a == 'firebase' ? a as String : null;
-    } catch (_) {
-      return null;
-    }
+    _user = _session == null ? null : AppUser._own(this, _session!);
   }
 
   // ------------------------------------------------------------ состояние

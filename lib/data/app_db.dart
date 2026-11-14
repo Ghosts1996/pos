@@ -1,13 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
-import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../build_info.dart';
 import 'local_engine.dart';
@@ -24,7 +21,6 @@ class AppDb {
   static FirebaseFirestore? _local;
   static LocalEngine? _engine;
   static bool _inited = false;
-  static const _prefKey = 'data_backend_v1';
 
   static FirebaseFirestore get instance => _local ?? FirebaseFirestore.instance;
 
@@ -53,25 +49,9 @@ class AppDb {
     _inited = true;
     if (!kSaasMode || kSaasGatewayUrl.isEmpty || kIsWeb) return;
     FieldValueRecorder.install();
-    String? cached;
-    SharedPreferences? prefs;
-    try {
-      prefs = await SharedPreferences.getInstance();
-      cached = prefs.getString(_prefKey);
-    } catch (_) {}
-    var backend = cached ?? 'firestore';
-    // Ответ сервера ждём недолго: без сети касса стартует по прошлому ответу.
-    final fresh = await _fetchBackend(cached == null ? const Duration(seconds: 4) : const Duration(milliseconds: 1500));
-    if (fresh != null) {
-      backend = fresh;
-      try {
-        await prefs?.setString(_prefKey, fresh);
-      } catch (_) {}
-    }
-    if (backend != 'local') {
-      if (!background) _watchSwitch(prefs);
-      return;
-    }
+    // SaaS: данные — только свой сервер платформы в РФ, всегда. Firestore
+    // (Google, США) не запускается даже при первом запуске без связи:
+    // трансграничной передачи нет (уведомление РКН от 14.11.2026).
     Directory? dir;
     if (!background) {
       try {
@@ -91,29 +71,5 @@ class AppDb {
       onHide: () => unawaited(engine.flushToDisk()),
       onDetach: () => unawaited(engine.flushToDisk()),
     );
-    _watchSwitch(prefs);
-  }
-
-  static Future<String?> _fetchBackend([Duration timeout = const Duration(seconds: 10)]) async {
-    try {
-      final r = await http.get(Uri.parse('$kSaasGatewayUrl/db/status')).timeout(timeout);
-      if (r.statusCode != 200) return null;
-      final b = (jsonDecode(r.body) as Map)['backend'];
-      return b == 'local' || b == 'firestore' ? b as String : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Сервер переключил хранилище — запомним; применится при следующем запуске.
-  static void _watchSwitch(SharedPreferences? prefs) {
-    Timer.periodic(const Duration(minutes: 15), (_) async {
-      final b = await _fetchBackend();
-      if (b != null) {
-        try {
-          await prefs?.setString(_prefKey, b);
-        } catch (_) {}
-      }
-    });
   }
 }

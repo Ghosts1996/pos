@@ -19,9 +19,12 @@ class DefaultFirebaseOptions {
   // resolveWindowsOptions).
   static bool get isConfigured {
     if (!kSaasMode) return true;
-    if (defaultTargetPlatform == TargetPlatform.windows) return kSaasGatewayUrl.isNotEmpty;
-    return _saasAndroid.projectId.isNotEmpty;
+    // SaaS: Firebase не нужен — данные и вход на своём сервере в РФ.
+    return kSaasGatewayUrl.isNotEmpty;
   }
+
+  /// Запускать ли Firebase вообще. SaaS — нет: трансграничной передачи нет.
+  static bool get useFirebase => !kSaasMode;
 
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {

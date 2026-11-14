@@ -25,7 +25,9 @@ class PushService {
   PushService._();
   static final PushService instance = PushService._();
 
-  final _fcm = FirebaseMessaging.instance;
+  // Лениво: в SaaS Firebase не запускается, и обращение к нему при
+  // создании службы уронило бы приложение.
+  FirebaseMessaging get _fcm => FirebaseMessaging.instance;
 
   static const _allPositions = [
     AppConstants.positionWaiter,

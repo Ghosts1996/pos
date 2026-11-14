@@ -55,7 +55,7 @@ void main() async {
       return;
     }
     try {
-      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      if (DefaultFirebaseOptions.useFirebase) await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       await AppDb.init();
       // Вход гостя — свой вход платформы на сервере в РФ, как у кассы
       // (lib/main.dart); прежний вход Firebase один раз меняется на свой с тем
@@ -75,7 +75,7 @@ void main() async {
       return;
     }
     try {
-      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      if (DefaultFirebaseOptions.useFirebase) await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       await AppDb.init();
       // Вход гостя — свой вход платформы на сервере в РФ, как у кассы
       // (lib/main.dart); прежний вход Firebase один раз меняется на свой с тем
@@ -96,7 +96,7 @@ void main() async {
 
   if (DefaultFirebaseOptions.isConfigured) {
     try {
-      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      if (DefaultFirebaseOptions.useFirebase) await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       await AppDb.init();
       // Вход гостя — свой вход платформы на сервере в РФ, как у кассы
       // (lib/main.dart); прежний вход Firebase один раз меняется на свой с тем

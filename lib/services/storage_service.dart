@@ -20,7 +20,9 @@ import 'app_auth.dart';
 /// устройствах осталась бы старая картинка из кэша. URL пишется в imageUrl
 /// документа (FirestoreService.updateCategoryImage/updateMenuItemImage).
 class StorageService {
-  final SupabaseClient _client;
+  final SupabaseClient? _injected;
+  // Лениво: в SaaS Supabase не запускается (фото — на свой сервер).
+  SupabaseClient get _client => _injected ?? Supabase.instance.client;
   final ImagePicker _picker;
 
   /// Имя бакета в Supabase Storage. Бакет должен быть создан заранее в
@@ -28,7 +30,7 @@ class StorageService {
   static const _bucket = 'menu-images';
 
   StorageService({SupabaseClient? client, ImagePicker? picker})
-      : _client = client ?? Supabase.instance.client,
+      : _injected = client,
         _picker = picker ?? ImagePicker();
 
   /// Открывает системный выбор фото (галерея/камера) с уменьшением размера,

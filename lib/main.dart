@@ -82,11 +82,11 @@ void main() async {
       // saas-gateway (см. docstring resolveWindowsOptions в
       // firebase_options.dart) — вызывается ДО initializeApp, иначе
       // currentPlatform ниже бросит StateError.
-      if (kSaasMode && defaultTargetPlatform == TargetPlatform.windows) {
-        await DefaultFirebaseOptions.resolveWindowsOptions();
-        StartupLog.step('конфигурация Firebase получена');
+      // SaaS: Firebase (Google, США) не запускается — данные и вход только
+      // на своём сервере в РФ, трансграничной передачи нет.
+      if (DefaultFirebaseOptions.useFirebase) {
+        await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       }
-      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       await AppDb.init();
       // Вход: свой вход платформы (сервер в РФ) или Firebase — решает сервер.
       await AppAuth.instance.init();
@@ -103,7 +103,7 @@ void main() async {
       // нативный код вместе с каждой ссылкой на документ — и касса
       // закрывалась без сообщения сразу после «Подключаем ваше заведение…»
       // (std::bad_variant_access). Без размера плагин берёт свои 100 МБ.
-      FirebaseFirestore.instance.settings = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows
+      if (!AppDb.isLocal) FirebaseFirestore.instance.settings = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows
           ? const Settings(persistenceEnabled: true)
           : const Settings(
               persistenceEnabled: true,
@@ -115,7 +115,9 @@ void main() async {
       // большее из двух, а не их сумму.
       await Future.wait([
         AuthService().ensureSignedIn(),
-        Supabase.initialize(url: _supabaseUrl, publishableKey: _supabaseAnonKey),
+        // Supabase (фото меню hookah-pos) — за рубежом; в SaaS фото идут на
+        // свой сервер (StorageService), Supabase не запускается.
+        if (!kSaasMode) Supabase.initialize(url: _supabaseUrl, publishableKey: _supabaseAnonKey),
       ]);
       StartupLog.step('вход выполнен');
 
