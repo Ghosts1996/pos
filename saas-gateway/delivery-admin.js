@@ -41,7 +41,7 @@ function createDeliveryAdmin({ db, admin, verifyAuth, parseJsonBody, sendJson, H
       .map((d) => {
         const m = d.data() || {};
         const cat = catById[m.categoryId] || {};
-        const law = remoteSaleBanned(m, String(cat.name || ""));
+        const law = remoteSaleBanned(m, cat);
         return {
           id: d.id, name: String(m.name || ""), categoryId: String(m.categoryId || ""), price: Number(m.price) || 0,
           off: m.deliveryOff === true, law, stop: m.available === false,

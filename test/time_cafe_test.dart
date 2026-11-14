@@ -41,6 +41,19 @@ void main() {
     expect(TimeCafe.costPerGuest(const Duration(minutes: 90)), 500, reason: '400 за первый час + 100 за полчаса');
   });
 
+  test('всё вместе: первый час, минимум, округление, стоп-чек, несколько гостей', () {
+    TimeCafe.apply({'enabled': true, 'pricePerHour': 300, 'firstHourPrice': 400, 'minMinutes': 60, 'roundMinutes': 15, 'stopCheck': 1500});
+    final cases = <Duration, double>{
+      const Duration(minutes: 10): 400, // минимум — час, по цене первого
+      const Duration(minutes: 61): 475, // 75 мин: 400 + 15 мин × 5 ₽
+      const Duration(hours: 2, minutes: 5): 775, // 135 мин: 400 + 75 мин × 5 ₽
+      const Duration(hours: 8): 1500, // 2 500 по тарифу — упёрлись в стоп-чек
+    };
+    cases.forEach((sat, cost) => expect(TimeCafe.costPerGuest(sat), cost, reason: '$sat'));
+    final l = TimeCafe.line(const Duration(minutes: 61), 3);
+    expect(l.total, 1425, reason: '3 гостя × 475');
+  });
+
   test('сумму поправили вручную — строка помечена, при оплате не пересчитывается', () {
     TimeCafe.apply({'enabled': true, 'pricePerHour': 300});
     final l = TimeCafe.line(const Duration(minutes: 60), 2, perGuest: 250);

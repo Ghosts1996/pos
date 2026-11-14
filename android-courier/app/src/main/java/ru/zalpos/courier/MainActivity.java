@@ -202,6 +202,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        TrackService.appVisible = true;
         if (web != null) web.onResume();
         // Вернулись из настроек «Установка неизвестных приложений».
         if (pendingUpdateUrl != null) {
@@ -284,6 +285,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        TrackService.appVisible = false;
         if (web != null) web.onPause();
         super.onPause();
     }

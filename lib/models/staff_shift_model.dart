@@ -31,6 +31,10 @@ class StaffShiftModel {
 
   /// Запись отменена. Смены не удаляются — ошибочную отменяют, и она
   /// остаётся в табеле зачёркнутой, с именем того, кто отменил.
+  /// Отмечена без интернета: время нажатия дошло до сервера позже
+  /// (syncedAt/endSyncedAt — когда), больше чем на 5 минут.
+  final bool offlineTap;
+
   final bool cancelled;
   final String _cancelledByName;
   String get cancelledByName => Pd.whoName(_cancelledByName);
@@ -48,6 +52,7 @@ class StaffShiftModel {
     String editedByName = '',
     this.editedAt,
     this.cancelled = false,
+    this.offlineTap = false,
     String cancelledByName = '',
   }) : _cancelledByName = cancelledByName, _employeeName = employeeName, _editedByName = editedByName;
 
@@ -103,6 +108,7 @@ class StaffShiftModel {
       editedByName: (data['editedBy'] ?? '').toString(),
       editedAt: (data['editedAt'] as Timestamp?)?.toDate(),
       cancelled: data['cancelled'] == true,
+      offlineTap: _late(data['startedAt'], data['syncedAt']) || _late(data['endedAt'], data['endSyncedAt']),
       cancelledByName: (data['cancelledBy'] ?? '').toString(),
     );
   }
@@ -116,6 +122,11 @@ class StaffShiftModel {
       'status': status,
       'manual': manual,
     };
+  }
+
+  static bool _late(Object? tapped, Object? synced) {
+    if (tapped is! Timestamp || synced is! Timestamp) return false;
+    return synced.toDate().difference(tapped.toDate()) > const Duration(minutes: 5);
   }
 
   StaffShiftModel copyWith({

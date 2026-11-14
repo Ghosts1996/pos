@@ -447,6 +447,31 @@ test("трое жмут «Беру» разом, двойные нажатия, 
   assert.deepEqual(holders, [s2.courierId], "заказ числится ровно у того, за кем он в базе");
 });
 
+test("служба APK спрашивает «что нового»: свободный заказ, затем назначенный — только номера, без адреса и телефона", async () => {
+  const w = world();
+  await seed(w);
+  const c = await hire(w);
+  await w.set("tenants/A/sessions/s1", order({ orderNo: 41 }));
+  let r = await call(w.api.handlePing, { points: [], news: true }, asCourier(c.token));
+  assert.deepEqual(r.body.news.free.map((x) => x.no), ["41"]);
+  assert.deepEqual(r.body.news.mine, []);
+  assert.ok(!JSON.stringify(r.body.news).match(/Ленина|79001234567|Аня/), "в уведомлении нет ПДн гостя");
+  await act(w, c.token, "take", "A", "s1");
+  r = await call(w.api.handlePing, { points: [], news: true }, asCourier(c.token));
+  assert.deepEqual(r.body.news.mine.map((x) => [x.key, x.no, x.stage]), [["A__s1", "41", "toVenue"]]);
+  assert.deepEqual(r.body.news.free, []);
+  // Без запроса новостей — как раньше.
+  r = await call(w.api.handlePing, { points: [] }, asCourier(c.token));
+  assert.equal(r.body.news, undefined);
+  // Ручное назначение: свободные не показываем (их назначает касса).
+  await w.set("tenants/A/sessions/s2", order({ orderNo: 42 }));
+  await call(w.api.handleAdminRates, { tenantId: "A", ratePerTrip: 150, ratePerKm: 0, dispatch: "manual" }, { uid: "owner" });
+  clock += 31000; // кэш настроек — 30 с
+  r = await call(w.api.handlePing, { points: [], news: true }, asCourier(c.token));
+  assert.deepEqual(r.body.news.free, []);
+  assert.deepEqual(r.body.news.mine.map((x) => x.no), ["41"]);
+});
+
 test("оплачено онлайн — денег не берут; закрыт на кассе — тоже; QR — через банк заведения", async () => {
   const w = world();
   await seed(w);
@@ -813,6 +838,10 @@ test("демо: вход по коду демо-сети, заказы обеи�
   assert.ok(noAddr.ageMin < 30, `старый демо-заказ при входе курьера — снова свежий (${noAddr.ageMin} мин)`);
   assert.match(noAddr.street, /^Санкт-Петербург, .+, \d+$/, "в демо — настоящий адрес без квартиры");
   assert.ok(noAddr.dest && noAddr.dest.lat > 59.9 && noAddr.dest.lat < 60, "и точка на карте");
+  // До «Беру» — только район: точка с шагом ~300 м, а не дом гостя.
+  const exactGeo = require("./courier").demoContact("s8").geo;
+  assert.equal(noAddr.dest.lat, Math.round(exactGeo.lat * 300) / 300);
+  assert.equal(noAddr.dest.lng, Math.round(exactGeo.lng * 300) / 300);
   const dc = require("./courier").demoContact("s8");
   assert.deepEqual(require("./courier").demoContact("s8"), dc, "адрес заказа постоянный");
   assert.match(dc.phone, /^\+7 900 000-00-\d\d$/);

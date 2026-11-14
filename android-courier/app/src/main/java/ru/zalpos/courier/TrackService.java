@@ -32,7 +32,9 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Смена курьера: точка телефона идёт на сервер ZalPOS (api/ping) и при
@@ -40,6 +42,11 @@ import java.util.List;
  * Точки копятся без связи и уходят пачкой, как в веб-приложении.
  * Сервер ответил «смена закрыта» или ключ недействителен — служба сама
  * останавливается. Координаты уходят только на наш сервер.
+ *
+ * Новые заказы: вместе с точками служба спрашивает у нашего сервера «что
+ * нового» (news) и, если приложение закрыто, показывает уведомление со
+ * звуком — «Вам назначен заказ №N» или «Новый заказ №N». Без сервисов
+ * Google: уведомление рисует сам телефон, в нём только номер заказа.
  */
 public class TrackService extends Service implements LocationListener {
     private static final String PREFS = "track";
@@ -51,6 +58,13 @@ public class TrackService extends Service implements LocationListener {
     private static final int MAX_BUFFER = 600;
 
     private static volatile boolean running = false;
+    private static final String ORDERS = "orders";
+
+    /** Приложение на экране — уведомления не нужны, оно звучит само. */
+    public static volatile boolean appVisible = false;
+
+    /** Первый ответ после запуска — запоминаем, что уже есть, без уведомлений. */
+    private boolean newsBaseline = true;
 
     private final List<JSONObject> buffer = new ArrayList<>();
     private HandlerThread thread;
@@ -211,7 +225,7 @@ public class TrackService extends Service implements LocationListener {
         if (sending) return;
         List<JSONObject> batch;
         synchronized (buffer) {
-            if (buffer.isEmpty()) return;
+            // Пустая пачка тоже уходит: в ответе — новые заказы.
             batch = new ArrayList<>(buffer.subList(0, Math.min(300, buffer.size())));
         }
         sending = true;
@@ -219,7 +233,7 @@ public class TrackService extends Service implements LocationListener {
         try {
             JSONArray arr = new JSONArray();
             for (JSONObject o : batch) arr.put(o);
-            byte[] body = new JSONObject().put("points", arr).toString().getBytes(StandardCharsets.UTF_8);
+            byte[] body = new JSONObject().put("points", arr).put("news", true).toString().getBytes(StandardCharsets.UTF_8);
             URL url = new URL(apiBase + (apiBase.endsWith("/") ? "" : "/") + "api/ping");
             c = (HttpURLConnection) url.openConnection();
             c.setConnectTimeout(15000);
@@ -241,13 +255,82 @@ public class TrackService extends Service implements LocationListener {
                     buffer.subList(0, Math.min(batch.size(), buffer.size())).clear();
                 }
                 String text = read(c.getInputStream());
-                if (new JSONObject(text).optBoolean("off", false)) finish();
+                JSONObject reply = new JSONObject(text);
+                if (reply.optBoolean("off", false)) finish();
+                else handleNews(reply.optJSONObject("news"));
             }
         } catch (Exception ignored) {
             // нет связи — повторим
         } finally {
             sending = false;
             if (c != null) c.disconnect();
+        }
+    }
+
+    /** Новые заказы с прошлого ответа — уведомление, если приложение закрыто. */
+    private void handleNews(JSONObject news) {
+        if (news == null) return;
+        SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
+        Set<String> seenMine = new HashSet<>(p.getStringSet("seenMine", new HashSet<>()));
+        Set<String> seenFree = new HashSet<>(p.getStringSet("seenFree", new HashSet<>()));
+        Set<String> mine = new HashSet<>();
+        Set<String> free = new HashSet<>();
+        List<String> newMine = new ArrayList<>();
+        List<String> newFree = new ArrayList<>();
+        JSONArray m = news.optJSONArray("mine");
+        for (int i = 0; m != null && i < m.length(); i++) {
+            JSONObject o = m.optJSONObject(i);
+            if (o == null) continue;
+            String key = o.optString("key");
+            mine.add(key);
+            if (!seenMine.contains(key)) newMine.add(o.optString("no"));
+        }
+        JSONArray f = news.optJSONArray("free");
+        for (int i = 0; f != null && i < f.length(); i++) {
+            JSONObject o = f.optJSONObject(i);
+            if (o == null) continue;
+            String key = o.optString("key");
+            free.add(key);
+            if (!seenFree.contains(key)) newFree.add(o.optString("no"));
+        }
+        p.edit().putStringSet("seenMine", mine).putStringSet("seenFree", free).apply();
+        boolean first = newsBaseline;
+        newsBaseline = false;
+        if (first || appVisible) return;
+        if (!newMine.isEmpty()) {
+            notifyOrders(101, newMine.size() == 1 ? "Вам назначен заказ №" + newMine.get(0) : "Вам назначены заказы: " + android.text.TextUtils.join(", ", newMine),
+                "Откройте приложение — заказ в «Мои поездки»");
+        }
+        if (!newFree.isEmpty()) {
+            notifyOrders(102, newFree.size() == 1 ? "Новый заказ №" + newFree.get(0) : "Новых заказов: " + newFree.size(),
+                "Свободен — нажмите, чтобы взять");
+        }
+    }
+
+    private void notifyOrders(int id, String title, String text) {
+        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (Build.VERSION.SDK_INT >= 26) {
+            NotificationChannel ch = new NotificationChannel(ORDERS, getString(R.string.channel_orders), NotificationManager.IMPORTANCE_HIGH);
+            ch.enableVibration(true);
+            ch.setVibrationPattern(new long[] {0, 300, 150, 300});
+            nm.createNotificationChannel(ch);
+        }
+        Intent open = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent pi = PendingIntent.getActivity(this, id, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, ORDERS) : new Notification.Builder(this);
+        b.setSmallIcon(R.drawable.ic_stat)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .setCategory(Notification.CATEGORY_MESSAGE);
+        if (Build.VERSION.SDK_INT < 26) {
+            b.setDefaults(Notification.DEFAULT_ALL).setPriority(Notification.PRIORITY_HIGH);
+        }
+        try {
+            nm.notify(id, b.build());
+        } catch (SecurityException ignored) {
+            // Уведомления запрещены в настройках телефона.
         }
     }
 

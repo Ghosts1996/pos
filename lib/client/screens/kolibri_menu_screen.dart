@@ -79,6 +79,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
 
   /// Названия категорий: по ним видно, что позиция — кальян (см. _add).
   Map<String, String> _catNames = const {};
+  Map<String, String> _catKinds = const {};
   static const _otherKey = '__other';
 
   static int _byName(MenuItem a, MenuItem b) => _alphaKey(a.name).compareTo(_alphaKey(b.name));
@@ -91,6 +92,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
         final catNames = {for (final c in allCategories) c.id: c.name};
         // Нужны и корзине: кальян из неё уходит кальянщику, а не официанту.
         _catNames = catNames;
+        _catKinds = {for (final c in allCategories) c.id: c.kind};
         bool tobacco(MenuItem i) => PromoPolicy.menuTobacco(i, catNames[i.categoryId] ?? '');
 
         return StreamBuilder<List<MenuItem>>(
@@ -935,7 +937,7 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
     final banned = <String>{
       for (final i in _cart.values)
         if (_menuById[i.menuItemId] case final m?)
-          if (RemoteSale.banned(m, categoryName: _catNames[m.categoryId] ?? '')) i.menuItemId,
+          if (RemoteSale.banned(m, categoryName: _catNames[m.categoryId] ?? '', categoryKind: _catKinds[m.categoryId] ?? '')) i.menuItemId,
     };
     final profile = await _link.profileStream(_auth.uid).first;
     if (!mounted) return;

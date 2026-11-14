@@ -8,6 +8,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../services/app_auth.dart';
+import 'server_clock.dart';
 
 // Движок собственного сервера данных: кэш документов на устройстве, очередь
 // записей (переживает выключение и работу без интернета), запросы и живые
@@ -876,7 +877,10 @@ class LocalEngine {
       _lastFailure = DateTime.now();
       throw const _Offline();
     }
-    if (resp.statusCode < 500) _lastSuccess = DateTime.now();
+    if (resp.statusCode < 500) {
+      _lastSuccess = DateTime.now();
+      ServerClock.syncFromHeader(resp.headers['date']);
+    }
     Map<String, dynamic> j;
     try {
       j = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
@@ -1023,6 +1027,14 @@ class LocalEngine {
             _retryDelay = min(_retryDelay * 2, 30);
             return;
           }
+          if (e.code == 'subscription-blocked' || e.code == 'device-limit') {
+            // Подписка не оплачена или касса сверх лимита тарифа: записи
+            // (чеки, закрытые без связи) не выбрасываем — ждут оплаты или
+            // освободившегося места и уходят сами. Касса в это время
+            // показывает экран блокировки.
+            _retryTimer = Timer(const Duration(seconds: 60), _kickFlush);
+            return;
+          }
           if (e.code == 'aborted' && b.writes.any((w) => w.ver != null)) {
             // Отложенная транзакция: прочитанное успело измениться на другом
             // устройстве. Выполняем её заново по свежим данным сервера (она
@@ -1043,7 +1055,9 @@ class LocalEngine {
                 _retryTimer = Timer(Duration(seconds: _retryDelay), _kickFlush);
                 return;
               } on FirebaseException catch (err) {
-                if (err.code != 'unavailable') {
+                // Блокировка подписки — как нет связи: повтор позже, не терять.
+                final wait = err.code == 'unavailable' || err.code == 'subscription-blocked' || err.code == 'device-limit';
+                if (!wait) {
                   debugPrint('local-db: транзакция после конфликта отклонена: $err');
                   if (b.accepted.isCompleted) lastRejected.value = _rejectText(err);
                   if (!b.done.isCompleted) b.done.completeError(err);

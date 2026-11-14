@@ -2818,12 +2818,15 @@ async function runChargeRecurringSubscriptions() {
   }
 }
 
-/** Раз в сутки: истёкшие пробные периоды и неоплаченные подписки — в
- *  past_due, а через GRACE_PERIOD_DAYS после этого данные удаляются. */
-async function runEnforceGracePeriod() {
+/** Истёкшие пробные периоды и неоплаченные подписки — в past_due: касса и
+ *  приложения закрываются. Идёт каждые 10 минут (scheduleSubscriptionExpiry),
+ *  а не раз в сутки: иначе после окончания срока касса работала бы ещё до
+ *  суток. Подписке с автопродлением, которую ещё не пытались продлить,
+ *  даём дождаться суточной попытки списания. */
+async function runExpireSubscriptions(now = Date.now()) {
   const firestore = db();
-  const now = Date.now();
   const nowTs = admin.firestore.Timestamp.fromMillis(now);
+  let n = 0;
 
   const expiredTrials = await firestore.collection("subscriptions")
     .where("status", "==", "trial")
@@ -2832,6 +2835,7 @@ async function runEnforceGracePeriod() {
   for (const subDoc of expiredTrials.docs) {
     const isChain = !!subDoc.data().chainId;
     await markPastDue(subDoc.id, subDoc.ref, isChain);
+    n++;
     await writeAuditLog({
       tenantId: isChain ? null : subDoc.id, actorId: null, action: "trialExpired",
       metadata: { chainId: isChain ? subDoc.id : null },
@@ -2847,8 +2851,22 @@ async function runEnforceGracePeriod() {
     // Если списание запустили сегодня, даём уведомлению об оплате сутки.
     const lastAttemptMs = sub.renewalAttemptedAt?.toMillis?.() ?? 0;
     if (now - lastAttemptMs < 24 * 3600000) continue;
+    // Автопродление ещё не пробовали (суточная задача не дошла) — ждём её,
+    // но не дольше суток после конца срока.
+    const endMs = sub.currentPeriodEnd?.toMillis?.() ?? 0;
+    const autoRenew = sub.provider === "robokassa" && !!sub.robokassaParentInvId && !sub.cancelAtPeriodEnd;
+    if (autoRenew && lastAttemptMs < endMs - 86400000 && now - endMs < 24 * 3600000) continue;
     await markPastDue(subDoc.id, subDoc.ref, !!sub.chainId);
+    n++;
   }
+  return n;
+}
+
+/** Раз в сутки: через GRACE_PERIOD_DAYS после past_due данные удаляются. */
+async function runEnforceGracePeriod() {
+  const firestore = db();
+  const now = Date.now();
+  await runExpireSubscriptions(now);
 
   const deadline = admin.firestore.Timestamp.fromMillis(now - GRACE_PERIOD_DAYS * 86400000);
   const overdue = await firestore.collection("subscriptions")
@@ -2914,6 +2932,16 @@ function scheduleDailyJob(name, intervalMs, run, firstDelayMs = 5 * 60 * 1000) {
   };
   setTimeout(tick, Number(process.env.CRON_FIRST_DELAY_MS) || firstDelayMs);
   setInterval(tick, 60 * 60 * 1000);
+}
+
+/** Каждые 10 минут — истёкшие сроки в past_due (касса закрывается сразу). */
+const EXPIRY_CHECK_MS = 10 * 60 * 1000;
+function scheduleSubscriptionExpiry() {
+  const tick = () => runExpireSubscriptions().then((n) => {
+    if (n) console.log(`saas-gateway: срок вышел, касса закрыта у подписок: ${n}`);
+  }).catch((e) => console.error("saas-gateway: проверка сроков подписок:", e.message || e));
+  setTimeout(tick, 60 * 1000).unref();
+  setInterval(tick, EXPIRY_CHECK_MS).unref();
 }
 
 const BILLING_CRON_INTERVAL_MS = 24 * 3600 * 1000;
@@ -9130,6 +9158,57 @@ const shield = createShield({
   },
 });
 
+/**
+ * Можно ли этому входу писать в данные заведения: заведение (и его сеть)
+ * оплачено — статус trial или active, а устройство (касса) — в пределах
+ * лимита тарифа по времени подключения, как на экране кассы
+ * (DeviceLimitGate). Иначе — { status, code, error }. Супер-админ и записи
+ * вне tenants/{id}/… не ограничиваются. Список устройств заведения —
+ * из кэша на 30 с.
+ */
+const WRITE_GATE_TTL_MS = 30 * 1000;
+const writeGateDevices = new Map();
+const OPERATIONAL = new Set(["trial", "active"]);
+async function dataWriteGate(store, auth, writes) {
+  if (!auth || !auth.uid || !Array.isArray(writes)) return null;
+  const tenants = new Set();
+  for (const w of writes) {
+    const m = /^tenants\/([^/]+)\/[^/]+\//.exec(String((w && w.path) || ""));
+    if (m) tenants.add(m[1]);
+  }
+  if (!tenants.size || store.raw(`superAdmins/${auth.uid}`)) return null;
+  for (const tid of tenants) {
+    const t = store.raw(`tenants/${tid}`);
+    if (!t) continue;
+    const chain = t.chainId ? store.raw(`chains/${t.chainId}`) : null;
+    const off = (x) => x && x.status && !OPERATIONAL.has(x.status);
+    if (off(t) || off(chain)) {
+      return { status: 402, code: "subscription-blocked", error: "Касса заблокирована: подписка заведения не оплачена. Владелец оплачивает её в кабинете — после оплаты всё, что сохранено на кассе, отправится само" };
+    }
+    const mine = store.raw(`tenants/${tid}/devices/${auth.uid}`);
+    if (!mine) continue;
+    const max = Math.max(0, Math.floor(Number((store.raw(`tenants/${tid}/public/features`) || {}).maxDevices) || 0));
+    const inactive = (d) => d.status === "disabled" || d.status === "removed";
+    if (inactive(mine)) return { status: 403, code: "permission-denied", error: "Устройство отключено владельцем заведения" };
+    if (!max) continue;
+    let cached = writeGateDevices.get(tid);
+    if (!cached || Date.now() - cached.at > WRITE_GATE_TTL_MS) {
+      const snap = await store.collection(`tenants/${tid}/devices`).get();
+      const ms = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : Number.POSITIVE_INFINITY);
+      const order = snap.docs.filter((d) => !inactive(d.data()))
+        .sort((a, b) => (ms(a.data().createdAt) - ms(b.data().createdAt)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        .map((d) => d.id);
+      cached = { at: Date.now(), order };
+      writeGateDevices.set(tid, cached);
+    }
+    const place = cached.order.indexOf(auth.uid);
+    if (place >= max) {
+      return { status: 402, code: "device-limit", error: `По тарифу касса работает на ${max} устройствах — это устройство сверх лимита. Удалите старое устройство в кабинете («Устройства») или смените тариф` };
+    }
+  }
+  return null;
+}
+
 let dataApi = null;
 function dataApiOrNull() {
   if (!DATA_LOCAL) return null;
@@ -9145,6 +9224,7 @@ function dataApiOrNull() {
         // Новые подключения к потоку данных: касса и гость открывают одно на
         // запуск — 300 за 10 минут с адреса хватает и большому залу.
         newSession: (req) => shield.hit("dbSession", req, 300, 10 * 60 * 1000),
+        canWrite: (auth, writes) => dataWriteGate(localDataStore(), auth, writes),
       },
     });
   }
@@ -10010,6 +10090,7 @@ const server = http.createServer((req, res) => {
 
 scheduleDemoCleanup();
 scheduleBillingCron();
+scheduleSubscriptionExpiry();
 scheduleUsageCron();
 schedulePiiAutoMigration();
 scheduleCapabilitiesCron();
@@ -10116,4 +10197,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck });
+Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, dataWriteGate, localDataStore });

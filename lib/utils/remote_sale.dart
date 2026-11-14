@@ -15,7 +15,10 @@ class RemoteSale {
   );
   static final _extraTobacco = RegExp(r'чаш[аи]|забивк', caseSensitive: false);
 
-  static bool banned(MenuItem item, {String categoryName = ''}) {
+  /// [categoryKind] — цех категории: всё из категории кальянного цеха
+  /// (`hookah`) — кальяны, как бы ни назывались позиции.
+  static bool banned(MenuItem item, {String categoryName = '', String categoryKind = ''}) {
+    if (categoryKind == 'hookah') return true;
     final name = item.name.toLowerCase();
     final cat = categoryName.toLowerCase();
     if (PromoPolicy.menuTobacco(item, categoryName) || _extraTobacco.hasMatch(name) || _extraTobacco.hasMatch(cat)) {

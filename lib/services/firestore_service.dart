@@ -47,6 +47,7 @@ import '../build_info.dart';
 import 'gateway_cache_service.dart';
 import '../data/app_db.dart';
 import '../data/local_firestore.dart';
+import '../data/server_clock.dart';
 
 /// Единая точка доступа к Firestore. Простая, без лишней абстракции.
 class FirestoreService {
@@ -875,7 +876,7 @@ class FirestoreService {
           ? OrderItem(
               menuItemId: old.menuItemId, name: old.name, price: old.price, qty: n, kind: old.kind,
               ready: n, sent: n, accepted: n, served: n, since: old.since)
-          : TimeCafe.line(DateTime.now().difference(s.startTime), n);
+          : TimeCafe.line(TimeCafe.sat(s.startTime), n);
       return true;
     });
   }
@@ -2212,7 +2213,10 @@ class FirestoreService {
     // Начало ставит сервер — перевод часов планшета назад смену не
     // удлинит. До открытия заведения время в зарплату не идёт: момент
     // открытия пишем в countFrom.
-    final now = DateTime.now();
+    // Время нажатия по серверным часам (ServerClock): без интернета смена
+    // начинается тогда, когда сотрудник нажал, а не когда вернулась связь.
+    final tapped = kSaasMode ? ServerClock.startTime()?.toLocal() : null;
+    final now = tapped ?? DateTime.now();
     final startedAt = _clampToVenueOpening(now);
 
     final id = await _db.runTransaction<String>((tx) async {
@@ -2252,7 +2256,10 @@ class FirestoreService {
       tx.set(shiftRef, {
         'employeeId': employee.id,
         if (Pd.mirror) 'employeeName': employee.name,
-        'startedAt': FieldValue.serverTimestamp(),
+        'startedAt': tapped != null ? Timestamp.fromDate(tapped) : FieldValue.serverTimestamp(),
+        // Когда запись дошла до сервера: сильно позже startedAt — нажали без
+        // интернета (в табеле это видно).
+        if (tapped != null) 'syncedAt': FieldValue.serverTimestamp(),
         'endedAt': null,
         'status': 'open',
         'manual': false,
@@ -2309,11 +2316,18 @@ class FirestoreService {
     final shiftRef = AppScope.col('staffShifts').doc(shiftId);
     final stateRef = AppScope.col('meta').doc('staffShiftState');
     final manual = endedAt != null;
+    // Уход — по серверным часам на момент нажатия (см. clockIn).
+    final tapped = !manual && kSaasMode ? ServerClock.endTime()?.toLocal() : null;
     final wasCurrent = await _db.runTransaction<bool>((tx) async {
       final stateDoc = await tx.get(stateRef);
       tx.update(shiftRef, {
         'status': 'closed',
-        'endedAt': manual ? Timestamp.fromDate(endedAt) : FieldValue.serverTimestamp(),
+        'endedAt': manual
+            ? Timestamp.fromDate(endedAt)
+            : tapped != null
+                ? Timestamp.fromDate(tapped)
+                : FieldValue.serverTimestamp(),
+        if (tapped != null) 'endSyncedAt': FieldValue.serverTimestamp(),
         if (manual) ...{
           'manual': true,
           'editedBy': Pd.who(editor?.name ?? '', id: editor?.id ?? ''),

@@ -351,11 +351,13 @@ function salesStats(sessions, excludeTobacco = true, period = sessions && sessio
   for (const s of sessions) {
     // Отменённый заказ с собой/доставки тоже получает closedAt, но денег
     // не принёс — как и в кабинете (там только status == "closed").
-    if (s.status === "cancelled") continue;
+    // Отменённый и снова открытый чек — не продажа (как в Z-отчёте кассы).
+    if (s.status === "cancelled" || s.status === "active") continue;
     const bill = sessionBill(s, excludeTobacco);
     if (period) {
       // Старые чеки без даты возврата — возврат в день закрытия, как раньше.
-      if (s.refunded && inPeriod(s.refundedAt || s.closedAt)) { st.refunds++; st.refundSum += bill; }
+      // Закрытый без оплаты чек в возвраты не идёт — денег по нему не было.
+      if (s.refunded && !s.closedWithoutPayment && inPeriod(s.refundedAt || s.closedAt)) { st.refunds++; st.refundSum += bill; }
       if (!inPeriod(s.closedAt)) continue; // в периоде только возврат
     } else if (s.refunded) { st.refunds++; st.refundSum += bill; continue; }
     if (s.closedWithoutPayment) { st.unpaid++; st.unpaidSum += bill; continue; }

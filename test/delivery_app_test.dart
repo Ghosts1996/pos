@@ -12,6 +12,9 @@ void main() {
     test('табак, кальяны, чаша — нельзя', () {
       expect(RemoteSale.banned(item('Классика'), categoryName: 'Кальяны'), isTrue);
       expect(RemoteSale.banned(item('Табак Darkside')), isTrue);
+      // Категория кальянного цеха — кальян, как бы ни называлась позиция.
+      expect(RemoteSale.banned(item('Двойное яблоко'), categoryName: 'Миксы', categoryKind: 'hookah'), isTrue);
+      expect(RemoteSale.banned(item('Двойное яблоко'), categoryName: 'Миксы', categoryKind: 'bar'), isFalse);
       expect(RemoteSale.banned(item('Чаша на грейпфруте')), isTrue);
       expect(RemoteSale.banned(item('Микс', tobacco: true)), isTrue);
     });

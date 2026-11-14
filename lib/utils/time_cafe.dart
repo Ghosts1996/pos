@@ -3,6 +3,8 @@ import 'dart:async';
 import 'sale_kind.dart';
 import '../models/session_model.dart';
 import '../services/app_scope.dart';
+import '../build_info.dart';
+import '../data/server_clock.dart';
 
 /// Тайм-кафе: гость платит за время за столом, а не только за заказ.
 ///
@@ -43,6 +45,11 @@ class TimeCafe {
   static const minChoices = [0, 30, 60];
 
   static bool get ready => enabled && pricePerHour > 0;
+
+  /// Сколько гости за столом: по серверным часам кассы (SaaS), а не по
+  /// часам планшета — сбитые или переведённые часы не меняют сумму.
+  static Duration sat(DateTime start) =>
+      ((kSaasMode ? ServerClock.now()?.toLocal() : null) ?? DateTime.now()).difference(start);
 
   static StreamSubscription<dynamic>? _sub;
 

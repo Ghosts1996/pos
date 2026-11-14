@@ -271,7 +271,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   /// Тайм-кафе: сколько гостей платят за время и сколько с каждого. Сумма
   /// по тарифу подставлена — её можно поправить (скидка, договорились).
   Future<(int, double?)?> _askTime(SessionModel session) {
-    final sat = DateTime.now().difference(session.startTime);
+    final sat = TimeCafe.sat(session.startTime);
     final calc = TimeCafe.costPerGuest(sat);
     final sumCtrl = TextEditingController(text: calc.toStringAsFixed(0));
     var n = TimeCafe.hasLine(session) ? TimeCafe.guestsIn(session) : (session.guests > 0 ? session.guests : 1);
@@ -320,7 +320,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     if (r == null) return false;
     final (guests, perGuest) = r;
     try {
-      final sat = DateTime.now().difference(session.startTime);
+      final sat = TimeCafe.sat(session.startTime);
       await _fs.setTimeCafeLine(session.id, sat, guests, perGuest: perGuest);
       if (mounted) {
         final sum = (perGuest ?? TimeCafe.costPerGuest(sat)).roundToDouble() * guests;
@@ -346,7 +346,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
         final manual = session.orderItems.any((i) => i.menuItemId == TimeCafe.lineId && i.name.endsWith(' · вручную'));
         if (!manual) {
           try {
-            await _fs.setTimeCafeLine(session.id, DateTime.now().difference(session.startTime), TimeCafe.guestsIn(session));
+            await _fs.setTimeCafeLine(session.id, TimeCafe.sat(session.startTime), TimeCafe.guestsIn(session));
           } catch (_) {}
         }
       } else {
@@ -354,7 +354,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
           context: context,
           builder: (ctx) => AlertDialog(
             title: const Text('Добавить время в счёт?'),
-            content: Text('Гости за столом ${TimeCafe.durationLabel(TimeCafe.billedMinutes(DateTime.now().difference(session.startTime)))}. '
+            content: Text('Гости за столом ${TimeCafe.durationLabel(TimeCafe.billedMinutes(TimeCafe.sat(session.startTime)))}. '
                 'Тайм-кафе включено, а время ещё не добавлено в счёт.'),
             actions: [
               TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Без времени')),

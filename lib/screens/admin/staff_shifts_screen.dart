@@ -467,7 +467,9 @@ class _StaffShiftsScreenState extends State<StaffShiftsScreen> {
                   ? ' · отменена${s.cancelledByName.isNotEmpty ? ' (${s.cancelledByName})' : ''}'
                   : s.manual
                       ? ' · вручную${s.editedByName.isNotEmpty ? ' (${s.selfEdited ? 'сам' : s.editedByName})' : ''}'
-                      : '';
+                      : s.offlineTap
+                          ? ' · отмечена без интернета'
+                          : '';
               return ListTile(
                 leading: Icon(
                   s.cancelled ? Icons.block : (s.manual ? Icons.edit_note : Icons.timer_outlined),

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import '../../services/printer_service.dart';
 import '../../services/egais_service.dart';
+import 'egais_waybills_screen.dart';
 import '../../services/atol_local_kassa.dart';
 import '../../services/kassa_service.dart';
 import '../../services/chestny_znak_api_service.dart';
@@ -1509,7 +1510,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             const _Hint('Общепит не отправляет в ЕГАИС каждую продажу: принимает накладные поставщиков, '
                 'переводит продукцию в зал и в день вскрытия бутылки крепкого алкоголя отмечает её. '
                 'Документы подписываются в УТМ на компьютере заведения. Здесь — связь с УТМ и '
-                'входящие документы: касса покажет, что пришла новая накладная.'),
+                'входящие документы: касса покажет, что пришла новая накладная'
+                '${kSaasMode ? ', и на неё можно ответить — принять, принять с расхождениями или отказать' : ''}.'),
             TextField(
               controller: _fsrarIdCtrl,
               keyboardType: TextInputType.number,
@@ -1526,6 +1528,17 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
               label: const Text('Проверить связь и входящие документы'),
             ),
             if (_utmResult != null) _Result(_utmResult!),
+            if (kSaasMode && _egaisDocs != null && _egaisDocs!.any((d) => d.isWaybill))
+              FilledButton.tonalIcon(
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => EgaisWaybillsScreen(
+                    service: EgaisUtmService(utmHost: _utmHostCtrl.text.trim(), fsrarId: _fsrarIdCtrl.text.trim()),
+                    docs: _egaisDocs,
+                  ),
+                )),
+                icon: const Icon(Icons.fact_check_outlined),
+                label: const Text('Накладные поставщиков: принять или отказать'),
+              ),
             if (_egaisDocs != null && _egaisDocs!.isNotEmpty)
               Column(
                 children: [

@@ -1416,7 +1416,7 @@ function screenMenu() {
     const hidden = atTable ? 0 : items.length - regular.length;
     // Не за столом — заказ с доставкой или с собой: алкоголь и табак так
     // не продаются (законы № 171-ФЗ и № 15-ФЗ), кнопок у них нет.
-    const canTakeAway = (i) => deliveryOn() && !remoteSaleBanned(i, catName(i.categoryId));
+    const canTakeAway = (i) => deliveryOn() && !remoteSaleBanned(i, cats.find((c) => c.id === i.categoryId) || '');
 
     // Категории в порядке справочника; позиции без категории — «Прочее».
     const sections = [];
@@ -2310,8 +2310,12 @@ const onlinePayReady = () => (state.venue || {}).guestSbpPay === true
 // шлюзе (guest-delivery.js): он и решает, здесь — чтобы гость видел заранее.
 const REMOTE_TOBACCO_RE = /кальян|табак|никотин|hookah|shisha|снюс|вейп|сигар|чаш[аи]|забивк/i;
 const ALCOHOL_RE = /(^|[^а-яё])(пив[оа]|пивн|вин[оа]($|[^а-яё])|винн|игрист|шампанск|просекко|виски|коньяк|водк|ром($|[^а-яё])|джин($|[^а-яё])|текил|ликёр|ликер|настойк|наливк|сидр|абсент|бренди|вермут|мартини|портвейн|херес|саке|бурбон|кальвадос|граппа|самбук|аперол|медовух|алко)/i;
-function remoteSaleBanned(item, catName = '') {
+function remoteSaleBanned(item, category = '') {
   const name = String(item.name || '');
+  const cat = category && typeof category === 'object' ? category : { name: category };
+  const catName = String(cat.name || '');
+  // Категория кальянного цеха — кальяны, как бы ни назывались позиции.
+  if (cat.kind === 'hookah' || item.kind === 'hookah') return true;
   if (item.tobacco === true || REMOTE_TOBACCO_RE.test(name) || REMOTE_TOBACCO_RE.test(catName)) return true;
   if (item.fiscalSubject === 'excise' || item.alcohol === true) return true;
   if (/безалк/i.test(name)) return false;
@@ -2433,7 +2437,7 @@ async function screenCheckout() {
     return {
       key, qty, mods, name: it.name, menuItemId: it.id,
       price: hall, base: Number(it.price) || 0, modsSum: Math.max(0, hall - (Number(it.price) || 0)),
-      banned: remoteSaleBanned(it, catName(it.categoryId)),
+      banned: remoteSaleBanned(it, cats.find((c) => c.id === it.categoryId) || ''),
     };
   }).filter(Boolean);
   const isOff = (l) => !!info && (info.off || []).includes(l.menuItemId);

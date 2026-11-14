@@ -447,8 +447,12 @@ function createCourier({
   async function freeDto(point, s, contact, courier) {
     const m = await moneyOf(point.id, s);
     const pos = courier.pos && now() - ms(courier.pos.at) < POS_FRESH_MS ? courier.pos : null;
-    const dest = contact.geo || null;
-    const est = await estimateOf(point, dest, await rates(courier.root));
+    const exact = contact.geo || null;
+    const est = await estimateOf(point, exact, await rates(courier.root));
+    // До «Беру» курьер видит район, а не дом гостя: точка — с шагом ~300 м
+    // (путь и заработок сервер считает по точной).
+    const coarse = (v) => Math.round(v * 300) / 300;
+    const dest = exact ? { lat: coarse(exact.lat), lng: coarse(exact.lng) } : null;
     return {
       key: `${point.id}__${s.id}`,
       t: point.id,
@@ -1381,17 +1385,39 @@ function createCourier({
     sendJson(res, 200, out || { ok: false, reason: "nomap" });
   }
 
+  /**
+   * Что нового для курьера — для уведомления, когда приложение закрыто
+   * (служба APK на смене спрашивает вместе с точками): свои заказы в работе
+   * и свободные (в режиме «Свободный пул»). Только номера заказов — без
+   * адресов и телефонов гостей.
+   */
+  async function newsOf(c) {
+    const mine = [];
+    for (const { t, s, x } of await activeOf(c)) mine.push({ key: `${t}__${s}`, no: String(x.orderNo || s.slice(-4)), stage: x.courierStage });
+    const free = [];
+    if ((await rates(c.root)).dispatch !== "manual") {
+      for (const p of await scopeOf(c)) {
+        for (const s of await openDeliveries(p.id)) {
+          if (isFree(s)) free.push({ key: `${p.id}__${s.id}`, no: String(s.orderNo || s.id.slice(-4)), point: p.name || "" });
+        }
+      }
+    }
+    return { mine, free: free.slice(0, 30) };
+  }
+
   async function handlePing(req, res) {
     const c = await courierByToken(req);
     const body = await parseJsonBody(req);
     if (!c.onShift) return sendJson(res, 200, { ok: true, off: true });
+    const news = body.news === true ? await newsOf(c).catch(() => null) : null;
+    const withNews = (o) => (news ? { ...o, news } : o);
     const raw = Array.isArray(body.points) ? body.points.slice(-300) : [];
     const points = raw
       .map((p) => ({ lat: Number(p.lat), lng: Number(p.lng), acc: Math.round(Number(p.acc) || 9999), at: Math.round(Number(p.at) || 0) }))
       .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng) && Math.abs(p.lat) <= 90 && Math.abs(p.lng) <= 180 && (p.lat || p.lng))
       .map((p) => ({ ...p, at: p.at > 0 && p.at <= now() + 60000 && p.at > now() - 6 * 3600 * 1000 ? p.at : now() }))
       .sort((a, b) => a.at - b.at);
-    if (!points.length) return sendJson(res, 200, { ok: true });
+    if (!points.length) return sendJson(res, 200, withNews({ ok: true }));
     const prev = c.pos ? { lat: c.pos.lat, lng: c.pos.lng, acc: c.pos.acc, at: ms(c.pos.at) } : null;
     const step = odometerStep(prev, points);
     const latest = points[points.length - 1];
@@ -1412,7 +1438,7 @@ function createCourier({
       await hooks.moved(t, s, pos.lat, pos.lng).catch(() => {});
     }
     if (lastSessionPos.size > 5000) lastSessionPos.clear();
-    sendJson(res, 200, { ok: true });
+    sendJson(res, 200, withNews({ ok: true }));
   }
 
   const round6 = (v) => Math.round(v * 1e6) / 1e6;

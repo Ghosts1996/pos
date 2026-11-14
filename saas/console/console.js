@@ -3040,7 +3040,7 @@ Promise.resolve().then(boot);
 const LANDING_FEATURES = [
   { icon: 'tablet', title: 'Зал, кухня и касса', desc: 'Схему зала рисуете прямо на планшете: стены, зоны, столы любой формы, у каждого свой таймер. Повар и бармен видят заказ на экране «Кухня и бар» или получают бумажный бегунок с пожеланиями гостя. Новый заказ звенит, пока его не примут, а «готово» вибрирует у официанта на телефоне или часах. Пропал интернет — касса работает дальше. Платить можно наличными, картой, через терминал любого банка, по QR СБП или частями, а в отчёте выручка разложена по банкам.' },
   { icon: 'phone', title: 'Приложение гостя', desc: 'Под вашим названием и логотипом, не под нашим. Гость сканирует QR на столе, смотрит меню с фото, заказывает, зовёт официанта, оставляет чаевые, копит бонусы и бронирует стол. Счёт оплачивает сам, по СБП или картой. На iPhone ничего ставить не нужно, всё открывается в браузере.' },
-  { icon: 'box', title: 'Склад', desc: 'Продали пасту или лимонад, и продукты списались по граммовке. Уже в пятницу днём видно, чего не хватит к вечеру. Накладную поставщика из ЭДО загружаете файлом — приход и средняя себестоимость посчитаются сами. Расхождения считает инвентаризация, а накладные ЕГАИС приходят через ваш УТМ.' },
+  { icon: 'box', title: 'Склад', desc: 'Продали пасту или лимонад, и продукты списались по граммовке. Уже в пятницу днём видно, чего не хватит к вечеру. Накладную поставщика из ЭДО загружаете файлом — приход и средняя себестоимость посчитаются сами. Расхождения считает инвентаризация, а накладную ЕГАИС принимаете прямо с кассы через ваш УТМ: целиком, с расхождениями или отказом.' },
   { icon: 'users', title: 'Смены и зарплата', desc: 'Приход и уход отмечаются на кассе, время берётся с сервера, а не с телефона сотрудника. Ставка за час или за смену, процент по роли и бонус, если заведение выполнило план по выручке. Любая ручная правка видна в отчёте, так что приписать себе пару часов не получится.' },
   { icon: 'gift', title: 'Гости возвращаются', desc: 'Кешбэк бонусами с уровнями, скидочные карты, сертификаты и новости в ленте приложения. После визита гость ставит оценку, а отзывы ниже четырёх звёзд собираются в отдельный список, чтобы вы успели перезвонить.' },
   { icon: 'clock', title: 'Тайм-кафе и антикафе', desc: 'Оплата за время отдельно от заказа: цена часа за гостя, отдельная цена первого часа, минимальная оплата, округление и стоп-чек. Касса сама считает, сколько должен каждый гость, а при закрытии стола пересчитывает время на момент оплаты.' },
@@ -3772,9 +3772,10 @@ function screenLanding() {
             видны ему в&nbsp;приложении.</span></div>
           <div class="risk-item"><b>Приложение курьера</b><span>Android-приложение и&nbsp;веб-версия для iPhone и&nbsp;любого
             телефона. Заказы только вашего заведения, «Беру» или назначение администратором, шаги «Забрал → У&nbsp;двери →
-            Вручил», оплата у&nbsp;двери наличными со&nbsp;сдачей, картой или по&nbsp;QR, заработок за&nbsp;поездку, день и&nbsp;неделю.</span></div>
+            Вручил», оплата у&nbsp;двери наличными со&nbsp;сдачей, картой или по&nbsp;QR, заработок за&nbsp;поездку, день и&nbsp;неделю.
+            Новый или назначенный заказ — звук и&nbsp;уведомление; в&nbsp;Android-приложении на&nbsp;смене — даже когда оно закрыто.</span></div>
           <div class="risk-item"><b>Карта и&nbsp;маршруты</b><span>Своя карта с&nbsp;маршрутом по&nbsp;дорогам для машины,
-            велосипеда и&nbsp;пешком, схема, спутник или гибрид. Навигатор — одной кнопкой. В&nbsp;кабинете видно, где курьеры
+            велосипеда и&nbsp;пешком, светлая и&nbsp;тёмная, без рекламы. Навигатор — одной кнопкой. В&nbsp;кабинете видно, где курьеры
             и&nbsp;какие заказы в&nbsp;пути.</span></div>
           <div class="risk-item"><b>Цена доставки по&nbsp;адресу</b><span>Районы, цена за&nbsp;километр по&nbsp;дорогам,
             «бесплатно от», минимальный заказ, наценка на&nbsp;блюда в&nbsp;доставке. Гость видит цену сразу в&nbsp;счёте,
@@ -4447,6 +4448,9 @@ function screenLegalPayment() {
       ])}
       ${legalSection('Документы', [
         'Полные условия — в <a href="#/legal/offer">публичной оферте</a>, обработка данных — в <a href="#/legal/privacy">политике конфиденциальности</a>.',
+      ])}
+      ${legalSection('Реквизиты', [
+        '<span id="legal-requisites" data-kind="offer">Реквизиты правообладателя — в <a href="#/legal/offer">публичной оферте</a>.</span>',
       ])}
     </div>
   `);
@@ -8613,12 +8617,15 @@ function watchDashboardData(tenantId) {
   // X-отчёте кассы. Выручка как Z-отчёт: оплаты чеков, закрытых за сутки,
   // минус возвраты, оформленные за сутки (за какой бы день ни был чек).
   {
-    const paid = (s) => (Number(s.paymentCash) || 0) + (Number(s.paymentCard) || 0) +
-      (Number(s.paymentTerminal) || 0) + (Number(s.paymentAggregator) || 0) + (Number(s.paymentComp) || 0);
     const watchDay = (tid, tz, onChange) => {
       const from = Timestamp.fromDate(businessDayStartIn(tz));
       let sales = null;
       let refunds = null;
+      // «Без скидок и бонусов на кальяны» — как на кассе (settings/loyalty).
+      let excludeTobacco = true;
+      getDoc(doc(state.db, 'tenants', tid, 'settings', 'loyalty'))
+        .then((d) => { const v = d.data()?.excludeTobaccoFromPromo; excludeTobacco = typeof v === 'boolean' ? v : true; emit(); })
+        .catch(() => {});
       const emit = () => {
         if (!sales || !refunds) return;
         let revenue = 0;
@@ -8626,10 +8633,10 @@ function watchDashboardData(tenantId) {
         for (const s of sales) {
           if (s.closedWithoutPayment) continue;
           checks++;
-          revenue += paid(s);
+          revenue += sessionBill(s, excludeTobacco);
         }
-        for (const s of refunds) if (s.refunded === true) revenue -= paid(s);
-        onChange({ revenue, checks });
+        for (const s of refunds) if (s.refunded === true && !s.closedWithoutPayment) revenue -= sessionBill(s, excludeTobacco);
+        onChange({ revenue: Math.round(revenue * 100) / 100, checks });
       };
       const col = collection(state.db, 'tenants', tid, 'sessions');
       const offs = [
@@ -8662,6 +8669,26 @@ function watchDashboardData(tenantId) {
     onGeneralSettings = restartDay;
     sub(() => { if (dayOff) dayOff(); onGeneralSettings = null; });
   }
+}
+
+// Счёт чека — та же формула, что у кассы (SessionModel.totalWithDiscount,
+// Z-отчёт) и у бота (guest-pay.js sessionBill): позиции минус скидка на то,
+// что можно удешевлять. Выручка «Сегодня» — по счетам, как в Z-отчёте и в
+// боте, а не по суммам оплат (предоплата, переплата, ошибка ввода их
+// разводят). Сверка трёх формул — saas-gateway/test.revenue-parity.js.
+const BILL_TOBACCO_RE = /кальян|табак|никотин|hookah|shisha|снюс|вейп|сигар/i;
+function sessionBill(session, excludeTobacco = true) {
+  const items = Array.isArray(session.orderItems) ? session.orderItems : [];
+  let total = 0;
+  let promoBase = 0;
+  for (const i of items) {
+    const sum = (Number(i.price) || 0) * (Number(i.qty) || 0);
+    total += sum;
+    const restricted = excludeTobacco && (i.noPromo === true || BILL_TOBACCO_RE.test(String(i.name || '')));
+    if (!restricted) promoBase += sum;
+  }
+  const discount = Number(session.discountPercent) || 0;
+  return Math.round((total - (promoBase * discount) / 100) * 100) / 100;
 }
 
 // draw() кабинета перерисовывает вкладку на любой снапшот, а живые цифры

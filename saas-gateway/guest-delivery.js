@@ -45,9 +45,15 @@ function normalizePhone(raw) {
   return /^7\d{10}$/.test(n) ? n : "";
 }
 
-/** Нельзя продавать навынос и с доставкой: табак и кальяны, алкоголь (подакцизное). */
-function remoteSaleBanned(item, categoryName = "") {
+/** Нельзя продавать навынос и с доставкой: табак и кальяны, алкоголь (подакцизное).
+ *  category — название категории или сама категория { name, kind }: всё из
+ *  категории кальянного цеха (kind "hookah") — кальяны, как бы ни назывались
+ *  позиции («Двойное яблоко» в «Миксах»). */
+function remoteSaleBanned(item, category = "") {
   const name = String(item.name || "");
+  const cat = category && typeof category === "object" ? category : { name: category };
+  const categoryName = String(cat.name || "");
+  if (cat.kind === "hookah" || item.kind === "hookah") return true;
   if (item.tobacco === true || TOBACCO.test(name) || TOBACCO.test(categoryName)) return true;
   if (item.fiscalSubject === "excise" || item.alcohol === true) return true;
   if (/безалк/i.test(name)) return false;
@@ -100,8 +106,8 @@ function priceItems(lines, menu, categoryNames, markup = null) {
   for (const line of lines) {
     const m = menu[line.menuItemId];
     if (!m || m.available === false) throw new Error(`Позиции «${clean(line.name || "", 60) || "из корзины"}» больше нет в меню — обновите корзину`);
-    const catName = categoryNames[m.categoryId] || "";
-    if (remoteSaleBanned(m, catName)) {
+    const cat = categoryNames[m.categoryId] || "";
+    if (remoteSaleBanned(m, cat)) {
       banned.push(m.name);
       continue;
     }
@@ -249,7 +255,7 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
     }
     let priced;
     try {
-      priced = priceItems(lines, menu, categoryNames, asked ? { pct: markupPct } : null);
+      priced = priceItems(lines, menu, categories, asked ? { pct: markupPct } : null);
     } catch (e) {
       throw new HttpError(409, e.message);
     }
@@ -542,7 +548,7 @@ function createGuestDelivery({ db, admin, verifyAuth, parseJsonBody, sendJson, H
       .filter((d) => {
         const m = d.data() || {};
         const cat = catById[m.categoryId] || {};
-        return pricing.deliveryBlock(m, cat, remoteSaleBanned(m, String(cat.name || ""))) !== "";
+        return pricing.deliveryBlock(m, cat, remoteSaleBanned(m, cat)) !== "";
       })
       .map((d) => d.id);
     // Свои цены позиций в доставке — гость видит их до заказа.

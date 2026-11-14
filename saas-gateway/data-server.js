@@ -333,6 +333,11 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
   async function handleCommit(req, res) {
     const auth = await authOf(req);
     const body = await parseJsonBody(req);
+    // Заведение не оплачено или устройство сверх тарифа — записи не
+    // принимаются (касса показывает это и сама, но старую версию или
+    // изменённый клиент держит только сервер).
+    const deny = g.canWrite ? await g.canWrite(auth, body.writes) : null;
+    if (deny) return sendJson(res, deny.status || 402, { error: deny.error, code: deny.code || "subscription-blocked" });
     try {
       sendJson(res, 200, { results: secure.commit(auth, body.writes, { key: body.key }) });
     } catch (e) { fail(res, e); }

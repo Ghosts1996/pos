@@ -1143,11 +1143,19 @@ service cloud.firestore {
     //    суток; она видна в расчёте зарплаты;
     //  • сотрудника у записи не сменить — чужие часы на себя не переписать;
     //  • удалять нельзя — ошибочную запись отменяют флагом cancelled.
+    // Нажали без интернета: время нажатия по серверным часам кассы
+    // (lib/data/server_clock.dart) дошло позже — не старше 48 часов, и
+    // запись помечена временем доставки на сервер (syncedAt/endSyncedAt =
+    // request.time), так что в табеле видно, что смену отметили без связи.
+    function offlineTapOk(d, t, mark) {
+      return d.get(mark, null) == request.time && t >= request.time - duration.value(48, 'h');
+    }
     function staffShiftCreateOk(d) {
       return d.employeeId is string && d.employeeId.size() > 0 &&
         d.startedAt is timestamp && d.get('cancelled', false) == false && (
           (d.get('manual', false) == false && d.status == 'open' && d.get('endedAt', null) == null &&
-            d.startedAt >= request.time - clockSkew() &&
+            (d.startedAt >= request.time - clockSkew() || offlineTapOk(d, d.startedAt, 'syncedAt')) &&
+            d.startedAt <= request.time + clockSkew() &&
             d.get('countFrom', d.startedAt) is timestamp) ||
           (d.manual == true && d.endedAt is timestamp &&
             d.endedAt <= request.time + clockSkew() && d.endedAt > d.startedAt &&
@@ -1161,8 +1169,8 @@ service cloud.firestore {
         (d.get('cancelled', false) == false && (
           (o.status == 'open' && d.status == 'closed' && d.startedAt == o.startedAt &&
             d.endedAt is timestamp && d.endedAt <= request.time + clockSkew() && d.endedAt > o.startedAt &&
-            changed.hasOnly(['status', 'endedAt', 'manual', 'editedBy', 'editedById', 'editedAt']) &&
-            (d.get('manual', false) == true || d.endedAt >= request.time - clockSkew())) ||
+            changed.hasOnly(['status', 'endedAt', 'manual', 'editedBy', 'editedById', 'editedAt', 'endSyncedAt']) &&
+            (d.get('manual', false) == true || d.endedAt >= request.time - clockSkew() || offlineTapOk(d, d.endedAt, 'endSyncedAt'))) ||
           (d.get('manual', false) == true && d.startedAt is timestamp && d.endedAt is timestamp &&
             d.endedAt <= request.time + clockSkew() && d.endedAt > d.startedAt &&
             d.endedAt - d.startedAt <= duration.value(24, 'h') &&

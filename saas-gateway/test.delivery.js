@@ -75,6 +75,20 @@ test("навынос нельзя: табак и кальяны, алкогол�
   assert.equal(gd.remoteSaleBanned({ name: "Ромашковый чай" }), false);
 });
 
+test("кальянный цех категории: «Двойное яблоко» в «Миксах» — тоже кальян, навынос нельзя", async () => {
+  assert.equal(gd.remoteSaleBanned({ name: "Двойное яблоко" }, { name: "Миксы", kind: "hookah" }), true);
+  assert.equal(gd.remoteSaleBanned({ name: "Двойное яблоко" }, { name: "Миксы", kind: "bar" }), false);
+  assert.equal(gd.remoteSaleBanned({ name: "Чизкейк" }, { name: "Десерты" }), false);
+  const { api, store } = setup();
+  store.set("tenants/t1/menuCategories/mix", { name: "Миксы", kind: "hookah" });
+  store.set("tenants/t1/menuItems/apple", { name: "Двойное яблоко", price: 1400, categoryId: "mix" });
+  const res = await call(api.handleCreate, order({ items: [{ menuItemId: "tea", qty: 1 }, { menuItemId: "apple", qty: 1 }] }));
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.skipped, ["Двойное яблоко"]);
+  assert.equal(res.body.total, 300);
+  await assert.rejects(call(api.handleCreate, order({ items: [{ menuItemId: "apple", qty: 2 }] })), (e) => e.status === 409 && /Табак, кальяны/.test(e.message));
+});
+
 test("часы работы: ночь до 06:00 — ещё вчерашняя смена; выходной; часы не заданы", () => {
   const hours = { 1: "14:00-06:00", 2: "", 3: "10:00-22:00" };
   assert.equal(gd.openNow(hours, { wd: 1, h: 15, min: 0 }).open, true);

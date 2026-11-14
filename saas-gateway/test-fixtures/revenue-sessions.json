@@ -1,0 +1,18 @@
+{
+  "_": "Одни и те же чеки для сверки выручки: бот (telegram.js salesStats), кабинет (console.js sessionBill) и Z-отчёт кассы (lib/utils/z_report.dart). Период: from 1000, to 9000 (мс).",
+  "period": { "from": 1000, "to": 9000 },
+  "excludeTobacco": true,
+  "sessions": [
+    { "id": "plain", "status": "closed", "closedAt": 2000, "paymentCash": 1200, "orderItems": [{ "name": "Паста", "price": 600, "qty": 2 }] },
+    { "id": "discount", "status": "closed", "closedAt": 2100, "discountPercent": 10, "paymentCard": 1940,
+      "orderItems": [{ "name": "Классический кальян", "price": 1400, "qty": 1, "noPromo": true }, { "name": "Чай улун", "price": 300, "qty": 2 }] },
+    { "id": "comp", "status": "closed", "closedAt": 2200, "paymentCash": 500, "paymentComp": 300, "orderItems": [{ "name": "Стейк", "price": 800, "qty": 1 }] },
+    { "id": "prepaidOverpay", "status": "closed", "closedAt": 2300, "paymentCard": 1000, "orderItems": [{ "name": "Пицца", "price": 750, "qty": 1 }] },
+    { "id": "unpaid", "status": "closed", "closedAt": 2400, "closedWithoutPayment": true, "orderItems": [{ "name": "Кофе", "price": 200, "qty": 1 }] },
+    { "id": "cancelled", "status": "cancelled", "closedAt": 2500, "orderItems": [{ "name": "Суп", "price": 400, "qty": 1 }] },
+    { "id": "refundToday", "status": "closed", "closedAt": 2600, "refunded": true, "refundedAt": 3000, "paymentCash": 350, "orderItems": [{ "name": "Лимонад", "price": 350, "qty": 1 }] },
+    { "id": "refundOld", "status": "closed", "closedAt": 500, "refunded": true, "refundedAt": 4000, "paymentCard": 900, "orderItems": [{ "name": "Сет роллов", "price": 900, "qty": 1 }] },
+    { "id": "fractional", "status": "closed", "closedAt": 2700, "discountPercent": 7, "paymentCard": 309.69, "orderItems": [{ "name": "Салат", "price": 333, "qty": 1 }] }
+  ],
+  "expected": { "sales": 5349.69, "refunds": 1250, "revenue": 4099.69, "checks": 6 }
+}
