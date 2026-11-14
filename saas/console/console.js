@@ -1103,10 +1103,10 @@ function bindDeliveryTab(tenantId, redraw) {
   });
   document.querySelectorAll('.f-dx-cancel').forEach((b) => {
     b.onclick = async () => {
-      if (!confirm('Отменить вызов курьера службы?')) return;
+      if (!(await uiConfirm('Отменить вызов курьера службы?'))) return;
       b.disabled = true;
       let r = await call('deliveryExtCancel', { tenantId: b.dataset.t, sessionId: b.dataset.s });
-      if (r && r.paid && confirm(r.message)) r = await call('deliveryExtCancel', { tenantId: b.dataset.t, sessionId: b.dataset.s, confirmPaid: true });
+      if (r && r.paid && (await uiConfirm(r.message))) r = await call('deliveryExtCancel', { tenantId: b.dataset.t, sessionId: b.dataset.s, confirmPaid: true });
       if (r && r.ok) toast('Вызов отменён — заказ снова ждёт курьера');
       loadList(true);
     };
@@ -1130,7 +1130,7 @@ function bindDeliveryTab(tenantId, redraw) {
   });
   document.querySelectorAll('.f-ds-del').forEach((b) => {
     b.onclick = async () => {
-      if (!confirm(`Удалить ключ ${DLV_PROVIDER[b.dataset.p]}?`)) return;
+      if (!(await uiConfirm(`Удалить ключ ${DLV_PROVIDER[b.dataset.p]}?`))) return;
       const ok = await call('deliveryServicesSave', { provider: b.dataset.p, remove: true, forChain: b.dataset.scope === 'chain' }, 'Ключ удалён');
       if (ok) { st.services = null; st.list = null; redraw(); }
     };
@@ -1182,7 +1182,7 @@ function bindDeliveryTab(tenantId, redraw) {
     b.onclick = async () => {
       const c = st.list.couriers.find((x) => x.id === b.dataset.id);
       const on = b.dataset.on === '1';
-      if (!on && !confirm(`Заблокировать курьера №${c.no} · ${c.name}? Он сразу выйдет из приложения, а заказы, которые он ещё не забрал, снова станут свободными. Место в лимите тарифа освободится.`)) return;
+      if (!on && !(await uiConfirm(`Заблокировать курьера №${c.no} · ${c.name}? Он сразу выйдет из приложения, а заказы, которые он ещё не забрал, снова станут свободными. Место в лимите тарифа освободится.`))) return;
       b.disabled = true;
       if (await call('courierAdminEnable', { courierId: c.id, enabled: on }, on ? 'Курьер снова активен — он может войти по почте' : 'Курьер заблокирован')) loadList(true);
       else b.disabled = false;
@@ -1191,14 +1191,14 @@ function bindDeliveryTab(tenantId, redraw) {
   document.querySelectorAll('.f-dl-forget').forEach((b) => {
     b.onclick = async () => {
       const c = st.list.couriers.find((x) => x.id === b.dataset.id);
-      if (!confirm(`Удалить имя, почту и телефон курьера №${c.no}? Это нельзя отменить. Поездки в отчётах останутся за номером курьера.`)) return;
+      if (!(await uiConfirm(`Удалить имя, почту и телефон курьера №${c.no}? Это нельзя отменить. Поездки в отчётах останутся за номером курьера.`))) return;
       if (await call('courierAdminForget', { courierId: c.id }, 'Данные курьера удалены')) loadList(true);
     };
   });
   document.querySelectorAll('.f-dl-cash').forEach((b) => {
     b.onclick = async () => {
       const c = st.list.couriers.find((x) => x.id === b.dataset.id);
-      const raw = prompt(`Сколько наличных сдал курьер №${c.no}? На руках: ${dlvRub(c.cashOnHand)}`, String(c.cashOnHand));
+      const raw = (await uiPrompt(`Сколько наличных сдал курьер №${c.no}? На руках: ${dlvRub(c.cashOnHand)}`, String(c.cashOnHand)));
       if (raw === null) return;
       const amount = Number(String(raw).replace(',', '.').replace(/[^\d.]/g, ''));
       if (await call('courierAdminCash', { courierId: c.id, amount }, `Принято ${dlvRub(amount)}`)) loadList(true);
@@ -1334,7 +1334,7 @@ function bindDeliveryTab(tenantId, redraw) {
       syncForm();
       const msg = $('f-dl-price-msg');
       const all = !!($('f-dl-all') && $('f-dl-all').checked);
-      if (all && !confirm('Применить цену, районы и способы оплаты ко всем точкам сети?')) return;
+      if (all && !(await uiConfirm('Применить цену, районы и способы оплаты ко всем точкам сети?'))) return;
       $('f-dl-price-save').disabled = true;
       try {
         const r = await callSaasGateway('deliverySettingsSave', { tenantId, settings: st.form, applyToChain: all, deliveryEnabled: $('f-dl-enabled').checked });
@@ -1436,7 +1436,7 @@ function bindApiKeysBox(tenantId, redraw) {
   }
   document.querySelectorAll('.f-api-revoke').forEach((b) => {
     b.onclick = async () => {
-      if (!confirm('Отозвать ключ? Программы, которые работают с ним, сразу потеряют доступ.')) return;
+      if (!(await uiConfirm('Отозвать ключ? Программы, которые работают с ним, сразу потеряют доступ.'))) return;
       b.disabled = true;
       try {
         await callSaasGateway('apiKeys', { tenantId, action: 'revoke', keyId: b.dataset.key });
@@ -1525,10 +1525,10 @@ function bindTelegramBox(tenantId, redraw) {
     saveAccess(list, 'Добавлено. Теперь этот человек может управлять ботом.');
   };
   document.querySelectorAll('.f-tg-del').forEach((el) => {
-    el.onclick = () => {
+    el.onclick = async () => {
       const st = tgStatusCache.get(tenantId) || {};
       const a = (st.allowed || [])[Number(el.dataset.i)];
-      if (!a || !confirm(`Убрать ${a.name || 'ID ' + a.id} из списка? Бот перестанет его слушаться, отчёты приходить не будут.`)) return;
+      if (!a || !(await uiConfirm(`Убрать ${a.name || 'ID ' + a.id} из списка? Бот перестанет его слушаться, отчёты приходить не будут.`))) return;
       saveAccess((st.allowed || []).filter((_, i) => i !== Number(el.dataset.i)), 'Убрано.');
     };
   });
@@ -1550,9 +1550,9 @@ function bindTelegramBox(tenantId, redraw) {
   if ($('f-tg-join')) $('f-tg-join').onclick = async () => {
     const st = tgStatusCache.get(tenantId) || {};
     const cb = st.chainBot || {};
-    if (!confirm(`Перевести точку на бот сети @${cb.username}? Этот бот (@${st.username}) отключится. `
+    if (!(await uiConfirm(`Перевести точку на бот сети @${cb.username}? Этот бот (@${st.username}) отключится. `
       + 'Список «Кто управляет ботом» перенесётся в бот сети. Владельцу и управляющим — открыть бота сети и нажать «Запустить», '
-      + 'рабочую группу точки — подключить заново кнопкой «Подключить группу этой точки».')) return;
+      + 'рабочую группу точки — подключить заново кнопкой «Подключить группу этой точки».'))) return;
     $('f-tg-join').disabled = true;
     try {
       await callSaasGateway('telegramJoinChain', { tenantId });
@@ -1565,9 +1565,9 @@ function bindTelegramBox(tenantId, redraw) {
   };
   if ($('f-tg-unlink')) $('f-tg-unlink').onclick = async () => {
     const st = tgStatusCache.get(tenantId) || {};
-    if (!confirm(st.chain
+    if (!(await uiConfirm(st.chain
       ? `Отключить бота всей сети «${st.chain.name}»? Уведомления и кнопки перестанут работать во всех точках.`
-      : 'Отключить бота заведения? Уведомления и кнопки в Telegram перестанут работать.')) return;
+      : 'Отключить бота заведения? Уведомления и кнопки в Telegram перестанут работать.'))) return;
     try {
       await callSaasGateway('telegramUnlink', { tenantId });
       // У сети бот общий — статус других точек тоже устарел.
@@ -1965,19 +1965,157 @@ function dismissBroadcast(id) {
  *  устройстве или украденный сеанс без пароля ничего опасного не сделает.
  *  Пароль есть у каждого аккаунта: при регистрации без пароля он
  *  создаётся случайным. true — пароль подтверждён, false — отменили. */
-async function reauthenticate(actionLabel) {
-  const password = prompt(`Подтвердите действие «${actionLabel}» — введите свой пароль от этой панели:`);
-  if (password === null) return false;
-  if (!password) {
-    toast('Пароль не введён — действие отменено');
-    return false;
+// ---------- ОКНА ПОДТВЕРЖДЕНИЯ ----------
+// Своё окно вместо системных prompt()/confirm(): в стиле кабинета, светлое и
+// тёмное, удобное на телефоне. uiDialog — общий вид, uiConfirm/uiPrompt —
+// замены confirm()/prompt() (возвращают Promise).
+
+/**
+ * fields: [{ name, label, type ('text'|'password'|'number'), value, placeholder,
+ *   autocomplete, hint, match — ok активна, только когда введено это значение
+ *   (без учёта регистра), multiline }].
+ * onOk(values) — проверка перед закрытием: вернула строку — это ошибка, окно
+ * остаётся открытым; бросила — тоже. Возвращает значения полей (или true без
+ * полей) либо null, если закрыли.
+ */
+function uiDialog({ title = '', text = '', html = '', fields = [], ok = 'OK', cancel = 'Отмена', danger = false, icon = '', onOk = null } = {}) {
+  return new Promise((resolve) => {
+    const prevFocus = document.activeElement;
+    const wrap = document.createElement('div');
+    wrap.className = 'zd-overlay';
+    const id = `zd-${Date.now().toString(36)}`;
+    const para = (s) => String(s || '').split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
+    wrap.innerHTML = `
+      <div class="zd-card${danger ? ' danger' : ''}" role="dialog" aria-modal="true" aria-labelledby="${id}-t">
+        ${icon ? `<div class="zd-icon" aria-hidden="true">${icon}</div>` : ''}
+        <h2 class="zd-title" id="${id}-t">${esc(title)}</h2>
+        <div class="zd-text">${para(text)}${html}</div>
+        ${fields.map((f, i) => `
+          <label class="zd-field">
+            ${f.label ? `<span class="zd-label">${esc(f.label)}</span>` : ''}
+            ${f.multiline
+              ? `<textarea data-i="${i}" rows="3" placeholder="${esc(f.placeholder || '')}">${esc(f.value || '')}</textarea>`
+              : `<input data-i="${i}" type="${esc(f.type || 'text')}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}"
+                  autocomplete="${esc(f.autocomplete || (f.type === 'password' ? 'current-password' : 'off'))}" ${f.type === 'number' ? 'inputmode="decimal"' : ''}
+                  autocapitalize="off" spellcheck="false">`}
+            ${f.hint ? `<span class="zd-hint">${f.hint}</span>` : ''}
+          </label>`).join('')}
+        <p class="zd-error" role="alert" hidden></p>
+        <div class="zd-actions">
+          ${cancel ? `<button type="button" class="btn btn-ghost zd-cancel">${esc(cancel)}</button>` : ''}
+          <button type="button" class="btn ${danger ? 'btn-danger' : 'btn-primary'} zd-ok">${esc(ok)}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    document.documentElement.classList.add('zd-open');
+    const card = wrap.querySelector('.zd-card');
+    const inputs = [...wrap.querySelectorAll('[data-i]')];
+    const okBtn = wrap.querySelector('.zd-ok');
+    const errEl = wrap.querySelector('.zd-error');
+    const values = () => Object.fromEntries(fields.map((f, i) => [f.name || String(i), inputs[i].value]));
+    const ready = () => fields.every((f, i) => !f.match || inputs[i].value.trim().toLowerCase() === String(f.match).toLowerCase());
+    const sync = () => { okBtn.disabled = !ready(); };
+    let busy = false;
+    const done = (v) => {
+      document.removeEventListener('keydown', onKey, true);
+      wrap.classList.add('closing');
+      document.documentElement.classList.remove('zd-open');
+      setTimeout(() => wrap.remove(), 160);
+      try { if (prevFocus && prevFocus.focus) prevFocus.focus({ preventScroll: true }); } catch (_) {}
+      resolve(v);
+    };
+    const submit = async () => {
+      if (busy || !ready()) return;
+      const v = fields.length ? values() : true;
+      if (onOk) {
+        busy = true;
+        const label = okBtn.textContent;
+        okBtn.disabled = true;
+        okBtn.innerHTML = '<span class="zd-spin" aria-hidden="true"></span>Проверяем…';
+        let problem = null;
+        try { problem = await onOk(v); } catch (e) { problem = e?.message || String(e); }
+        busy = false;
+        okBtn.textContent = label;
+        sync();
+        if (problem) {
+          errEl.textContent = problem;
+          errEl.hidden = false;
+          card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
+          const pw = inputs.find((x) => x.type === 'password');
+          if (pw) { pw.value = ''; pw.focus(); sync(); }
+          return;
+        }
+      }
+      done(v);
+    };
+    function onKey(e) {
+      if (e.key === 'Escape') { e.preventDefault(); if (!busy) done(null); }
+      else if (e.key === 'Enter' && !(e.target && e.target.tagName === 'TEXTAREA')) { e.preventDefault(); submit(); }
+      else if (e.key === 'Tab') {
+        const f = [...card.querySelectorAll('input,textarea,button:not([disabled])')];
+        if (!f.length) return;
+        const i = f.indexOf(document.activeElement);
+        if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+        else if (!e.shiftKey && i === f.length - 1) { e.preventDefault(); f[0].focus(); }
+      }
+    }
+    document.addEventListener('keydown', onKey, true);
+    inputs.forEach((x) => x.addEventListener('input', () => { errEl.hidden = true; sync(); }));
+    okBtn.onclick = submit;
+    const c = wrap.querySelector('.zd-cancel');
+    if (c) c.onclick = () => { if (!busy) done(null); };
+    wrap.addEventListener('mousedown', (e) => { if (e.target === wrap && !busy) done(null); });
+    sync();
+    requestAnimationFrame(() => {
+      wrap.classList.add('open');
+      (inputs[0] || okBtn).focus({ preventScroll: true });
+      if (inputs[0] && inputs[0].select && inputs[0].value) inputs[0].select();
+    });
+  });
+}
+
+/** Замена confirm(): да/нет. Первая строка текста до пустой — заголовок, если не задан. */
+async function uiConfirm(text, { title = '', ok = 'Да', cancel = 'Отмена', danger = null } = {}) {
+  let body = String(text || '');
+  let head = title;
+  if (!head) {
+    const parts = body.split(/\n{2,}/);
+    if (parts.length > 1 && parts[0].length <= 90) { head = parts.shift(); body = parts.join('\n\n'); } else { head = body.length <= 90 ? body : 'Подтвердите действие'; body = body.length <= 90 ? '' : body; }
   }
+  const isDanger = danger ?? /удал|заблок|отключ|сброс|отмен|безвозврат|снять/i.test(`${head} ${body}`);
+  return !!(await uiDialog({ title: head, text: body, ok: ok === 'Да' && isDanger ? 'Да, продолжить' : ok, cancel, danger: isDanger }));
+}
+
+/** Замена prompt(): строка или null. */
+async function uiPrompt(text, value = '', { title = '', ok = 'Готово', type = 'text', placeholder = '', multiline = false } = {}) {
+  const r = await uiDialog({ title: title || 'Введите', text, fields: [{ name: 'v', value: value ?? '', type, placeholder, multiline }], ok });
+  return r ? r.v : null;
+}
+
+/** Повторный ввод пароля перед опасным действием (удаление, выход везде). */
+async function reauthenticate(actionLabel, { title = 'Подтвердите паролем', text = '' } = {}) {
+  const user = state.auth.currentUser;
+  const r = await uiDialog({
+    title,
+    text: text || `Чтобы ${actionLabel}, введите пароль от своего аккаунта${user?.email ? ` ${user.email}` : ''}.`,
+    fields: [{ name: 'password', type: 'password', label: 'Пароль', placeholder: 'Ваш пароль' }],
+    ok: 'Подтвердить',
+    danger: /удал|безвозврат/i.test(actionLabel),
+    onOk: ({ password }) => checkPassword(password),
+  });
+  return !!r;
+}
+
+/** Пароль верный — null, иначе текст ошибки для окна. */
+async function checkPassword(password) {
+  if (!password) return 'Введите пароль';
   try {
     await reauthenticateWithCredential(state.auth.currentUser, EmailAuthProvider.credential(state.auth.currentUser.email, password));
-    return true;
+    return null;
   } catch (e) {
-    toast(e?.code === 'auth/wrong-password' || e?.code === 'auth/invalid-credential' ? 'Неверный пароль' : `Не удалось подтвердить: ${e?.message || e}`);
-    return false;
+    return e?.code === 'auth/wrong-password' || e?.code === 'auth/invalid-credential'
+      ? 'Неверный пароль — попробуйте ещё раз'
+      : e?.code === 'auth/too-many-requests' ? 'Слишком много попыток — подождите пару минут' : `Не удалось проверить пароль: ${e?.message || e}`;
   }
 }
 
@@ -2447,7 +2585,7 @@ async function boot() {
     // Свой вход знает почту по коду ссылки — спрашивать не нужно.
     if (!email && isOwnAuth(state.auth)) email = '-';
     if (!email) {
-      email = window.prompt('Введите email, на который приходило письмо со ссылкой для входа:');
+      email = (await uiPrompt('Введите email, на который приходило письмо со ссылкой для входа:'));
     }
     if (email) {
       try {
@@ -7162,7 +7300,7 @@ function watchDashboardData(tenantId) {
         const btn = $('f-upd-post');
         const U = updCore;
         const dups = upd.docs.filter((d) => d.dup);
-        if (dups.length && !window.confirm(`Накладная № ${dups[0].number} уже проводилась. Провести приход ещё раз?`)) return;
+        if (dups.length && !(await uiConfirm(`Накладная № ${dups[0].number} уже проводилась. Провести приход ещё раз?`))) return;
         btn.disabled = true;
         try {
           const now = Timestamp.fromDate(new Date());
@@ -7358,7 +7496,7 @@ function watchDashboardData(tenantId) {
       if ($('f-imp-copy-pins')) $('f-imp-copy-pins').onclick = () => copyToClipboard(imp.result.pins.map((x) => `${x.name} — ${x.role === 'admin' ? 'администратор' : 'сотрудник'} — PIN ${x.pin}`).join('\n'));
       document.querySelectorAll('.f-imp-undo').forEach((el) => {
         el.onclick = async () => {
-          if (!confirm('Отменить перенос? Созданные им позиции, продукты, сотрудники и карты удалятся, перенесённые рецепты снимутся. Обновлённые цены и остатки не вернутся.')) return;
+          if (!(await uiConfirm('Отменить перенос? Созданные им позиции, продукты, сотрудники и карты удалятся, перенесённые рецепты снимутся. Обновлённые цены и остатки не вернутся.'))) return;
           el.disabled = true;
           try {
             const n = await undoImport(el.dataset.id);
@@ -7386,7 +7524,7 @@ function watchDashboardData(tenantId) {
     };
     const renameBtn = $('f-tenant-rename');
     if (renameBtn) renameBtn.onclick = async () => {
-      const next = (window.prompt('Новое название заведения', tenant.name || '') || '').trim();
+      const next = ((await uiPrompt('Новое название заведения', tenant.name || '')) || '').trim();
       if (!next || next === tenant.name) return;
       if (next.length > 80) { alert('Слишком длинное название — не больше 80 символов'); return; }
       try {
@@ -7433,10 +7571,10 @@ function watchDashboardData(tenantId) {
         };
       });
       document.querySelectorAll('.f-ai-k-del').forEach((el) => {
-        el.onclick = () => {
+        el.onclick = async () => {
           const d = ensureDraft();
           const k = d.keys[Number(el.dataset.i)];
-          if (!k || (k.hasKey && !window.confirm(`Удалить ключ ${Number(el.dataset.i) + 1}? Он перестанет работать после сохранения.`))) return;
+          if (!k || (k.hasKey && !(await uiConfirm(`Удалить ключ ${Number(el.dataset.i) + 1}? Он перестанет работать после сохранения.`)))) return;
           d.keys.splice(Number(el.dataset.i), 1);
           if (!k.id.startsWith('v-')) d.removed.push(k.id);
           draw();
@@ -7853,7 +7991,7 @@ function watchDashboardData(tenantId) {
     if ($('f-rotate-code')) $('f-rotate-code').onclick = () => rotateInviteCode(tenantId);
     document.querySelectorAll('[data-device-remove]').forEach((btn) => {
       btn.onclick = async () => {
-        if (!confirm(`Удалить «${btn.dataset.name}»? Касса на этом устройстве перестанет работать, место по тарифу освободится. Вернуть его можно кнопкой «Восстановить» в течение ${DEVICE_RESTORE_DAYS} дней.`)) return;
+        if (!(await uiConfirm(`Удалить «${btn.dataset.name}»? Касса на этом устройстве перестанет работать, место по тарифу освободится. Вернуть его можно кнопкой «Восстановить» в течение ${DEVICE_RESTORE_DAYS} дней.`))) return;
         btn.disabled = true;
         try {
           await callSaasGateway('removeDevice', { tenantId, uid: btn.dataset.deviceRemove });
@@ -7865,7 +8003,7 @@ function watchDashboardData(tenantId) {
       };
     });
     const purgeDevices = async (btn, body, question, done) => {
-      if (!confirm(question)) return;
+      if (!(await uiConfirm(question))) return;
       btn.disabled = true;
       try {
         const r = await callSaasGateway('purgeDevice', { tenantId, ...body });
@@ -7900,7 +8038,7 @@ function watchDashboardData(tenantId) {
     });
     document.querySelectorAll('[data-device-rename]').forEach((btn) => {
       btn.onclick = async () => {
-        const name = prompt('Как назвать устройство? Например: «Планшет на кухне», «Касса на баре», «Телефон Ани»', btn.dataset.name || '');
+        const name = (await uiPrompt('Как назвать устройство? Например: «Планшет на кухне», «Касса на баре», «Телефон Ани»', btn.dataset.name || ''));
         if (name === null) return;
         try {
           await updateDoc(doc(state.db, 'tenants', tenantId, 'devices', btn.dataset.deviceRename), { deviceName: name.trim().slice(0, 40) });
@@ -7913,7 +8051,7 @@ function watchDashboardData(tenantId) {
     document.querySelectorAll('[data-device-toggle]').forEach((btn) => {
       btn.onclick = async () => {
         const enable = btn.dataset.enable === '1';
-        if (!enable && !confirm('Отключить кассу на этом устройстве? Она перестанет работать, пока вы не включите её снова.')) return;
+        if (!enable && !(await uiConfirm('Отключить кассу на этом устройстве? Она перестанет работать, пока вы не включите её снова.'))) return;
         btn.disabled = true;
         try {
           await callSaasGateway(enable ? 'enableDevice' : 'disableDevice', { tenantId, uid: btn.dataset.deviceToggle });
@@ -8101,7 +8239,7 @@ function watchDashboardData(tenantId) {
     }
     document.querySelectorAll('.f-emp-delete').forEach((el) => {
       el.onclick = async () => {
-        if (!confirm(`Удалить сотрудника «${el.dataset.name}»? Он больше не сможет войти по своему PIN-коду.`)) return;
+        if (!(await uiConfirm(`Удалить сотрудника «${el.dataset.name}»? Он больше не сможет войти по своему PIN-коду.`))) return;
         try {
           await deleteDoc(doc(state.db, 'tenants', tenantId, 'employees', el.dataset.id));
           if (editingEmployeeId === el.dataset.id) editingEmployeeId = null;
@@ -8214,7 +8352,7 @@ function watchDashboardData(tenantId) {
     });
     document.querySelectorAll('.f-bank-cancel').forEach((el) => {
       el.onclick = async () => {
-        if (!confirm('Отменить счёт? Если вы уже оплатили его, не отменяйте — напишите в поддержку.')) return;
+        if (!(await uiConfirm('Отменить счёт? Если вы уже оплатили его, не отменяйте — напишите в поддержку.'))) return;
         el.disabled = true;
         try {
           await callSaasGateway('cancelBankInvoice', { id: el.dataset.id });
@@ -8229,7 +8367,7 @@ function watchDashboardData(tenantId) {
     });
     document.querySelectorAll('.f-convert-to-single').forEach((el) => {
       el.onclick = async () => {
-        if (!confirm(`Перевести сеть на тариф «${el.dataset.name}» для одного заведения? Оплаченный срок сохранится, гости и бонусы останутся в заведении. Добавить точки потом можно, снова перейдя на тариф сети.`)) return;
+        if (!(await uiConfirm(`Перевести сеть на тариф «${el.dataset.name}» для одного заведения? Оплаченный срок сохранится, гости и бонусы останутся в заведении. Добавить точки потом можно, снова перейдя на тариф сети.`))) return;
         el.disabled = true;
         try {
           await callSaasGateway('convertChainToSingle', { tenantId, planId: el.dataset.plan });
@@ -8539,7 +8677,7 @@ function renderKeepingInputs(root, html) {
 }
 
 async function rotateInviteCode(tenantId) {
-  if (!confirm('Обновить код приглашения? Прежний код перестанет работать на новых устройствах.')) return;
+  if (!(await uiConfirm('Обновить код приглашения? Прежний код перестанет работать на новых устройствах.'))) return;
   try {
     await setDoc(doc(state.db, 'tenants', tenantId, 'settings', 'deviceInvite'), {
       code: randomInviteCode(),
@@ -8556,14 +8694,14 @@ async function toggleAutorenew(tenantId, cancel, chainId) {
   // null — нажали «Отмена», пустая строка — причину не написали.
   let reason = '';
   if (cancel) {
-    const input = prompt(
+    const input = (await uiPrompt(
       'Отключить автопродление? Заведение продолжит работать до конца уже оплаченного периода, ' +
       'дальше касса будет заблокирована, если не оплатить вручную.\n\n' +
       'Подскажите, пожалуйста, почему уходите (необязательно) — это поможет нам стать лучше:'
-    );
+    ));
     if (input === null) return;
     reason = input.trim();
-  } else if (!confirm('Возобновить автопродление? В конце периода спишется оплата сохранённым способом.')) {
+  } else if (!(await uiConfirm('Возобновить автопродление? В конце периода спишется оплата сохранённым способом.'))) {
     return;
   }
   const btn = $('f-toggle-autorenew');
@@ -8635,7 +8773,7 @@ async function toggleMemberStatus(tenantId, memberUid, isActive, chainId) {
 // «Отключить» оставляет запись в списке, а через заведение проходит много
 // планшетов — «Удалить» убирает её совсем.
 async function deleteMember(tenantId, memberUid, isDevice, label, chainId) {
-  if (!confirm(`Удалить «${label}» из команды безвозвратно? Отменить нельзя — для устройства понадобится заново присоединяться по коду приглашения.`)) return;
+  if (!(await uiConfirm(`Удалить «${label}» из команды безвозвратно? Отменить нельзя — для устройства понадобится заново присоединяться по коду приглашения.`))) return;
   try {
     await deleteDoc(doc(state.db, 'tenantMembers', `${tenantId}_${memberUid}`));
     if (isDevice) {
@@ -9184,15 +9322,15 @@ function screenPartner() {
       try { await fn(); if (ok) toast(ok); await load(); } catch (e) { if (btn) btn.disabled = false; toast(`Не получилось: ${e?.message || e}`); }
     };
     if ($('f-partner-pay')) {
-      $('f-partner-pay').onclick = () => {
+      $('f-partner-pay').onclick = async () => {
         const sm = data.summary;
-        if (!confirm(`Запросить выплату ${fmtMoney(sm.calc.net)} на ${data.partner.payoutDetails}?`)) return;
+        if (!(await uiConfirm(`Запросить выплату ${fmtMoney(sm.calc.net)} на ${data.partner.payoutDetails}?`))) return;
         payCall($('f-partner-pay'), () => callSaasGateway('partnerPayoutRequest', {}), 'Запрос отправлен — сообщим, когда деньги будут перечислены');
       };
     }
     if ($('f-partner-pay-cancel')) {
-      $('f-partner-pay-cancel').onclick = () => {
-        if (!confirm('Отменить запрос выплаты? Сумма снова станет доступной.')) return;
+      $('f-partner-pay-cancel').onclick = async () => {
+        if (!(await uiConfirm('Отменить запрос выплаты? Сумма снова станет доступной.'))) return;
         payCall($('f-partner-pay-cancel'), () => callSaasGateway('partnerPayoutRequest', { action: 'cancel' }), 'Запрос отменён');
       };
     }
@@ -9220,7 +9358,7 @@ function screenPartner() {
     });
     if ($('f-partner-renew')) {
       $('f-partner-renew').onclick = async () => {
-        if (!confirm('Создать новую ссылку? Старые ссылки, которые вы уже отправили, продолжат работать — клиенты по ним тоже закрепятся за вами.')) return;
+        if (!(await uiConfirm('Создать новую ссылку? Старые ссылки, которые вы уже отправили, продолжат работать — клиенты по ним тоже закрепятся за вами.'))) return;
         const btn = $('f-partner-renew');
         btn.disabled = true;
         try {
@@ -9490,7 +9628,7 @@ function watchAdminPartners() {
       toast('Бот подключён');
     });
     if ($('f-pa-bot-off')) $('f-pa-bot-off').onclick = act(async () => {
-      if (!confirm('Отключить бота менеджеров?')) throw new Error('отменено');
+      if (!(await uiConfirm('Отключить бота менеджеров?'))) throw new Error('отменено');
       await callSaasGateway('partnerAdminBot', { disconnect: true });
     });
     if ($('f-pa-add')) $('f-pa-add').onclick = act(async () => {
@@ -9559,14 +9697,14 @@ function watchAdminPartners() {
         const owe = p.summary.unpaid > 0 || p.request;
         const msg = `Удалить менеджера ${p.name || p.email}?\n\nВход в кабинет менеджера и бот закроются, новые начисления прекратятся. Выплаты, акты и договор останутся в истории — они нужны для налоговой.`
           + (owe ? `\n\n⚠ Менеджеру начислено к выплате ${fmtMoney(p.summary.unpaid)} — по договору их нужно выплатить.` : '');
-        if (!confirm(msg)) return;
+        if (!(await uiConfirm(msg))) return;
         await save(p, { status: 'removed' });
         toast('Менеджер удалён');
       });
     });
     document.querySelectorAll('.f-pa-pay').forEach((el) => {
       el.onclick = act(async (b) => {
-        const note = prompt(`Отметить выплату ${fmtMoney(b.dataset.amount)}? Комментарий (например, «перевод на карту 24.10»):`, '');
+        const note = (await uiPrompt(`Отметить выплату ${fmtMoney(b.dataset.amount)}? Комментарий (например, «перевод на карту 24.10»):`, ''));
         if (note === null) throw new Error('отменено');
         paidToast(await payWithNpd({ partnerId: b.dataset.id, expected: Number(b.dataset.amount), note }));
       });
@@ -9578,14 +9716,14 @@ function watchAdminPartners() {
         return (await callSaasGateway('partnerAdminPayout', payload)).data;
       } catch (e) {
         if (e.status !== 428) throw e;
-        if (!confirm(`${e.message}\n\nОткройте npd.nalog.ru/check-status, проверьте ИНН на сегодня. Статус действующий — нажмите ОК.`)) throw new Error('отменено');
+        if (!(await uiConfirm(`${e.message}\n\nОткройте npd.nalog.ru/check-status, проверьте ИНН на сегодня. Статус действующий — нажмите ОК.`))) throw new Error('отменено');
         return (await callSaasGateway('partnerAdminPayout', { ...payload, npdManual: true })).data;
       }
     };
     const paidToast = () => toast('Выплата отмечена — менеджеру ушло уведомление');
     document.querySelectorAll('.f-pa-reqpay').forEach((el) => {
       el.onclick = act(async (b) => {
-        const note = prompt(`Вы перевели ${fmtMoney(b.dataset.net)}? Комментарий для менеджера (например, «СБП 24.10, Сбербанк»):`, '');
+        const note = (await uiPrompt(`Вы перевели ${fmtMoney(b.dataset.net)}? Комментарий для менеджера (например, «СБП 24.10, Сбербанк»):`, ''));
         if (note === null) throw new Error('отменено');
         paidToast(await payWithNpd({ partnerId: b.dataset.id, requestId: b.dataset.req, note }));
       });
@@ -9593,7 +9731,7 @@ function watchAdminPartners() {
     document.querySelectorAll('.f-pa-copy').forEach((el) => { el.onclick = () => copyToClipboard(el.dataset.text); });
     document.querySelectorAll('.f-pa-act').forEach((el) => {
       el.onclick = act(async (b) => {
-        const month = prompt('Акт за какой месяц? В виде ГГГГ-ММ:', prevMonthIso());
+        const month = (await uiPrompt('Акт за какой месяц? В виде ГГГГ-ММ:', prevMonthIso()));
         if (month === null) throw new Error('отменено');
         await downloadFromGateway('partnerAdminAct', { id: b.dataset.id, month: month.trim() }, `Акт_${month}.docx`);
         toast('Акт скачан — подпишите и обменяйтесь сканами с менеджером');
@@ -9605,7 +9743,7 @@ function watchAdminPartners() {
     });
     document.querySelectorAll('.f-pa-reqreject').forEach((el) => {
       el.onclick = act(async (b) => {
-        const reason = prompt('Почему отклоняете? Менеджер увидит это в Telegram (например, «проверьте номер телефона»):', '');
+        const reason = (await uiPrompt('Почему отклоняете? Менеджер увидит это в Telegram (например, «проверьте номер телефона»):', ''));
         if (reason === null) throw new Error('отменено');
         await callSaasGateway('partnerAdminPayoutReject', { requestId: b.dataset.req, reason });
         toast('Запрос отклонён');
@@ -9613,8 +9751,8 @@ function watchAdminPartners() {
     });
     document.querySelectorAll('.f-pa-reverse').forEach((el) => {
       el.onclick = act(async (b) => {
-        if (b.dataset.paid && !confirm('Начисление уже выплачено. Удержать его из следующей выплаты менеджера (клиенту вернули деньги)?')) throw new Error('отменено');
-        if (!b.dataset.paid && !b.dataset.restore && !confirm('Снять начисление (клиенту вернули деньги)?')) throw new Error('отменено');
+        if (b.dataset.paid && !(await uiConfirm('Начисление уже выплачено. Удержать его из следующей выплаты менеджера (клиенту вернули деньги)?'))) throw new Error('отменено');
+        if (!b.dataset.paid && !b.dataset.restore && !(await uiConfirm('Снять начисление (клиенту вернули деньги)?'))) throw new Error('отменено');
         await callSaasGateway('partnerAdminReverse', { accrualId: b.dataset.id, restore: !!b.dataset.restore });
       });
     });
@@ -10269,9 +10407,9 @@ function watchSupportBotAdmin() {
       };
     });
     document.querySelectorAll('.f-sb-pdel').forEach((el) => {
-      el.onclick = () => {
+      el.onclick = async () => {
         const p = provDraft[Number(el.dataset.i)];
-        if (p && p.hasKey && !confirm('Удалить этот ключ из бота? Он сотрётся после «Сохранить».')) return;
+        if (p && p.hasKey && !(await uiConfirm('Удалить этот ключ из бота? Он сотрётся после «Сохранить».'))) return;
         provDraft.splice(Number(el.dataset.i), 1);
         draw();
       };
@@ -10306,7 +10444,7 @@ function watchSupportBotAdmin() {
       try {
         const n = (await callSaasGateway('supportBotPurgeForeign', { dryRun: true })).data;
         if (!n.telegramTickets && !n.cabinetTickets && !n.topics) { toast('Удалять нечего — старых данных нет'); return; }
-        if (!confirm(`Удалить обращений из Telegram: ${n.telegramTickets}, обезличить обращений из кабинета: ${n.cabinetTickets}, удалить тем в группе сотрудников: ${n.topics}?\n\nОтменить это нельзя.`)) return;
+        if (!(await uiConfirm(`Удалить обращений из Telegram: ${n.telegramTickets}, обезличить обращений из кабинета: ${n.cabinetTickets}, удалить тем в группе сотрудников: ${n.topics}?\n\nОтменить это нельзя.`))) return;
         const r = (await callSaasGateway('supportBotPurgeForeign', {})).data;
         toast(`Готово: удалено ${r.telegramTickets}, обезличено ${r.cabinetTickets}, тем удалено ${r.removedTopics}`);
       } catch (e) {
@@ -10370,7 +10508,7 @@ function watchSupportBotAdmin() {
     if (kbDetails) kbDetails.ontoggle = () => { if (kbDetails.open && knowledge === null) loadKnowledge(); };
     document.querySelectorAll('.f-sb-kb-del').forEach((el) => {
       el.onclick = async () => {
-        if (!confirm('Удалить запись из базы знаний бота?')) return;
+        if (!(await uiConfirm('Удалить запись из базы знаний бота?'))) return;
         try {
           await callSaasGateway('supportKnowledge', { deleteId: el.dataset.id });
           knowledge = (knowledge || []).filter((k) => k.id !== el.dataset.id);
@@ -10678,7 +10816,7 @@ function watchAdminBroadcasts() {
     });
     document.querySelectorAll('.f-bc-delete').forEach((el) => {
       el.onclick = async () => {
-        if (!confirm('Удалить объявление совсем? Владельцы перестанут его видеть, вернуть нельзя.')) return;
+        if (!(await uiConfirm('Удалить объявление совсем? Владельцы перестанут его видеть, вернуть нельзя.'))) return;
         el.disabled = true;
         try {
           await deleteDoc(doc(state.db, 'broadcasts', el.dataset.id));
@@ -10841,17 +10979,17 @@ function watchAllTenants() {
       const text = 'Перевести заведение на хранение данных только в РФ? Кассы, приложение и сервер перестанут '
         + 'писать имена и телефоны в Firestore.';
       if (notReady.length) {
-        if (!confirm(`${text}\n\nНе обновлены: ${notReady.map((d) => d.name).join(', ')}. Если эти устройства `
-          + 'больше не используются — продолжить. Если используются — сначала обновите их, иначе на них пропадут имена.')) return;
+        if (!(await uiConfirm(`${text}\n\nНе обновлены: ${notReady.map((d) => d.name).join(', ')}. Если эти устройства `
+          + 'больше не используются — продолжить. Если используются — сначала обновите их, иначе на них пропадут имена.'))) return;
         if (!(await reauthenticate('переключить заведение с необновлёнными кассами'))) return;
         opts.force = true;
         fresh = true;
-      } else if (!confirm(text)) {
+      } else if (!(await uiConfirm(text))) {
         return;
       }
     } else if (step === 'scrub') {
-      if (!confirm('Очистить Firestore? Имена и телефоны, которые уже есть в справочнике в РФ, будут удалены '
-        + 'из базы за рубежом. Сначала сделайте пробный проход. Отменить нельзя (копия остаётся в РФ).')) return;
+      if (!(await uiConfirm('Очистить Firestore? Имена и телефоны, которые уже есть в справочнике в РФ, будут удалены '
+        + 'из базы за рубежом. Сначала сделайте пробный проход. Отменить нельзя (копия остаётся в РФ).'))) return;
       if (!(await reauthenticate('очистить персональные данные в Firestore'))) return;
       fresh = true;
     }
@@ -10965,7 +11103,7 @@ function watchAllTenants() {
     const promptLabel = t.chainId
       ? `На сколько дней продлить доступ сети «${t.chainName || t.chainId}» (это затронет ВСЕ её точки)? (от 1 до 365)`
       : 'На сколько дней продлить доступ этому заведению? (от 1 до 365)';
-    const input = prompt(promptLabel);
+    const input = (await uiPrompt(promptLabel));
     if (input === null) return;
     const days = Number(input);
     if (!Number.isFinite(days) || days <= 0 || days > 365) {
@@ -11236,7 +11374,7 @@ function watchAllTenants() {
   $('f-tenant-show-demo').onchange = draw;
   $('f-tenant-show-deleted').onchange = draw;
   $('f-tenant-purge-demos').onclick = async () => {
-    if (!confirm('Удалить все демо-заведения сейчас? Демо, созданные за последний час, останутся — ими могут пользоваться прямо сейчас.')) return;
+    if (!(await uiConfirm('Удалить все демо-заведения сейчас? Демо, созданные за последний час, останутся — ими могут пользоваться прямо сейчас.'))) return;
     try {
       const r = await callSaasGateway('adminPurgeDemos', {});
       toast(`Удалено демо: ${r.data.deleted}${r.data.kept ? ` · оставлено свежих: ${r.data.kept}` : ''}`);
@@ -11362,7 +11500,7 @@ function watchAppRollout() {
         <button class="btn btn-ghost" id="f-rollout-all" style="width:auto;margin-top:10px">Пересобрать приложения всем заведениям</button>
       </div>`;
     $('f-rollout-all').onclick = async (e) => {
-      if (!confirm('Пересобрать кассу и гостевое приложение всем заведениям, у которых они уже есть? Сборка идёт по очереди.')) return;
+      if (!(await uiConfirm('Пересобрать кассу и гостевое приложение всем заведениям, у которых они уже есть? Сборка идёт по очереди.'))) return;
       const btn = e.currentTarget;
       btn.disabled = true;
       try {
@@ -11537,14 +11675,14 @@ function watchPlans() {
 
   if ($('f-apply-plan-catalog')) $('f-apply-plan-catalog').onclick = () => applyPlanCatalog();
   $('f-new-plan').onclick = async () => {
-    const id = prompt('Код нового тарифа (латиница, цифры, дефис — например custom-vip; "chain" — для сети заведений):');
+    const id = (await uiPrompt('Код нового тарифа (латиница, цифры, дефис — например custom-vip; "chain" — для сети заведений):'));
     if (!id || !/^[a-z0-9-]+$/.test(id)) {
       if (id !== null) toast('Код тарифа: только латиница, цифры и дефис');
       return;
     }
     // «chain» — тариф сети по умолчанию в handleCreateChain, но сетевым можно
     // сделать любой.
-    const isChainPlan = id === 'chain' || confirm('Это тариф для сети заведений (своя цена за первую и доп. точки)?');
+    const isChainPlan = id === 'chain' || (await uiConfirm('Это тариф для сети заведений (своя цена за первую и доп. точки)?'));
     try {
       // Тарифы пишет только saas-gateway (handleSavePlan) — изменения цен
       // попадают в журнал безопасности.
@@ -11587,7 +11725,7 @@ async function applyPlanCatalog() {
       ].filter(Boolean).join(', ');
       return `• ${r.planId}: ${from}«${r.after.name}» ${r.after.priceRub} ₽/мес (${extra})`;
     };
-    const ok = confirm(`Применить сетку тарифов?\n\n${(data.diff || []).map(line).join('\n')}\n\nТем, кто уже платит, подорожание начнёт действовать через 30 дней. Отменить можно, поправив тарифы вручную.`);
+    const ok = (await uiConfirm(`Применить сетку тарифов?\n\n${(data.diff || []).map(line).join('\n')}\n\nТем, кто уже платит, подорожание начнёт действовать через 30 дней. Отменить можно, поправив тарифы вручную.`));
     if (!ok) return;
     const res = await callSaasGateway('applyPlanCatalog', { confirm: true });
     toast(`Сетка тарифов применена${res.data?.priceLocked ? ` — у ${res.data.priceLocked} подписчиков прежняя цена до ${new Date(res.data.priceLockUntil).toLocaleDateString('ru-RU')}` : ''}`);
@@ -11632,7 +11770,7 @@ async function deletePlan(planId) {
     const warning = inUse.empty
       ? `Удалить тариф «${planId}»? Отменить нельзя.`
       : `Тариф «${planId}» сейчас назначен как минимум одному заведению — после удаления у него останется тариф без описания, назначьте другой вручную. Удалить всё равно?`;
-    if (!confirm(warning)) return;
+    if (!(await uiConfirm(warning))) return;
     await callSaasGateway('deletePlan', { planId });
     toast('Тариф удалён');
   } catch (e) {
@@ -11711,12 +11849,12 @@ function watchBankInvoicesAdmin() {
         }
       };
     });
-    act('.f-bank-paid', async (el) => (confirm(`Деньги по счёту ${el.dataset.label} поступили на расчётный счёт? Подписка продлится.`)
+    act('.f-bank-paid', async (el) => ((await uiConfirm(`Деньги по счёту ${el.dataset.label} поступили на расчётный счёт? Подписка продлится.`))
       ? { endpoint: 'markBankInvoicePaid', body: { id: el.dataset.id } } : null));
-    act('.f-bank-cancel-admin', async (el) => (confirm('Отменить неоплаченный счёт?')
+    act('.f-bank-cancel-admin', async (el) => ((await uiConfirm('Отменить неоплаченный счёт?'))
       ? { endpoint: 'cancelBankInvoice', body: { id: el.dataset.id } } : null));
     act('.f-bank-receipt', async (el) => {
-      const url = prompt('Ссылка на чек из «Мой налог» (Чеки → чек → «Поделиться»). Можно оставить пустой:', '');
+      const url = (await uiPrompt('Ссылка на чек из «Мой налог» (Чеки → чек → «Поделиться»). Можно оставить пустой:', ''));
       return url === null ? null : { endpoint: 'markBankInvoiceReceipt', body: { id: el.dataset.id, receiptUrl: url.trim() } };
     });
   }, (e) => {
@@ -11975,24 +12113,31 @@ async function changeTenantPlan(tenantId, planId) {
  * адрес заведения и пароль. Сервер перед удалением сохраняет копию на 30 дней.
  */
 async function deleteTenantForever(tenantId, slug, name, gone) {
-  const ask = gone
-    ? `Убрать «${name}» из списка совсем? Данных у него уже нет.\n\nДля подтверждения введите адрес заведения: ${slug}`
-    : `Удалить «${name}» безвозвратно — меню, чеки, гостей, сотрудников, курьеров?\nКопия данных сохранится на сервере 30 дней.\n\nДля подтверждения введите адрес заведения: ${slug}`;
-  const typed = prompt(ask, '');
-  if (typed === null) return;
-  if (typed.trim().toLowerCase() !== String(slug).toLowerCase()) { toast('Адрес не совпал — заведение не удалено'); return; }
-  if (!(await reauthenticate('удалить заведение безвозвратно'))) return;
+  const r = await uiDialog({
+    danger: true,
+    icon: '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg>',
+    title: gone ? `Убрать «${name}» из списка?` : `Удалить «${name}»?`,
+    text: gone
+      ? 'Данных у этого заведения уже нет — останется только строка в списке. Её можно убрать совсем.'
+      : 'Безвозвратно удалятся меню, чеки, гости, сотрудники и курьеры заведения. Копия данных сохранится на сервере 30 дней — по ней можно восстановить заведение, если удалили по ошибке.',
+    fields: [
+      { name: 'slug', label: 'Адрес заведения', placeholder: slug, match: slug, hint: `Чтобы подтвердить, введите <b>${esc(slug)}</b>` },
+      { name: 'password', type: 'password', label: 'Ваш пароль', placeholder: 'Пароль от панели' },
+    ],
+    ok: gone ? 'Убрать из списка' : 'Удалить навсегда',
+    onOk: async ({ password }) => checkPassword(password),
+  });
+  if (!r) return;
   try {
-    const r = await callSaasGateway('adminDeleteTenant', { tenantId, confirm: typed.trim() });
-    toast(gone ? 'Убрано из списка' : `Заведение удалено${r.data.backup ? ' · копия на сервере 30 дней' : ''}`);
+    const res = await callSaasGateway('adminDeleteTenant', { tenantId, confirm: r.slug.trim() });
+    toast(gone ? 'Убрано из списка' : `Заведение удалено${res.data.backup ? ' · копия на сервере 30 дней' : ''}`);
   } catch (e) {
     toast(`Не удалось удалить: ${e?.message || e}`);
   }
 }
 
 async function deleteDemoTenant(tenantId) {
-  if (!confirm('Удалить это демо-заведение безвозвратно вместе со всеми данными?')) return;
-  if (!(await reauthenticate('удалить заведение безвозвратно'))) return;
+  if (!(await reauthenticate('удалить демо-заведение со всеми данными', { title: 'Удалить демо-заведение?' }))) return;
   try {
     await callSaasGateway('deleteDemoTenant', { tenantId });
     toast('Демо-заведение удалено');
@@ -12055,7 +12200,7 @@ async function revokeSuperAdmin(uid) {
     toast('Нельзя снять доступ у самого себя — попросите другого супер-админа');
     return;
   }
-  if (!confirm('Снять права супер-админа платформы у этого пользователя?')) return;
+  if (!(await uiConfirm('Снять права супер-админа платформы у этого пользователя?'))) return;
   if (!(await reauthenticate('снять доступ супер-админа'))) return;
   try {
     await callSaasGateway('revokeSuperAdmin', { uid }, { forceRefresh: true });
@@ -12099,7 +12244,7 @@ async function revokeAdminSessions(uid, label, reason) {
   const question = self
     ? 'Завершить ВСЕ ваши сеансы панели на всех устройствах, включая этот? Потребуется войти заново.'
     : `Завершить все сеансы супер-админа ${label} на всех устройствах? Ему придётся войти заново.`;
-  if (!confirm(question)) return;
+  if (!(await uiConfirm(question))) return;
   if (!self && !(await reauthenticate(`завершить сеансы ${label}`))) return;
   try {
     await callSaasGateway('revokeAdminSessions', { uid, reason: reason || null }, { forceRefresh: !self });
@@ -12160,7 +12305,7 @@ async function securityRootName(collectionName, id) {
 /** Обезличить гостя (saas-gateway handleAnonymizeGuest) — только после
  *  ввода пароля. */
 async function anonymizeGuest({ scope, id, clientUid, requestId, label }) {
-  if (!confirm(`Обезличить гостя ${label || ''}? Имя, телефон и день рождения будут удалены из профиля и из броней, заказов и отзывов, бонусы сгорят, аккаунт гостя удалится. Отменить нельзя.`)) return;
+  if (!(await uiConfirm(`Обезличить гостя ${label || ''}? Имя, телефон и день рождения будут удалены из профиля и из броней, заказов и отзывов, бонусы сгорят, аккаунт гостя удалится. Отменить нельзя.`))) return;
   if (!(await reauthenticate('обезличить гостя'))) return;
   try {
     const r = (await callSaasGateway('anonymizeGuest', { scope, id, clientUid, requestId: requestId || null }, { forceRefresh: true })).data;
@@ -12209,7 +12354,7 @@ function watchSecurityData() {
     reqBox.querySelectorAll('.f-dr-resolve').forEach((el) => {
       el.onclick = async () => {
         const done = el.dataset.status === 'done';
-        const resolution = prompt(done ? 'Что сделано (для истории):' : 'Причина отказа (для истории):', '');
+        const resolution = (await uiPrompt(done ? 'Что сделано (для истории):' : 'Причина отказа (для истории):', ''));
         if (resolution === null) return;
         try {
           await callSaasGateway('resolveDataRequest', { id: el.dataset.id, status: el.dataset.status, resolution });
@@ -12363,7 +12508,7 @@ function watchSecurityActivity() {
       </div>`).join('') : '<p class="small muted">За неделю регистраций не было.</p>';
     signupsBox.querySelectorAll('.f-sec-block-ip').forEach((el) => {
       el.onclick = async () => {
-        const reason = prompt(`Заблокировать регистрации с ${el.dataset.ip}? Причина (необязательно):`, 'массовые регистрации');
+        const reason = (await uiPrompt(`Заблокировать регистрации с ${el.dataset.ip}? Причина (необязательно):`, 'массовые регистрации'));
         if (reason === null) return;
         try { await addBlockEntry('ip', el.dataset.ip, reason); toast('IP заблокирован'); } catch (e) { toast(`Не удалось: ${e?.message || e}`); }
       };
@@ -12388,7 +12533,7 @@ function watchSecurityActivity() {
       </div>`).join('') : '<p class="small muted">Блокировок нет.</p>';
     blockBox.querySelectorAll('.f-sec-unblock').forEach((el) => {
       el.onclick = async () => {
-        if (!confirm('Снять блокировку?')) return;
+        if (!(await uiConfirm('Снять блокировку?'))) return;
         try { await callSaasGateway('unblockEntry', { id: el.dataset.id }); toast('Блокировка снята'); } catch (e) { toast(`Не удалось: ${e?.message || e}`); }
       };
     });
@@ -12458,9 +12603,9 @@ async function loadSecurityDevices() {
       const enable = el.dataset.enable === '1';
       let reason = null;
       if (!enable) {
-        reason = prompt('Отключить устройство? Оно сразу потеряет доступ к данным заведения. Причина (необязательно):', 'давно не на связи');
+        reason = (await uiPrompt('Отключить устройство? Оно сразу потеряет доступ к данным заведения. Причина (необязательно):', 'давно не на связи'));
         if (reason === null) return;
-      } else if (!confirm('Включить устройство обратно?')) return;
+      } else if (!(await uiConfirm('Включить устройство обратно?'))) return;
       el.disabled = true;
       try {
         await callSaasGateway(enable ? 'enableDevice' : 'disableDevice', { tenantId: el.dataset.tenant, uid: el.dataset.uid, reason });
@@ -12678,7 +12823,7 @@ async function loadSecurityPlatform() {
   });
   box.querySelectorAll('.f-sec-reprovision').forEach((el) => {
     el.onclick = async () => {
-      if (!confirm(`Выпустить сертификат для ${el.dataset.host} заново?`)) return;
+      if (!(await uiConfirm(`Выпустить сертификат для ${el.dataset.host} заново?`))) return;
       el.disabled = true;
       try {
         const r = await callSaasGateway('reprovisionDomain', { host: el.dataset.host });
@@ -12740,9 +12885,9 @@ async function loadDataBackend() {
         + (last ? ' <button type="button" class="btn btn-ghost" id="f-data-migrate-backup" style="width:auto">Из резервной копии</button>' : ''));
   }
   const start = async (source) => {
-    if (!confirm(source === 'backup'
+    if (!(await uiConfirm(source === 'backup'
       ? 'Перенести данные из последней резервной копии на собственный сервер? Изменения после этой копии не перенесутся.'
-      : 'Перенести все данные из Firestore на собственный сервер?')) return;
+      : 'Перенести все данные из Firestore на собственный сервер?'))) return;
     if (!(await reauthenticate('Перенос данных'))) return;
     try {
       await callSaasGateway('dataMigrate', { source }, { forceRefresh: true });
@@ -12753,7 +12898,7 @@ async function loadDataBackend() {
   if ($('f-data-migrate')) $('f-data-migrate').onclick = () => start('firestore');
   if ($('f-data-migrate-backup')) $('f-data-migrate-backup').onclick = () => start('backup');
   if ($('f-data-rollback')) $('f-data-rollback').onclick = async () => {
-    if (!confirm('Вернуть данные в Firestore? Изменения, сделанные на своём сервере, в Firestore не попадут.')) return;
+    if (!(await uiConfirm('Вернуть данные в Firestore? Изменения, сделанные на своём сервере, в Firestore не попадут.'))) return;
     if (!(await reauthenticate('Возврат данных в Firestore'))) return;
     try {
       await callSaasGateway('dataMigrate', { action: 'rollback' }, { forceRefresh: true });
@@ -12786,7 +12931,7 @@ function firestorePurgeRowHtml(p, running, oldClients = null) {
 async function startFirestorePurge() {
   // Подтверждение — кнопкой и паролем панели: ввод слова в окне браузера
   // на телефоне легко сбить (автозамена, отмена окна).
-  if (!confirm('Удалить копию данных в Cloud Firestore (Google)?\n\nСначала будет сделана и проверена полная резервная копия на этом сервере. Вернуть данные в Firestore потом будет нельзя.')) return;
+  if (!(await uiConfirm('Удалить копию данных в Cloud Firestore (Google)?\n\nСначала будет сделана и проверена полная резервная копия на этом сервере. Вернуть данные в Firestore потом будет нельзя.'))) return;
   if (!(await reauthenticate('Удаление копии в Google'))) return;
   try {
     await callSaasGateway('dataMigrate', { action: 'purgeFirestore', confirm: 'УДАЛИТЬ' }, { forceRefresh: true });
@@ -12830,21 +12975,21 @@ async function loadAuthBackend() {
     } catch (e) { toast(`Не удалось: ${e?.message || e}`); }
     loadAuthBackend();
   };
-  if ($('f-auth-own')) $('f-auth-own').onclick = () => {
-    if (confirm('Включить свой вход платформы? Пользователи Firebase перенесутся с теми же учётными записями.')) act('enable', 'Включение своего входа');
+  if ($('f-auth-own')) $('f-auth-own').onclick = async () => {
+    if ((await uiConfirm('Включить свой вход платформы? Пользователи Firebase перенесутся с теми же учётными записями.'))) act('enable', 'Включение своего входа');
   };
-  if ($('f-auth-purge')) $('f-auth-purge').onclick = () => {
-    if (confirm('Удалить из Firebase Authentication тех, кто уже входил через свой вход? Вернуться на вход Firebase после этого будет нельзя.')) act('purgeFirebase', 'Удаление пользователей из Firebase');
+  if ($('f-auth-purge')) $('f-auth-purge').onclick = async () => {
+    if ((await uiConfirm('Удалить из Firebase Authentication тех, кто уже входил через свой вход? Вернуться на вход Firebase после этого будет нельзя.'))) act('purgeFirebase', 'Удаление пользователей из Firebase');
   };
-  if ($('f-auth-purge-all')) $('f-auth-purge-all').onclick = () => {
-    if (confirm('Удалить из Firebase Authentication всех пользователей?\n\n'
+  if ($('f-auth-purge-all')) $('f-auth-purge-all').onclick = async () => {
+    if ((await uiConfirm('Удалить из Firebase Authentication всех пользователей?\n\n'
       + 'Кто ещё ни разу не входил через свой вход, один раз задаст пароль по ссылке «Забыли пароль» — аккаунт и данные те же. '
-      + 'Кассы и приложения на старой версии войдут заново после обновления. Вернуться на вход Firebase будет нельзя.')) {
+      + 'Кассы и приложения на старой версии войдут заново после обновления. Вернуться на вход Firebase будет нельзя.'))) {
       act('purgeFirebase', 'Удаление всех пользователей из Firebase', { includePending: true });
     }
   };
-  if ($('f-auth-firebase')) $('f-auth-firebase').onclick = () => {
-    if (confirm('Вернуть вход через Firebase? Свои входы продолжат работать до истечения.')) act('disable', 'Возврат входа Firebase');
+  if ($('f-auth-firebase')) $('f-auth-firebase').onclick = async () => {
+    if ((await uiConfirm('Вернуть вход через Firebase? Свои входы продолжат работать до истечения.'))) act('disable', 'Возврат входа Firebase');
   };
 }
 
@@ -13291,14 +13436,14 @@ async function screenBankAct(id) {
 // Работающее заведение становится первой точкой новой сети вместе с гостями
 // и бонусами. Обратно не разделить — об этом прямо спрашиваем.
 async function convertTenantToChain(tenantId, tenant, planId) {
-  const name = prompt('Название сети:', tenant?.name || '');
+  const name = (await uiPrompt('Название сети:', tenant?.name || ''));
   if (!name || !name.trim()) return;
   const trimmedName = name.trim();
-  let slug = prompt('Код сети (латиница, цифры, дефис):', slugify(trimmedName));
+  let slug = (await uiPrompt('Код сети (латиница, цифры, дефис):', slugify(trimmedName)));
   if (slug === null) return;
   slug = slugify(slug);
   if (slug.length < 3) { toast('Код сети — от 3 символов латиницей или цифрами, например «leto»'); return; }
-  if (!confirm(`Перевести «${tenant?.name || tenantId}» в сеть «${trimmedName}»? Заведение останется первой точкой сети со всеми гостями и бонусами — отменить это действие потом будет нельзя.`)) return;
+  if (!(await uiConfirm(`Перевести «${tenant?.name || tenantId}» в сеть «${trimmedName}»? Заведение останется первой точкой сети со всеми гостями и бонусами — отменить это действие потом будет нельзя.`))) return;
   try {
     const res = await callSaasGateway('convertTenantToChain', { tenantId, name: trimmedName, slug, planId });
     // Членства не менялись, watchMemberships сам state.tenants не обновит.
@@ -13319,10 +13464,10 @@ async function convertTenantToChain(tenantId, tenant, planId) {
 // периода (сервер считает сумму сам: chainLocationQuote). В пробный период
 // и для первой точки — бесплатно. Точку создаёт сервер после оплаты.
 async function addChainLocation(chainId) {
-  const name = prompt('Название новой точки сети:');
+  const name = (await uiPrompt('Название новой точки сети:'));
   if (!name || !name.trim()) return;
   const trimmedName = name.trim();
-  let slug = prompt('Код точки (латиница, цифры, дефис) — используется в ссылках и как основа имени Android-приложения. Можно по-русски — переведу в латиницу:', slugify(trimmedName));
+  let slug = (await uiPrompt('Код точки (латиница, цифры, дефис) — используется в ссылках и как основа имени Android-приложения. Можно по-русски — переведу в латиницу:', slugify(trimmedName)));
   if (slug === null) return;
   slug = slugify(slug);
   if (slug.length < 3) { toast('Код точки — от 3 символов латиницей или цифрами, например «leto-centr»'); return; }
@@ -13348,7 +13493,7 @@ async function addChainLocation(chainId) {
     const until = quote.periodEnd ? new Date(quote.periodEnd).toLocaleDateString('ru-RU') : '';
     question = `Новая точка «${trimmedName}»: доплата ${rub(quote.amount)} — цена доп. точки за ${quote.remainingDays} дн. до конца оплаченного периода${until ? ` (до ${until})` : ''}.${next}\n\nТочка появится сразу после оплаты. Перейти к оплате?`;
   }
-  if (!confirm(question)) return;
+  if (!(await uiConfirm(question))) return;
   try {
     const res = await callSaasGateway('chainLocationCheckout', {
       chainId, name: trimmedName, slug,

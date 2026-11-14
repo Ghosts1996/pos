@@ -654,7 +654,23 @@ class _PaymentScreenState extends State<PaymentScreen> {
             .then((_) => ReferralService.instance.rewardIfFirstVisit(_clientUid)));
       }
       _paidDone = true; // списанные бонусы/сертификаты ушли в оплату
-      if (_printReceipt) await _printOnThermalPrinter();
+      if (_printReceipt) {
+        if (kSaasMode) {
+          // Счёт уже закрыт: зависший принтер (кончилась бумага, Bluetooth
+          // «подключён», но молчит) не должен держать экран оплаты и
+          // задерживать фискальный чек — ждём не дольше 20 секунд.
+          await _printOnThermalPrinter().timeout(const Duration(seconds: 20), onTimeout: () {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('Принтер не ответил за 20 секунд — счёт закрыт. Проверьте принтер: бумагу, питание и связь'),
+                duration: Duration(seconds: 8),
+              ));
+            }
+          });
+        } else {
+          await _printOnThermalPrinter();
+        }
+      }
       if (fiscal) {
         final error = await _sendToKassa();
         if (error != null) {

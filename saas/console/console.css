@@ -1607,3 +1607,62 @@ body:has(.landing-nav) .theme-fab, body:has(.dash-topbar) .theme-fab { display: 
 @media (max-width: 700px) { .dz-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; vertical-align: middle; }
 .dz-head .dz-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; line-height: 1.35; }
+
+/* ---------- Окна подтверждения (uiDialog в console.js) ----------
+   Вместо системных prompt()/confirm(): карточка по центру, на телефоне —
+   снизу, как лист; поля крупные, опасная кнопка — красная. */
+html.zd-open { overflow: hidden; }
+.zd-overlay {
+  position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center;
+  padding: 20px; background: rgba(20, 17, 14, .46); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  opacity: 0; transition: opacity .16s ease;
+}
+.zd-overlay.open { opacity: 1; }
+.zd-overlay.closing { opacity: 0; }
+.zd-card {
+  width: 100%; max-width: 440px; max-height: calc(100dvh - 40px); overflow: auto;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 22px;
+  padding: 26px 24px 20px; box-shadow: 0 30px 80px -30px rgba(0, 0, 0, .55), var(--shadow);
+  transform: translateY(10px) scale(.98); transition: transform .18s cubic-bezier(.2, .8, .2, 1);
+}
+.zd-overlay.open .zd-card { transform: none; }
+.zd-icon {
+  width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center; margin-bottom: 14px;
+  background: var(--accent-soft); color: var(--primary);
+}
+.zd-card.danger .zd-icon { background: var(--danger-soft); color: var(--danger); }
+.zd-title { font-family: var(--sans); font-size: 21px; line-height: 1.25; font-weight: 650; letter-spacing: -.01em; margin: 0 0 8px; }
+.zd-text { color: var(--muted); font-size: 15px; line-height: 1.5; }
+.zd-text p { margin: 0 0 10px; }
+.zd-text:empty { display: none; }
+.zd-field { display: block; margin: 14px 0 0; }
+.zd-label { display: block; font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+.zd-field input, .zd-field textarea {
+  width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; color: var(--text);
+  background: var(--field); border: 1.5px solid var(--border-strong); border-radius: 12px; padding: 13px 14px; margin: 0;
+  transition: border-color .15s, box-shadow .15s;
+}
+.zd-field input::placeholder, .zd-field textarea::placeholder { color: var(--placeholder); }
+.zd-field input:focus, .zd-field textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
+.zd-hint { display: block; font-size: 13px; color: var(--muted); margin-top: 6px; }
+.zd-hint b { color: var(--text); font-weight: 650; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.zd-error { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--danger-soft); color: var(--danger); font-size: 14px; font-weight: 550; }
+.zd-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; }
+.zd-actions .btn { width: auto; min-height: 48px; padding: 0 20px; border-radius: 14px; font-weight: 600; }
+.zd-actions .btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+:root[data-theme="dark"] .btn-danger { color: #1A0F0C; }
+.zd-spin { display: inline-block; width: 15px; height: 15px; margin-right: 8px; vertical-align: -2px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: zd-spin .7s linear infinite; }
+@keyframes zd-spin { to { transform: rotate(360deg); } }
+.zd-card.shake { animation: zd-shake .32s ease; }
+@keyframes zd-shake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
+@media (max-width: 560px) {
+  .zd-overlay { align-items: flex-end; padding: 0; }
+  .zd-card { max-width: none; border-radius: 24px 24px 0 0; padding: 24px 20px calc(18px + env(safe-area-inset-bottom)); max-height: 92dvh; transform: translateY(40px); }
+  .zd-actions { flex-direction: column-reverse; }
+  .zd-actions .btn { width: 100%; min-height: 52px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .zd-overlay, .zd-card { transition: none; }
+  .zd-card.shake { animation: none; }
+}

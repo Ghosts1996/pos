@@ -8506,7 +8506,7 @@ const zalMap = createMap({
 /** Точки заведений с доставкой — чтобы map-build.js собрал карту вокруг них. */
 async function refreshMapRegions() {
   try {
-    const tenants = await db.collection("tenants").get();
+    const tenants = await db().collection("tenants").get();
     const points = [];
     for (const d of tenants.docs) {
       const s = await d.ref.collection("settings").doc("delivery").get();

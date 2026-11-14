@@ -635,7 +635,11 @@ class FirestoreService {
     if (!offline) {
       try {
         await _db.runTransaction((tx) async {
-          final tableData = (await tx.get(tableRef)).data();
+          var tableData = (await tx.get(tableRef)).data();
+          // Стол «помнит» уже закрытый чек (закрыли без связи, или два
+          // устройства закрыли одновременно) — такой чек не считается
+          // открытым: иначе стол навсегда «занят» и новый чек не открыть.
+          if (kSaasMode && tableData != null) tableData = await _withoutStaleChecks(tx, tableData);
           var orderNo = 0;
           if (numbered) {
             final last = asNum((await tx.get(counterRef)).data()?['last'])?.toInt() ?? 0;
@@ -695,7 +699,8 @@ class FirestoreService {
       final from = SessionModel.fromDoc(fromSnap);
       if (from.status != 'active') throw StateError('Этот чек уже закрыт');
 
-      final tdata = tableSnap.data() ?? const <String, dynamic>{};
+      var tdata = tableSnap.data() ?? const <String, dynamic>{};
+      if (kSaasMode) tdata = await _withoutStaleChecks(tx, tdata, keep: sessionId);
       final ids = ((tdata['activeSessionIds'] ?? []) as List).map((e) => e.toString()).toList();
       final maxOpen = (tdata['maxOpenSessions'] as num?)?.toInt() ?? 2;
       if (ids.length >= maxOpen) throw TableFullException(maxOpen);
@@ -1616,8 +1621,9 @@ class FirestoreService {
     final tableDoc = await AppScope.col('tables').doc(s.tableId).get();
     if (!tableDoc.exists) throw StateError('Стола «${s.tableName}» больше нет на схеме зала');
     final table = TableModel.fromDoc(tableDoc);
-    if (table.activeSessionIds.length >= table.maxOpenSessions) {
-      throw StateError('На столе «${table.name}» уже открыто чеков: ${table.activeSessionIds.length} из '
+    final openNow = kSaasMode ? (await _liveSessionIds(table.activeSessionIds)).length : table.activeSessionIds.length;
+    if (openNow >= table.maxOpenSessions) {
+      throw StateError('На столе «${table.name}» уже открыто чеков: $openNow из '
           '${table.maxOpenSessions}. Закройте один из них и переоткройте чек снова');
     }
     // Гостя узнаём до возврата: возврат снимает с него кешбэк этого чека.
@@ -2944,6 +2950,85 @@ class FirestoreService {
       }
     }
     if (changed) await batch.commit();
+  }
+
+  /// Данные стола без «зависших» чеков: id в activeSessionIds, чей чек уже
+  /// закрыт или удалён. Читает чеки в той же транзакции (до записей).
+  /// [keep] — чек, который точно открыт (его не перечитываем).
+  Future<Map<String, dynamic>> _withoutStaleChecks(Transaction tx, Map<String, dynamic> data, {String? keep}) async {
+    final ids = ((data['activeSessionIds'] ?? []) as List).map((e) => e.toString()).toList();
+    if (ids.isEmpty) return data;
+    final live = <String>[];
+    for (final id in ids) {
+      if (id == keep) {
+        live.add(id);
+        continue;
+      }
+      final snap = await tx.get(AppScope.col('sessions').doc(id));
+      if (snap.exists && (snap.data()?['status'] as String?) == 'active') live.add(id);
+    }
+    if (live.length == ids.length) return data;
+    debugPrint('table ${data['name'] ?? ''}: убраны закрытые чеки ${ids.where((i) => !live.contains(i)).join(',')}');
+    return {...data, 'activeSessionIds': live, if (live.isEmpty) 'status': 'free'};
+  }
+
+  /// Какие из [ids] — действительно открытые чеки (вне транзакции).
+  Future<List<String>> _liveSessionIds(List<String> ids) async {
+    final live = <String>[];
+    for (final id in ids) {
+      try {
+        final snap = await AppScope.col('sessions').doc(id).get();
+        // Чек и стол пишутся одной транзакцией: если стол на сервере его
+        // числит, а чека нет — чек удалён. Без связи судить нельзя — открыт.
+        if (snap.exists ? (snap.data()?['status'] as String?) == 'active' : !NetStatus.online.value) live.add(id);
+      } catch (_) {
+        live.add(id);
+      }
+    }
+    return live;
+  }
+
+  /// Самовосстановление зала (SaaS): стол числит за собой чек, который уже
+  /// закрыт или удалён, — убрать его, стол освобождается. Бывает после
+  /// закрытия счёта без связи или одновременного закрытия на двух кассах.
+  /// [tableId] — один стол (кассир открыл «зависший» стол), иначе все.
+  /// Только со связью: без неё не отличить «закрыт» от «не дошёл».
+  Future<int> repairStaleTables({String? tableId}) async {
+    if (!kSaasMode || !NetStatus.online.value) return 0;
+    var fixed = 0;
+    try {
+      final docs = tableId != null
+          ? [await AppScope.col('tables').doc(tableId).get()]
+          : (await AppScope.col('tables').get()).docs;
+      for (final doc in docs) {
+        final ids = ((doc.data()?['activeSessionIds'] ?? []) as List).map((e) => e.toString()).toList();
+        if (ids.isEmpty) continue;
+        final live = await _liveSessionIds(ids);
+        if (live.length == ids.length) continue;
+        // Перепроверка и запись — одной транзакцией по свежим данным.
+        final changed = await _db.runTransaction<bool>((tx) async {
+          final snap = await tx.get(doc.reference);
+          final data = snap.data();
+          if (data == null) return false;
+          final clean = await _withoutStaleChecks(tx, data);
+          final before = ((data['activeSessionIds'] ?? []) as List).length;
+          final after = (clean['activeSessionIds'] as List).length;
+          if (after == before) return false;
+          tx.update(doc.reference, {
+            'activeSessionIds': clean['activeSessionIds'],
+            'status': after == 0 ? 'free' : 'occupied',
+          });
+          return true;
+        });
+        if (changed) {
+          fixed++;
+          unawaited(syncTableBusyUntil(doc.id).catchError((Object _) {}));
+        }
+      }
+    } catch (e) {
+      debugPrint('repairStaleTables: $e');
+    }
+    return fixed;
   }
 
   /// Разовая достройка [TableModel.busyUntil] для столов, занятых до

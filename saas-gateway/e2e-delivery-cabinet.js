@@ -114,6 +114,9 @@ async function callSaasGateway(path, data) {
 }
 window.confirm = () => true;
 window.prompt = (q, def) => def;
+// Окна кабинета (uiDialog в console.js) — здесь сразу «да» / значение по умолчанию.
+const uiConfirm = async () => true;
+const uiPrompt = async (q, def) => def;
 ${section}
 const tenantId = 'P1';
 const draw = () => { $('body').innerHTML = deliveryTabHtml(tenantId); bindDeliveryTab(tenantId, draw); };

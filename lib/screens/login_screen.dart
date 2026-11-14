@@ -292,6 +292,8 @@ class _LoginScreenState extends State<LoginScreen> {
     // Проверка стоит один документ и ничего не делает, если всё на месте.
     unawaited(ReservationService().ensureSlotMirror());
     unawaited(_fs.backfillTablesBusyUntil());
+    // Столы, «зависшие» на уже закрытом чеке, освобождаются сами (SaaS).
+    unawaited(_fs.repairStaleTables());
     // PIN, ещё хранящиеся открытым текстом, — в хэши.
     unawaited(_fs.migratePlainPins());
     // Секреты столов для QR-наклеек — столам, у которых их ещё нет.

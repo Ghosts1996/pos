@@ -10,6 +10,7 @@ import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hookah_pos/build_info.dart';
 import 'package:hookah_pos/data/app_db.dart';
 import 'package:hookah_pos/data/local_engine.dart';
 import 'package:hookah_pos/data/local_firestore.dart';
@@ -205,6 +206,44 @@ void main() {
     expect(z, isNotNull);
     await fs.closeShift(shiftId, 'Тест Кассир');
     expect(await fs.currentOpenShift(), isNull);
+  }, skip: skip, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('стол, «зависший» на закрытом чеке, освобождается и открывает новый чек (SaaS)', () async {
+    NetStatus.online.value = true;
+    final fs = FirestoreService();
+    await fs.openShiftIfNeeded('Тест Кассир');
+    final table = TableModel(id: 'stale1', name: 'Стол З', x: 0.3, y: 0.3, maxOpenSessions: 1);
+    await fs.addTable(table);
+    final sid = await fs.openSession(table: table, employeeName: 'Тест Кассир');
+    await fs.addOrderItem(sid, MenuItem(id: 'z1', categoryId: 'c1', name: 'Морс', price: 90));
+    await engine.waitForPendingWrites();
+    // Чек закрыли, а стол его не отпустил (закрытие без связи / две кассы).
+    await db.doc('tenants/$_tenant/sessions/$sid').update({'status': 'closed', 'closedAt': Timestamp.now()});
+    await db.doc('tenants/$_tenant/tables/stale1').update({'activeSessionIds': [sid], 'status': 'occupied'});
+    await engine.waitForPendingWrites();
+    if (!kSaasMode) {
+      // В обычной кассе (не SaaS) поведение прежнее: стол числит чек.
+      expect(() => fs.openSession(table: table, employeeName: 'Тест Кассир'), throwsA(isA<TableFullException>()));
+      return;
+    }
+    // Новый чек открывается: закрытый чек больше не считается.
+    final sid2 = await fs.openSession(table: table, employeeName: 'Тест Кассир');
+    final t1 = await db.doc('tenants/$_tenant/tables/stale1').get(const GetOptions(source: Source.server));
+    expect(List<String>.from(t1.data()!['activeSessionIds'] as List), [sid2]);
+    // Самовосстановление зала: чек снова «завис» — стол освобождается.
+    expect(await fs.closeSessionWithPayment(sid2, 'stale1', cash: 0, card: 0, comp: 0, closedWithoutPayment: true), isTrue);
+    await db.doc('tenants/$_tenant/tables/stale1').update({'activeSessionIds': [sid2, 'nope-${DateTime.now().millisecondsSinceEpoch}'], 'status': 'occupied'});
+    await engine.waitForPendingWrites();
+    expect(await fs.repairStaleTables(), greaterThanOrEqualTo(1));
+    final t2 = await db.doc('tenants/$_tenant/tables/stale1').get(const GetOptions(source: Source.server));
+    expect(t2.data()!['activeSessionIds'], isEmpty);
+    expect(t2.data()!['status'], 'free');
+    // Открытый чек самовосстановление не трогает.
+    final sid3 = await fs.openSession(table: table, employeeName: 'Тест Кассир');
+    expect(await fs.repairStaleTables(tableId: 'stale1'), 0);
+    final t3 = await db.doc('tenants/$_tenant/tables/stale1').get(const GetOptions(source: Source.server));
+    expect(List<String>.from(t3.data()!['activeSessionIds'] as List), [sid3]);
+    expect(await fs.closeSessionWithPayment(sid3, 'stale1', cash: 0, card: 0, comp: 0, closedWithoutPayment: true), isTrue);
   }, skip: skip, timeout: const Timeout(Duration(minutes: 2)));
 
   test('Z-отчёты: сквозные номера, необнуляемый итог; открытие смены их не сбрасывает', () async {

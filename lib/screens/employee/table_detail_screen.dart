@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../../build_info.dart';
 import 'package:flutter/services.dart';
 import '../../models/employee.dart';
 import '../../models/table_model.dart';
@@ -810,6 +811,10 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                   }
                   final others =
                       t.activeSessionIds.where((id) => id != _sessionId).toList();
+                  // Стол всё ещё числит закрытый чек — освобождаем его (SaaS).
+                  if (kSaasMode && t.activeSessionIds.contains(_sessionId)) {
+                    unawaited(_fs.repairStaleTables(tableId: t.id));
+                  }
                   setState(() => _sessionId = others.isEmpty ? null : others.first);
                 });
                 return const Center(child: CircularProgressIndicator());
