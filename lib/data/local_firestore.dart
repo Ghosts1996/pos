@@ -135,6 +135,14 @@ class LocalFirestore implements FirebaseFirestore {
     }
   }
 
+  /// Транзакция сразу «без связи» — касса уже знает, что интернета нет, и
+  /// не ждёт таймаута: по данным на устройстве, записи — в очередь со
+  /// сверкой версий. Если прочитанное за это время изменили на другом
+  /// устройстве, после возвращения связи [handler] выполнится заново уже по
+  /// данным сервера (см. [_offline]).
+  Future<T> runTransactionOffline<T>(TransactionHandler<T> handler, {Duration timeout = const Duration(seconds: 30)}) =>
+      _offline(handler, timeout, 5);
+
   /// Транзакция на сервере: чтения с версиями, запись со сверкой; кто-то
   /// успел изменить прочитанное — повтор. Связи нет ещё до записи — [_TxOffline].
   Future<T> _onlineAttempts<T>(TransactionHandler<T> handler, Duration timeout, int maxAttempts) async {

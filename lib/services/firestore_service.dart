@@ -46,6 +46,7 @@ import 'guest_link_service.dart';
 import '../build_info.dart';
 import 'gateway_cache_service.dart';
 import '../data/app_db.dart';
+import '../data/local_firestore.dart';
 
 /// Единая точка доступа к Firestore. Простая, без лишней абстракции.
 class FirestoreService {
@@ -1195,7 +1196,50 @@ class FirestoreService {
         offline = true;
       }
     }
-    if (offline) {
+    // Своя база (SaaS) без связи: закрытие — отложенной транзакцией вместе
+    // со списанием склада. Если этот чек за время без связи закрыла другая
+    // касса, сервер это увидит: повтор по его данным ничего не запишет —
+    // ни оплату поверх чужой, ни второе списание склада.
+    var stockInClose = false;
+    var deferredDone = false;
+    final db = _db;
+    final local = db is LocalFirestore ? db : null;
+    if (offline && local != null && kSaasMode) {
+      try {
+        final stock = await _offlineSaleWrites(orderItems, employeeName);
+        var runs = 0;
+        outcome = await local.runTransactionOffline<_CloseOutcome>((tx) async {
+          final first = runs++ == 0;
+          final snap = await tx.get(sessionRef);
+          if ((snap.data()?['status'] as String?) == 'closed') {
+            if (!first) {
+              final name = (snap.data()?['tableName'] as String?) ?? '';
+              AppDb.engine?.lastRejected.value = 'Чек${name.isEmpty ? '' : ' «$name»'} уже закрыли на другой кассе, '
+                  'пока здесь не было связи: оплату с этой кассы сервер не записал. Проверьте, не заплатил ли гость дважды.';
+            }
+            return _CloseOutcome.alreadyClosed;
+          }
+          // Сумму сверяем по данным устройства. В повторе после связи гость
+          // уже заплатил — чек закрывается с той оплатой, что взяли.
+          if (first) {
+            final verdict = check(snap);
+            if (verdict != _CloseOutcome.closed) return verdict;
+          }
+          tx.update(sessionRef, closeData);
+          tipUpdates.forEach(tx.update);
+          for (final w in stock) {
+            w(tx);
+          }
+          return _CloseOutcome.closed;
+        });
+        stockInClose = true;
+        deferredDone = true;
+      } on FirebaseException catch (e) {
+        // Чека нет в памяти устройства — как раньше, простой записью.
+        if (e.code != 'unavailable') rethrow;
+      }
+    }
+    if (offline && !deferredDone) {
       outcome = check(await sessionRef.get(const GetOptions(source: Source.cache)));
       if (outcome == _CloseOutcome.closed) {
         final batch = _db.batch()..update(sessionRef, closeData);
@@ -1227,10 +1271,32 @@ class FirestoreService {
     }
 
     if (offline) {
-      final doc = await tableRef.get(const GetOptions(source: Source.cache)).catchError((Object _) => tableRef.get());
-      unawaited(tableRef.update(freed(doc.data())).catchError((Object _) {}));
+      var tableDone = false;
+      if (deferredDone && local != null) {
+        // Тоже отложенной транзакцией: если за это время на стол открыли
+        // новый чек, после связи список чеков стола пересчитается по серверу,
+        // а не затрёт его копией с этого устройства.
+        try {
+          await local.runTransactionOffline((tx) async {
+            final doc = await tx.get(tableRef);
+            tx.update(tableRef, freed(doc.data()));
+          });
+          tableDone = true;
+        } catch (_) {}
+      }
+      if (!tableDone) {
+        try {
+          final doc = await tableRef.get(const GetOptions(source: Source.cache)).catchError((Object _) => tableRef.get());
+          unawaited(tableRef.update(freed(doc.data())).catchError((Object _) {}));
+        } catch (_) {
+          // Стола нет в памяти устройства (вынос, доставка, зал не открывали):
+          // чек уже закрыт и оплата записана — ошибка здесь заставила бы
+          // кассира провести оплату ещё раз. Стол поправит repairStaleTables.
+        }
+      }
       // Остальное — после возвращения связи, не задерживая кассира.
-      unawaited(_afterClose(sessionId, tableId, alreadyClosed, orderItems, employeeName).catchError((Object _) {}));
+      // Склад уже списан в самой транзакции закрытия (stockInClose).
+      unawaited(_afterClose(sessionId, tableId, alreadyClosed || stockInClose, orderItems, employeeName).catchError((Object _) {}));
       return !alreadyClosed;
     }
     // Чек уже закрыт и оплата записана: сбой дальше (стол, склад) — не
@@ -1319,6 +1385,57 @@ class FirestoreService {
   /// Ошибки по отдельным позициям не прерывают списание остальных.
   Future<void> _deductInventoryForSale(List<OrderItem> orderItems, String employeeName) =>
       _applyDraws(orderItems, employeeName, sign: -1, type: 'writeoff', reason: 'Продажа');
+
+  /// Списание склада по чеку — записями для транзакции закрытия без связи
+  /// (см. closeSessionWithPayment): меню и остатки — из памяти устройства,
+  /// остаток — приращением (другие кассы могли продать то же самое), номера
+  /// строк журнала заданы заранее, чтобы повтор транзакции их не удвоил.
+  Future<List<void Function(Transaction tx)>> _offlineSaleWrites(List<OrderItem> orderItems, String employeeName) async {
+    if (orderItems.isEmpty) return const [];
+    const cache = GetOptions(source: Source.cache);
+    Future<Map<String, T>> read<T>(String col, Set<String> ids, T Function(DocumentSnapshot<Map<String, dynamic>>) make) async {
+      final out = <String, T>{};
+      for (final id in ids) {
+        try {
+          final d = await AppScope.col(col).doc(id).get(cache);
+          if (d.exists) out[id] = make(d);
+        } catch (_) {
+          // Нет в памяти устройства — эту позицию не списываем, как и раньше без связи.
+        }
+      }
+      return out;
+    }
+
+    final menu = await read('menuItems', orderItems.map((o) => o.menuItemId).where((id) => id.isNotEmpty).toSet(), MenuItem.fromDoc);
+    final combo = comboDishIds(orderItems, menu).difference(menu.keys.toSet());
+    if (combo.isNotEmpty) menu.addAll(await read('menuItems', combo, MenuItem.fromDoc));
+    final stock = await read('inventoryItems', stockIdsFor(menu.values), InventoryItem.fromDoc);
+    final now = DateTime.now();
+    return [
+      for (final d in saleDraws(orderItems, menu, stock).values)
+        () {
+          final inv = stock[d.inventoryItemId]!;
+          final itemRef = AppScope.col('inventoryItems').doc(inv.id);
+          final moveRef = AppScope.col('inventoryMovements').doc();
+          final move = InventoryMovement(
+            id: moveRef.id,
+            itemId: inv.id,
+            itemName: inv.name,
+            unit: inv.unit,
+            type: 'writeoff',
+            delta: -d.qty,
+            resultingQty: inv.quantity - d.qty,
+            reason: 'Продажа: ${d.sourceText}',
+            employeeName: employeeName,
+            createdAt: now,
+          ).toMap();
+          return (Transaction tx) {
+            tx.update(itemRef, {'quantity': FieldValue.increment(-d.qty), 'updatedAt': Timestamp.fromDate(now)});
+            tx.set(moveRef, move);
+          };
+        }(),
+    ];
+  }
 
   /// Движения склада по строкам чека: [sign] −1 — списать, +1 — вернуть.
   /// Возвращает, сколько позиций склада затронуто.

@@ -408,6 +408,45 @@ test("двое жмут «Беру» одновременно — заказ д�
   assert.equal(b.no, 2);
 });
 
+test("трое жмут «Беру» разом, двойные нажатия, два «Вручил», назначение против «Беру» — без двойного учёта", async () => {
+  const w = world();
+  await seed(w);
+  await w.set("tenants/A/settings/delivery", { payAtDoor: { cash: true, card: true } });
+  const [a, b, c] = [await hire(w, { name: "Аня" }), await hire(w, { name: "Боря" }), await hire(w, { name: "Вика" })];
+  await w.set("tenants/A/sessions/s1", order());
+  // Трое одновременно, и каждый ещё раз нажал «Беру» (двойное касание).
+  const res = await Promise.allSettled([a, b, c, a, b, c].map((x) => act(w, x.token, "take", "A", "s1")));
+  const won = (await w.db.doc("tenants/A/sessions/s1").get()).data().courierId;
+  const winner = [a, b, c].find((x) => x.id === won);
+  assert.ok(winner, "заказ у одного из троих");
+  for (const x of [a, b, c]) {
+    const st = await state(w, x.token);
+    assert.deepEqual(st.mine.map((m) => m.s || m.sessionId || m.id), x === winner ? ["s1"] : [], "в «Моих» заказ только у взявшего");
+    assert.deepEqual(Object.keys((await w.db.doc(`couriers/${x.id}`).get()).data().active || {}), x === winner ? ["A__s1"] : []);
+  }
+  const lost = res.filter((r) => r.status === "rejected");
+  assert.equal(lost.length, 4, "двое проигравших × 2 нажатия");
+  assert.ok(lost.every((r) => r.reason.status === 409 && /другой курьер/.test(r.reason.message)));
+  assert.equal(w.events.filter((e) => /взял заказ/.test(e.text)).length, 1, "в кассу одно сообщение «взял заказ»");
+  // «Вручил» два раза разом (нажатие + повтор из очереди без связи): деньги учтены раз.
+  await act(w, winner.token, "pickup", "A", "s1");
+  await Promise.allSettled([1, 2].map(() => act(w, winner.token, "deliver", "A", "s1", { method: "cash", received: 1000 })));
+  const me = (await w.db.doc(`couriers/${winner.id}`).get()).data();
+  assert.equal(me.cashOnHand, 750, "наличные посчитаны один раз");
+  assert.equal((await w.db.collection("tenants/A/waiterCalls").get()).docs.length, 1, "кассе один вызов «получил наличные»");
+  // Заведение назначает Вику, а Боря в ту же секунду жмёт «Беру».
+  await w.set("tenants/A/sessions/s2", order({ orderNo: 13 }));
+  const other = [a, b, c].filter((x) => x !== winner);
+  await Promise.allSettled([
+    call(w.api.handleAdminAssign, { tenantId: "A", s: "s2", courierId: other[0].id }, { uid: "owner" }),
+    act(w, other[1].token, "take", "A", "s2"),
+  ]);
+  const s2 = (await w.db.doc("tenants/A/sessions/s2").get()).data();
+  const holders = [];
+  for (const x of other) if (Object.keys((await w.db.doc(`couriers/${x.id}`).get()).data().active || {}).includes("A__s2")) holders.push(x.id);
+  assert.deepEqual(holders, [s2.courierId], "заказ числится ровно у того, за кем он в базе");
+});
+
 test("оплачено онлайн — денег не берут; закрыт на кассе — тоже; QR — через банк заведения", async () => {
   const w = world();
   await seed(w);

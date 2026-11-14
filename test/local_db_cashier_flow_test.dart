@@ -15,6 +15,7 @@ import 'package:hookah_pos/data/app_db.dart';
 import 'package:hookah_pos/data/local_engine.dart';
 import 'package:hookah_pos/data/local_firestore.dart';
 import 'package:hookah_pos/models/cash_op.dart';
+import 'package:hookah_pos/models/inventory_models.dart';
 import 'package:hookah_pos/models/menu_models.dart';
 import 'package:hookah_pos/models/table_model.dart';
 import 'package:hookah_pos/services/app_scope.dart';
@@ -153,6 +154,45 @@ void main() {
     expect((await db.doc('tenants/$_tenant/sessions/$s2').get(const GetOptions(source: Source.server))).data()!['tableId'], 'flow3');
     expect((await db.doc('tenants/$_tenant/sessions/$part').get(const GetOptions(source: Source.server))).exists, isTrue);
     await fs.closeShift(shiftId, 'Тест Кассир');
+  }, skip: harnessOnly, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('касса знает, что связи нет: чек со складом закрывается и после связи записан один раз (SaaS)', () async {
+    final fs = FirestoreService();
+    await db.doc('tenants/$_tenant/inventoryItems/offInv').set({'name': 'Лимонад', 'unit': 'pcs', 'quantity': 10, 'active': true, 'category': ''});
+    final lemon = MenuItem(id: 'offLemon', categoryId: 'c1', name: 'Лимонад', price: 150, inventoryItemId: 'offInv', weight: 1, weightUnit: InventoryUnit.pcs);
+    await db.doc('tenants/$_tenant/menuItems/offLemon').set(lemon.toMap());
+    final table = TableModel(id: 'flowOff', name: 'Стол Н', x: 0.3, y: 0.3);
+    await fs.addTable(table);
+    await fs.tablesStream().firstWhere((l) => l.any((t) => t.id == 'flowOff')).timeout(const Duration(seconds: 8));
+    final sessionId = await fs.openSession(table: table, employeeName: 'Тест Кассир');
+    await fs.addOrderItem(sessionId, lemon, qty: 2);
+    final s = await fs.sessionStream(sessionId).firstWhere((s) => s != null && s.orderItems.isNotEmpty).timeout(const Duration(seconds: 8));
+    // Меню и склад — в памяти устройства, как у кассы с открытым залом.
+    await db.doc('tenants/$_tenant/menuItems/offLemon').get();
+    await db.doc('tenants/$_tenant/inventoryItems/offInv').get();
+    await engine.waitForPendingWrites();
+
+    await http.post(Uri.parse('$_url/__offline'), body: jsonEncode({'on': true}));
+    NetStatus.online.value = false;
+    final ok = await fs
+        .closeSessionWithPayment(sessionId, 'flowOff', cash: 0, card: 300, comp: 0, orderItems: s!.orderItems, employeeName: 'Тест Кассир', expectedTotal: 300)
+        .timeout(const Duration(seconds: 5), onTimeout: () => throw StateError('касса без связи ждёт сервер'));
+    expect(ok, isTrue);
+    expect((await db.doc('tenants/$_tenant/sessions/$sessionId').get(const GetOptions(source: Source.cache))).data()!['status'], 'closed');
+
+    await http.post(Uri.parse('$_url/__offline'), body: jsonEncode({'on': false}));
+    NetStatus.online.value = true;
+    engine.reconnectNow();
+    await engine.waitForPendingWrites().timeout(const Duration(seconds: 30));
+    final server = (await db.doc('tenants/$_tenant/sessions/$sessionId').get(const GetOptions(source: Source.server))).data()!;
+    expect(server['status'], 'closed');
+    expect(server['paymentCard'], 300);
+    expect((await db.doc('tenants/$_tenant/inventoryItems/offInv').get(const GetOptions(source: Source.server))).data()!['quantity'], 8);
+    final moves = await db.collection('tenants/$_tenant/inventoryMovements').where('itemId', isEqualTo: 'offInv').get(const GetOptions(source: Source.server));
+    expect(moves.docs.length, 1, reason: 'склад списан один раз');
+    final t = (await db.doc('tenants/$_tenant/tables/flowOff').get(const GetOptions(source: Source.server))).data()!;
+    expect(t['status'], 'free');
+    expect(engine.lastRejected.value, isNull);
   }, skip: harnessOnly, timeout: const Timeout(Duration(minutes: 2)));
 
   test('кухня, разделение и пересадка, повторное открытие, касса, Z-отчёт', () async {
