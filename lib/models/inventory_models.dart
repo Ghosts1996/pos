@@ -181,6 +181,11 @@ class InventoryItem {
 
   /// Сколько заготовки получается по [recipe], в единицах [unit]
   /// («из этого выходит 10 л»).
+  /// Мульти-склад (SaaS, кабинет · «Склад» → «Перемещение»): сколько из
+  /// общего остатка выдано в цеха — bar / kitchen / hookah. Основной склад =
+  /// [quantity] − сумма. В [toMap] не пишется: правит только перемещение и
+  /// списание приращениями, обычное сохранение карточки его не затирает.
+  final Map<String, double> zones;
   final double recipeOutput;
 
   InventoryItem({
@@ -199,6 +204,7 @@ class InventoryItem {
     this.costPrice = 0,
     this.recipe = const [],
     this.recipeOutput = 0,
+    this.zones = const {},
   });
 
   /// Позиция — заготовка со своим рецептом.
@@ -233,6 +239,11 @@ class InventoryItem {
           .where((c) => c.inventoryItemId.isNotEmpty && c.weight > 0)
           .toList(),
       recipeOutput: (data['recipeOutput'] as num?)?.toDouble() ?? 0,
+      zones: {
+        if (data['zones'] is Map)
+          for (final e in (data['zones'] as Map).entries)
+            if (e.value is num) '${e.key}': (e.value as num).toDouble(),
+      },
     );
   }
 
@@ -272,6 +283,7 @@ class InventoryItem {
         id: id,
         recipe: recipe ?? this.recipe,
         recipeOutput: recipeOutput ?? this.recipeOutput,
+        zones: zones,
         costPrice: costPrice ?? this.costPrice,
         name: name ?? this.name,
         category: category ?? this.category,
@@ -344,6 +356,8 @@ class InventoryMovement {
         return 'Заготовка';
       case 'refund':
         return 'Возврат';
+      case 'transfer':
+        return 'Перемещение';
       default:
         return 'Корректировка';
     }

@@ -37,6 +37,7 @@ import 'net_status.dart';
 import '../utils/guest_items.dart';
 import '../utils/loyalty_refund.dart';
 import '../utils/recipe_math.dart';
+import '../utils/stock_zones.dart';
 import '../utils/checkout_checks.dart';
 import '../utils/reopen_check.dart';
 import '../utils/z_report.dart';
@@ -1412,6 +1413,11 @@ class FirestoreService {
     if (combo.isNotEmpty) menu.addAll(await read('menuItems', combo, MenuItem.fromDoc));
     final stock = await read('inventoryItems', stockIdsFor(menu.values), InventoryItem.fromDoc);
     final now = DateTime.now();
+    // Мульти-склад (SaaS): сколько убрать из цехов — по памяти устройства.
+    final zones = kSaasMode && anyZones(stock.values)
+        ? zoneDraws(orderItems, menu, stock,
+            _kindOfWith(await read('menuCategories', menu.values.map((m) => m.categoryId).where((id) => id.isNotEmpty).toSet(), MenuCategory.fromDoc)))
+        : const <String, Map<String, double>>{};
     return [
       for (final d in saleDraws(orderItems, menu, stock).values)
         () {
@@ -1430,8 +1436,13 @@ class FirestoreService {
             employeeName: employeeName,
             createdAt: now,
           ).toMap();
+          final fromZones = zoneDecrements(zones[inv.id] ?? const {});
           return (Transaction tx) {
-            tx.update(itemRef, {'quantity': FieldValue.increment(-d.qty), 'updatedAt': Timestamp.fromDate(now)});
+            tx.update(itemRef, {
+              'quantity': FieldValue.increment(-d.qty),
+              'updatedAt': Timestamp.fromDate(now),
+              for (final z in fromZones.entries) z.key: FieldValue.increment(z.value),
+            });
             tx.set(moveRef, move);
           };
         }(),
@@ -1465,6 +1476,7 @@ class FirestoreService {
           for (final d in draws)
             (item: stock[d.inventoryItemId]!, delta: sign * d.qty, reason: '$reason: ${d.sourceText}'),
         ], type: type, employeeName: employeeName);
+        if (sign < 0 && type == 'writeoff') await _takeFromWorkshops(orderItems, menu, stock);
         return draws.length;
       } on FirebaseException catch (e) {
         if (e.code == 'unavailable') return 0;
@@ -1488,7 +1500,42 @@ class FirestoreService {
         // Не блокируем оплату из-за ошибок по одной позиции склада.
       }
     }
+    if (kSaasMode && n > 0 && sign < 0 && type == 'writeoff') await _takeFromWorkshops(orderItems, menu, stock);
     return n;
+  }
+
+  /// Цех позиции меню (кухня / бар / кальяны) по её разделу.
+  String Function(MenuItem) _kindOfWith(Map<String, MenuCategory> cats) => (m) {
+        final c = cats[m.categoryId];
+        return SaleKind.forMenuItem(
+            tobacco: m.tobacco, itemName: m.name, categoryKind: c?.kind ?? '', categoryName: c?.name ?? '');
+      };
+
+  /// Мульти-склад (SaaS): после списания продажи убрать проданное из цеха,
+  /// куда его переместили в кабинете. Общий остаток уже списан — здесь только
+  /// раскладка по местам, приращениями (другие кассы пишут туда же). Сбой не
+  /// мешает оплате: в худшем случае остаток числится на основном складе.
+  Future<void> _takeFromWorkshops(List<OrderItem> orderItems, Map<String, MenuItem> menu, Map<String, InventoryItem> stock) async {
+    if (!anyZones(stock.values)) return;
+    try {
+      final catIds = menu.values.map((m) => m.categoryId).where((id) => id.isNotEmpty).toSet();
+      final cats = <String, MenuCategory>{};
+      for (final id in catIds) {
+        final d = await AppScope.col('menuCategories').doc(id).get();
+        if (d.exists) cats[id] = MenuCategory.fromDoc(d);
+      }
+      final byItem = zoneDraws(orderItems, menu, stock, _kindOfWith(cats));
+      if (byItem.isEmpty) return;
+      final batch = _db.batch();
+      byItem.forEach((invId, kinds) {
+        batch.update(AppScope.col('inventoryItems').doc(invId), {
+          for (final z in zoneDecrements(kinds).entries) z.key: FieldValue.increment(z.value),
+        });
+      });
+      await batch.commit();
+    } catch (_) {
+      // Раскладка по цехам — подсказка, а не учёт: оплату не задерживаем.
+    }
   }
 
   /// Вернуть на склад продукты по возвращённому чеку — если товар вернулся

@@ -1693,3 +1693,7 @@ html.zd-open { overflow: hidden; }
 .acc-export-head { display: grid; gap: 4px; }
 .acc-export-row { gap: 10px; flex-wrap: wrap; align-items: center; }
 .acc-export-row select { width: auto; margin: 0; min-width: 200px; }
+
+/* Склад: перемещение между складами */
+.move-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 12px; margin-bottom: 10px; }
+.move-grid .field { margin: 0; }

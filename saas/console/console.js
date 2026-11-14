@@ -20,6 +20,8 @@ import {
 } from './zal-db.js';
 import { savingsEstimate, planTableRows } from './savings.js';
 import { buildAccountingSheets, buildXlsx } from './accounting-export.js';
+import { A4_MM, buildImagePdf, renderTentPage, tableTentUrl, tentTables } from './table-tents.js';
+import { STOCK_ZONES, zoneBalances, hasZones, planTransfer, zoneLabel } from './stock-zones.js';
 
 // saas-gateway — сервер платформы (saas-gateway/README.md), живёт на том же
 // домене, что и pii-gateway, по пути /saas/.
@@ -5663,6 +5665,8 @@ function watchDashboardData(tenantId) {
   let stockItems = null;
   let stockWatching = false;
   let stockFilter = '';
+  // Перемещение между складами: выбранная позиция, откуда/куда, сколько, итог.
+  let stockMove = { itemId: '', from: 'main', to: 'bar', qty: '', error: '', done: '' };
   let upd = { step: 'pick' };
   let updCore = null;
   const loadUpdCore = async () => (updCore = updCore || await import('./upd-import.js'));
@@ -6635,6 +6639,14 @@ function watchDashboardData(tenantId) {
         ${canManage ? `<button class="btn btn-primary" id="f-save-branding" style="margin-top:16px">Сохранить брендинг</button>` : ''}
         <div id="f-branding-error" class="small" style="color:var(--danger);margin-top:8px"></div>
       </div>
+      <div class="card tents-card">
+        <h3 style="margin-top:0">Тейбл-тенты с QR</h3>
+        <p class="small muted">Домики на стол: лист A4 складывается пополам, с обеих сторон — логотип,
+        название, номер стола и QR этого стола. Гость наводит камеру — открываются меню, заказ, вызов
+        официанта и счёт. По одному листу на стол, файл PDF — печатайте на плотной бумаге.</p>
+        <button type="button" class="btn btn-primary" id="f-tents" style="width:auto">Скачать PDF</button>
+        <div id="f-tents-status" class="small muted" style="margin-top:8px" role="status" aria-live="polite"></div>
+      </div>
     `;
 
     const teamHtml = () => `
@@ -7313,9 +7325,38 @@ function watchDashboardData(tenantId) {
           ${upd.error ? `<p class="small" style="color:var(--danger);margin-top:8px">${esc(upd.error)}</p>` : ''}
         </div>`;
       };
+      const zoned = items.some(hasZones);
+      const zonesCell = (x) => {
+        if (!hasZones(x)) return '<span class="muted">основной склад</span>';
+        const b = zoneBalances(x);
+        return STOCK_ZONES.filter((z) => z.id === 'main' ? b.main !== 0 : b[z.id] > 0)
+          .map((z) => `<span style="white-space:nowrap${b[z.id] < 0 ? ';color:var(--danger)' : ''}">${esc(z.label)}: ${fmtQty(b[z.id])}</span>`).join('<br>');
+      };
+      const moveItem = items.find((x) => x.id === stockMove.itemId);
+      const moveCard = () => `
+        <div class="card" id="stock-move">
+          <b>Перемещение между складами</b>
+          <p class="small muted" style="margin:6px 0 10px">Основной склад, бар, кухня, кальянная. Выдали продукты в цех — отметьте здесь:
+          общий остаток не меняется, а касса при продаже спишет сначала из того цеха, который готовит позицию (вид раздела меню:
+          кухня, бар, кальяны), не хватит — с основного склада.</p>
+          ${canPost ? `
+          <div class="move-grid">
+            <label class="field"><span>Позиция</span><select id="f-move-item">
+              <option value="">— выберите —</option>
+              ${items.slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ru'))
+                .map((x) => `<option value="${esc(x.id)}" ${x.id === stockMove.itemId ? 'selected' : ''}>${esc(x.name || '')}</option>`).join('')}
+            </select></label>
+            <label class="field"><span>Откуда</span><select id="f-move-from">${STOCK_ZONES.map((z) => `<option value="${z.id}" ${z.id === stockMove.from ? 'selected' : ''}>${esc(z.label)}${moveItem ? ` (${fmtQty(zoneBalances(moveItem)[z.id])})` : ''}</option>`).join('')}</select></label>
+            <label class="field"><span>Куда</span><select id="f-move-to">${STOCK_ZONES.map((z) => `<option value="${z.id}" ${z.id === stockMove.to ? 'selected' : ''}>${esc(z.label)}</option>`).join('')}</select></label>
+            <label class="field"><span>Сколько${moveItem ? `, ${esc(STOCK_UNIT[moveItem.unit] || '')}` : ''}</span><input id="f-move-qty" type="text" inputmode="decimal" autocomplete="off" placeholder="например, 2,5" value="${esc(stockMove.qty || '')}"></label>
+          </div>
+          <button class="btn btn-primary" id="f-move-go" style="width:auto">Переместить</button>` : '<p class="small muted">Перемещать может владелец или администратор.</p>'}
+          <div id="f-move-status" class="small ${stockMove.error ? 'error' : 'muted'}" style="margin-top:8px" role="status" aria-live="polite">${esc(stockMove.error || stockMove.done || '')}</div>
+        </div>`;
       return `
         <h2>Склад</h2>
         ${updCard()}
+        ${items.length ? moveCard() : ''}
         <div class="card">
           <div class="row" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
             <b>Остатки</b>
@@ -7324,11 +7365,12 @@ function watchDashboardData(tenantId) {
           ${stockItems === null ? '<div class="spinner"></div>' : !items.length
             ? '<p class="small muted">На складе пока пусто. Загрузите накладную выше, перенесите склад из прежней системы («Перенос данных») или заведите продукты в кассе: Админ → Склад.</p>'
             : `<div style="overflow-x:auto;margin-top:8px"><table class="table">
-                <thead><tr><th>Позиция</th><th>Остаток</th><th>Цена закупки</th></tr></thead>
+                <thead><tr><th>Позиция</th><th>Остаток</th>${zoned ? '<th>Где лежит</th>' : ''}<th>Цена закупки</th></tr></thead>
                 <tbody>${shown.slice(0, 400).map((x) => {
                   const low = Number(x.minQuantity) > 0 && Number(x.quantity) <= Number(x.minQuantity);
                   return `<tr><td>${esc(x.name || '')}${x.category ? ` <span class="small muted">· ${esc(x.category)}</span>` : ''}</td>
                     <td style="white-space:nowrap;${Number(x.quantity) < 0 || low ? 'color:var(--danger)' : ''}">${fmtQty(x.quantity)} ${STOCK_UNIT[x.unit] || ''}${low ? ' · мало' : ''}</td>
+                    ${zoned ? `<td class="small">${zonesCell(x)}</td>` : ''}
                     <td style="white-space:nowrap">${Number(x.costPrice) > 0 ? `${Number(x.costPrice).toLocaleString('ru-RU')} ${STOCK_PRICE_UNIT[x.unit] || '₽'}` : '<span class="muted">—</span>'}</td></tr>`;
                 }).join('')}</tbody>
               </table></div>
@@ -7361,6 +7403,9 @@ function watchDashboardData(tenantId) {
     if (activeTab === 'overview' && $('f-acc-export')) {
       $('f-acc-export').onclick = () => exportForAccountant(tenantId, tenant.name, generalSettings?.timezone || 'Europe/Moscow');
     }
+    if (activeTab === 'branding' && $('f-tents')) {
+      $('f-tents').onclick = () => downloadTableTents(tenantId, tenant, branding);
+    }
     if (activeTab === 'guests') bindGuestsTab(tenantId, draw);
     if (activeTab === 'delivery') bindDeliveryTab(tenantId, draw);
     if (activeTab === 'stock') {
@@ -7373,6 +7418,42 @@ function watchDashboardData(tenantId) {
       }
       if (!updCore) loadUpdCore().then(() => { if (activeTab === 'stock') draw(); }).catch(() => {});
       if ($('f-stock-filter')) $('f-stock-filter').oninput = (e) => { stockFilter = e.target.value; draw(); };
+      const keepMove = () => {
+        stockMove.itemId = ($('f-move-item') || {}).value || '';
+        stockMove.from = ($('f-move-from') || {}).value || 'main';
+        stockMove.to = ($('f-move-to') || {}).value || 'bar';
+        stockMove.qty = ($('f-move-qty') || {}).value || '';
+      };
+      ['f-move-item', 'f-move-from', 'f-move-to'].forEach((id) => { if ($(id)) $(id).onchange = () => { keepMove(); stockMove.error = ''; stockMove.done = ''; draw(); }; });
+      if ($('f-move-qty')) $('f-move-qty').oninput = () => keepMove();
+      if ($('f-move-go')) $('f-move-go').onclick = async () => {
+        keepMove();
+        const it = (stockItems || []).find((x) => x.id === stockMove.itemId);
+        stockMove.error = '';
+        stockMove.done = '';
+        try {
+          if (!it) throw new Error('Выберите позицию склада');
+          const plan = planTransfer(it, stockMove.from, stockMove.to, Number(String(stockMove.qty).replace(',', '.')));
+          $('f-move-go').disabled = true;
+          const now = Timestamp.now();
+          const batch = writeBatch(state.db);
+          const data = { updatedAt: now };
+          for (const [k, v] of Object.entries(plan.inc)) data[k] = increment(v);
+          batch.update(doc(tcol('inventoryItems'), it.id), data);
+          batch.set(doc(tcol('inventoryMovements')), {
+            itemId: it.id, itemName: it.name || '', unit: it.unit || 'pcs', type: 'transfer', delta: 0,
+            resultingQty: Number(it.quantity) || 0, fromZone: stockMove.from, toZone: stockMove.to, qty: plan.qty,
+            reason: `Перемещение: ${zoneLabel(stockMove.from)} → ${zoneLabel(stockMove.to)}, ${fmtQty(plan.qty)} ${STOCK_UNIT[it.unit] || ''}`.trim(),
+            employeeName: state.auth.currentUser?.email || '', createdAt: now,
+          });
+          await batch.commit();
+          stockMove.done = `Перемещено: ${it.name} — ${fmtQty(plan.qty)} ${STOCK_UNIT[it.unit] || ''}, ${zoneLabel(stockMove.from)} → ${zoneLabel(stockMove.to)}.`;
+          stockMove.qty = '';
+        } catch (err) {
+          stockMove.error = err?.message || String(err);
+        }
+        draw();
+      };
       if ($('f-upd-file')) $('f-upd-file').onchange = async (e) => {
         const files = [...(e.target.files || [])];
         if (!files.length) return;
@@ -8936,6 +9017,69 @@ async function exportForAccountant(tenantId, venueName, tz) {
     if (status) { status.className = 'small'; status.textContent = `Готово, чеков в файле: ${checks}. Файл — в папке «Загрузки».`; }
   } catch (e) {
     if (status) { status.className = 'small error'; status.textContent = `Не удалось собрать выгрузку: ${e.message || e}`; }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/** Тейбл-тенты: столы и их секреты из базы → листы A4 → один PDF. */
+async function downloadTableTents(tenantId, tenant, branding) {
+  const btn = $('f-tents');
+  const status = $('f-tents-status');
+  const say = (text, cls = 'small muted') => { if (status) { status.className = cls; status.textContent = text; } };
+  if (!btn) return;
+  btn.disabled = true;
+  say('Собираю столы…');
+  try {
+    const [tSnap, kSnap] = await Promise.all([
+      getDocs(collection(state.db, 'tenants', tenantId, 'tables')),
+      getDocs(collection(state.db, 'tenants', tenantId, 'tableKeys')),
+    ]);
+    const keys = {};
+    kSnap.docs.forEach((d) => { const k = d.data().key; if (typeof k === 'string' && k) keys[d.id] = k; });
+    const { tables, missing } = tentTables(tSnap.docs.map((d) => ({ id: d.id, ...d.data() })), keys);
+    if (!tables.length) {
+      say(tSnap.empty
+        ? 'Столов пока нет: добавьте их на кассе (Админ → «Зал»), и здесь появятся тейбл-тенты.'
+        : 'Касса ещё не выпустила коды столов: откройте на кассе Админ → «QR-коды столов» — коды появятся сами, потом скачайте PDF.', 'small error');
+      return;
+    }
+    await import('./vendor/qr.js');
+    let logo = null;
+    if (branding && branding.logoUrl) {
+      logo = await new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        // Логотип сети лежит под id сети: берём его из адреса /branding/<id>/logo.*.
+        const owner = (/\/branding\/([A-Za-z0-9_-]{1,64})\/logo\./.exec(branding.logoUrl) || [])[1] || tenantId;
+        img.src = `${SAAS_GATEWAY_URL}/brandingLogoFile?tenantId=${encodeURIComponent(owner)}&v=${Date.now()}`;
+      });
+    }
+    const accent = (branding && branding.primaryColor) || '#B5652C';
+    const pages = [];
+    for (let i = 0; i < tables.length; i++) {
+      say(`Рисую стол ${i + 1} из ${tables.length}…`);
+      const t = tables[i];
+      const url = tableTentUrl({ slug: tenant.slug, tenantId }, t.id, t.key);
+      pages.push(await renderTentPage({ venue: tenant.name || 'Заведение', table: { name: t.name, url }, qr: window.ZQR.matrix(url), logo, accent }));
+    }
+    const pdf = buildImagePdf(pages, A4_MM, 'Table tents');
+    const blobUrl = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `${String(tenant.name || 'Заведение').replace(/[\\/:*?"<>|]/g, ' ').trim()} — тейбл-тенты.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
+    const notes = [];
+    if (branding && branding.logoUrl && !logo) notes.push('логотип не загрузился — листы без него');
+    if (missing.length) notes.push(`без кода на кассе: ${missing.join(', ')} — откройте на кассе «QR-коды столов» и скачайте ещё раз`);
+    say(`Готово: ${tables.length} ${tables.length === 1 ? 'лист' : tables.length < 5 ? 'листа' : 'листов'}. Файл — в папке «Загрузки».${notes.length ? ` Внимание: ${notes.join('; ')}.` : ''}`, notes.length ? 'small' : 'small');
+  } catch (e) {
+    say(`Не удалось собрать PDF: ${e.message || e}`, 'small error');
   } finally {
     btn.disabled = false;
   }

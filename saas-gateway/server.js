@@ -3757,6 +3757,36 @@ async function handleUploadMenuImage(req, res) {
   sendJson(res, 200, { path: `/branding/${tenantId}/menu/${folder}/${entityId}.${ext}` });
 }
 
+/**
+ * Логотип заведения для холста кабинета (тейбл-тенты): тот же публичный файл,
+ * что nginx отдаёт по /branding/, но с CORS — иначе браузер не даст
+ * вставить картинку с другого адреса в PDF. Только чтение, без входа.
+ */
+async function handleBrandingLogoFile(req, res) {
+  const tenantId = new URL(req.url, "http://localhost").searchParams.get("tenantId") || "";
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "не указан tenantId");
+  const types = { png: "image/png", jpg: "image/jpeg", webp: "image/webp" };
+  for (const ext of Object.values(BRANDING_CONTENT_TYPES)) {
+    const file = path.join(BRANDING_UPLOADS_DIR, tenantId, `logo.${ext}`);
+    let buf;
+    try {
+      buf = await fs.promises.readFile(file);
+    } catch (_) {
+      continue;
+    }
+    res.writeHead(200, {
+      "Content-Type": types[ext] || "application/octet-stream",
+      "Content-Length": buf.length,
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "no-cache",
+      "X-Content-Type-Options": "nosniff",
+    });
+    res.end(buf);
+    return;
+  }
+  throw new HttpError(404, "Логотип не загружен");
+}
+
 // ------------------------------------------------------- вложения поддержки
 
 const supportFiles = require("./support-files");
@@ -10418,6 +10448,7 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/guestDemoApk") return runHandler(handleGuestDemoApk, req, res);
   if (req.method === "GET" && (urlPath === "/courierApk" || urlPath === "/zcApk")) return runHandler(handleCourierApk, req, res);
   if (req.method === "GET" && urlPath === "/windowsDemo") return runHandler(handleWindowsDemo, req, res);
+  if (req.method === "GET" && urlPath === "/brandingLogoFile") return runHandler(handleBrandingLogoFile, req, res);
   // Адрес доставки для курьера — по подписанной ссылке из карточки в Telegram.
   if (req.method === "GET" && urlPath === "/deliveryAddress") return runHandler(telegram.handleAddress, req, res);
   // Геолокация курьера по подписанной ссылке из карточки: страница и приём координат.

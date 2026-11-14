@@ -497,6 +497,7 @@ class _MovementTile extends StatelessWidget {
           'count' => Icons.fact_check_outlined,
           'production' => Icons.soup_kitchen_outlined,
           'refund' => Icons.undo,
+          'transfer' => Icons.swap_horiz,
           _ => Icons.tune,
         },
         color: color,
