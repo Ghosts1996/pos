@@ -98,7 +98,7 @@ function createPlatform({ url, token, admin, firebaseApp, fetchImpl = fetch, tim
           return snap(path, !!j.exists, j.data);
         } catch (e) {
           if (!(e instanceof Unreachable)) throw e;
-          console.warn(`platform: ${e.message} — читаю Firestore напрямую`);
+          console.warn(`platform: ${e.message} — запасного пути нет (Firebase не используется), запрос отклонён`);
           return fallbackFirestore().doc(path).get();
         }
       },
@@ -107,7 +107,7 @@ function createPlatform({ url, token, admin, firebaseApp, fetchImpl = fetch, tim
           await call({ op: "set", path, data: toWire(data), merge: !!(opts && opts.merge) });
         } catch (e) {
           if (!(e instanceof Unreachable)) throw e;
-          console.warn(`platform: ${e.message} — пишу в Firestore напрямую`);
+          console.warn(`platform: ${e.message} — запасного пути нет (Firebase не используется), запись отклонена`);
           await fallbackFirestore().doc(path).set(data, opts || {});
         }
       },
@@ -124,7 +124,7 @@ function createPlatform({ url, token, admin, firebaseApp, fetchImpl = fetch, tim
           return { docs, size: docs.length, empty: !docs.length, forEach: (fn) => docs.forEach(fn) };
         } catch (e) {
           if (!(e instanceof Unreachable)) throw e;
-          console.warn(`platform: ${e.message} — читаю Firestore напрямую`);
+          console.warn(`platform: ${e.message} — запасного пути нет (Firebase не используется), запрос отклонён`);
           let q = fallbackFirestore().collection(col);
           for (const [f, op, v] of where) q = q.where(f, op, v);
           return q.get();
