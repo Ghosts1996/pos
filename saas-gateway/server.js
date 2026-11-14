@@ -47,6 +47,7 @@ const aiKeys = require("./ai-keys");
 const { createGuestDelivery } = require("./guest-delivery");
 const { createCourier, DEMO_VENUE_POS } = require("./courier");
 const { createCourierWeb } = require("./courier-web");
+const { createApkInfo } = require("./apk-info");
 const { createMap } = require("./map");
 const deliveryPricing = require("./delivery-pricing");
 const { createDeliveryAdmin } = require("./delivery-admin");
@@ -8493,7 +8494,9 @@ const courier = createCourier({
 });
 courier.setHooks({ event: telegram.deliveryEvent, moved: telegram.courierMoved });
 telegram.setCourierApi(courier);
-const courierWeb = createCourierWeb();
+// Версия APK курьера на сервере — для «Проверить обновления» в приложении.
+const courierApkInfo = createApkInfo(path.join(TENANT_BUILDS_DIR, PUBLIC_DEMO_DIR, "courier.apk"));
+const courierWeb = createCourierWeb({ apkInfo: courierApkInfo });
 // Своя карта: тайлы, шрифты, движок карты и маршруты (map.js). Файлы карты
 // собирает map-build.js на сервере; в тестах папки карт нет — карта «выключена».
 const zalMap = createMap({
@@ -9892,7 +9895,7 @@ const server = http.createServer((req, res) => {
   // Гостевой APK по QR стола — без входа.
   if (req.method === "GET" && urlPath === "/publicGuestApk") return runHandler(handlePublicGuestApk, req, res);
   if (req.method === "GET" && urlPath === "/guestDemoApk") return runHandler(handleGuestDemoApk, req, res);
-  if (req.method === "GET" && urlPath === "/courierApk") return runHandler(handleCourierApk, req, res);
+  if (req.method === "GET" && (urlPath === "/courierApk" || urlPath === "/zcApk")) return runHandler(handleCourierApk, req, res);
   if (req.method === "GET" && urlPath === "/windowsDemo") return runHandler(handleWindowsDemo, req, res);
   if (req.method === "GET" && urlPath === "/firebaseConfig") return runHandler(handleFirebaseWebConfig, req, res);
   // Адрес доставки для курьера — по подписанной ссылке из карточки в Telegram.

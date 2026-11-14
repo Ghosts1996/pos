@@ -5,4 +5,8 @@
     <string name="track_title">Вы на линии</string>
     <string name="track_text">Заведение видит, где вы, пока идёт смена</string>
     <string name="offline">Нет связи с сервером. Проверьте интернет — страница откроется сама.</string>
+    <string name="update_title">Обновление приложения курьера</string>
+    <string name="update_allow">Разрешите установку обновлений для «Курьер ZalPOS» и вернитесь в приложение</string>
+    <string name="update_loading">Скачиваем обновление…</string>
+    <string name="update_failed">Обновление не скачалось. Проверьте интернет и нажмите «Обновить» ещё раз</string>
 </resources>

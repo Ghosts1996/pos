@@ -274,6 +274,36 @@ async function main() {
   await page.waitForTimeout(600);
   await shot(page, "8b-forget");
   await page.click('[data-m="close"]');
+  // 11б. Обновления: кнопка «Проверить обновления» — версия та же.
+  await page.click('[data-a="upd-check"]');
+  await page.waitForSelector("text=У вас последняя версия приложения");
+  // Вышла новая версия экранов — приложение перезагружается само.
+  await page.evaluate(() => { window.__before = 1; });
+  await page.route("**/courier/version.json*", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ web: "ffffffffffff", apk: null }) }));
+  await page.click('[data-a="upd-check"]');
+  await page.waitForFunction(() => !window.__before, null, { timeout: 15000 });
+  await page.waitForSelector("#bnav");
+  await page.unroute("**/courier/version.json*");
+  // Приложение для Android: новый APK — «Обновить» скачивает его внутри приложения.
+  const native = await ctx.newPage();
+  await native.addInitScript(() => {
+    window.ZalNative = { isNative: () => true, version: () => "1.0.3", isTracking: () => false, startTracking: () => true, stopTracking() {}, openExternal(u) { window.__ext = u; }, installUpdate(u) { window.__inst = u; } };
+  });
+  await native.route("**/courier/version.json*", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ web: web.version(), apk: { code: 5, name: "1.0.5", size: 120000, at: Date.now() } }) }));
+  await native.goto(base);
+  await native.click('#bnav [data-a="view"][data-view="profile"]');
+  await native.click('[data-a="upd-check"]');
+  await native.waitForSelector("text=Вышла версия для Android 1.0.5");
+  await shot(native, "8c-update-apk");
+  await native.click('.list [data-a="apk-update"]');
+  assert.match(await native.evaluate(() => window.__inst), /\/saas\/zcApk$/, "APK скачивается внутри приложения");
+  await native.click('#bnav [data-a="view"][data-view="orders"]');
+  assert.ok(await native.isVisible('.updbar [data-a="apk-update"]'), "полоска «Новая версия для Android» на главном экране");
+  await native.waitForTimeout(3800);
+  await shot(native, "8d-update-bar");
+  await native.click('[data-a="apk-later"]');
+  assert.equal(await native.$(".updbar"), null, "«×» — напомнить завтра");
+  await native.close();
   await page.click('#bnav [data-a="view"][data-view="orders"]');
   await shot(page, "9-dark");
   // 12. Ручное назначение: свободных не видно, «Свободные» скрыты.

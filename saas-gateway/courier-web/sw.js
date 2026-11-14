@@ -2,7 +2,7 @@
  * Сначала сеть (обновления приходят сразу), кэш — запасной путь.
  * Запросы к серверу (api/) не кэшируются никогда: заказы — только свежие. */
 "use strict";
-const CACHE = "zalpos-courier-v17";
+const CACHE = "zalpos-courier-v18";
 // Тайлы своей карты — отдельно и «сначала из памяти»: адрес тайла меняется
 // с каждой новой сборкой карты (?v=…), старые вытесняются по количеству.
 const TILES = "zalpos-map-tiles-v1";
@@ -30,6 +30,8 @@ function trimTiles(cache) {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== self.location.origin || url.pathname.includes("/api/")) return;
+  // Версия приложения — только с сервера: по ней приложение узнаёт об обновлении.
+  if (url.pathname.endsWith("/version.json")) return;
   if (url.pathname.includes("/map/tiles/")) {
     // Скачивание карты города (dl=1) — мимо кэша просмотра: приложение кладёт само.
     if (url.searchParams.get("dl") === "1") return;

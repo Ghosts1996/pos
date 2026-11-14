@@ -30,6 +30,7 @@
     token: "zc_token", queue: "zc_queue", pings: "zc_pings", order: "zc_order", nav: "zc_nav",
     sound: "zc_sound", seen: "zc_seen", transport: "zc_transport", sheet: "zc_sheet", installSkip: "zc_install_skip",
     auth: "zc_auth", layer: "zc_layer", off: "zc_offmap", last: "zc_last", view: "zc_view",
+    updSkip: "zc_upd_skip",
   };
   const load = (k, def) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? def : v; } catch (_) { return def; } };
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* память переполнена — не страшно */ } };
@@ -168,6 +169,8 @@
     histAt: 0,
     // Вход по почте: шаг, почта, галочка, билет выбора заведения, когда можно прислать код ещё раз.
     auth: { step: "email", email: "", consent: false, ticket: "", venues: [], resendAt: 0, busy: false, error: "", demo: false },
+    // Обновления: когда проверяли, что нашли (версия экранов, APK для Android).
+    upd: { at: 0, checked: 0, busy: false, web: "", apk: null, webAt: 0 },
   };
   {
     // Ушли в почту за кодом, а телефон выгрузил страницу — возвращаем на ввод кода (код живёт 10 минут).
@@ -517,6 +520,104 @@
   const NATIVE = (() => { try { return !!(window.ZalNative && window.ZalNative.isNative()); } catch (_) { return false; } })();
   function nativeTracking() {
     try { return NATIVE && window.ZalNative.isTracking(); } catch (_) { return false; }
+  }
+
+  // ---------------------------------------------------------------- обновления
+  // Приложение обновляется само: раз в 15 минут, при возврате в приложение и
+  // по кнопке «Проверить обновления» сверяет свою версию (WEB_VER — её
+  // вписывает сервер в index.html) с version.json. Новая версия экранов —
+  // перезагрузка, как только курьер ничего не вводит (нажатия без связи и
+  // точки лежат в памяти телефона и не теряются). Новый APK для Android —
+  // скачивается внутри приложения, телефон спрашивает «Установить?».
+  const WEB_VER = (document.querySelector('meta[name="zc-ver"]') || {}).content || "";
+  const UPD_EVERY = 15 * 60 * 1000;
+  function nativeName() { try { return NATIVE ? String(window.ZalNative.version() || "") : ""; } catch (_) { return ""; } }
+  function nativeCode() { const m = /(\d+)\s*$/.exec(nativeName()); return m ? Number(m[1]) : 0; }
+  function nativeCanInstall() { try { return NATIVE && typeof window.ZalNative.installUpdate === "function"; } catch (_) { return false; } }
+  function updBusyUser() {
+    const el = document.activeElement;
+    return !!S.modal || !!(el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) || (!S.token && S.auth.step !== "email");
+  }
+  async function checkUpdates(manual = false) {
+    if (S.upd.busy) return;
+    S.upd.busy = true;
+    S.upd.at = Date.now();
+    if (manual) render();
+    let j = null;
+    try {
+      const r = await fetch(`version.json?t=${Date.now()}`, { cache: "no-store", signal: AbortSignal.timeout(10000) });
+      if (r.ok) j = await r.json();
+    } catch (_) { j = null; }
+    S.upd.busy = false;
+    if (!j) {
+      if (manual) { toast("Не удалось проверить обновления — нет связи", "bad"); render(); }
+      return;
+    }
+    S.upd.checked = Date.now();
+    if (j.web === WEB_VER && j.webAt) S.upd.webAt = j.webAt;
+    S.upd.web = !!(j.web && WEB_VER && j.web !== WEB_VER) ? j.web : "";
+    S.upd.apk = NATIVE && j.apk && j.apk.code > nativeCode() ? j.apk : null;
+    if (S.upd.web) applyWebUpdate(manual);
+    if (manual) {
+      if (S.upd.apk) toast(`Вышла новая версия приложения для Android ${S.upd.apk.name || ""}`.trim(), "ok");
+      else if (!S.upd.web) toast("У вас последняя версия приложения", "ok");
+    }
+    render();
+  }
+  /** Перейти на новую версию экранов: сразу (кнопка) или когда курьер ничего не вводит. */
+  function applyWebUpdate(now = false) {
+    if (!S.upd.web) return;
+    if (!now && (S.modal || (updBusyUser() && document.visibilityState === "visible"))) return;
+    // Защита от круга: та же версия уже подтягивалась только что — ждём кнопку.
+    let tried = null;
+    try { tried = JSON.parse(sessionStorage.getItem("zc_upd_try") || "null"); } catch (_) { tried = null; }
+    if (!now && tried && tried.v === S.upd.web && Date.now() - tried.at < 10 * 60 * 1000) return;
+    try { sessionStorage.setItem("zc_upd_try", JSON.stringify({ v: S.upd.web, at: Date.now() })); } catch (_) { /* приватный режим */ }
+    save(KEY.queue, S.queue);
+    save(KEY.pings, S.pings);
+    const go = () => location.reload();
+    if (S.reg && S.reg.update) S.reg.update().catch(() => {}).finally(go);
+    else go();
+  }
+  function apkUrl() {
+    const u = new URL("../zcApk", location.href);
+    return u.href;
+  }
+  function installApk() {
+    const url = apkUrl();
+    if (nativeCanInstall()) {
+      try {
+        window.ZalNative.installUpdate(url);
+        toast("Скачиваем обновление — когда появится окно, нажмите «Установить»", "ok");
+      } catch (_) { toast("Не удалось начать обновление — попробуйте ещё раз", "bad"); }
+      return;
+    }
+    // Приложение старой версии не умеет обновляться само: файл скачает браузер телефона.
+    try {
+      const u = new URL(url);
+      window.ZalNative.openExternal(`intent://${u.host}${u.pathname}#Intent;scheme=https;action=android.intent.action.VIEW;end`);
+      toast("Откроется браузер: скачайте файл и установите его поверх — смена и вход сохранятся", "ok");
+    } catch (_) { toast("Скачайте приложение заново: Профиль → «Скачать»", "bad"); }
+  }
+  function apkSkipped() {
+    const s = load(KEY.updSkip, null);
+    return !!(s && S.upd.apk && s.code === S.upd.apk.code && Date.now() < s.until);
+  }
+  /** Полоска на карте и в списке: новая версия для Android (новая версия экранов ставится сама). */
+  function updBarHtml() {
+    if (S.upd.web && updBusyUser()) return `<button class="updbar" data-a="upd-apply">${I.refresh("s")}<span>Новая версия приложения · <b>Обновить</b></span></button>`;
+    if (S.upd.apk && !apkSkipped()) return `<div class="updbar"><button class="updbar-go" data-a="apk-update">${I.download("s")}<span>Новая версия для Android ${esc(S.upd.apk.name || "")} · <b>Обновить</b></span></button><button class="updbar-x" data-a="apk-later" aria-label="Напомнить завтра">×</button></div>`;
+    return "";
+  }
+  function updatesHtml() {
+    const hm = (ms) => new Date(ms).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+    const t = S.upd.checked ? hm(S.upd.checked) : "";
+    const from = S.upd.webAt ? `${new Date(S.upd.webAt).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" })} ${hm(S.upd.webAt)}` : "";
+    return `
+      <div class="lrow">${I.refresh()}<span class="grow"><b>Версия приложения</b><br><span class="small muted">${NATIVE && nativeName() ? `Android ${esc(nativeName())} · ` : ""}${from ? `от ${from}` : `сборка ${esc((WEB_VER || "—").slice(0, 6))}`}${t ? ` · проверено в ${t}` : ""}</span></span></div>
+      ${S.upd.web ? `<div class="lrow">${I.download()}<span class="grow">Готова новая версия приложения</span><button class="btn go" style="min-height:40px" data-a="upd-apply">Обновить</button></div>` : ""}
+      ${S.upd.apk ? `<div class="lrow">${I.download()}<span class="grow">Вышла версия для Android ${esc(S.upd.apk.name || "")}${S.upd.apk.size ? ` <span class="small muted">· ${(S.upd.apk.size / 1048576).toFixed(1).replace(".", ",")} МБ</span>` : ""}</span><button class="btn go" style="min-height:40px" data-a="apk-update">Обновить</button></div>` : ""}
+      <div class="lrow" style="display:block"><p class="small muted" style="margin:0 0 10px">Приложение обновляется само${NATIVE ? "; новую версию для Android телефон попросит установить" : ""}.</p><button class="btn line wide" style="min-height:44px" data-a="upd-check" ${S.upd.busy ? "disabled" : ""}>${I.refresh("s")}${S.upd.busy ? "Проверяем…" : "Проверить обновления"}</button></div>`;
   }
 
   function startShiftServices() {
@@ -1351,6 +1452,7 @@
         </button>
       </div>
       ${net}
+      ${updBarHtml()}
       <div class="hud-col">
         ${Object.keys(LAYERS).length > 1 ? `<button class="round${S.layer !== "map" ? " on" : ""}" data-a="layers" aria-label="Вид карты: ${LAYERS[S.layer].label}" aria-expanded="${S.layersOpen}">${I.layers()}</button>` : ""}
         <button class="round" data-a="map-refresh" aria-label="Обновить карту и маршрут">${I.refresh()}</button>
@@ -1680,6 +1782,9 @@
             : iosHint ? `<div class="lrow">${I.download()}<span class="grow small">На iPhone: «Поделиться» → «На экран „Домой“»</span></div>`
               : `<div class="lrow">${I.download()}<span class="grow small">Установить на Android: меню браузера ⋮ → «Добавить на главный экран»</span></div>`}
       </div>
+
+      <div class="sec">Обновления</div>
+      <div class="list">${updatesHtml()}</div>
 
       <div class="sec">Где работаю</div>
       <div class="list">${(me.points || []).map((p) => `<div class="lrow">${I.store()}<span class="grow"><b>${esc(p.name)}</b><br><span class="small muted">${esc(p.address || "")}</span></span></div>`).join("")}</div>
@@ -2121,6 +2226,10 @@
         }
         return;
       case "refresh": S.v = ""; await refresh(true); loadHistory(true); toast("Обновлено"); return;
+      case "upd-check": return checkUpdates(true);
+      case "upd-apply": return applyWebUpdate(true);
+      case "apk-update": return installApk();
+      case "apk-later": if (S.upd.apk) save(KEY.updSkip, { code: S.upd.apk.code, until: Date.now() + 86400000 }); render(); return;
       case "logout": return openModal({ kind: "logout" });
       case "forget": return openModal({ kind: "forget" });
       default:
@@ -2276,6 +2385,7 @@
       if (S.data && S.data.me.onShift) requestWake();
       refresh();
       flush();
+      if (Date.now() - S.upd.at > 2 * 60 * 1000) checkUpdates();
     }
   });
   window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); S.install = e; if (S.data) render(); });
@@ -2300,6 +2410,8 @@
     if (S.token && now - S.lastSync >= every) refresh();
     if (now - lastTick >= 10000) { lastTick = now; flushPings(); flush(); }
     if (S.view === "income") loadHistory();
+    if (S.online && now - S.upd.at >= UPD_EVERY) checkUpdates();
+    else if (S.upd.web) applyWebUpdate();
     updateLive();
   }
 
@@ -2321,6 +2433,8 @@
     if (S.token && S.view === "map") startGeo();
     if (S.token) await refresh(true);
     flush();
+    // Первая проверка обновлений — через 20 с после запуска (не мешает загрузке заказов).
+    S.upd.at = Date.now() - UPD_EVERY + 20000;
     setInterval(loop, 1000);
   }
 

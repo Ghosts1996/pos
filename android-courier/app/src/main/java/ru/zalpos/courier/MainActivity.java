@@ -3,13 +3,20 @@ package ru.zalpos.courier;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.DownloadManager;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.Settings;
 import android.view.WindowManager;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
@@ -21,6 +28,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -37,6 +45,10 @@ public class MainActivity extends Activity {
     private GeolocationPermissions.Callback pendingGeo;
     private String pendingGeoOrigin;
     private long lastOfflineToast = 0;
+    // Обновление приложения: номер загрузки, ссылка до разрешения «Установка приложений».
+    private long updateId = -1;
+    private String pendingUpdateUrl;
+    private BroadcastReceiver updateReceiver;
 
     @SuppressLint({"SetJavaScriptEnabled", "JavascriptInterface"})
     @Override
@@ -95,6 +107,25 @@ public class MainActivity extends Activity {
                 }
             }
         });
+
+        // Ссылка на APK внутри приложения — это обновление: скачать и предложить установить.
+        web.setDownloadListener((url, userAgent, disposition, mime, length) -> {
+            Uri u = Uri.parse(url);
+            if (isOurs(u)) startUpdate(url);
+            else openOutside(u);
+        });
+        updateReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
+                if (id < 0 || id != updateId) return;
+                updateId = -1;
+                installDownloaded(id);
+            }
+        };
+        IntentFilter done = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(updateReceiver, done, Context.RECEIVER_EXPORTED);
+        else registerReceiver(updateReceiver, done);
 
         askPermissions();
         Uri start = getIntent() != null ? getIntent().getData() : null;
@@ -172,6 +203,83 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (web != null) web.onResume();
+        // Вернулись из настроек «Установка неизвестных приложений».
+        if (pendingUpdateUrl != null) {
+            String url = pendingUpdateUrl;
+            pendingUpdateUrl = null;
+            if (canInstall()) downloadUpdate(url);
+        }
+    }
+
+    private boolean canInstall() {
+        return Build.VERSION.SDK_INT < 26 || getPackageManager().canRequestPackageInstalls();
+    }
+
+    /** Обновить приложение: новый APK с нашего сервера, установка — с подтверждения курьера. */
+    private void startUpdate(String url) {
+        if (url == null || !isOurs(Uri.parse(url))) return;
+        if (!canInstall()) {
+            pendingUpdateUrl = url;
+            Toast.makeText(this, R.string.update_allow, Toast.LENGTH_LONG).show();
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+            } catch (Exception e) {
+                pendingUpdateUrl = null;
+                Toast.makeText(this, R.string.update_failed, Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        downloadUpdate(url);
+    }
+
+    private void downloadUpdate(String url) {
+        try {
+            File dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+            if (dir != null) {
+                File[] old = dir.listFiles();
+                if (old != null) for (File f : old) if (f.getName().endsWith(".apk")) f.delete();
+            }
+            DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+            DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
+            r.setTitle(getString(R.string.update_title));
+            r.setMimeType("application/vnd.android.package-archive");
+            r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
+            r.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "zalpos-courier-" + System.currentTimeMillis() + ".apk");
+            updateId = dm.enqueue(r);
+            Toast.makeText(this, R.string.update_loading, Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            updateId = -1;
+            Toast.makeText(this, R.string.update_failed, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void installDownloaded(long id) {
+        DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+        boolean ok = false;
+        Cursor c = null;
+        try {
+            c = dm.query(new DownloadManager.Query().setFilterById(id));
+            if (c != null && c.moveToFirst()) {
+                ok = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) == DownloadManager.STATUS_SUCCESSFUL;
+            }
+        } catch (Exception e) {
+            ok = false;
+        } finally {
+            if (c != null) c.close();
+        }
+        Uri apk = ok ? dm.getUriForDownloadedFile(id) : null;
+        if (apk == null) {
+            Toast.makeText(this, R.string.update_failed, Toast.LENGTH_LONG).show();
+            return;
+        }
+        Intent in = new Intent(Intent.ACTION_VIEW);
+        in.setDataAndType(apk, "application/vnd.android.package-archive");
+        in.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(in);
+        } catch (Exception e) {
+            Toast.makeText(this, R.string.update_failed, Toast.LENGTH_LONG).show();
+        }
     }
 
     @Override
@@ -182,6 +290,10 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (updateReceiver != null) {
+            try { unregisterReceiver(updateReceiver); } catch (Exception ignored) { }
+            updateReceiver = null;
+        }
         if (web != null) {
             web.destroy();
             web = null;
@@ -199,6 +311,17 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String version() {
             return BuildConfig.VERSION_NAME;
+        }
+
+        @JavascriptInterface
+        public int versionCode() {
+            return BuildConfig.VERSION_CODE;
+        }
+
+        /** «Обновить» в приложении: скачать новый APK и предложить установить. */
+        @JavascriptInterface
+        public void installUpdate(String url) {
+            runOnUiThread(() -> startUpdate(url));
         }
 
         /** Смена началась: точка курьера идёт на сервер и при выключенном экране. */
