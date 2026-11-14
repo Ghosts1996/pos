@@ -40,4 +40,20 @@ assert.equal(checks, fx.expected.checks, "кабинет: чеков");
 for (const s of fx.sessions) {
   for (const ex of [true, false]) assert.equal(consoleBill(s, ex), gatewayBill(s, ex), `${s.id}, excludeTobacco=${ex}`);
 }
+// 4. Выгрузка «Для бухгалтера» (accounting-export.js) — та же сумма каждого чека
+// и те же итоги за период, что у кабинета и бота.
+(async () => {
+  const acc = await import(require("url").pathToFileURL(path.join(__dirname, "..", "saas", "console", "accounting-export.js")).href);
+  for (const s of fx.sessions) {
+    for (const ex of [true, false]) assert.equal(acc.checkTotal(s, ex), consoleBill(s, ex), `выгрузка: ${s.id}, excludeTobacco=${ex}`);
+  }
+  const sheets = acc.buildAccountingSheets({
+    sessions: fx.sessions.filter((s) => s.status === "closed" && inP(s.closedAt)),
+    refunds: fx.sessions.filter((s) => s.refunded === true && inP(s.refundedAt)),
+  }, { excludeTobacco: fx.excludeTobacco });
+  const sum = Object.fromEntries(sheets.find((x) => x.name === "Сводка").rows.slice(1));
+  assert.equal(sum["Чеков"], fx.expected.checks, "выгрузка: чеков");
+  assert.equal(sum["Выручка за вычетом возвратов, ₽"], fx.expected.revenue, "выгрузка: выручка");
+  console.log("revenue-parity: выгрузка для бухгалтера совпала с кабинетом и ботом");
+})().catch((e) => { console.error(e); process.exit(1); });
 console.log("revenue-parity: бот и кабинет совпали — продажи", fx.expected.sales, "возвраты", fx.expected.refunds, "выручка", fx.expected.revenue);

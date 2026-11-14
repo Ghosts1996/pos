@@ -1688,3 +1688,8 @@ html.zd-open { overflow: hidden; }
 .calc-lines span, .savings-calc-note { color: var(--muted); }
 .savings-calc-note { font-size: 12px; margin: 12px 0 0; }
 @media (max-width: 600px) { .savings-calc { padding: 16px; } .calc-total b { font-size: 24px; } }
+
+.acc-export { display: grid; gap: 10px; }
+.acc-export-head { display: grid; gap: 4px; }
+.acc-export-row { gap: 10px; flex-wrap: wrap; align-items: center; }
+.acc-export-row select { width: auto; margin: 0; min-width: 200px; }

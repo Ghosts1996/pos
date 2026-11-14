@@ -7887,6 +7887,146 @@ async function handleAiProxy(req, res) {
 }
 
 /**
+ * ИИ заведения для задач сервера (перевод меню, разбор меню из фото): тот же
+ * ключ и те же модели, что у ИИ-помощника (у сети — общий набор ключей).
+ * Возвращает null, если ИИ в заведении выключен, не настроен или не входит в
+ * тариф. Всё, что уходит провайдеру, — через вычистку ПДн (pii-scrub.js).
+ */
+async function venueAiVendor(tenantId) {
+  const firestore = db();
+  const tenantRef = firestore.collection("tenants").doc(tenantId);
+  const tenantDoc = await tenantRef.get();
+  if (!tenantDoc.exists || ["deleted", "suspended"].includes(tenantDoc.data().status)) return null;
+  if (tenantDoc.data().demo !== true) {
+    const caps = (await tenantRef.collection("public").doc("features").get()).data();
+    if (caps && caps.ai === false) return null;
+  }
+  const chainId = tenantDoc.data().chainId || null;
+  let settingsDoc = null;
+  let secretsDoc = null;
+  if (chainId) {
+    const root = firestore.collection("chains").doc(chainId);
+    [settingsDoc, secretsDoc] = await Promise.all([root.collection("meta").doc("aiSettings").get(), root.collection("meta").doc("aiSecrets").get()]);
+  }
+  if (!settingsDoc || !settingsDoc.exists) {
+    [settingsDoc, secretsDoc] = await Promise.all([tenantRef.collection("meta").doc("aiSettings").get(), tenantRef.collection("meta").doc("aiSecrets").get()]);
+  }
+  const settings = settingsDoc.data() || {};
+  if (settings.enabled !== true) return null;
+  const vendor = resolveAiVendor(settings, secretsDoc.data() || {}, "primary");
+  if (!vendor || !vendor.apiKey || !vendor.baseUrl) return null;
+  return vendor;
+}
+
+/** Один ответ ИИ: content — строка или массив частей (в т.ч. картинка data:URL). */
+async function venueAiComplete(vendor, { system, content, maxTokens = 4000, heavy = false }) {
+  await assertPublicAiUrl(vendor.baseUrl);
+  const fmt = vendor.format === "anthropic" ? "anthropic" : "openai";
+  const model = (heavy ? vendor.models[1] : vendor.models[0]) || vendor.models[0];
+  const parts = Array.isArray(content) ? content : [{ type: "text", text: String(content) }];
+  let payload;
+  if (fmt === "anthropic") {
+    payload = { model, max_tokens: maxTokens, system, messages: [{ role: "user", content: parts.map((p) => (p.type === "image"
+      ? { type: "image", source: { type: "base64", media_type: p.mediaType, data: p.data } } : { type: "text", text: p.text })) }] };
+  } else {
+    payload = { model, max_tokens: maxTokens, messages: [{ role: "system", content: system }, { role: "user", content: parts.map((p) => (p.type === "image"
+      ? { type: "image_url", image_url: { url: `data:${p.mediaType};base64,${p.data}` } } : { type: "text", text: p.text })) }] };
+  }
+  const headers = fmt === "anthropic"
+    ? { "Content-Type": "application/json", "x-api-key": vendor.apiKey, "anthropic-version": "2023-06-01", Authorization: `Bearer ${vendor.apiKey}` }
+    : { "Content-Type": "application/json", Authorization: `Bearer ${vendor.apiKey}` };
+  const upstreamPath = fmt === "anthropic" ? (vendor.baseUrl.endsWith("/v1") ? "messages" : "v1/messages") : "chat/completions";
+  const r = await aiKeys.aiFetch(`${vendor.baseUrl}/${upstreamPath}`, {
+    method: "POST", headers, body: JSON.stringify(scrubAiPayload(payload)), timeoutMs: 120000,
+  });
+  if (r.status < 200 || r.status >= 300) throw new HttpError(502, `Провайдер ИИ ответил ${r.status}: ${String(r.text || "").slice(0, 160)}`);
+  let j;
+  try { j = JSON.parse(r.text); } catch (_) { throw new HttpError(502, "Провайдер ИИ прислал не JSON"); }
+  const text = fmt === "anthropic"
+    ? (Array.isArray(j.content) ? j.content.filter((c) => c.type === "text").map((c) => c.text).join("") : "")
+    : String((((j.choices || [])[0] || {}).message || {}).content || "");
+  if (!text) throw new HttpError(502, "Провайдер ИИ вернул пустой ответ");
+  return text;
+}
+
+/** Первый JSON-массив или объект в ответе ИИ (ответ бывает обёрнут в ```json). */
+function extractJson(text) {
+  const t = String(text || "").replace(/```(?:json)?/gi, "");
+  const a = t.indexOf("[");
+  const o = t.indexOf("{");
+  const start = a === -1 ? o : o === -1 ? a : Math.min(a, o);
+  if (start === -1) throw new Error("в ответе нет JSON");
+  const close = t[start] === "[" ? "]" : "}";
+  const end = t.lastIndexOf(close);
+  return JSON.parse(t.slice(start, end + 1));
+}
+
+// ---- Автоперевод меню гостя (RU → EN / 中文). Перевод — ИИ заведения, хранится
+// на сервере (menuTranslations/{точка}_{язык}, клиентам закрыт правилами): каждую
+// строку меню переводим один раз; новые позиции — только они.
+const MENU_LANGS = { en: "English", zh: "简体中文 (Simplified Chinese)" };
+const menuTranslateJobs = new Map(); // точка|язык → Promise
+const MENU_TRANSLATE_MAX = 800; // строк меню за раз
+
+async function menuStrings(tenantId) {
+  const t = db().collection("tenants").doc(tenantId);
+  const [cats, items] = await Promise.all([t.collection("menuCategories").get(), t.collection("menuItems").get()]);
+  const out = new Set();
+  const add = (v) => { const s = String(v || "").trim(); if (s && s.length <= 400) out.add(s); };
+  cats.docs.forEach((d) => add(d.data().name));
+  items.docs.forEach((d) => { add(d.data().name); add(d.data().description); });
+  return [...out].slice(0, MENU_TRANSLATE_MAX);
+}
+
+async function translateMenu(tenantId, lang, { complete = venueAiComplete, vendorOf = venueAiVendor } = {}) {
+  const key = `${tenantId}|${lang}`;
+  if (menuTranslateJobs.has(key)) return menuTranslateJobs.get(key);
+  const job = (async () => {
+    const ref = db().collection("menuTranslations").doc(`${tenantId}_${lang}`);
+    const strings = await menuStrings(tenantId);
+    const hash = crypto.createHash("sha256").update(JSON.stringify([...strings].sort())).digest("hex").slice(0, 32);
+    const cur = (await ref.get()).data() || {};
+    const map = cur.map && typeof cur.map === "object" ? { ...cur.map } : {};
+    if (cur.hash === hash) return { available: true, lang, map, cached: true };
+    const missing = strings.filter((s) => !(s in map));
+    if (missing.length) {
+      const vendor = await vendorOf(tenantId);
+      if (!vendor) return { available: false, reason: "ai-off" };
+      for (let i = 0; i < missing.length; i += 60) {
+        const chunk = missing.slice(i, i + 60);
+        const text = await complete(vendor, {
+          system: `You translate a Russian restaurant menu into ${MENU_LANGS[lang]}. Translate dish names naturally, keep brand names, `
+            + "numbers, units (g, ml) and prices as they are. Reply ONLY with a JSON array of strings: the same length and order as the input.",
+          content: JSON.stringify(chunk),
+          maxTokens: 4000,
+        });
+        const arr = extractJson(text);
+        if (!Array.isArray(arr) || arr.length !== chunk.length) throw new HttpError(502, "ИИ вернул перевод не той длины — повторите позже");
+        chunk.forEach((src, k) => { const v = String(arr[k] || "").trim(); if (v) map[src] = v.slice(0, 600); });
+      }
+    }
+    // Оставляем только строки текущего меню — удалённые позиции не копятся.
+    const fresh = Object.fromEntries(strings.filter((s) => s in map).map((s) => [s, map[s]]));
+    await ref.set({ tenantId, lang, hash, map: fresh, updatedAt: admin.firestore.Timestamp.now() });
+    return { available: true, lang, map: fresh, cached: false };
+  })();
+  menuTranslateJobs.set(key, job);
+  try { return await job; } finally { menuTranslateJobs.delete(key); }
+}
+
+async function handleGuestMenuTranslate(req, res) {
+  await verifyAuth(req); // любой вошедший гость (в т.ч. анонимный)
+  const { tenantId, lang, probe } = await parseJsonBody(req);
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
+  if (!MENU_LANGS[lang]) throw new HttpError(400, "Язык: en или zh");
+  if (probe === true) {
+    const cached = (await db().collection("menuTranslations").doc(`${tenantId}_${lang}`).get()).exists;
+    return sendJson(res, 200, { available: cached || !!(await venueAiVendor(tenantId)) });
+  }
+  sendJson(res, 200, await translateMenu(tenantId, lang));
+}
+
+/**
  * Подключение ключа ИИ одним полем (кабинет → «ИИ»): сервер узнаёт
  * провайдера, берёт модели ключа, выбирает быструю и умную и проверяет
  * ответ. Ключ не сохраняется здесь — кабинет сам пишет его в meta/aiSecrets.
@@ -10115,6 +10255,7 @@ const ROUTES = {
   "/registerGuestRecovery": handleRegisterGuestRecovery,
   "/restoreGuestSession": handleRestoreGuestSession,
   "/aiProxy": handleAiProxy,
+  "/guestMenuTranslate": handleGuestMenuTranslate,
   "/aiKeyProbe": handleAiKeyProbe,
   "/grantSuperAdmin": handleGrantSuperAdmin,
   "/revokeSuperAdmin": handleRevokeSuperAdmin,
@@ -10372,4 +10513,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, dataWriteGate, localDataStore });
+Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, dataWriteGate, localDataStore });

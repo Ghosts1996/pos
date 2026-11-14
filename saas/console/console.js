@@ -19,6 +19,7 @@ import {
   collection, query, where, orderBy, limit, Timestamp, deleteField, writeBatch, increment,
 } from './zal-db.js';
 import { savingsEstimate, planTableRows } from './savings.js';
+import { buildAccountingSheets, buildXlsx } from './accounting-export.js';
 
 // saas-gateway — сервер платформы (saas-gateway/README.md), живёт на том же
 // домене, что и pii-gateway, по пути /saas/.
@@ -6222,6 +6223,16 @@ function watchDashboardData(tenantId) {
           `).join('')}
         </div>
       ` : ''}
+      <div class="card acc-export">
+        <div class="acc-export-head"><b>Для бухгалтера</b>
+          <span class="small muted">Один файл Excel за месяц: чеки и виды оплаты, продажи по позициям, возвраты, приходы по накладным,
+          смены сотрудников, премии и штрафы. Открывается в Excel, «1С» (загрузка из табличного документа) и бухгалтерских сервисах.</span></div>
+        <div class="row acc-export-row">
+          <select id="f-acc-month" aria-label="Месяц выгрузки">${accMonthOptions()}</select>
+          <button type="button" class="btn btn-primary" id="f-acc-export" style="width:auto">Скачать Excel</button>
+        </div>
+        <div class="small" id="f-acc-status" aria-live="polite"></div>
+      </div>
       <h2>Быстрый доступ</h2>
       <div class="quick-actions">
         ${quickAction('devices', 'device', '#0EA5E9', 'Устройства', 'Код приглашения и сборка APK')}
@@ -7337,6 +7348,9 @@ function watchDashboardData(tenantId) {
         draw();
       };
     });
+    if (activeTab === 'overview' && $('f-acc-export')) {
+      $('f-acc-export').onclick = () => exportForAccountant(tenantId, tenant.name, generalSettings?.timezone || 'Europe/Moscow');
+    }
     if (activeTab === 'guests') bindGuestsTab(tenantId, draw);
     if (activeTab === 'delivery') bindDeliveryTab(tenantId, draw);
     if (activeTab === 'stock') {
@@ -8735,6 +8749,77 @@ function watchDashboardData(tenantId) {
 // что можно удешевлять. Выручка «Сегодня» — по счетам, как в Z-отчёте и в
 // боте, а не по суммам оплат (предоплата, переплата, ошибка ввода их
 // разводят). Сверка трёх формул — saas-gateway/test.revenue-parity.js.
+// ---- «Для бухгалтера»: месяц → Excel (accounting-export.js).
+function accMonthOptions() {
+  const now = new Date();
+  const out = [];
+  for (let i = 0; i < 13; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const v = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const label = d.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+    out.push(`<option value="${v}"${i === 1 ? ' selected' : ''}>${esc(label.charAt(0).toUpperCase() + label.slice(1))}${i === 0 ? ' (идёт)' : ''}</option>`);
+  }
+  return out.join('');
+}
+
+/** Начало месяца «2026-11» в поясе заведения (сутки с 00:00 по его часам). */
+function monthStartIn(ym, tz) {
+  const [y, m] = ym.split('-').map(Number);
+  const utc = Date.UTC(y, m - 1, 1);
+  // Сдвиг пояса на эту дату: сколько показывают часы заведения в полночь UTC.
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', hourCycle: 'h23', day: 'numeric' }).formatToParts(new Date(utc));
+  const h = Number(parts.find((p) => p.type === 'hour').value);
+  const day = Number(parts.find((p) => p.type === 'day').value);
+  const offsetH = day === 1 ? h : h - 24;
+  return new Date(utc - offsetH * 3600000);
+}
+
+async function exportForAccountant(tenantId, venueName, tz) {
+  const status = $('f-acc-status');
+  const btn = $('f-acc-export');
+  const ym = ($('f-acc-month') || {}).value;
+  if (!ym || !btn) return;
+  const [y, m] = ym.split('-').map(Number);
+  const from = monthStartIn(ym, tz);
+  const to = monthStartIn(`${m === 12 ? y + 1 : y}-${String(m === 12 ? 1 : m + 1).padStart(2, '0')}`, tz);
+  btn.disabled = true;
+  if (status) { status.className = 'small muted'; status.textContent = 'Собираю данные за месяц…'; }
+  try {
+    const tcol = (name) => collection(state.db, 'tenants', tenantId, name);
+    const inRange = (v) => { const d = v && typeof v.toDate === 'function' ? v.toDate() : null; return d && d >= from && d < to; };
+    const fromTs = Timestamp.fromDate(from);
+    const [sales, refunds, moves, shifts, adj, loyalty] = await Promise.all([
+      getDocs(query(tcol('sessions'), where('status', '==', 'closed'), where('closedAt', '>=', fromTs))),
+      getDocs(query(tcol('sessions'), where('refundedAt', '>=', fromTs))),
+      getDocs(query(tcol('inventoryMovements'), where('createdAt', '>=', fromTs))),
+      getDocs(query(tcol('staffShifts'), where('startedAt', '>=', fromTs))),
+      getDocs(query(tcol('payrollAdjustments'), where('at', '>=', fromTs))),
+      getDoc(doc(state.db, 'tenants', tenantId, 'settings', 'loyalty')).catch(() => null),
+    ]);
+    const rows = (snap, field) => snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((x) => inRange(x[field]));
+    const ex = loyalty && loyalty.data ? loyalty.data()?.excludeTobaccoFromPromo : undefined;
+    const sheets = buildAccountingSheets({
+      sessions: rows(sales, 'closedAt'), refunds: rows(refunds, 'refundedAt'), movements: rows(moves, 'createdAt'),
+      shifts: rows(shifts, 'startedAt'), adjustments: rows(adj, 'at'),
+    }, { tz, excludeTobacco: typeof ex === 'boolean' ? ex : true, tobaccoRe: BILL_TOBACCO_RE });
+    const blob = new Blob([buildXlsx(sheets)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${String(venueName || 'Заведение').replace(/[\\/:*?"<>|]/g, ' ').trim()} — ${ym} — для бухгалтера.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    const checks = sheets.find((x) => x.name === 'Чеки').rows.length - 2;
+    if (status) { status.className = 'small'; status.textContent = `Готово, чеков в файле: ${checks}. Файл — в папке «Загрузки».`; }
+  } catch (e) {
+    if (status) { status.className = 'small error'; status.textContent = `Не удалось собрать выгрузку: ${e.message || e}`; }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 const BILL_TOBACCO_RE = /кальян|табак|никотин|hookah|shisha|снюс|вейп|сигар/i;
 function sessionBill(session, excludeTobacco = true) {
   const items = Array.isArray(session.orderItems) ? session.orderItems : [];

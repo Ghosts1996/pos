@@ -1433,8 +1433,8 @@ function screenMenu() {
         <div class="mphoto">${i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
           ${isHit(i) ? '<span class="hit">Хит</span>' : ''}</div>
         <div class="mbody">
-          <div class="mname">${esc(i.name)}</div>
-          ${i.description ? `<div class="small muted mdesc">${esc(i.description)}</div>` : ''}
+          <div class="mname">${esc(trMenu(i.name))}</div>
+          ${i.description ? `<div class="small muted mdesc">${esc(trMenu(i.description))}</div>` : ''}
           ${hasMods(i) ? '<div class="small muted">Можно выбрать добавки</div>' : ''}
           <div class="mfoot"><b class="mprice">${money(i.price)}</b>${atTable || canTakeAway(i) ? qtyControls(i)
     : deliveryOn() ? '<span class="small muted">Только в заведении</span>' : ''}</div>
@@ -1469,8 +1469,8 @@ function screenMenu() {
     let body;
     if (q) {
       // Поиск — по всему меню сразу, как в кассе.
-      const match = (i) => String(i.name || '').toLowerCase().includes(q)
-        || String(i.description || '').toLowerCase().includes(q);
+      const match = (i) => [i.name, i.description, trMenu(i.name), trMenu(i.description)]
+        .some((v) => String(v || '').toLowerCase().includes(q));
       const found = regular.filter(match);
       const foundTobacco = tobaccoItems.filter(match);
       body = found.length || foundTobacco.length
@@ -1480,7 +1480,7 @@ function screenMenu() {
       body = backBar('Табак и кальяны') + tobaccoBlock(tobaccoItems);
     } else if (activeCat) {
       const s = sections.find((x) => x.id === activeCat);
-      body = `${backBar(s.name)}<div class="mgrid">${s.items.map(itemCard).join('')}</div>`;
+      body = `${backBar(trMenu(s.name))}<div class="mgrid">${s.items.map(itemCard).join('')}</div>`;
     } else {
       const hits = regular.filter(isHit).sort((a, b) => Number(a.popularRank) - Number(b.popularRank));
       body = `
@@ -1490,7 +1490,7 @@ function screenMenu() {
           const img = s.imageUrl || (s.items.find((i) => i.imageUrl) || {}).imageUrl || '';
           return `<button class="ctile" data-cat="${esc(s.id)}">
             ${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : `<span class="cinitial" aria-hidden="true">${esc((s.name || '').trim().charAt(0))}</span>`}
-            <span class="cname">${esc(s.name)}<small>${s.items.length} ${plural(s.items.length, 'позиция', 'позиции', 'позиций')}</small></span>
+            <span class="cname">${esc(trMenu(s.name))}<small>${s.items.length} ${plural(s.items.length, 'позиция', 'позиции', 'позиций')}</small></span>
           </button>`;
         }).join('')}</div>
         ${tobaccoItems.length ? `<button class="tobacco-tile" data-cat="__tobacco">
@@ -1503,6 +1503,7 @@ function screenMenu() {
     }
 
     box.innerHTML = `
+      ${menuLangBar()}
       <input id="menuSearch" class="msearch" type="search" placeholder="Поиск по меню" value="${esc(search)}">
       ${body}
       ${atTable ? cartBlock(items) : deliveryOn() ? cartBlock(items, true) : `
@@ -1521,6 +1522,10 @@ function screenMenu() {
     box.querySelectorAll('[data-cat]').forEach((el) => {
       el.onclick = () => { activeCat = el.dataset.cat; draw(); window.scrollTo(0, 0); };
     });
+    box.querySelectorAll('[data-mlang]').forEach((el) => {
+      el.onclick = () => setMenuLang(el.dataset.mlang, draw);
+    });
+    probeMenuLang(draw);
     box.querySelectorAll('[data-back]').forEach((el) => {
       el.onclick = () => { activeCat = null; draw(); };
     });
@@ -2187,6 +2192,70 @@ function paintSbp(s, boxId = 'sbpPanel', takeaway = false) {
   box.insertAdjacentHTML('beforeend', sellerHtml());
   const btn = $('sbpPay');
   if (btn) btn.onclick = () => startSbp(s, btn, boxId, takeaway);
+}
+
+// ---- Автоперевод меню (RU / EN / 中文): перевод делает ИИ заведения на сервере
+// и хранит его там же (/guestMenuTranslate); табачный перечень и надписи
+// приложения остаются на русском (закон о защите прав потребителей и № 15-ФЗ).
+const MENU_LANGS = [['ru', 'RU'], ['en', 'EN'], ['zh', '中文']];
+let menuLang = (() => { try { return ['en', 'zh'].includes(localStorage.getItem('zg_menu_lang')) ? localStorage.getItem('zg_menu_lang') : 'ru'; } catch (_) { return 'ru'; } })();
+const menuDict = {};
+let menuLangAvail = null; // null — ещё не спрашивали; true/false — ответ сервера
+let menuLangBusy = false;
+let menuLangError = '';
+
+function trMenu(text) {
+  if (menuLang === 'ru' || !text) return text;
+  const m = menuDict[menuLang];
+  return (m && m[String(text).trim()]) || text;
+}
+
+async function probeMenuLang(redraw) {
+  if (menuLangAvail !== null || !state.auth || !state.auth.currentUser) return;
+  menuLangAvail = false;
+  try {
+    menuLangAvail = (await gatewayPost('/guestMenuTranslate', { lang: 'en', probe: true })).available === true;
+  } catch (_) { menuLangAvail = false; }
+  if (menuLangAvail && menuLang !== 'ru') await setMenuLang(menuLang, redraw, true);
+  else redraw();
+}
+
+async function setMenuLang(lang, redraw, silent = false) {
+  menuLangError = '';
+  if (lang === 'ru' || menuDict[lang]) {
+    menuLang = lang;
+    try { localStorage.setItem('zg_menu_lang', lang); } catch (_) {}
+    redraw();
+    return;
+  }
+  menuLangBusy = true;
+  if (!silent) redraw();
+  try {
+    const key = `zg_menu_tr:${state.tenantId}:${lang}`;
+    const r = await gatewayPost('/guestMenuTranslate', { lang });
+    if (r.available === false) {
+      menuLangAvail = false;
+      menuLangError = 'Перевод меню в этом заведении недоступен';
+    } else {
+      menuDict[lang] = r.map || {};
+      try { sessionStorage.setItem(key, '1'); } catch (_) {}
+      menuLang = lang;
+      try { localStorage.setItem('zg_menu_lang', lang); } catch (_) {}
+    }
+  } catch (e) {
+    menuLangError = `Не удалось перевести меню: ${e.message || e}`;
+  } finally {
+    menuLangBusy = false;
+    redraw();
+  }
+}
+
+function menuLangBar() {
+  if (!menuLangAvail) return menuLangError ? `<p class="small muted">${esc(menuLangError)}</p>` : '';
+  return `<div class="mlang" role="group" aria-label="Язык меню">${MENU_LANGS.map(([id, label]) => `
+    <button type="button" data-mlang="${id}" class="${menuLang === id ? 'on' : ''}"${menuLangBusy ? ' disabled' : ''}>${label}</button>`).join('')}
+    ${menuLangBusy ? '<span class="small muted">Переводим…</span>' : menuLang !== 'ru' ? '<span class="small muted">Перевод автоматический</span>' : ''}
+  </div>${menuLangError ? `<p class="small muted">${esc(menuLangError)}</p>` : ''}`;
 }
 
 async function gatewayPost(path, body) {

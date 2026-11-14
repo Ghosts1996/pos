@@ -480,6 +480,9 @@ button.chip.on { color: var(--on-primary, #fff); background: var(--primary); fon
 
 /* Меню как в кассе: плитки категорий с фото → карточки позиций. */
 .msearch { width: 100%; margin: 0 0 6px; }
+.mlang { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; }
+.mlang button { min-width: 48px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text); font: inherit; font-size: 13px; }
+.mlang button.on { background: var(--primary); color: var(--on-primary, #fff); border-color: transparent; }
 h2.mh { margin: 26px 0 12px; }
 .cgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 .ctile { position: relative; aspect-ratio: 1 / 1.08; border: 1px solid var(--border); padding: 0; border-radius: var(--r); overflow: hidden; cursor: pointer;
