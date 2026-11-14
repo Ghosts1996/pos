@@ -128,7 +128,8 @@ class LocalDb {
   async post(route, body) {
     let res;
     try {
-      res = await fetch(`${this.gateway}${route}`, { method: 'POST', headers: await this.headers(), body: JSON.stringify(body) });
+      // Не дольше 30 с: зависший запрос — «нет связи», а не вечная крутилка.
+      res = await fetch(`${this.gateway}${route}`, { method: 'POST', headers: await this.headers(), body: JSON.stringify(body), ...(AbortSignal.timeout ? { signal: AbortSignal.timeout(30000) } : {}) });
     } catch (_) {
       throw dbError('unavailable', 'Нет связи с сервером — проверьте интернет');
     }

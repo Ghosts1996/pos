@@ -25,9 +25,23 @@ const GATEWAY = 'https://pii.zalpos.ru/saas';
 // имя и телефон гостя пишутся сюда ДО Firestore.
 const PII_URL = 'https://pii.zalpos.ru/';
 
+/** fetch с пределом ожидания: на плохой мобильной сети запрос не «висит»
+ *  минутами с крутилкой — через ms приходит понятная ошибка. */
+async function netFetch(url, opts = {}, ms = 30000) {
+  const t = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined;
+  try {
+    return await fetch(url, t && !opts.signal ? { ...opts, signal: t } : opts);
+  } catch (e) {
+    if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+      throw Object.assign(new Error(`Сервер не ответил за ${Math.round(ms / 1000)} с — проверьте интернет и попробуйте ещё раз`), { code: 'timeout', network: true });
+    }
+    throw Object.assign(new Error('Нет связи с сервером — проверьте интернет'), { code: 'network', network: true });
+  }
+}
+
 async function piiPost(body) {
   const token = await state.auth.currentUser.getIdToken();
-  const resp = await fetch(PII_URL, {
+  const resp = await netFetch(PII_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
@@ -82,7 +96,7 @@ function randomSecret() {
 /// Вернуться в свой профиль по ключу. false — ключ не подошёл или нет связи.
 async function restoreGuest(auth, k) {
   try {
-    const resp = await fetch(`${GATEWAY}/restoreGuestSession`, {
+    const resp = await netFetch(`${GATEWAY}/restoreGuestSession`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uid: k.uid, secret: k.secret, auth: isOwnAuth(auth) ? 'own' : 'firebase' }),
@@ -107,7 +121,7 @@ async function rememberGuestKey(user) {
     writeGuestKey({ uid: user.uid, secret, ok: false });
     try {
       const token = await user.getIdToken();
-      const resp = await fetch(`${GATEWAY}/registerGuestRecovery`, {
+      const resp = await netFetch(`${GATEWAY}/registerGuestRecovery`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ secret }),
@@ -482,7 +496,7 @@ async function resolveTenant() {
   const slug = (location.hostname.split('.')[0] || '').trim();
   if (!slug) throw new Error('Не удалось определить заведение по адресу');
 
-  const tenantResp = await fetch(`${GATEWAY}/resolveTenantBySlug`, {
+  const tenantResp = await netFetch(`${GATEWAY}/resolveTenantBySlug`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ slug }),
@@ -499,7 +513,7 @@ async function resolveTenant() {
     return { type: 'tenant', tenantId: json.tenantId, chainId: json.chainId || '' };
   }
 
-  const chainResp = await fetch(`${GATEWAY}/resolveChainBySlug`, {
+  const chainResp = await netFetch(`${GATEWAY}/resolveChainBySlug`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ slug }),
@@ -612,6 +626,16 @@ async function boot() {
     resolved = await tenantPromise;
   } catch (e) {
     if (e && e.blocked) { screenEl().innerHTML = blockedHtml(e.message); return; }
+    // Сервер не ответил или нет интернета — это не «заведение не найдено».
+    if (e && e.network) {
+      screenEl().innerHTML = `
+        <h1>Нет связи с сервером</h1>
+        <p class="muted">${esc(e.message)}</p>
+        <button class="btn-primary" id="bootRetry">Повторить</button>`;
+      const r = document.getElementById('bootRetry');
+      if (r) r.onclick = () => location.reload();
+      return;
+    }
     screenEl().innerHTML = `
       <h1>Заведение не найдено</h1>
       <p class="muted">Проверьте адрес — возможно, ссылка или QR-код
@@ -652,7 +676,7 @@ async function boot() {
   const firebaseApp = () => {
     if (!appPromise) {
       appPromise = (async () => {
-        const res = await fetch(`${GATEWAY}/firebaseConfig`);
+        const res = await netFetch(`${GATEWAY}/firebaseConfig`);
         const config = await res.json();
         if (!res.ok || !config || !config.projectId) throw new Error('нет настроек Firebase');
         const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
@@ -2168,7 +2192,7 @@ function paintSbp(s, boxId = 'sbpPanel', takeaway = false) {
 
 async function gatewayPost(path, body) {
   const token = await state.auth.currentUser.getIdToken();
-  const res = await fetch(`${GATEWAY}${path}`, {
+  const res = await netFetch(`${GATEWAY}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ tenantId: state.tenantId, ...body }),
@@ -4021,7 +4045,7 @@ async function deleteMyData() {
     }
     await piiPost({ tenantId: state.tenantId, kind: 'guest_delete' });
     const token = await state.auth.currentUser.getIdToken();
-    const res = await fetch(`${GATEWAY}/deleteGuestData`, {
+    const res = await netFetch(`${GATEWAY}/deleteGuestData`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ tenantId: state.tenantId }),

@@ -140,7 +140,8 @@ class OwnAuth {
     if (withToken) headers.Authorization = `Bearer ${await this._token(false)}`;
     let res;
     try {
-      res = await fetch(`${this.gateway}${route}`, { method: 'POST', headers, body: JSON.stringify(body || {}) });
+      // Не дольше 20 с: на обновлении входа ждут все остальные запросы страницы.
+      res = await fetch(`${this.gateway}${route}`, { method: 'POST', headers, body: JSON.stringify(body || {}), ...(AbortSignal.timeout ? { signal: AbortSignal.timeout(20000) } : {}) });
     } catch (_) {
       throw authErr('auth/network-request-failed', 'Нет связи с сервером — проверьте интернет');
     }

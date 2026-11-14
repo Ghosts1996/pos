@@ -51,6 +51,8 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   /// «Начать сеанс» — про кальян; в ресторане и кафе стол просто открывают.
   String get _startLabel => VenueService.instance.terms.isHookah ? 'Начать сеанс' : 'Открыть стол';
   final _fs = FirestoreService();
+  // Чек стола не найден в базе — через 5 с стол освобождается (SaaS).
+  Timer? _missingTimer;
   bool _busy = false;
   bool _sending = false;
   String? _sessionId;
@@ -80,6 +82,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   @override
   void dispose() {
     _meSub?.cancel();
+    _missingTimer?.cancel();
     super.dispose();
   }
 
@@ -669,7 +672,9 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     final failed = <String>[...missing];
     for (final g in groups.values) {
       try {
-        await g.$1.printKitchenSlips(g.$2);
+        // Принтер молчит — не держим кнопку «На кухню» дольше 20 с (SaaS).
+        final job = g.$1.printKitchenSlips(g.$2);
+        await (kSaasMode ? job.timeout(const Duration(seconds: 20)) : job);
         printed.addAll(g.$2);
       } catch (_) {
         failed.addAll(g.$2.map((s) => s.title.toLowerCase()));
@@ -792,7 +797,24 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                 );
               }
               final session = sessSnap.data;
-              if (session == null) return const Center(child: CircularProgressIndicator());
+              if (session == null) {
+                // Чека нет в базе (удалён, стол «помнит» несуществующий чек):
+                // раньше здесь была вечная крутилка. Ждём 5 с (чек мог ещё не
+                // дойти) и освобождаем стол (SaaS).
+                if (kSaasMode && sessSnap.connectionState == ConnectionState.active) {
+                  final missing = _sessionId;
+                  _missingTimer ??= Timer(const Duration(seconds: 5), () {
+                    _missingTimer = null;
+                    if (!mounted || _sessionId != missing) return;
+                    unawaited(_fs.repairStaleTables(tableId: t.id));
+                    final others = t.activeSessionIds.where((id) => id != missing).toList();
+                    setState(() => _sessionId = others.isEmpty ? null : others.first);
+                  });
+                }
+                return const Center(child: CircularProgressIndicator());
+              }
+              _missingTimer?.cancel();
+              _missingTimer = null;
 
               // Чек закрыли (в т.ч. с другого устройства через оплату) —
               // переключаемся на другой открытый чек этого стола или на

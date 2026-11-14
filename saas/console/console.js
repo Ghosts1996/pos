@@ -31,7 +31,7 @@ const PII_GATEWAY_URL = 'https://pii.zalpos.ru/';
 async function recordOwnerInRussia(email) {
   let res;
   try {
-    res = await fetch(PII_GATEWAY_URL, {
+    res = await netFetch(PII_GATEWAY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind: 'owner', email, offer: true, pdConsent: true, edition: LEGAL_EDITION }),
@@ -53,7 +53,7 @@ async function piiCall(body) {
   const idToken = await state.auth.currentUser?.getIdToken();
   let res;
   try {
-    res = await fetch(PII_GATEWAY_URL, {
+    res = await netFetch(PII_GATEWAY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
       body: JSON.stringify(body),
@@ -70,7 +70,7 @@ async function piiCall(body) {
 async function linkOwnerInRussia(user) {
   try {
     const token = await user.getIdToken();
-    await fetch(PII_GATEWAY_URL, {
+    await netFetch(PII_GATEWAY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ kind: 'owner_link' }),
@@ -729,7 +729,7 @@ async function dlvLoadDistricts(st, redraw) {
   st.districts = { ...(st.districts || {}), loading: true, error: '', km };
   redraw();
   try {
-    const r = await fetch(`${SAAS_GATEWAY_URL}/map/districts?lat=${pos.lat}&lng=${pos.lng}&km=${km}`).then((x) => x.json());
+    const r = await netFetch(`${SAAS_GATEWAY_URL}/map/districts?lat=${pos.lat}&lng=${pos.lng}&km=${km}`).then((x) => x.json());
     if (!r.ok) {
       const why = r.reason === 'building' || r.reason === 'noarea'
         ? 'Карты этого места на сервере ещё нет — она соберётся сама в течение суток после сохранения места. Пока можно добавить районы по названию.'
@@ -1584,11 +1584,11 @@ function bindTelegramBox(tenantId, redraw) {
 /** Скачать файл (docx, csv), который сервер отдаёт по POST. */
 async function downloadFromGateway(path, data, fallbackName) {
   const idToken = await state.auth.currentUser?.getIdToken();
-  const res = await fetch(`${SAAS_GATEWAY_URL}/${path}`, {
+  const res = await netFetch(`${SAAS_GATEWAY_URL}/${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
     body: JSON.stringify(data || {}),
-  });
+  }, 180000);
   if (!res.ok) {
     const json = await res.json().catch(() => null);
     throw new Error(json?.error || `Сервис ответил ошибкой (${res.status})`);
@@ -1605,6 +1605,23 @@ async function downloadFromGateway(path, data, fallbackName) {
   return name;
 }
 
+/** fetch с пределом ожидания: на плохой мобильной сети запрос не «висит»
+ *  минутами с крутилкой — через ms приходит понятная ошибка. */
+async function netFetch(url, opts = {}, ms = 30000) {
+  const t = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined;
+  try {
+    return await fetch(url, t && !opts.signal ? { ...opts, signal: t } : opts);
+  } catch (e) {
+    if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+      throw Object.assign(new Error(`Сервер не ответил за ${Math.round(ms / 1000)} с — проверьте интернет и попробуйте ещё раз`), { code: 'timeout', network: true });
+    }
+    throw Object.assign(new Error('Нет связи с сервером — проверьте интернет'), { code: 'network', network: true });
+  }
+}
+
+/** Долгие действия сервера (перенос данных, копии, удаление, сборки) — ждём дольше. */
+const LONG_CALL = /import|migrat|backup|Backup|Delete|Purge|purge|authBackend|build|Build|restore|export|Export|robokassaCheck|aiKey|ai[A-Z]/;
+
 const prevMonthIso = () => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
 
 async function callSaasGateway(path, data, { forceRefresh = false } = {}) {
@@ -1616,14 +1633,14 @@ async function callSaasGateway(path, data, { forceRefresh = false } = {}) {
   // forceRefresh — сразу после reauthenticate(): серверу нужен токен со
   // свежим auth_time (requireRecentAuth).
   const idToken = await state.auth.currentUser?.getIdToken(forceRefresh);
-  const res = await fetch(`${SAAS_GATEWAY_URL}/${path}`, {
+  const res = await netFetch(`${SAAS_GATEWAY_URL}/${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
     },
     body: JSON.stringify(data || {}),
-  });
+  }, LONG_CALL.test(path) ? 300000 : 60000);
   const json = await res.json().catch(() => null);
   // 401 — токен устарел или отозван (например, сразу после того, как задали
   // пароль, или пароль сменили на другом устройстве): один раз повторяем со
@@ -1758,7 +1775,7 @@ async function uploadSupportFiles(ticketId, list) {
     const upload = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
     let json = null;
     for (let i = 0; i < parts; i++) {
-      const res = await fetch(`${SAAS_GATEWAY_URL}/supportUpload?ticketId=${encodeURIComponent(ticketId)}&name=${encodeURIComponent(a.name)}&upload=${upload}&part=${i}&parts=${parts}`, {
+      const res = await netFetch(`${SAAS_GATEWAY_URL}/supportUpload?ticketId=${encodeURIComponent(ticketId)}&name=${encodeURIComponent(a.name)}&upload=${upload}&part=${i}&parts=${parts}`, {
         method: 'POST', headers: { 'Content-Type': a.type, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: a.file.slice(i * CHUNK, (i + 1) * CHUNK),
       });
@@ -1775,7 +1792,7 @@ async function supportFileUrl(ticketId, fileId) {
   const key = `${ticketId}/${fileId}`;
   if (supportBlobs.has(key)) return supportBlobs.get(key);
   const token = await state.auth.currentUser?.getIdToken();
-  const res = await fetch(`${SAAS_GATEWAY_URL}/supportFile?t=${encodeURIComponent(ticketId)}&f=${encodeURIComponent(fileId)}`, {
+  const res = await netFetch(`${SAAS_GATEWAY_URL}/supportFile?t=${encodeURIComponent(ticketId)}&f=${encodeURIComponent(fileId)}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new Error(res.status === 404 ? 'файл не найден' : `ошибка ${res.status}`);
@@ -7680,7 +7697,7 @@ function watchDashboardData(tenantId) {
         const idToken = await state.auth.currentUser?.getIdToken();
         const check = async (s) => {
           try {
-            const res = await fetch(`${SAAS_GATEWAY_URL}/aiProxy`, {
+            const res = await netFetch(`${SAAS_GATEWAY_URL}/aiProxy`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
               body: JSON.stringify({
@@ -9666,7 +9683,7 @@ function watchAdminPartners() {
       el.onclick = async () => {
         try {
           const idToken = await state.auth.currentUser.getIdToken();
-          const res = await fetch(`${SAAS_GATEWAY_URL}/partnerAdminContract`, {
+          const res = await netFetch(`${SAAS_GATEWAY_URL}/partnerAdminContract`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
             body: JSON.stringify({ id: el.dataset.id }),
@@ -10874,7 +10891,7 @@ const STUCK_BUILD_MINUTES = 30;
 // запросом: watchAllBuildJobs видит только последние 50 сборок.
 function watchAdminInfra() {
   const statusEl = $('admin-infra-gateway-status');
-  fetch(`${SAAS_GATEWAY_URL}/health`)
+  netFetch(`${SAAS_GATEWAY_URL}/health`, {}, 15000)
     .then((r) => {
       if (!statusEl) return;
       statusEl.innerHTML = r.ok
@@ -13015,7 +13032,7 @@ async function downloadBackup(name) {
   if (!(await reauthenticate(`скачать резервную копию ${name}`))) return;
   try {
     const idToken = await state.auth.currentUser.getIdToken(true);
-    const res = await fetch(`${SAAS_GATEWAY_URL}/downloadBackup`, {
+    const res = await netFetch(`${SAAS_GATEWAY_URL}/downloadBackup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
       body: JSON.stringify({ name }),
@@ -13045,7 +13062,7 @@ async function exportVenueBackup({ tenantId, chainId, fileKey, label, asAdmin = 
   toast('Собираем бэкап — это может занять до минуты…');
   try {
     const idToken = await state.auth.currentUser.getIdToken(asAdmin);
-    const res = await fetch(`${SAAS_GATEWAY_URL}/exportBackup`, {
+    const res = await netFetch(`${SAAS_GATEWAY_URL}/exportBackup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
       body: JSON.stringify({ ...(chainId ? { chainId } : { tenantId }), ...(unlimited ? { unlimited: true } : {}) }),

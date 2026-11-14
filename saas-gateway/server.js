@@ -1569,6 +1569,8 @@ async function githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, jobIdPosW
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ ref: GITHUB_REF, inputs: withInputs }),
+      // Кнопка «Собрать» в кабинете ждёт этот ответ — не дольше 20 с.
+      signal: AbortSignal.timeout(20000),
     }
   );
   let res = await dispatch(inputs);
@@ -2572,6 +2574,8 @@ async function robokassaCharge({ sub, targetId, isChain, price, billingPeriod, d
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form.toString(),
+    // Зависшая Робокасса не должна держать продление остальных подписок.
+    signal: AbortSignal.timeout(30000),
   });
   const text = (await resp.text()).trim();
   if (!resp.ok || !/^OK/i.test(text)) throw new Error(`Робокасса не приняла автосписание: ${resp.status} ${text.slice(0, 200)}`);

@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:pointycastle/export.dart';
 import '../models/fiscal_receipt.dart';
 import 'atol_local_kassa.dart';
+import '../build_info.dart';
 
 /// Фискализация чека по 54-ФЗ. Экран оплаты знает только этот интерфейс,
 /// провайдер выбирается в одном месте ([kassaService]), как и терминал в
@@ -512,7 +513,9 @@ class OrangeDataKassaService implements KassaService {
       Uint8List.fromList(utf8.encode(clientKeyPem)),
       password: (certPassphrase ?? '').isEmpty ? null : certPassphrase,
     );
-    return HttpClient(context: ctx);
+    // Касса OrangeData недоступна (сеть, файрвол) — соединение не ждём
+    // минутами: экран оплаты ждёт этот ответ (только SaaS).
+    return HttpClient(context: ctx)..connectionTimeout = kSaasMode ? const Duration(seconds: 15) : null;
   }
 
   String _sign(String body) {

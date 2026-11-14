@@ -1082,7 +1082,7 @@
       const step = () => { S.off.done++; if (S.view === "profile") paintOff(); };
       const put = async (key, url) => {
         if (await cache.match(key)) { step(); return; }
-        const res = await fetch(url, { cache: "no-store" });
+        const res = await fetch(url, { cache: "no-store", ...(AbortSignal.timeout ? { signal: AbortSignal.timeout(60000) } : {}) });
         if (!res.ok) throw new Error(`карта: ${res.status}`);
         const blob = await res.blob();
         bytes += blob.size;

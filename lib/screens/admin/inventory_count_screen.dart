@@ -6,6 +6,7 @@ import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/adaptive.dart';
 import '../../utils/human_error.dart';
+import '../../build_info.dart';
 
 /// Экран одного прохода инвентаризации: список позиций, зафиксированных на
 /// момент старта, с полем для фактически посчитанного количества по
@@ -46,7 +47,20 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
   }
 
   Future<void> _load() async {
-    final count = await _fs.inventoryCountStream(widget.countId).first;
+    final InventoryCount? count;
+    if (kSaasMode) {
+      // Нет связи и копии в памяти — не крутим загрузку вечно (SaaS).
+      try {
+        count = await _fs.inventoryCountStream(widget.countId).first.timeout(const Duration(seconds: 15));
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Не удалось открыть инвентаризацию: ${humanError(e, lower: true)}')));
+        return;
+      }
+    } else {
+      count = await _fs.inventoryCountStream(widget.countId).first;
+    }
     if (!mounted) return;
     setState(() {
       _count = count;

@@ -10,6 +10,7 @@ import '../utils/constants.dart';
 import '../utils/human_error.dart';
 import '../utils/shift_crew.dart';
 import 'close_shift_dialog.dart';
+import '../build_info.dart';
 
 /// Смены в заведении, где работают несколько человек.
 ///
@@ -89,7 +90,7 @@ Widget crewList(ShiftCrew crew, List<StaffShiftModel> shifts) => Column(
 /// «Начать мою смену». Если смена заведения ещё закрыта — пришедший первым
 /// открывает и её: без открытой смены нет ни X-отчёта, ни уведомлений.
 /// Вчерашнюю незакрытую смену заведения предлагает сначала закрыть.
-Future<void> startMyShift(BuildContext context, Employee me) async {
+Future<void> _startMyShiftRaw(BuildContext context, Employee me) async {
   try {
     var venue = await _fs.currentOpenShift();
     if (venue != null && isStaleShift(venue.openedAt)) {
@@ -143,7 +144,7 @@ Future<bool?> _offerCloseStaleVenueShift(BuildContext context, ShiftModel venue,
 /// Кто-то ещё работает — заканчивается только своя смена: касса и X-отчёт
 /// остальных не меняются. Уходит последним — предлагаем закрыть и смену
 /// заведения с пересчётом кассы (или оставить её сменщику).
-Future<void> endMyShift(BuildContext context, Employee me, StaffShiftModel mine) async {
+Future<void> _endMyShiftRaw(BuildContext context, Employee me, StaffShiftModel mine) async {
   ShiftCrew crew;
   ShiftModel? venue;
   try {
@@ -277,7 +278,7 @@ DateTime leftAtFromTime(DateTime startedAt, int hour, int minute) {
 /// закрытие закроет кассу и X-отчёт для всех. Уходит только сам —
 /// предлагаем вместо этого закончить свою смену. После пересчёта кассы
 /// отмечаем уход закрывающего и (по галочке) всех, кто был на смене.
-Future<bool> closeVenueShift(BuildContext context, {required ShiftModel shift, required Employee me}) async {
+Future<bool> _closeVenueShiftRaw(BuildContext context, {required ShiftModel shift, required Employee me}) async {
   ShiftCrew crew;
   try {
     crew = await loadShiftCrew();
@@ -462,3 +463,36 @@ Future<bool> joinOpenVenueShift(BuildContext context, {required Employee me, req
   }
   return true;
 }
+
+// ---- Защита от «вечной крутилки» (SaaS) ----
+// Начало/конец своей смены и закрытие смены заведения вызываются с кнопок,
+// которые на время ставят «занято». Сбой связи или ошибка внутри раньше
+// оставляли кнопку крутиться навсегда — теперь ошибка показывается, а
+// кнопка снова доступна.
+
+Future<T> _guardShift<T>(BuildContext context, String what, T onError, Future<T> Function() run) async {
+  if (!kSaasMode) return run();
+  try {
+    return await run();
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Не удалось $what: ${humanError(e, lower: true)}. Проверьте интернет и попробуйте ещё раз'),
+        duration: const Duration(seconds: 8),
+      ));
+    }
+    return onError;
+  }
+}
+
+/// Начать свою смену (см. [_startMyShiftRaw]).
+Future<void> startMyShift(BuildContext context, Employee me) =>
+    _guardShift<void>(context, 'начать смену', null, () => _startMyShiftRaw(context, me));
+
+/// Закончить свою смену (см. [_endMyShiftRaw]).
+Future<void> endMyShift(BuildContext context, Employee me, StaffShiftModel mine) =>
+    _guardShift<void>(context, 'закончить смену', null, () => _endMyShiftRaw(context, me, mine));
+
+/// Закрыть смену заведения с Z-отчётом (см. [_closeVenueShiftRaw]).
+Future<bool> closeVenueShift(BuildContext context, {required ShiftModel shift, required Employee me}) =>
+    _guardShift<bool>(context, 'закрыть смену', false, () => _closeVenueShiftRaw(context, shift: shift, me: me));

@@ -326,6 +326,11 @@ function createMailer(env = process.env) {
     port,
     secure: port === 465,
     auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+    // По умолчанию nodemailer ждёт почтовый сервер до 10 минут — всё это
+    // время у курьера крутится «Получить код». Не дольше полуминуты.
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 30000,
   });
   const from = env.MAIL_FROM || `ZalPOS <${env.SMTP_USER}>`;
   return {

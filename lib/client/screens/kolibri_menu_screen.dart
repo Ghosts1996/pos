@@ -961,7 +961,23 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
     // Платформа: второе нажатие, пока первое отправляется, — не второй заказ.
     if (kSaasMode && _sending) return;
     if (kSaasMode) setState(() => _sending = true);
-    final profile = await _link.profileStream(_auth.uid).first;
+    ClientProfile? profile;
+    if (kSaasMode) {
+      // Нет связи — профиль не придёт: не держим кнопку «Отправить» вечно.
+      try {
+        profile = await _link.profileStream(_auth.uid).first.timeout(const Duration(seconds: 12));
+      } catch (_) {
+        if (mounted) {
+          setState(() => _sending = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Нет связи с заведением — проверьте интернет и отправьте ещё раз')),
+          );
+        }
+        return;
+      }
+    } else {
+      profile = await _link.profileStream(_auth.uid).first;
+    }
     if (profile == null || profile.activeSessionId.isEmpty) {
       if (kSaasMode && mounted) setState(() => _sending = false);
       if (!mounted) return;
