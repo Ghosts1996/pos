@@ -1,8 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/app_scope.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
+import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart' show PaperSize;
 import '../../services/printer_service.dart';
+import '../../services/printers/device_printers.dart';
+import '../../services/printers/lan_scan.dart';
 import '../../services/egais_service.dart';
 import 'egais_waybills_screen.dart';
 import '../../services/atol_local_kassa.dart';
@@ -46,6 +50,15 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   final _hookahIpCtrl = TextEditingController();
   String _btMac = '';
   final _networkIpCtrl = TextEditingController();
+  // Только SaaS: лента, кодировка, ящик, облачная печать, принтер устройства.
+  String _paper = '58';
+  String _encoding = 'cp866';
+  bool _drawerOnCash = false;
+  bool _printHub = false;
+  String _devType = '';
+  final _devNameCtrl = TextEditingController();
+  bool _devHub = false;
+  bool _scanning = false;
   final _utmHostCtrl = TextEditingController();
   final _fsrarIdCtrl = TextEditingController();
   bool _egaisEnabled = false;
@@ -136,6 +149,17 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _hookahIpCtrl.text = data['hookahPrinterIp'] as String? ?? '';
     _btMac = data['printerBtMac'] ?? '';
     _networkIpCtrl.text = data['printerIp'] ?? '';
+    if (kSaasMode) {
+      _paper = '${data['printerPaper'] ?? ''}' == '80' ? '80' : '58';
+      final enc = '${data['printerEncoding'] ?? ''}';
+      _encoding = printEncodings.containsKey(enc) ? enc : 'cp866';
+      _drawerOnCash = data['printerDrawerOnCash'] as bool? ?? false;
+      _printHub = data['printHub'] as bool? ?? false;
+      await DevicePrinterPrefs.load();
+      _devType = DevicePrinterPrefs.type;
+      _devNameCtrl.text = DevicePrinterPrefs.name;
+      _devHub = DevicePrinterPrefs.hub;
+    }
     _utmHostCtrl.text = data['utmHost'] ?? '';
     _fsrarIdCtrl.text = data['egaisFsrarId'] ?? '';
     _egaisEnabled = data['egaisEnabled'] as bool? ?? (data['utmHost'] ?? '').toString().trim().isNotEmpty;
@@ -224,6 +248,17 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     } else {
       activeReceiptPrinter = null;
     }
+    if (kSaasMode) {
+      sharedReceiptPrinter = activeReceiptPrinter;
+      printPaper = _paper == '80' ? PaperSize.mm80 : PaperSize.mm58;
+      printEncoding = _encoding;
+      drawerOnCash = _drawerOnCash;
+      printHubOn = _printHub;
+      DevicePrinterPrefs.type = _devType;
+      DevicePrinterPrefs.name = _devNameCtrl.text.trim();
+      DevicePrinterPrefs.hub = _devHub;
+      pickDevicePrinter();
+    }
   }
 
   Future<void> _save() async {
@@ -244,6 +279,12 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       'printerType': _printerType,
       'printerBtMac': _btMac,
       'printerIp': _networkIpCtrl.text.trim(),
+      if (kSaasMode) ...{
+        'printerPaper': _paper,
+        'printerEncoding': _encoding,
+        'printerDrawerOnCash': _drawerOnCash,
+        'printHub': _printHub,
+      },
       'utmHost': _utmHostCtrl.text.trim(),
       'egaisEnabled': _egaisEnabled,
       'egaisFsrarId': _fsrarIdCtrl.text.trim(),
@@ -291,6 +332,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       _onlineVerified = false;
     }
     _onlineSaved = _onlineSignature;
+    if (kSaasMode) {
+      await DevicePrinterPrefs.save(type: _devType, name: _devNameCtrl.text.trim(), hub: _devHub);
+    }
     _applyActivePrinter();
     _applyActiveKassa();
     _applyActiveEgais();
@@ -686,6 +730,176 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     }
   }
 
+  // ------------------------------------------------ SaaS: дополнительно
+
+  Widget _findButton(TextEditingController ctrl) => IconButton(
+        tooltip: 'Найти в сети',
+        onPressed: _scanning ? null : () => _findLan(ctrl),
+        icon: _scanning
+            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+            : const Icon(Icons.wifi_find),
+      );
+
+  /// «Найти в сети»: принтеры с открытым портом 9100 в своей Wi-Fi/LAN.
+  Future<void> _findLan(TextEditingController ctrl) async {
+    setState(() => _scanning = true);
+    List<String> found;
+    try {
+      found = await scanLanPrinters();
+    } catch (_) {
+      found = const [];
+    }
+    if (!mounted) return;
+    setState(() => _scanning = false);
+    if (found.isEmpty) {
+      _showSnack('Принтеры в сети не найдены. Проверьте, что принтер включён и подключён к той же сети, '
+          'что и это устройство (адрес принтера печатается на тестовой странице — зажмите FEED при включении).');
+      return;
+    }
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(title: Text('Найдены принтеры (порт 9100)')),
+            for (final ip in found)
+              ListTile(leading: const Icon(Icons.print_outlined), title: Text(ip), onTap: () => Navigator.of(ctx).pop(ip)),
+          ],
+        ),
+      ),
+    );
+    if (chosen != null && mounted) setState(() => ctrl.text = chosen);
+  }
+
+  Future<void> _pickWindowsPrinter() async {
+    final list = await windowsPrinters();
+    if (!mounted) return;
+    if (list.isEmpty) {
+      _showSnack('В Windows не установлено ни одного принтера. Подключите принтер по USB и установите его драйвер '
+          '(или «Generic / Text Only») в «Параметры → Принтеры и сканеры».');
+      return;
+    }
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            for (final n in list)
+              ListTile(leading: const Icon(Icons.print_outlined), title: Text(n), onTap: () => Navigator.of(ctx).pop(n)),
+          ],
+        ),
+      ),
+    );
+    if (chosen != null && mounted) setState(() => _devNameCtrl.text = chosen);
+  }
+
+  Future<void> _testDrawer() async {
+    setState(() {
+      _testing = true;
+      _printerResult = null;
+    });
+    _applyActivePrinter();
+    final err = await openCashDrawer().timeout(const Duration(seconds: 30), onTimeout: () => 'принтер не ответил');
+    if (mounted) {
+      setState(() {
+        _testing = false;
+        _printerResult = err == null ? 'Команда отправлена — ящик должен открыться' : 'Ящик не открылся: $err';
+      });
+    }
+  }
+
+  List<Widget> _saasPrinterExtras() {
+    final devOptions = <_Opt<String>>[
+      const _Opt('', 'Как у заведения', 'Принтер выше или облачная печать'),
+      if (isAndroidApp) const _Opt('rawbt', 'USB-принтер (OTG)', 'Через бесплатное приложение RawBT'),
+      if (isWindowsApp) const _Opt('system', 'Принтер Windows', 'USB или общий принтер из «Принтеры и сканеры»'),
+    ];
+    final devType = devOptions.any((o) => o.value == _devType) ? _devType : '';
+    final hasOwn = devType.isNotEmpty || _printerType != 'none';
+    return [
+      const SizedBox(height: 8),
+      const _Label('Ширина ленты'),
+      _Choice<String>(
+        value: _paper,
+        compact: true,
+        options: const [_Opt('58', '58 мм'), _Opt('80', '80 мм')],
+        onChanged: (v) => setState(() => _paper = v),
+      ),
+      DropdownButtonFormField<String>(
+        initialValue: _encoding,
+        decoration: const InputDecoration(
+          labelText: 'Кодировка русского текста',
+          helperText: 'Вместо букв печатаются «кракозябры» — выберите другую и нажмите «Тестовая печать»',
+          helperMaxLines: 2,
+        ),
+        items: [for (final e in printEncodings.entries) DropdownMenuItem(value: e.key, child: Text(e.value))],
+        onChanged: (v) => setState(() => _encoding = v ?? 'cp866'),
+      ),
+      if (devOptions.length > 1) ...[
+        const SizedBox(height: 12),
+        const _Label('Принтер этого устройства'),
+        const _Hint('Только для этого телефона или компьютера: остальные устройства заведения не меняются.'),
+        _Choice<String>(value: devType, options: devOptions, onChanged: (v) => setState(() => _devType = v)),
+        if (devType == 'rawbt')
+          const _Hint('Установите «RawBT» из магазина приложений, подключите принтер кабелем OTG, в RawBT выберите '
+              'принтер (USB) и разрешите доступ. Касса будет отдавать чеки в RawBT, он печатает.'),
+        if (devType == 'system') ...[
+          TextField(
+            controller: _devNameCtrl,
+            decoration: const InputDecoration(labelText: 'Имя принтера в Windows', hintText: 'XP-58'),
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _pickWindowsPrinter,
+              icon: const Icon(Icons.list, size: 18),
+              label: const Text('Выбрать из установленных'),
+            ),
+          ),
+        ],
+      ],
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        value: _drawerOnCash,
+        onChanged: (v) => setState(() => _drawerOnCash = v),
+        title: const Text('Открывать денежный ящик при оплате наличными'),
+        subtitle: const Text('Ящик подключают кабелем RJ-11 к разъёму «DK» чекового принтера.'),
+      ),
+      if (_drawerOnCash)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: _testing ? null : _testDrawer,
+            icon: const Icon(Icons.point_of_sale, size: 18),
+            label: const Text('Открыть ящик (проверка)'),
+          ),
+        ),
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        value: _printHub,
+        onChanged: (v) => setState(() {
+          _printHub = v;
+          if (!v) _devHub = false;
+        }),
+        title: const Text('Облачная печать'),
+        subtitle: const Text('Телефоны официантов без принтера печатают через кассу с принтером — '
+            'чек уходит через сервер, даже если телефон в другой сети.'),
+      ),
+      if (_printHub)
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: _devHub && hasOwn,
+          onChanged: hasOwn ? (v) => setState(() => _devHub = v) : null,
+          title: const Text('Это устройство печатает за всех'),
+          subtitle: Text(hasOwn
+              ? 'Включите на кассе, к которой подключён принтер. Держите ZalPOS на ней открытым.'
+              : 'Сначала подключите к этому устройству принтер.'),
+        ),
+    ];
+  }
+
   Future<void> _testPrinter() async {
     setState(() {
       _testing = true;
@@ -1042,8 +1256,13 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
           TextField(
             controller: _networkIpCtrl,
             onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(labelText: 'IP-адрес принтера', hintText: '192.168.1.100'),
+            decoration: InputDecoration(
+              labelText: 'IP-адрес принтера',
+              hintText: '192.168.1.100',
+              suffixIcon: kSaasMode && !kIsWeb ? _findButton(_networkIpCtrl) : null,
+            ),
           ),
+        if (kSaasMode) ..._saasPrinterExtras(),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           value: _splitHookah,
@@ -1070,7 +1289,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
           ),
           TextField(
             controller: _kitchenIpCtrl,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
+              suffixIcon: kSaasMode && !kIsWeb ? _findButton(_kitchenIpCtrl) : null,
               labelText: 'Принтер кухни — IP (необязательно)',
               hintText: '192.168.1.101',
               helperText: 'Пусто — бегунки кухни печатает чековый принтер',
@@ -1079,7 +1299,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
           ),
           TextField(
             controller: _barIpCtrl,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
+              suffixIcon: kSaasMode && !kIsWeb ? _findButton(_barIpCtrl) : null,
               labelText: 'Принтер бара — IP (необязательно)',
               hintText: '192.168.1.102',
               helperText: 'Пусто — печатает чековый принтер',
@@ -1088,7 +1309,8 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
           ),
           TextField(
             controller: _hookahIpCtrl,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
+              suffixIcon: kSaasMode && !kIsWeb ? _findButton(_hookahIpCtrl) : null,
               labelText: 'Принтер кальянщика — IP (необязательно)',
               hintText: '192.168.1.103',
               helperText: 'Пусто — кальяны печатает принтер бара',
@@ -1710,7 +1932,9 @@ class _SectionState extends State<_Section> {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: _open ? AppColors.primary.withValues(alpha: 0.5) : AppColors.border),
       ),
-      child: Column(
+      // SaaS: прозрачный Material под переключателями — их нажатие видно
+      // на фоне карточки (иначе ListTile рисует отклик под ней).
+      child: _material(Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           InkWell(
@@ -1790,9 +2014,12 @@ class _SectionState extends State<_Section> {
                   ),
           ),
         ],
-      ),
+      )),
     );
   }
+
+  static Widget _material(Widget child) =>
+      kSaasMode ? Material(type: MaterialType.transparency, child: child) : child;
 }
 
 class _Opt<T> {

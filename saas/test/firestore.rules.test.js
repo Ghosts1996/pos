@@ -1980,6 +1980,29 @@ describe("Секрет стола в QR: чужой чек удалённо не
   });
 });
 
+describe("Облачная печать (printJobs)", () => {
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenantMembers/tenantA_empA"), {
+        tenantId: "tenantA", userId: "empA", role: "employee", status: "active",
+      });
+    });
+  });
+
+  it("сотрудник кладёт задание, касса забирает и удаляет; чужие и гости — нет", async () => {
+    const emp = ctxFor("empA");
+    const job = { status: "new", data: "G0AbdBE=", createdAt: 1 };
+    await assertSucceeds(setDoc(doc(emp, "tenants/tenantA/printJobs/j1"), job));
+    await assertSucceeds(updateDoc(doc(emp, "tenants/tenantA/printJobs/j1"), { status: "printing" }));
+    await assertSucceeds(deleteDoc(doc(emp, "tenants/tenantA/printJobs/j1")));
+    await assertFails(setDoc(doc(emp, "tenants/tenantA/printJobs/big"), { ...job, data: "A".repeat(400001) }));
+    await assertFails(setDoc(doc(ctxFor("guestA"), "tenants/tenantA/printJobs/g1"), job));
+    await assertFails(getDoc(doc(ctxFor("guestA"), "tenants/tenantA/printJobs/_hub")));
+    await assertFails(setDoc(doc(ctxFor("ownerB"), "tenants/tenantA/printJobs/x1"), job));
+  });
+});
+
 describe("Стены на схеме зала", () => {
   const wall = (over = {}) => ({ zone: "Основной зал", points: [26, 26, 520, 26, 520, 390], closed: false, ...over });
 

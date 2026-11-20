@@ -653,6 +653,14 @@ service cloud.firestore {
       allow read, write: if isStaff(tenantId);
     }
 
+    // Облачная печать: телефон кладёт задание (ESC/POS в base64), касса с
+    // принтером печатает и удаляет его (lib/services/print_hub.dart).
+    match /tenants/{tenantId}/printJobs/{doc} {
+      allow read, delete: if isStaff(tenantId);
+      allow create, update: if isStaff(tenantId) &&
+        request.resource.data.get('data', '').size() <= 400000;
+    }
+
     match /tenants/{tenantId}/sessions/{doc} {
       // Гость видит свой чек за столом и свои заказы доставки/с собой из
       // приложения (их создаёт шлюз, clientUid — гость): статус и сумму.

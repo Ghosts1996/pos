@@ -9,6 +9,9 @@ import 'package:flutter/services.dart';
 /// веб-сборке (E2E) он бросает исключение прямо в build.
 bool get isWindowsApp => !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
+/// Приложение на Android (не веб).
+bool get isAndroidApp => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
 /// Ширины, от которых меняется раскладка: до [tablet] — телефон (одна
 /// колонка, списки на всю ширину), от [tablet] — планшет (две колонки,
 /// формы по центру ограниченной ширины), от [wide] — большой планшет в

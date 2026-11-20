@@ -10,11 +10,15 @@ import '../utils/adaptive.dart';
 import '../utils/kitchen_slips.dart';
 import 'signals/signal_settings.dart';
 import '../models/aggregator.dart';
+import '../build_info.dart';
+import 'print_hub.dart';
+import 'printers/device_printers.dart';
 
 /// Печать информационного (не фискального) чека на 58/80-мм принтере
 /// командами ESC/POS: по Bluetooth (`print_bluetooth_thermal`) или по сети
-/// (сырой ESC/POS на порт 9100). USB на Android потребует отдельного
-/// плагина с USB Host API — подключается через тот же [ReceiptPrinter].
+/// (сырой ESC/POS на порт 9100). В SaaS ещё: USB на Android через
+/// приложение RawBT, принтер Windows (USB, драйвер «Generic / Text Only»
+/// или родной), облачная печать через кассу с принтером (print_hub.dart).
 class ReceiptLine {
   final String left;
   final String right;
@@ -55,7 +59,7 @@ abstract class ReceiptPrinter {
   bool get isConnected;
   Future<bool> connect();
   Future<void> disconnect();
-  Future<void> printReceipt(ReceiptData data);
+  Future<void> printReceipt(ReceiptData data) async => printBytes(await buildReceiptBytes(data));
 
   /// Отправить готовые ESC/POS-байты — для отчётов (см. [ReportPrint]).
   Future<void> printBytes(List<int> bytes);
@@ -96,10 +100,10 @@ class ReportPrint {
 
 /// ESC/POS-байты отчёта — для 58-мм бумаги (на 80-мм печатается так же,
 /// просто с полями).
-Future<List<int>> buildReportBytes(ReportPrint r, {PaperSize paper = PaperSize.mm58}) async {
+Future<List<int>> buildReportBytes(ReportPrint r, {PaperSize? paper}) async {
   final profile = await CapabilityProfile.load();
-  final g = Generator(paper, profile, codec: const Cp866Codec());
-  final bytes = <int>[...g.setGlobalCodeTable('CP866')];
+  final (g, codeTable) = escPosGenerator(profile, paper: paper);
+  final bytes = <int>[...codeTable];
   bytes.addAll(g.text(r.title,
       styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2)));
   for (final line in r.subtitle) {
@@ -170,10 +174,10 @@ String precheckMoney(double v) {
   return rest == 0 ? whole : '$whole.${rest.toString().padLeft(2, '0')}';
 }
 
-Future<List<int>> buildPrecheckBytes(PrecheckData d, {PaperSize paper = PaperSize.mm58}) async {
+Future<List<int>> buildPrecheckBytes(PrecheckData d, {PaperSize? paper}) async {
   final profile = await CapabilityProfile.load();
-  final g = Generator(paper, profile, codec: const Cp866Codec());
-  final bytes = <int>[...g.setGlobalCodeTable('CP866')];
+  final (g, codeTable) = escPosGenerator(profile, paper: paper);
+  final bytes = <int>[...codeTable];
   String two(int v) => v.toString().padLeft(2, '0');
   if (d.venueName.isNotEmpty) {
     bytes.addAll(g.text(d.venueName,
@@ -226,10 +230,10 @@ Future<List<int>> buildPrecheckBytes(PrecheckData d, {PaperSize paper = PaperSiz
 
 /// ESC/POS-байты бегунков: цех и стол крупно — чтобы повар прочитал с
 /// расстояния, позиции крупно, пожелание под позицией. Без цен.
-Future<List<int>> buildKitchenSlipsBytes(List<KitchenSlip> slips, {PaperSize paper = PaperSize.mm58}) async {
+Future<List<int>> buildKitchenSlipsBytes(List<KitchenSlip> slips, {PaperSize? paper}) async {
   final profile = await CapabilityProfile.load();
-  final g = Generator(paper, profile, codec: const Cp866Codec());
-  final bytes = <int>[...g.setGlobalCodeTable('CP866')];
+  final (g, codeTable) = escPosGenerator(profile, paper: paper);
+  final bytes = <int>[...codeTable];
   String two(int v) => v.toString().padLeft(2, '0');
   for (final slip in slips) {
     bytes.addAll(g.text(slip.title,
@@ -293,16 +297,15 @@ Future<String?> beepStationPrinter(String station, {String? mode, int? times}) a
 /// Общая сборка ESC/POS-байтов из [ReceiptData] — не зависит от способа
 /// доставки (Bluetooth/сеть), поэтому вынесена отдельно и переиспользуется
 /// обеими реализациями ниже.
-Future<List<int>> _buildReceiptBytes(ReceiptData data, {PaperSize paper = PaperSize.mm58}) async {
+Future<List<int>> buildReceiptBytes(ReceiptData data, {PaperSize? paper}) async {
   final profile = await CapabilityProfile.load();
   // По умолчанию библиотека кодирует текст в latin1, где кириллицы нет
   // вовсе: любой русский чек падал с «Contains invalid characters» и не
   // печатался. Чековые принтеры (Xprinter/Gprinter/Rongta/Epson) печатают
   // кириллицу в кодовой странице CP866 — включаем её командой ESC t и
   // кодируем текст тем же набором.
-  final generator = Generator(paper, profile, codec: const Cp866Codec());
-  final bytes = <int>[];
-  bytes.addAll(generator.setGlobalCodeTable('CP866'));
+  final (generator, codeTable) = escPosGenerator(profile, paper: paper);
+  final bytes = <int>[...codeTable];
 
   bytes.addAll(generator.text(
     data.venueName,
@@ -348,6 +351,122 @@ Future<List<int>> _buildReceiptBytes(ReceiptData data, {PaperSize paper = PaperS
   bytes.addAll(generator.text(data.footerNote, styles: const PosStyles(align: PosAlign.center)));
   bytes.addAll(generator.cut());
   return bytes;
+}
+
+// ---------------------------------------------------------------- лента и кодировка
+
+/// Ширина ленты чекового принтера: 58 или 80 мм (settings/integrations.
+/// printerPaper). На 80 мм в строку помещается больше — генератор сам
+/// переносит строки по ширине, текст не обрезается.
+PaperSize printPaper = PaperSize.mm58;
+
+/// Кодировка русского текста (settings/integrations.printerEncoding):
+/// cp866 — по умолчанию (ESC t 17, большинство Xprinter, Gprinter, Rongta,
+/// Epson); cp1251 — Windows-1251 (ESC t 46, Epson и совместимые);
+/// cp1251x — Windows-1251 у Xprinter и клонов (ESC t 73); utf8 — принтеры,
+/// переключённые в UTF-8 своей утилитой (кодовую страницу не шлём).
+String printEncoding = 'cp866';
+
+const printEncodings = {
+  'cp866': 'CP866 (по умолчанию)',
+  'cp1251': 'Windows-1251 (Epson и совместимые)',
+  'cp1251x': 'Windows-1251 (Xprinter и клоны)',
+  'utf8': 'UTF-8',
+};
+
+/// Генератор ESC/POS с выбранными шириной ленты и кодировкой и команда
+/// выбора кодовой страницы, с которой начинается каждый документ.
+(Generator, List<int>) escPosGenerator(CapabilityProfile profile, {PaperSize? paper, String? encoding}) {
+  final p = paper ?? printPaper;
+  switch (encoding ?? printEncoding) {
+    case 'cp1251':
+      return (Generator(p, profile, codec: const Cp1251Codec()), const [0x1B, 0x74, 46]);
+    case 'cp1251x':
+      return (Generator(p, profile, codec: const Cp1251Codec()), const [0x1B, 0x74, 73]);
+    case 'utf8':
+      return (Generator(p, profile, codec: utf8), const <int>[]);
+    default:
+      final g = Generator(p, profile, codec: const Cp866Codec());
+      return (g, g.setGlobalCodeTable('CP866'));
+  }
+}
+
+/// Открывать денежный ящик при оплате наличными (settings/integrations.
+/// printerDrawerOnCash). Ящик подключают к разъёму RJ-11 чекового принтера.
+bool drawerOnCash = false;
+
+/// ESC p 0 25 250: импульс 50 мс на контакт 2 разъёма ящика — так
+/// открываются ящики почти всех чековых принтеров.
+const List<int> drawerKickBytes = [0x1B, 0x70, 0x00, 0x19, 0xFA];
+
+/// Открыть денежный ящик через чековый принтер кассы. null — открыт,
+/// иначе текст ошибки.
+Future<String?> openCashDrawer() async {
+  final printer = activeReceiptPrinter;
+  if (printer == null) return 'чековый принтер не подключён';
+  try {
+    await printer.printBytes(drawerKickBytes);
+    return null;
+  } catch (e) {
+    return '$e';
+  }
+}
+
+/// Кодировка Windows-1251 для ESC/POS-принтеров. Символы, которых в ней
+/// нет (₽, эмодзи), заменяются похожими или «?».
+class Cp1251Codec extends Encoding {
+  const Cp1251Codec();
+
+  @override
+  String get name => 'windows-1251';
+
+  @override
+  Converter<List<int>, String> get decoder => const _Cp1251Decoder();
+
+  @override
+  Converter<String, List<int>> get encoder => const _Cp1251Encoder();
+
+  static int? _byte(int c) {
+    if (c < 0x80) return c;
+    if (c >= 0x0410 && c <= 0x044F) return c - 0x0410 + 0xC0; // А..я
+    switch (c) {
+      case 0x0401: return 0xA8; // Ё
+      case 0x0451: return 0xB8; // ё
+      case 0x00AB: return 0xAB; // «
+      case 0x00BB: return 0xBB; // »
+      case 0x2014: return 0x97; // —
+      case 0x2013: return 0x96; // –
+      case 0x2116: return 0xB9; // №
+      case 0x00B0: return 0xB0; // °
+      case 0x00B7: return 0xB7; // ·
+      case 0x2026: return 0x85; // …
+      case 0x00A0: return 0xA0;
+    }
+    return null;
+  }
+
+  static List<int> encodeString(String text) {
+    final t = text.replaceAll('₽', 'р.').replaceAll('×', 'x');
+    return [for (final rune in t.runes) _byte(rune) ?? 0x3F];
+  }
+}
+
+class _Cp1251Encoder extends Converter<String, List<int>> {
+  const _Cp1251Encoder();
+  @override
+  List<int> convert(String input) => Uint8List.fromList(Cp1251Codec.encodeString(input));
+}
+
+class _Cp1251Decoder extends Converter<List<int>, String> {
+  const _Cp1251Decoder();
+  @override
+  String convert(List<int> input) => String.fromCharCodes(input.map((b) {
+        if (b < 0x80) return b;
+        if (b >= 0xC0) return b - 0xC0 + 0x0410;
+        if (b == 0xA8) return 0x0401;
+        if (b == 0xB8) return 0x0451;
+        return 0x3F;
+      }));
 }
 
 /// Кодировка CP866 («DOS-кириллица») для ESC/POS-принтеров. Символы,
@@ -452,7 +571,7 @@ class BluetoothReceiptPrinter extends ReceiptPrinter {
   }
 
   @override
-  Future<void> printReceipt(ReceiptData data) async => printBytes(await _buildReceiptBytes(data));
+  Future<void> printReceipt(ReceiptData data) async => printBytes(await buildReceiptBytes(data));
 
   @override
   Future<void> printBytes(List<int> bytes) async {
@@ -508,7 +627,7 @@ class NetworkReceiptPrinter extends ReceiptPrinter {
   }
 
   @override
-  Future<void> printReceipt(ReceiptData data) async => printBytes(await _buildReceiptBytes(data));
+  Future<void> printReceipt(ReceiptData data) async => printBytes(await buildReceiptBytes(data));
 
   @override
   Future<void> printBytes(List<int> bytes) async {
@@ -590,6 +709,15 @@ void _applyPrintFlags(Map<String, dynamic> data) {
   kitchenPrinterIp = (data['kitchenPrinterIp'] as String? ?? '').trim();
   barPrinterIp = (data['barPrinterIp'] as String? ?? '').trim();
   hookahPrinterIp = (data['hookahPrinterIp'] as String? ?? '').trim();
+  if (kSaasMode) {
+    // Лента, кодировка, ящик и облачная печать — только SaaS; в обычной
+    // сборке всё как раньше (58 мм, CP866).
+    printPaper = '${data['printerPaper'] ?? ''}' == '80' ? PaperSize.mm80 : PaperSize.mm58;
+    final enc = '${data['printerEncoding'] ?? ''}';
+    printEncoding = printEncodings.containsKey(enc) ? enc : 'cp866';
+    drawerOnCash = data['printerDrawerOnCash'] as bool? ?? false;
+    printHubOn = data['printHub'] as bool? ?? false;
+  }
   // Сигналы (реле, зуммер, локальная сеть) — в том же документе.
   applySignalSettings(data);
   // Агрегаторы доставки — для окна оплаты: тот же документ настроек, и
@@ -623,24 +751,62 @@ Future<void> loadSavedPrinterSettings() async {
   try {
     final doc = await AppScope.col('settings').doc('integrations').get();
     final data = doc.data();
-    if (data == null) return;
-    _applyPrintFlags(data);
-    final type = data['printerType'] as String? ?? 'none';
-    // На Windows print_bluetooth_thermal идёt через BLE (win_ble), а не
-    // classic-SPP, на котором держится подавляющее большинство дешёвых
-    // 58/80-мм принтеров — см. подробный комментарий в
-    // integrations_settings_screen.dart._applyActivePrinter. Настройка
-    // общая на все устройства заведения, поэтому Windows-планшет просто не
-    // применяет её, вместо того чтобы обманчиво "подключаться".
-    if (type == 'bluetooth' && !isWindowsApp && !kIsWeb) {
-      final mac = data['printerBtMac'] as String? ?? '';
-      if (mac.isNotEmpty) activeReceiptPrinter = BluetoothReceiptPrinter(macAddress: mac);
-    } else if (type == 'network') {
-      final ip = data['printerIp'] as String? ?? '';
-      if (ip.isNotEmpty) activeReceiptPrinter = NetworkReceiptPrinter(ip: ip);
+    if (data != null) {
+      _applyPrintFlags(data);
+      final shared = sharedPrinterFrom(data);
+      if (shared != null) activeReceiptPrinter = shared;
+      sharedReceiptPrinter = shared;
     }
   } catch (_) {
     // Нет сети/документа при первом запуске — не критично, принтер просто
     // останется не настроен до захода в Настройки → Интеграции.
   }
+  if (kSaasMode) await applyDevicePrinter();
+}
+
+/// Общий принтер заведения из settings/integrations (Bluetooth или сеть).
+ReceiptPrinter? sharedPrinterFrom(Map<String, dynamic> data) {
+  final type = data['printerType'] as String? ?? 'none';
+  // На Windows print_bluetooth_thermal идёт через BLE (win_ble), а не
+  // classic-SPP, на котором держится подавляющее большинство дешёвых
+  // 58/80-мм принтеров — см. подробный комментарий в
+  // integrations_settings_screen.dart._applyActivePrinter. Настройка
+  // общая на все устройства заведения, поэтому Windows-планшет просто не
+  // применяет её, вместо того чтобы обманчиво "подключаться".
+  if (type == 'bluetooth' && !isWindowsApp && !kIsWeb) {
+    final mac = data['printerBtMac'] as String? ?? '';
+    if (mac.isNotEmpty) return BluetoothReceiptPrinter(macAddress: mac);
+  } else if (type == 'network') {
+    final ip = data['printerIp'] as String? ?? '';
+    if (ip.isNotEmpty) return NetworkReceiptPrinter(ip: ip);
+  }
+  return null;
+}
+
+/// Принтер из общих настроек заведения (Bluetooth/сеть) — без поправок
+/// этого устройства, чтобы [applyDevicePrinter] можно было вызвать снова.
+ReceiptPrinter? sharedReceiptPrinter;
+
+/// Включена облачная печать: в заведении есть касса «Печатать за всех»
+/// (settings/integrations.printHub).
+bool printHubOn = false;
+
+/// SaaS: принтер этого устройства (USB через RawBT, принтер Windows)
+/// главнее общего; без принтера и с облачной печатью — печать через кассу;
+/// касса «Печатать за всех» с принтером начинает принимать задания.
+Future<void> applyDevicePrinter() async {
+  await DevicePrinterPrefs.load();
+  pickDevicePrinter();
+}
+
+/// То же без чтения памяти устройства — после правки настроек на экране.
+void pickDevicePrinter() {
+  final own = DevicePrinterPrefs.printer() ?? sharedReceiptPrinter;
+  if (DevicePrinterPrefs.hub && own != null) {
+    activeReceiptPrinter = own;
+    unawaited(PrintHub.start(own).catchError((Object _) {}));
+    return;
+  }
+  PrintHub.stop();
+  activeReceiptPrinter = own ?? (printHubOn ? HubReceiptPrinter() : null);
 }

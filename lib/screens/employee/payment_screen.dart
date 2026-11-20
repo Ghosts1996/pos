@@ -665,6 +665,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
             .then((_) => ReferralService.instance.rewardIfFirstVisit(_clientUid)));
       }
       _paidDone = true; // списанные бонусы/сертификаты ушли в оплату
+      // Наличные — открыть денежный ящик (он подключён к чековому
+      // принтеру). До печати чека, а не параллельно: Bluetooth-принтер не
+      // принимает два задания разом.
+      if (kSaasMode && drawerOnCash && !_training && !_closeWithoutPayment && _cashNet > 0.004) {
+        final err = await openCashDrawer().timeout(const Duration(seconds: 8), onTimeout: () => 'принтер не ответил');
+        if (err != null && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Денежный ящик не открылся: $err')));
+        }
+      }
       if (_printReceipt) {
         if (kSaasMode) {
           // Счёт уже закрыт: зависший принтер (кончилась бумага, Bluetooth

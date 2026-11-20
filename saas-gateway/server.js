@@ -126,7 +126,7 @@ const TENANT_SUBCOLLECTIONS = [
   "giftCardClaims", "giftCards", "guestOrders", "hallLabels", "hallWalls", "happyHours", "inventory",
   "inventoryCounts", "inventoryItems", "inventoryMovements", "jobRuns",
   "marking_codes_sold", "menuCategories", "menuItems", "meta", "payrollAdjustments", "phoneIndex",
-  "pushQueue", "referralCodes", "reservations", "reservationSlots",
+  "printJobs", "pushQueue", "referralCodes", "reservations", "reservationSlots",
   "reviews", "sessionClaims", "sessions", "settings", "shifts", "staffNotes",
   "staffShifts", "stories", "tableKeys", "tables", "tips", "usage",
   "waiterCalls", "waitlist", "guestPayments", "kassaPayments", "contactReceipts",
