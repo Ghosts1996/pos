@@ -764,8 +764,16 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     if (!mounted) return;
     setState(() => _scanning = false);
     if (found.isEmpty) {
-      _showSnack('Принтеры в сети не найдены. Проверьте, что принтер включён и подключён к той же сети, '
-          'что и это устройство (адрес принтера печатается на тестовой странице — зажмите FEED при включении).');
+      final hint = lanNotFoundHint(await localNetworkInfo());
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Принтер не найден'),
+          content: Text(hint),
+          actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Понятно'))],
+        ),
+      );
       return;
     }
     final chosen = await showModalBottomSheet<String>(

@@ -46,19 +46,52 @@ bool isPrivateLan(String ip) {
   return p[0] == 10 || (p[0] == 172 && p[1] >= 16 && p[1] <= 31) || (p[0] == 192 && p[1] == 168);
 }
 
-Future<List<String>> _subnetHosts() async {
-  final own = <String>{};
-  final subnets = <String>{};
+/// Интерфейс VPN (tun, ppp, WireGuard, IPsec): его адреса не локальная сеть
+/// заведения, а сам VPN часто не пускает телефон к принтеру в той же Wi-Fi.
+bool isVpnInterface(String name) => RegExp(r'^(tun|ppp|wg|ipsec|utun|tap)|vpn', caseSensitive: false).hasMatch(name);
+
+/// Адреса этого устройства в локальной сети и включён ли VPN — для
+/// подсказки, когда принтер не нашёлся.
+Future<({List<String> own, bool vpn})> localNetworkInfo() async {
+  final own = <String>[];
+  var vpn = false;
   try {
     for (final ni in await NetworkInterface.list(type: InternetAddressType.IPv4)) {
+      if (isVpnInterface(ni.name)) {
+        vpn = true;
+        continue;
+      }
       for (final a in ni.addresses) {
-        if (!isPrivateLan(a.address)) continue;
-        own.add(a.address);
-        final p = a.address.split('.');
-        subnets.add('${p[0]}.${p[1]}.${p[2]}');
+        if (isPrivateLan(a.address)) own.add(a.address);
       }
     }
   } catch (_) {}
+  return (own: own, vpn: vpn);
+}
+
+/// Подсказка, если принтер не нашёлся: адрес устройства, каким должен быть
+/// адрес принтера, и про VPN.
+String lanNotFoundHint(({List<String> own, bool vpn}) net) {
+  final b = StringBuffer('Принтеры в сети не найдены. ');
+  if (net.own.isEmpty) {
+    b.write('Это устройство не подключено к Wi-Fi или сети заведения — подключите его к тому же роутеру, что и принтер. ');
+  } else {
+    final ip = net.own.first;
+    final p = ip.split('.');
+    b.write('Адрес этого устройства: $ip — у принтера адрес должен начинаться так же: ${p[0]}.${p[1]}.${p[2]}.… '
+        'Узнайте адрес принтера: выключите его, зажмите FEED и включите — напечатается страница с IP. '
+        'Если первые три числа другие (например, 192.168.123.100), принтеру нужно сменить адрес или подключить его по USB. ');
+  }
+  if (net.vpn) b.write('На устройстве включён VPN — выключите его на время поиска: он часто не пускает к принтеру в той же сети. ');
+  return b.toString().trim();
+}
+
+Future<List<String>> _subnetHosts() async {
+  final net = await localNetworkInfo();
+  final own = net.own.toSet();
+  final subnets = <String>{
+    for (final a in own) a.split('.').take(3).join('.'),
+  };
   return [
     for (final s in subnets.take(4))
       for (var i = 1; i < 255; i++)

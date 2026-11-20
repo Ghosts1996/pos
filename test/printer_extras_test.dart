@@ -133,6 +133,19 @@ void main() {
     expect(isPrivateLan('172.20.0.1'), isTrue);
     expect(isPrivateLan('8.8.8.8'), isFalse);
   });
+
+  test('не нашли принтер: подсказка с адресом устройства, про FEED и VPN', () {
+    expect(isVpnInterface('tun0'), isTrue);
+    expect(isVpnInterface('ppp0'), isTrue);
+    expect(isVpnInterface('wlan0'), isFalse);
+    final h = lanNotFoundHint((own: ['192.168.0.105'], vpn: true));
+    expect(h, contains('192.168.0.105'));
+    expect(h, contains('192.168.0.…'));
+    expect(h, contains('FEED'));
+    expect(h, contains('VPN'));
+    expect(lanNotFoundHint((own: const <String>[], vpn: false)), contains('не подключено к Wi-Fi'));
+    expect(lanNotFoundHint((own: ['10.0.0.5'], vpn: false)), isNot(contains('VPN')));
+  });
 }
 
 bool _contains(List<int> hay, List<int> needle) {
