@@ -4399,7 +4399,7 @@ function applyLegalMode(status) {
     // по согласию на cookie. Пока счётчик не включён, действует № 10.
     const ed7 = new Date('2026-11-20T00:00:00+03:00');
     const ed11 = METRIKA_ON() ? new Date(`${window.ZalMetrika.since}T00:00:00+03:00`) : null;
-    const base = ed11 && !Number.isNaN(ed11.getTime()) && ed11 > ed7 ? ed11 : ed7;
+    const base = ed11 && !Number.isNaN(ed11.getTime()) && ed11 >= ed7 ? ed11 : ed7;
     const from = since > base ? since : base;
     LEGAL_EDITION = `Редакция № ${base === ed7 ? 10 : 11} от ${from.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Moscow' })}`;
   }

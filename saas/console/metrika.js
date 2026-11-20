@@ -13,8 +13,8 @@
 // Согласие — localStorage 'zalpos-cookies' = 'yes' | 'no'; отозвать —
 // ссылка «Настройки cookie» внизу страницы (атрибут data-cookie-settings).
 (function () {
-  var ID = 0;
-  var SINCE = '';
+  var ID = 114414635;
+  var SINCE = '2026-11-20';
   var KEY = 'zalpos-cookies';
 
   window.ZalMetrika = { id: ID, since: SINCE };
@@ -51,7 +51,7 @@
     window.ym.l = +new Date();
     var s = document.createElement('script');
     s.async = true;
-    s.src = 'https://mc.yandex.ru/metrika/tag.js';
+    s.src = 'https://mc.yandex.ru/metrika/tag.js?id=' + ID;
     document.head.appendChild(s);
     window.ym(ID, 'init', {
       defer: true, clickmap: false, trackLinks: true, accurateTrackBounce: true, webvisor: false,
