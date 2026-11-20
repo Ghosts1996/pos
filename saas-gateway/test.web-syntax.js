@@ -55,6 +55,17 @@ for (const f of files) {
     check(rel, text, isModule ? "module" : "classic");
   }
 }
+// 20.11.2026: разбор ?p= / ?v= / Telegram шёл прямо при загрузке модуля, раньше
+// объявления своих констант ниже по файлу, — ошибку глотал try, и ссылки
+// менеджеров не закрепляли заведения. Вызовы — только через микрозадачу.
+{
+  const consoleJs = fs.readFileSync(path.join(__dirname, "..", "saas", "console", "console.js"), "utf8");
+  checked++;
+  if (/^(captureTelegramApp|capturePartnerRef)\(\);/m.test(consoleJs)) {
+    failed++;
+    console.error("FAIL console.js: captureTelegramApp()/capturePartnerRef() вызваны до объявления констант — только в Promise.resolve().then(...)");
+  }
+}
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`web-syntax: ${checked - failed} passed, ${failed} failed`);
 if (failed) process.exit(1);

@@ -58,6 +58,7 @@ const { createSupportBot } = require("./support-bot");
 const { createLocalDb } = require("./local-db");
 const { createTenantCache, guestMenu } = require("./tenant-cache");
 const { createPartners } = require("./partners");
+const { createVenueReferral } = require("./venue-referral");
 const { createOpenApi } = require("./open-api");
 const { createGuestMarketing, rootKeyOf: guestRootKey } = require("./guest-marketing");
 const { createRushHour } = require("./rush-hour");
@@ -957,8 +958,20 @@ async function handleCreateTenant(req, res) {
   if (!chainId) {
     recordSignupEvent(req, "tenant", { uid, email: decoded.email, tenantId, slug });
     await attachPartnerClient(decoded, body, name.trim());
+    await attachVenueReferral(decoded, body, false, tenantId);
   }
   sendJson(res, 200, { tenantId, slug, chainId });
+}
+
+/** Новое заведение или сеть пришли по ссылке «Приведи коллегу» — запоминаем,
+ *  кто пригласил. Сбой не мешает регистрации. */
+async function attachVenueReferral(decoded, body, isChain, id) {
+  try {
+    const rb = await venueReferral.referredByFrom(decoded, body);
+    if (rb) await db().collection(isChain ? "chains" : "tenants").doc(id).set({ referredBy: rb }, { merge: true });
+  } catch (e) {
+    console.error("saas-gateway: «Приведи коллегу» при регистрации:", e.message || e);
+  }
 }
 
 /**
@@ -1042,6 +1055,7 @@ async function handleCreateChain(req, res) {
 
   recordSignupEvent(req, "chain", { uid, email: decoded.email, chainId, slug });
   await attachPartnerClient(decoded, body, name.trim());
+  await attachVenueReferral(decoded, body, true, chainId);
   sendJson(res, 200, { chainId, slug });
 }
 
@@ -2626,8 +2640,12 @@ async function applySubscriptionPayment({ eventId, provider, status, tenantId, c
         wasMonthly = monthlyOf(was.data() || {});
         nextMonthly = monthlyOf(next.data() || {});
       }
-      const { carryMs, freeMs } = periodCarry({ now, cur, planId, wasMonthly, nextMonthly });
-      const base = now + carryMs;
+      const carry = periodCarry({ now, cur, planId, wasMonthly, nextMonthly });
+      // Бесплатные дни «Приведи коллегу», накопленные, пока подписка не
+      // действовала, — в начало нового срока, тоже бесплатными.
+      const creditMs = Math.max(0, Number(cur.referralCreditDays) || 0) * 86400000;
+      const freeMs = carry.freeMs + creditMs;
+      const base = now + carry.carryMs + creditMs;
       const update = {
         tenantId, chainId, planId, billingPeriod,
         status: "active",
@@ -2643,6 +2661,7 @@ async function applySubscriptionPayment({ eventId, provider, status, tenantId, c
         // бы в ту же ночь, без льготных 10 дней.
         pastDueSince: null,
         renewalAttemptedAt: admin.firestore.FieldValue.delete(),
+        ...(creditMs > 0 ? { referralCreditDays: 0 } : {}),
         ...extra,
       };
       // set+merge, а не update: не роняем уведомление 500-й ошибкой
@@ -2660,6 +2679,11 @@ async function applySubscriptionPayment({ eventId, provider, status, tenantId, c
     await syncCapabilities(chainId ? { chainId } : { tenantId })
       .catch((e) => console.error(`saas-gateway: возможности тарифа ${billingId}:`, e.message || e));
     await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaid", metadata: { paymentId, planId, chainId, ...(test ? { test: true } : {}) } });
+    // «Приведи коллегу»: первая настоящая оплата приглашённого — бонус пригласившему.
+    if (!test && Number(amount) > 0) {
+      await venueReferral.reward({ billingId, isChain: !!chainId })
+        .catch((e) => console.error(`saas-gateway: бонус «Приведи коллегу» за ${billingId}:`, e.message || e));
+    }
   } else {
     await writeAuditLog({ tenantId, actorId: null, action: "subscriptionPaymentCanceled", metadata: { paymentId, planId, chainId } });
   }
@@ -10009,6 +10033,11 @@ const partnersDb = createLocalDb({
   admin,
   file: process.env.PARTNERS_DB_FILE || path.join(__dirname, "state", "partners-db.json"),
 });
+// «Приведи коллегу» — бонус заведению за приглашённое заведение (venue-referral.js).
+const venueReferral = createVenueReferral({
+  db, admin, HttpError, verifyAuth, parseJsonBody, sendJson, requireTenantRole, requireChainRole, writeAuditLog,
+});
+
 const partners = createPartners({
   db,
   store: () => partnersDb,
@@ -10342,6 +10371,7 @@ const ROUTES = {
   "/resolveChainBySlug": handleResolveChainBySlug,
   "/createTenant": handleCreateTenant,
   "/createChain": handleCreateChain,
+  "/venueReferral": venueReferral.handleGet,
   "/convertTenantToChain": handleConvertTenantToChain,
   "/inviteTenantMember": handleInviteTenantMember,
   "/createBuildJob": handleCreateBuildJob,
@@ -10686,4 +10716,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, runChargeRecurringSubscriptions, runRenewalReminders, dataWriteGate, localDataStore });
+Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, runChargeRecurringSubscriptions, runRenewalReminders, dataWriteGate, localDataStore, applySubscriptionPayment, venueReferral });

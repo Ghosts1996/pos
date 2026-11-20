@@ -2846,6 +2846,7 @@ const PUBLIC_ROUTES = {
   '#/guide': () => screenPublicGuide(),
   '#/demo-photos': () => screenDemoPhotos(),
   '#/partner-terms': () => screenPartnerTerms(),
+  '#/referral-terms': () => screenReferralTerms(),
 };
 
 // Кнопка «Оплатить подписку» в кассе ведёт на #/billing: после входа кабинет
@@ -2891,7 +2892,7 @@ function setSupportChat(ctx) {
 }
 const SUPPORT_PAGE_NAMES = {
   '#/guide': 'Инструкция', '#/faq': 'Частые вопросы', '#/status': 'Статус сервиса', '#/demo-photos': 'Демо',
-  '#/legal/offer': 'Оферта', '#/legal/privacy': 'Конфиденциальность', '#/legal/payment': 'Оплата и возврат',
+  '#/referral-terms': 'Приведи коллегу', '#/legal/offer': 'Оферта', '#/legal/privacy': 'Конфиденциальность', '#/legal/payment': 'Оплата и возврат',
   '#/legal/consent': 'Согласие', '#/login': 'Вход', '#/signup': 'Регистрация', '#/forgot': 'Восстановление пароля', '#/onboarding': 'Создание заведения',
 };
 /** Режим чата для текущей страницы; кабинет уточняет раздел сам (draw). */
@@ -3016,8 +3017,12 @@ function screenDashboardOrOnboarding() {
 }
 
 window.addEventListener('hashchange', route);
-captureTelegramApp();
-capturePartnerRef();
+// Разбор адреса (?p=, ?v=, мини-приложение Telegram) — тоже после того, как
+// модуль выполнится, но до boot(): их константы (PARTNER_REF_KEY,
+// VENUE_REF_KEY, TG_INIT_KEY) объявлены ниже по файлу. Раньше вызов шёл
+// сразу, константа была ещё недоступна, ошибку глотал try — и ссылки
+// менеджеров ?p= не закрепляли заведения (20.11.2026).
+Promise.resolve().then(() => { captureTelegramApp(); capturePartnerRef(); });
 // Запуск — после того как весь модуль выполнится: boot() без ожидания сети
 // (статус сервера из кэша) идёт синхронно и иначе обращается к переменным,
 // объявленным ниже по файлу (DATA_IN_RF и др.), раньше их объявления.
@@ -4402,6 +4407,22 @@ function applyLegalMode(status) {
 /** Яндекс Метрика включена (metrika.js: номер счётчика и дата включения). */
 function METRIKA_ON() { return !!(window.ZalMetrika && window.ZalMetrika.id && window.ZalMetrika.since); }
 const xborderConsentHtml = () => (AUTH_IN_RF ? '' : ', в том числе на их трансграничную передачу');
+
+/** Условия «Приведи коллегу» — отдельная страница, не меняет оферту. */
+function screenReferralTerms() {
+  screenEl().innerHTML = publicPageWrapHtml('Приведи коллегу', `
+    <div class="card">
+      ${legalSection('Условия акции «Приведи коллегу»', [
+        'Организатор — исполнитель по публичной оферте ZalPOS (реквизиты — в оферте, раздел 14). Участник — владелец заведения или сети с действующей учётной записью в ZalPOS.',
+        'Участник делится персональной ссылкой из кабинета (раздел «Оплата»). Приглашённым считается новое заведение или сеть, созданные по этой ссылке в течение 30 дней после перехода и принадлежащие другому владельцу. Пригласить себя, своё другое заведение или точку своей сети нельзя.',
+        'После первой оплаты подписки приглашённым (тестовые платежи и бесплатные периоды не считаются) участник получает 30 календарных дней пользования своим тарифом бесплатно: они добавляются к пробному или оплаченному сроку, а если подписка не действует — к следующему оплаченному сроку.',
+        'Бонус за одно приглашённое заведение выдаётся один раз. Всего участник может получить не больше 12 месяцев по этой акции. Бесплатные дни не обмениваются на деньги и не возвращаются при отказе от подписки; приглашённый получает обычные условия тарифа.',
+        'Участник рассылает ссылку только тем, кто согласен её получить, — без массовых рассылок и без указания ZalPOS как отправителя. При злоупотреблениях (фиктивные заведения, накрутка) организатор вправе не выдать или отменить бонус.',
+        'Организатор вправе изменить или прекратить акцию, опубликовав новые условия на этой странице; уже начисленные дни сохраняются.',
+      ])}
+    </div>
+  `);
+}
 
 function screenLegalOffer() {
   screenEl().innerHTML = publicPageWrapHtml('Публичная оферта', `
@@ -6444,6 +6465,7 @@ function watchDashboardData(tenantId) {
           <div id="f-toggle-autorenew-error" class="small" style="color:var(--danger);margin-top:6px"></div>
         ` : ''}
       </div>
+      ${role === 'owner' && !tenant?.isDemo ? '<div id="f-vref"></div>' : ''}
 
       ${(bankInvoices || []).length ? `
         <h2>Счета на оплату</h2>
@@ -8321,6 +8343,7 @@ function watchDashboardData(tenantId) {
       };
     }
 
+    if ($('f-vref')) loadVenueReferral(tenantId);
     if ($('f-toggle-autorenew')) {
       $('f-toggle-autorenew').onclick = () => toggleAutorenew(tenantId, !subscription?.cancelAtPeriodEnd, tenant?.chainId || null);
     }
@@ -9335,9 +9358,62 @@ function updateBrandPreview() {
 const PARTNER_REF_KEY = 'zalpos-partner-ref';
 const PARTNER_REF_TTL_MS = 30 * 24 * 3600 * 1000;
 
+/** Кабинет · «Оплата» → «Приведи коллегу»: ссылка и итоги. */
+async function loadVenueReferral(tenantId) {
+  const box = $('f-vref');
+  if (!box) return;
+  let d;
+  try {
+    d = (await callSaasGateway('venueReferral', { tenantId })).data;
+  } catch (e) {
+    box.innerHTML = '';
+    return;
+  }
+  const el = $('f-vref');
+  if (!el) return;
+  el.innerHTML = `
+    <h2>Приведи коллегу</h2>
+    <div class="card">
+      <p style="margin-top:0">Пригласите знакомое заведение: после его первой оплаты подписки вы получите <b>${d.bonusDays} бесплатных дней</b>. До ${d.maxMonths} месяцев.</p>
+      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="f-vref-link" readonly value="${esc(d.link)}" style="flex:1;min-width:220px">
+        <button class="btn btn-primary" id="f-vref-copy" style="width:auto">Скопировать ссылку</button>
+      </div>
+      <p class="small muted" style="margin:10px 0 0">Пришли по ссылке: ${d.invited} · оплатили: ${d.paid} · получено месяцев: ${d.monthsEarned} из ${d.maxMonths}.
+      <a href="#/referral-terms" target="_blank" rel="noopener">Условия</a></p>
+    </div>`;
+  const copy = el.querySelector('#f-vref-copy');
+  if (copy) copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(d.link); toast('Ссылка скопирована'); } catch (_) { $('f-vref-link').select(); }
+  };
+}
+
+// «Приведи коллегу»: zalpos.ru/?v=КОД — заведение пригласило заведение.
+// Запоминаем на 30 дней, отдаём серверу при создании заведения или сети.
+const VENUE_REF_KEY = 'zalpos-venue-ref';
+function captureVenueRef(params) {
+  const v = (params.get('v') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
+  if (!/^[A-Z2-9]{8}$/.test(v)) return false;
+  try { localStorage.setItem(VENUE_REF_KEY, JSON.stringify({ code: v, at: Date.now() })); } catch (_) {}
+  return true;
+}
+function venueRefBody() {
+  try {
+    const r = JSON.parse(localStorage.getItem(VENUE_REF_KEY) || 'null');
+    return r && r.code && Date.now() - (r.at || 0) <= PARTNER_REF_TTL_MS ? { venueRef: r.code } : {};
+  } catch (_) {
+    return {};
+  }
+}
+
 function capturePartnerRef() {
   let params;
   try { params = new URLSearchParams(location.search); } catch (_) { return; }
+  if (captureVenueRef(params)) {
+    params.delete('v');
+    const rest = params.toString();
+    history.replaceState(null, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash}`);
+  }
   const code = (params.get('p') || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 20);
   const invite = /^[a-f0-9]{32}$/.test(params.get('invite') || '') ? params.get('invite') : '';
   if (!code && !invite) return;
@@ -9403,10 +9479,10 @@ async function telegramLogin() {
 function partnerRefBody() {
   try {
     const ref = JSON.parse(localStorage.getItem(PARTNER_REF_KEY) || 'null');
-    if (!ref || Date.now() - (ref.at || 0) > PARTNER_REF_TTL_MS) return {};
-    return { ...(ref.code ? { partnerCode: ref.code } : {}), ...(ref.invite ? { partnerInvite: ref.invite } : {}) };
+    if (!ref || Date.now() - (ref.at || 0) > PARTNER_REF_TTL_MS) return venueRefBody();
+    return { ...(ref.code ? { partnerCode: ref.code } : {}), ...(ref.invite ? { partnerInvite: ref.invite } : {}), ...venueRefBody() };
   } catch (_) {
-    return {};
+    return venueRefBody();
   }
 }
 
@@ -9420,7 +9496,7 @@ function partnerRefEmail() {
 }
 
 function forgetPartnerRef() {
-  try { localStorage.removeItem(PARTNER_REF_KEY); } catch (_) {}
+  try { localStorage.removeItem(PARTNER_REF_KEY); localStorage.removeItem(VENUE_REF_KEY); } catch (_) {}
 }
 
 /** Вошедший — менеджер программы? (фоном после входа) */
