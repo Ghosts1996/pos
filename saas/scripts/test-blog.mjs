@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { build, readPosts, markdown, readGuide, readFaq, guideArticles, changedUrls } from './build-blog.mjs';
+import { build, readPosts, markdown, readGuide, readFaq, guideArticles, changedUrls, readGuideMore } from './build-blog.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SAAS = path.resolve(HERE, '..');
@@ -132,6 +132,36 @@ check('инструкция и частые вопросы — обычными 
   const map = fs.readFileSync(path.join(out, 'sitemap.xml'), 'utf8');
   assert.ok(map.includes('https://zalpos.ru/guide/</loc>') && map.includes('https://zalpos.ru/faq/</loc>'));
   assert.ok(map.includes(`https://zalpos.ru/guide/${arts[arts.length - 1].slug}/</loc>`));
+  fs.rmSync(out, { recursive: true, force: true });
+});
+
+// 20.11.2026: Google не брал в поиск 107 страниц из 158 — статьи инструкции
+// были по 2–3 предложения. Теперь у каждой есть дополнение (saas/blog/guide-more).
+check('инструкция на сайте: у каждой статьи подробный текст', () => {
+  const arts = guideArticles(readGuide());
+  const more = readGuideMore();
+  const slugs = new Set(arts.map((a) => a.slug));
+  const orphans = Object.keys(more).filter((k) => !slugs.has(k));
+  assert.deepEqual(orphans, [], `дополнения без статьи (переименовали статью?): ${orphans.join(', ')}`);
+  const missing = arts.filter((a) => !more[a.slug]).map((a) => a.slug);
+  assert.deepEqual(missing, [], `статьи без дополнения: ${missing.join(', ')}`);
+  // Бот и сайт не хвалят себя превосходными степенями (правило владельца).
+  for (const [slug, m] of Object.entries(more)) {
+    const text = JSON.stringify(m);
+    assert.ok(!/лучш(ий|ая|ее|ие|его|ей|их)\b|№\s?1\b/i.test(text), `превосходная степень: ${slug}`);
+  }
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'zalpos-guide-'));
+  build({ out, log: {} });
+  const short = [];
+  for (const a of arts) {
+    const html = fs.readFileSync(path.join(out, 'guide', a.slug, 'index.html'), 'utf8');
+    const body = html.slice(html.indexOf('<article'), html.indexOf('</article>'));
+    const words = body.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').split(/\s+/).filter((w) => /[а-яёa-z0-9]/i.test(w)).length;
+    if (words < 300) short.push(`${a.slug} (${words})`);
+  }
+  assert.deepEqual(short, [], `короткие статьи (меньше 300 слов): ${short.join(', ')}`);
+  const sample = fs.readFileSync(path.join(out, 'guide', arts[0].slug, 'index.html'), 'utf8');
+  assert.ok(sample.includes('"@type":"FAQPage"'), 'нет разметки частых вопросов');
   fs.rmSync(out, { recursive: true, force: true });
 });
 

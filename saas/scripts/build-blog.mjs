@@ -48,6 +48,7 @@ const SAAS = path.resolve(HERE, '..');
 const POSTS_DIR = path.join(SAAS, 'blog', 'posts');
 const ASSETS_DIR = path.join(SAAS, 'blog');
 const CONSOLE = path.join(SAAS, 'console');
+const GUIDE_MORE_DIR = path.join(SAAS, 'blog', 'guide-more');
 
 // ---------- даты ----------
 
@@ -337,6 +338,45 @@ export function readGuide(file = path.join(CONSOLE, 'guide.js')) {
   return Array.isArray(ctx.GUIDE) ? ctx.GUIDE : [];
 }
 
+/** Дополнения статей инструкции для сайта: saas/blog/guide-more/*.js,
+ *  в каждом файле «export const MORE = { адрес: {...} }». В кабинете
+ *  инструкция остаётся короткой (её грузит каждый владелец), а на сайте
+ *  у статьи есть подробности: как это работает, примеры, частые ошибки.
+ *  Поля: parts — [[заголовок, [абзацы; строка с «• » — пункт списка]]],
+ *  faq — [[вопрос, ответ]] (добавляются к faq статьи). */
+export function readGuideMore(dir = GUIDE_MORE_DIR) {
+  const more = {};
+  let files = [];
+  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.js')).sort(); } catch (_) { return more; }
+  for (const f of files) {
+    const src = fs.readFileSync(path.join(dir, f), 'utf8').replace(/^export const MORE =/m, 'MORE =');
+    const ctx = { MORE: null };
+    vm.runInNewContext(src, ctx, { timeout: 1000 });
+    for (const [slug, v] of Object.entries(ctx.MORE || {})) {
+      if (more[slug]) throw new Error(`guide-more: «${slug}» описан дважды (${f})`);
+      more[slug] = v;
+    }
+  }
+  return more;
+}
+
+/** Абзацы дополнения: подряд идущие «• …» — одним списком. */
+function moreBlocks(items) {
+  const out = [];
+  let list = null;
+  for (const raw of items || []) {
+    const t = String(raw);
+    if (t.startsWith('• ')) {
+      if (!list) { list = []; out.push(list); }
+      list.push(`<li>${uiText(t.slice(2))}</li>`);
+    } else {
+      list = null;
+      out.push(`<p>${uiText(t)}</p>`);
+    }
+  }
+  return out.map((x) => (Array.isArray(x) ? `<ul>${x.join('')}</ul>` : x)).join('\n');
+}
+
 /** Частые вопросы кабинета: массив FAQ_ITEMS в console.js — чистые литералы. */
 export function readFaq(file = path.join(CONSOLE, 'console.js')) {
   const src = fs.readFileSync(file, 'utf8');
@@ -421,6 +461,7 @@ function buildHelpPages({ out, today }) {
 
   const guide = readGuide();
   const arts = guideArticles(guide);
+  const more = readGuideMore();
   if (arts.length) {
     // Главная инструкции: разделы и статьи.
     const intro = `Инструкция по ${BRAND}: как подключить заведение, поставить кассу на Android и Windows, вести зал, заказы, оплату, склад, смены и зарплату, работать с гостями и бонусами.`;
@@ -445,6 +486,8 @@ ${appCta}`;
       const text = [it.intro, ...(it.steps || [])].filter(Boolean).join(' ');
       const description = (text.replace(/\s+/g, ' ').slice(0, 150).replace(/\s\S*$/, '') || it.title) + '…';
       const steps = it.steps || [];
+      const extra = more[a.slug] || {};
+      const faqAll = [...(it.faq || []), ...(extra.faq || [])];
       const head = ldJson({
         '@context': 'https://schema.org',
         '@type': 'HowTo',
@@ -460,14 +503,19 @@ ${appCta}`;
           { '@type': 'ListItem', position: 2, name: 'Инструкция', item: `${SITE}/guide/` },
           { '@type': 'ListItem', position: 3, name: it.title, item: url },
         ],
-      });
+      }) + (faqAll.length ? ldJson({
+        '@context': 'https://schema.org',
+        '@type': 'FAQPage',
+        mainEntity: faqAll.map(([q, ans]) => ({ '@type': 'Question', name: String(q).replace(/[«»]/g, '"'), acceptedAnswer: { '@type': 'Answer', text: String(ans).replace(/[«»]/g, '"') } })),
+      }) : '');
       const near = arts.filter((x) => x.sec === sec && x !== a).slice(0, 6);
       const body = `<nav class="crumbs"><a href="/">Главная</a> / <a href="/guide/">Инструкция</a> / ${esc(sec.title)}</nav>
 <article class="post">
   <h1>${typo(esc(it.title))}</h1>
 ${it.where ? `  <p class="meta">Где: ${uiText(it.where)}</p>\n` : ''}  <div class="content">
 ${it.intro ? `<p>${uiText(it.intro)}</p>\n` : ''}${steps.length ? `<ol>${steps.map((st) => `<li>${uiText(st)}</li>`).join('')}</ol>\n` : ''}${(it.tips || []).map((t) => `<blockquote><p>${uiText(t)}</p></blockquote>`).join('\n')}
-${(it.faq || []).length ? `<h2>Если что-то не так</h2>\n${it.faq.map(([q, ans]) => `<h3>${uiText(q)}</h3>\n<p>${uiText(ans)}</p>`).join('\n')}` : ''}
+${(extra.parts || []).map(([h, items]) => `<h2>${uiText(h)}</h2>\n${moreBlocks(items)}`).join('\n')}
+${faqAll.length ? `<h2>Частые вопросы</h2>\n${faqAll.map(([q, ans]) => `<h3>${uiText(q)}</h3>\n<p>${uiText(ans)}</p>`).join('\n')}` : ''}
   </div>
 </article>
 ${near.length ? `<section class="related"><p class="block-title">${esc(sec.title)}: ещё по теме</p>${near.map((x) => `
