@@ -134,6 +134,17 @@ void main() {
     expect(isPrivateLan('8.8.8.8'), isFalse);
   });
 
+  test('сетевой принтер не ответил: причина про принтер, а не «нет связи с сервером»', () {
+    final router = networkPrinterError('192.168.0.1', 9100, const SocketException('Connection refused'));
+    expect(router, contains('Принтер 192.168.0.1 не отвечает'));
+    expect(router, contains('не принтер'));
+    expect(router, contains('у роутера'));
+    expect(router.toLowerCase(), isNot(contains('socketexception')));
+    final none = networkPrinterError('192.168.0.57', 9100, const SocketException('Connection timed out'));
+    expect(none, contains('никого нет'));
+    expect(none, isNot(contains('роутера')));
+  });
+
   test('не нашли принтер: подсказка с адресом устройства, про FEED и VPN', () {
     expect(isVpnInterface('tun0'), isTrue);
     expect(isVpnInterface('ppp0'), isTrue);

@@ -650,9 +650,30 @@ class NetworkReceiptPrinter extends ReceiptPrinter {
       await socket.flush();
       if (_socket == null) await socket.close();
     } catch (e) {
+      if (kSaasMode) throw PrinterException(networkPrinterError(ip, port, e));
       throw PrinterException('Не удалось напечатать на сетевом принтере $ip:$port — $e');
     }
   }
+}
+
+/// SaaS: понятная причина, почему сетевой принтер не напечатал. Без слов
+/// «SocketException» — иначе общий разбор ошибок показывал «нет связи с
+/// сервером», хотя не ответил именно принтер.
+String networkPrinterError(String ip, int port, Object e) {
+  final raw = '$e'.toLowerCase();
+  final b = StringBuffer('Принтер $ip не отвечает');
+  if (raw.contains('refused')) {
+    b.write(' — по этому адресу есть устройство, но это не принтер (порт $port закрыт)');
+  } else if (raw.contains('timed out') || raw.contains('timeout') || raw.contains('unreachable') || raw.contains('no route')) {
+    b.write(' — по этому адресу никого нет');
+  }
+  b.write('. ');
+  if (RegExp(r'\.1$').hasMatch(ip.trim())) {
+    b.write('Адрес на «.1» обычно у роутера, а не у принтера. ');
+  }
+  b.write('Узнайте адрес принтера: выключите его, зажмите FEED и включите — напечатается страница с IP. '
+      'Телефон или планшет должен быть в той же сети, что и принтер.');
+  return b.toString();
 }
 
 class PrinterException implements Exception {
