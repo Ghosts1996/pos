@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import '../../build_info.dart';
 import '../../services/background_reliability.dart';
 
 import '../../services/app_scope.dart';
@@ -406,7 +407,7 @@ class _Section extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: AppColors.border),
         ),
-        child: Column(
+        child: _material(Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(children: [
@@ -417,8 +418,13 @@ class _Section extends StatelessWidget {
             const SizedBox(height: 8),
             ...children,
           ],
-        ),
+        )),
       );
+
+  /// SaaS: прозрачный Material под переключателями — отклик на нажатие
+  /// виден на фоне карточки (иначе ListTile рисует его под ней).
+  static Widget _material(Widget child) =>
+      kSaasMode ? Material(type: MaterialType.transparency, child: child) : child;
 }
 
 class _Hint extends StatelessWidget {

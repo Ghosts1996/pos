@@ -1389,6 +1389,22 @@ test("знания: 4 принтера (зал, кухня, бар, кальян
   assert.ok(/Принтер кальянщика/.test(doc.text) && /Проверить принтеры цехов/.test(doc.text));
 });
 
+test("знания: USB-принтер, денежный ящик, печать с телефона официанта — бот находит статью о принтере", async () => {
+  const h = harness();
+  await setup(h);
+  for (const q of [
+    "Как подключить чековый принтер по USB к планшету через OTG?",
+    "Не открывается денежный ящик при оплате наличными",
+    "Можно ли печатать чек с телефона официанта, принтер стоит у кассы",
+    "Принтер печатает кракозябры вместо русских букв",
+  ]) {
+    const top = sb.rankDocs(q, h.bot._state.guide, 3);
+    assert.ok(top.some((d) => d.id === "kb:printer-connect"), `${q}: ${top.map((d) => d.id).join(", ")}`);
+  }
+  const doc = h.bot._state.guide.find((d) => d.id === "kb:printer-connect");
+  assert.ok(/RawBT/.test(doc.text) && /печатает за всех/.test(doc.text) && /Открыть ящик/.test(doc.text));
+});
+
 test("шум без ИИ: повторы, «ты тут?», «бот помоги», набор букв; термины — не мусор", () => {
   for (const x of ["hdbdbdbd", "ыввфыв", "asdasd", "кококо"]) assert.strictEqual(sb.noiseKind(x), "junk", x);
   for (const x of ["html", "ЕГАИС", "сбп", "привет", "Склад", "отчёт"]) assert.ok(!sb.gibberish(x), x);

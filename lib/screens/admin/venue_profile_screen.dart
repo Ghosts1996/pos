@@ -6,6 +6,7 @@ import '../../services/venue_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/adaptive.dart';
 import '../../utils/ru_requisites.dart';
+import '../../widgets/load_failed_view.dart';
 
 /// Профиль заведения: часы, адрес, правила, FAQ и «счастливые часы».
 ///
@@ -36,6 +37,7 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
   final _hours = <int, TextEditingController>{};
 
   bool _loading = true;
+  Object? _loadError;
   bool _cloudFunctions = false;
   String _venueType = VenueTerms.hookah;
   bool _hookah = true;
@@ -59,7 +61,17 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
   }
 
   Future<void> _load() async {
-    final p = await _service.load();
+    final VenueProfile p;
+    try {
+      p = await _service.load();
+    } catch (e) {
+      // SaaS: нет связи и копии профиля на устройстве — не крутим загрузку
+      // вечно и не открываем пустой профиль (иначе «Сохранить» затёрло бы
+      // настоящий).
+      if (!kSaasMode) rethrow;
+      if (mounted) setState(() => _loadError = e);
+      return;
+    }
     _profile = p;
     _name.text = p.name;
     _address.text = p.address;
@@ -174,6 +186,16 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_loadError != null) {
+      return LoadFailedScaffold(
+        title: 'Профиль заведения',
+        error: _loadError!,
+        onRetry: () {
+          setState(() => _loadError = null);
+          _load();
+        },
+      );
+    }
     if (_loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
 
     return Scaffold(

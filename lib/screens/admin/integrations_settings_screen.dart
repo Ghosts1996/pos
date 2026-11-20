@@ -23,6 +23,7 @@ import '../../models/aggregator.dart';
 import '../../services/gateway_api.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
+import '../../widgets/load_failed_view.dart';
 import '../../utils/kitchen_slips.dart';
 import '../../utils/sale_kind.dart';
 import '../../theme/app_colors.dart';
@@ -105,6 +106,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   final _cliResultCtrl = TextEditingController();
   final _cliApproveCtrl = TextEditingController();
   bool _loading = true;
+  Object? _loadError;
   bool _testing = false;
   String? _printerResult;
   String? _utmResult;
@@ -138,7 +140,17 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   }
 
   Future<void> _load() async {
-    final snap = await _doc.get();
+    final DocumentSnapshot<Map<String, dynamic>> snap;
+    try {
+      snap = await _doc.get();
+    } catch (e) {
+      // SaaS: нет связи и копии настроек на устройстве — не крутим загрузку
+      // вечно; пустыми настройками экран не открываем, чтобы «Сохранить» не
+      // затёрло настоящие.
+      if (!kSaasMode) rethrow;
+      if (mounted) setState(() => _loadError = e);
+      return;
+    }
     final data = snap.data() ?? {};
     _printerType = data['printerType'] ?? 'none';
     _splitHookah = data['printSplitHookah'] as bool? ?? true;
@@ -1172,6 +1184,16 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (_loadError != null) {
+      return LoadFailedScaffold(
+        title: 'Интеграции',
+        error: _loadError!,
+        onRetry: () {
+          setState(() => _loadError = null);
+          _load();
+        },
+      );
+    }
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
