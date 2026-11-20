@@ -258,6 +258,12 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   assert.ok(kitchen.some((m) => /Стол «5»/.test(m.body.text) && /Борщ ×1/.test(m.body.text) && /без сметаны/.test(m.body.text)), "кухня не получила добавку");
   assert.ok(bar.some((m) => /Морс ×1/.test(m.body.text)), "бар не получил напиток");
   assert.ok(!sent.some((m) => /тайм-кафе/.test(m.body.text || "")), "время ушло на кухню");
+  // Скриншот владельца 20.11.2026: в «Кухне» было «🆕 <b>Стол «VIP 1»</b>» — теги видны.
+  // Заголовок жирный настоящей разметкой, экранированных тегов нет.
+  const kMsg = kitchen.find((m) => /без сметаны/.test(m.body.text));
+  assert.equal(kMsg.body.parse_mode, "HTML");
+  assert.equal(kMsg.body.html, "<b>🆕 Стол «5»</b>\n• Борщ ×1 — без сметаны");
+  assert.ok(!sent.some((m) => /&lt;\/?[bi]&gt;/.test(m.body.html || "")), "в чат ушли теги текстом");
   assert.ok(sent.every((m) => m.body.chat_id !== 777), "в чаты Б ничего не ушло");
 
   // Человек из группы, которого нет в списке, кнопку нажать не может

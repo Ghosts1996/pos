@@ -2611,8 +2611,10 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
           const more = (next.get(key) || 0) - (prev.get(key) || 0);
           if (more <= 0 || !live) continue;
           const kind = ["kitchen", "bar", "hookah"].includes(it.kind) ? it.kind : it.noPromo ? "hookah" : "kitchen";
-          const name = `${it.name || "Позиция"}${mods.length ? ` (${mods.join(", ")})` : ""}`.replace(/[<>&]/g, "");
-          added[kind].push(`• ${name} ×${more}${it.note ? ` — <i>${String(it.note).slice(0, 80).replace(/[<>&]/g, "")}</i>` : ""}`);
+          // Текст простой: say() сам экранирует и делает первую строку жирной
+          // (теги здесь пришли бы в чат как «<b>»).
+          const name = `${it.name || "Позиция"}${mods.length ? ` (${mods.join(", ")})` : ""}`;
+          added[kind].push(`• ${name} ×${more}${it.note ? ` — ${String(it.note).slice(0, 80)}` : ""}`);
         }
         seenItems.set(ch.doc.id, next);
         if (!live) continue;
@@ -2622,7 +2624,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         const head = `${label() ? `${label()} · ` : ""}${place}`;
         for (const [kind, lines] of Object.entries(added)) {
           if (!lines.length || !threadOf(staff, kind)) continue;
-          say(bot, staff.id, `🆕 <b>${head}</b>\n${lines.join("\n")}`, inThread(staff, kind));
+          say(bot, staff.id, `🆕 ${head}\n${lines.join("\n")}`, inThread(staff, kind));
         }
       }
       primed = true;
