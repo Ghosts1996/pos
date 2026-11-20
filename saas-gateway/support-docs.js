@@ -68,25 +68,35 @@ const FONT = '<w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs
 function run(text, { b = false, size = 24 } = {}) {
   return String(text).split("\n").map((line, i) => `<w:r><w:rPr>${FONT}${b ? "<w:b/>" : ""}<w:sz w:val="${size}"/><w:szCs w:val="${size}"/></w:rPr>${i ? "<w:br/>" : ""}<w:t xml:space="preserve">${xmlEsc(line)}</w:t></w:r>`).join("");
 }
-function para(text, { align = "both", b = false, size = 24, after = 120, indent = true } = {}) {
-  return `<w:p><w:pPr><w:jc w:val="${align}"/><w:spacing w:after="${after}" w:line="276" w:lineRule="auto"/>${indent && align === "both" ? '<w:ind w:firstLine="567"/>' : ""}</w:pPr>${run(text, { b, size })}</w:p>`;
+function para(text, { align = "both", b = false, size = 24, after = 120, indent = true, keepNext = false, pageBreak = false } = {}) {
+  return `<w:p><w:pPr>${keepNext ? "<w:keepNext/>" : ""}${pageBreak ? "<w:pageBreakBefore/>" : ""}<w:widowControl/><w:jc w:val="${align}"/><w:spacing w:after="${after}" w:line="276" w:lineRule="auto"/>${indent && align === "both" ? '<w:ind w:firstLine="567"/>' : ""}</w:pPr>${run(text, { b, size })}</w:p>`;
+}
+/** Строка «слева … справа» (город и дата) без пробелов-распорок: таблица без
+ *  рамок на всю ширину — на любом экране и в любом редакторе не разъезжается. */
+function split(left, right) {
+  const w = [4677, 4678];
+  const cell = (t, i) => `<w:tc><w:tcPr><w:tcW w:w="${w[i]}" w:type="dxa"/></w:tcPr>${para(t, { align: i ? "right" : "left", indent: false, after: 0 })}</w:tc>`;
+  return `<w:tbl><w:tblPr><w:tblW w:w="9355" w:type="dxa"/><w:tblBorders>${["top", "left", "bottom", "right", "insideH", "insideV"].map((b) => `<w:${b} w:val="nil"/>`).join("")}</w:tblBorders><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="${w[0]}"/><w:gridCol w:w="${w[1]}"/></w:tblGrid><w:tr>${cell(left, 0)}${cell(right, 1)}</w:tr></w:tbl>${para("", { after: 80, indent: false, align: "left" })}`;
 }
 function table(rows, widths) {
   const total = widths.reduce((a, b) => a + b, 0);
   const border = ["top", "left", "bottom", "right", "insideH", "insideV"].map((s) => `<w:${s} w:val="single" w:sz="4" w:space="0" w:color="000000"/>`).join("");
   const grid = widths.map((w) => `<w:gridCol w:w="${w}"/>`).join("");
   const tr = rows.map((r, ri) => `<w:tr>${r.map((cell, ci) => `<w:tc><w:tcPr><w:tcW w:w="${widths[ci]}" w:type="dxa"/></w:tcPr>${para(cell || " ", { align: ri === 0 ? "center" : "left", b: ri === 0, size: 22, after: 60, indent: false })}</w:tc>`).join("")}</w:tr>`).join("");
-  return `<w:tbl><w:tblPr><w:tblW w:w="${total}" w:type="dxa"/><w:tblBorders>${border}</w:tblBorders></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${tr}</w:tbl>`;
+  return `<w:tbl><w:tblPr><w:tblW w:w="${total}" w:type="dxa"/><w:tblBorders>${border}</w:tblBorders><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${tr}</w:tbl>`;
 }
 
-/** Блоки → .docx. Блок: строка (абзац) или { h | c | b | r | table, widths }. */
+/** Блоки → .docx. Блок: строка (абзац) или { h | c | b | r | l | split: [слева, справа] | table, widths };
+ *  pageBreak: true у блока — с новой страницы. */
 function docx(blocks) {
   const body = blocks.map((x) => {
     if (typeof x === "string") return para(x);
-    if (x.h) return para(x.h, { align: "center", b: true, size: 26, after: 200 });
-    if (x.c) return para(x.c, { align: "center", after: 120 });
-    if (x.b) return para(x.b, { b: true, after: 120, indent: false, align: "left" });
-    if (x.r) return para(x.r, { align: "right", after: 120 });
+    const pb = !!x.pageBreak;
+    if (x.split) return split(x.split[0], x.split[1]);
+    if (x.h) return para(x.h, { align: "center", b: true, size: 26, after: 200, keepNext: true, pageBreak: pb });
+    if (x.c) return para(x.c, { align: "center", after: 120, keepNext: true, pageBreak: pb });
+    if (x.b) return para(x.b, { b: true, after: 120, indent: false, align: "left", keepNext: true, pageBreak: pb });
+    if (x.r) return para(x.r, { align: "right", after: 120, keepNext: true, pageBreak: pb });
     if (x.l) return para(x.l, { align: "left", indent: false, after: 80 });
     if (x.table) return table(x.table, x.widths);
     return "";
@@ -153,7 +163,7 @@ const TEMPLATES = {
     build: (c) => [
       { c: c.legal },
       { h: `ПРИКАЗ № ${LINE}` },
-      { l: `г. ${LINE}                                                                 ${c.date}` },
+      { split: [`г. ${LINE}`, c.date] },
       { b: "О назначении лица, ответственного за организацию обработки персональных данных" },
       "В соответствии со статьями 18.1 и 22.1 Федерального закона от 27.07.2006 № 152-ФЗ «О персональных данных»",
       { b: "ПРИКАЗЫВАЮ:" },

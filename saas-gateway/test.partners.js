@@ -297,7 +297,7 @@ test("договор: услуги (не агентский), реквизиты
   assert.ok(!/агентск/i.test(npd), "не агентский договор");
   assert.match(npd, /^ДОГОВОР № ANNA-2026/);
   assert.match(npd, /Индивидуальный предприниматель Иванов Иван Иванович, ОГРНИП 321000000000001, ИНН 770000000001, применяющий/);
-  assert.match(npd, /20 \(_+\) процентов от суммы платежей/);
+  assert.match(npd, /20 \(двадцать\) процентов от суммы платежей/);
   assert.ok(!/привлеч|вознагражд/i.test(npd), "нет слов «привлечение клиентов» и «вознаграждение»");
   assert.match(npd, /\(на дату заключения Договора — 6%\)/);
   assert.match(npd, /чек в приложении «Мой налог»/);
@@ -308,7 +308,18 @@ test("договор: услуги (не агентский), реквизиты
   assert.doesNotMatch(text("person"), /налоговым агентом Исполнителя|НДФЛ/, "физлиц нет — договор как с самозанятым");
   assert.match(text("npd"), /выплаты приостанавливаются до восстановления статуса/);
   assert.match(text("ip"), /ИП Петрова Анна Сергеевна/);
-  assert.match(text("npd", { months: 12 }), /в течение 12 \(_+\) месяцев/);
+  assert.match(text("npd", { months: 12 }), /в течение 12 \(двенадцать\) месяцев/);
+  // 21.11.2026: строки разъезжались — ИП заглавными из ЕГРИП, «город … дата» пробелами, акт без новой страницы.
+  const caps = contractBlocks({ platform: { fullName: "ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ БИКОЕВ КОНСТАНТИН НИКОЛАЕВИЧ", taxRegime: "npd" }, partner: { percent: 15, taxStatus: "npd" } });
+  const capsText = JSON.stringify(caps);
+  assert.match(capsText, /Индивидуальный предприниматель Бикоев Константин Николаевич, ОГРНИП/);
+  assert.match(capsText, /Бикоев К\. Н\./);
+  assert.ok(!/БИКОЕВ/.test(capsText), "без заглавных");
+  assert.ok(caps.some((b) => b.split && /^г\. /.test(b.split[0])), "город и дата — по краям, без пробелов-распорок");
+  assert.ok(caps.some((b) => b.pageBreak && /Приложение № 1/.test(b.r)), "форма акта — с новой страницы");
+  assert.ok(!caps.some((b) => b.l && / {10}/.test(b.l)), "нет строк, выровненных пробелами");
+  const xml = require("zlib").inflateRawSync((() => { const f = buildPartnerContract({ platform: {}, partner: { percent: 15 } }); const i = f.indexOf(Buffer.from("word/document.xml")); const size = f.readUInt32LE(i - 12); return f.subarray(i + 17, i + 17 + size); })()).toString();
+  assert.match(xml, /<w:pageBreakBefore\/>/);
   assert.strictEqual(shortName("Иванов Иван Иванович"), "Иванов И. И.");
   const file = buildPartnerContract({ platform: {}, partner: { name: "А", percent: 10 } });
   assert.strictEqual(file.slice(0, 2).toString(), "PK", "docx — это zip");
