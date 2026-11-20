@@ -257,6 +257,7 @@ function layout({ title, description, canonical, body, ogType = 'website', extra
 <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 <link rel="alternate" type="application/rss+xml" title="Блог ${BRAND}" href="${SITE}/blog/rss.xml">
+<script src="/metrika.js" defer></script>
 <link rel="stylesheet" href="/fonts.css">
 <link rel="stylesheet" href="/blog/blog.css?v=${CSS_VERSION()}">
 ${extraHead}</head>
@@ -275,7 +276,7 @@ ${body}
   </div>
   <nav class="foot-cols" aria-label="Разделы сайта">
     <div><div class="foot-h">Продукт</div><a href="/guide/">Инструкция</a><a href="/blog/">Блог</a><a href="/faq/">Частые вопросы</a><a href="/#/status">Статус сервиса</a></div>
-    <div><div class="foot-h">Документы</div><a href="/#/legal/offer">Оферта</a><a href="/#/legal/payment">Оплата и возврат</a><a href="/#/legal/privacy">Конфиденциальность</a></div>
+    <div><div class="foot-h">Документы</div><a href="/#/legal/offer">Оферта</a><a href="/#/legal/payment">Оплата и возврат</a><a href="/#/legal/privacy">Конфиденциальность</a><a href="#" data-cookie-settings hidden>Настройки cookie</a></div>
     <div><div class="foot-h">Доверие</div><span>Персональные данные первично записываются на сервер в России (152-ФЗ)</span><span>Реквизиты исполнителя — в оферте, раздел 14</span></div>
   </nav>
   <p class="muted foot-note">Материалы блога носят справочный характер. Законы и цены меняются — сверяйтесь с первоисточниками и консультируйтесь с бухгалтером или юристом.</p>

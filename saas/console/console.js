@@ -3983,6 +3983,7 @@ function screenLanding() {
     $('f-landing-start').disabled = true;
     try {
       await recordOwnerInRussia(email);
+      window.zalGoal?.('signup');
       await sendAuthEmail('signIn', email, () => sendSignInLinkToEmail(state.auth, email, {
         url: `${location.origin}${location.pathname}#/`,
         handleCodeInApp: true,
@@ -4019,7 +4020,7 @@ function screenLanding() {
   if ($('f-landing-goto-demo')) {
     $('f-landing-goto-demo').onclick = () => $('landing-demo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
-  if ($('f-landing-cta-demo')) $('f-landing-cta-demo').onclick = downloadDemoForThisDevice;
+  if ($('f-landing-cta-demo')) $('f-landing-cta-demo').onclick = (e) => { window.zalGoal?.('demo'); return downloadDemoForThisDevice(e); };
   if ($('f-landing-download-windows')) $('f-landing-download-windows').onclick = downloadWindowsDemo;
   suggestDemoPlatform();
 
@@ -4251,7 +4252,7 @@ function siteFooterHtml({ home = false, top: topHtml = '', extraDocs = '' } = {}
           <div><div class="l-footer-h">Продукт</div>
             <a href="/guide/">Инструкция</a><a href="/blog/">Блог</a><a href="/faq/">Частые вопросы</a><a href="#/status">Статус сервиса</a></div>
           <div><div class="l-footer-h">Документы</div>
-            <a href="#/legal/offer">Оферта</a><a href="#/legal/payment">Оплата и возврат</a><a href="#/legal/privacy">Конфиденциальность</a>${extraDocs}</div>
+            <a href="#/legal/offer">Оферта</a><a href="#/legal/payment">Оплата и возврат</a><a href="#/legal/privacy">Конфиденциальность</a>${extraDocs}<a href="#" data-cookie-settings hidden>Настройки cookie</a></div>
           <div><div class="l-footer-h">Доверие</div>
             <span>${DATA_IN_RF && AUTH_IN_RF ? 'Вход и все данные — на серверах в России (152-ФЗ)' : 'Персональные данные первично записываются на сервер в России (152-ФЗ)'}</span><span>Реквизиты исполнителя — в оферте, раздел 14</span></div>
         </nav>
@@ -4387,11 +4388,17 @@ function applyLegalMode(status) {
     // автосписания подписки (поправки ЗоЗПП о подписках с 01.03.2026),
     // возврат за неиспользованные дни физлицу-потребителю на «Оплата и возврат».
     // Свой вход включили позже — от его даты.
+    // № 11 (дата из metrika.js) — Яндекс Метрика на публичных страницах сайта
+    // по согласию на cookie. Пока счётчик не включён, действует № 10.
     const ed7 = new Date('2026-11-20T00:00:00+03:00');
-    const from = since > ed7 ? since : ed7;
-    LEGAL_EDITION = `Редакция № 10 от ${from.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Moscow' })}`;
+    const ed11 = METRIKA_ON() ? new Date(`${window.ZalMetrika.since}T00:00:00+03:00`) : null;
+    const base = ed11 && !Number.isNaN(ed11.getTime()) && ed11 > ed7 ? ed11 : ed7;
+    const from = since > base ? since : base;
+    LEGAL_EDITION = `Редакция № ${base === ed7 ? 10 : 11} от ${from.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Moscow' })}`;
   }
 }
+/** Яндекс Метрика включена (metrika.js: номер счётчика и дата включения). */
+function METRIKA_ON() { return !!(window.ZalMetrika && window.ZalMetrika.id && window.ZalMetrika.since); }
 const xborderConsentHtml = () => (AUTH_IN_RF ? '' : ', в том числе на их трансграничную передачу');
 
 function screenLegalOffer() {
@@ -4623,7 +4630,11 @@ function screenLegalPrivacy() {
         'Назначено лицо, ответственное за организацию обработки персональных данных; утверждена настоящая Политика; доступ к данным разграничен по ролям и защищён авторизацией; данные передаются по защищённым каналам (TLS); ведутся резервное копирование и журналирование действий; обеспечивается антивирусная защита; уровень защищённости информационной системы определён в соответствии с Постановлением Правительства РФ № 1119.',
         'Об инцидентах с персональными данными Оператор уведомляет Роскомнадзор в сроки ч. 3.1 ст. 21 Федерального закона № 152-ФЗ: в течение 24 часов — о самом инциденте, в течение 72 часов — о результатах расследования.',
       ])}
-      ${legalSection('10. Файлы cookie и локальное хранилище', [
+      ${legalSection('10. Файлы cookie и локальное хранилище', METRIKA_ON() ? [
+        'Сайт и приложения используют локальное хранилище браузера и устройства для сохранения входа и настроек.',
+        'На публичных страницах сайта zalpos.ru (главная, блог, инструкция, документы, вход и регистрация) с согласия посетителя работает сервис веб-аналитики Яндекс Метрика (ООО «ЯНДЕКС», ИНН 7736207543, данные обрабатываются в России). Он использует файлы cookie и собирает сведения о посещении: какие страницы открыты, откуда пришёл посетитель, тип устройства и браузера, примерное местоположение по IP-адресу. Цель — понимать, какие страницы полезны, и оценивать рекламу. Запись действий посетителя (Вебвизор) и карта кликов не используются; в личном кабинете после входа, в кассе, в приложениях гостя и курьера счётчик не работает.',
+        'Счётчик включается только после нажатия «Разрешить» в уведомлении о cookie. Отказаться или отозвать согласие можно в любой момент ссылкой «Настройки cookie» внизу сайта — после этого сведения не передаются. Сторонние рекламные счётчики не используются.',
+      ] : [
         'Сайт и приложения используют локальное хранилище браузера и устройства для сохранения входа и настроек. Сторонние рекламные и аналитические счётчики не используются.',
       ])}
     </div>
@@ -5057,6 +5068,7 @@ function screenAuth() {
         await signInWithEmailAndPassword(state.auth, email, pass);
       } else {
         await recordOwnerInRussia(email);
+        window.zalGoal?.('signup');
         const cred = await createUserWithEmailAndPassword(state.auth, email, pass);
         await setDoc(doc(state.db, 'users', cred.user.uid), {
           email, createdAt: Timestamp.fromDate(new Date()),
