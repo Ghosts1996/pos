@@ -33,6 +33,9 @@ saas/console/blog/
 # Инструкция и частые вопросы обычными страницами — тоже при выкладке.
 saas/console/guide/
 saas/console/faq/
+# Страницы под вид заведения и «Переезд» (saas/blog/landings.js) — тоже.
+saas/console/dlya/
+saas/console/pereezd/
 saas/console/sitemap.xml
 saas/console/.sitemap-urls
 saas/console/.help-lastmod.json

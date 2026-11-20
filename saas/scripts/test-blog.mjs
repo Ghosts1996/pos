@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { build, readPosts, markdown, readGuide, readFaq, guideArticles, changedUrls, readGuideMore } from './build-blog.mjs';
+import { build, readPosts, markdown, readGuide, readFaq, guideArticles, changedUrls, readGuideMore, readLandings } from './build-blog.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SAAS = path.resolve(HERE, '..');
@@ -162,6 +162,28 @@ check('инструкция на сайте: у каждой статьи под
   assert.deepEqual(short, [], `короткие статьи (меньше 300 слов): ${short.join(', ')}`);
   const sample = fs.readFileSync(path.join(out, 'guide', arts[0].slug, 'index.html'), 'utf8');
   assert.ok(sample.includes('"@type":"FAQPage"'), 'нет разметки частых вопросов');
+  fs.rmSync(out, { recursive: true, force: true });
+});
+
+check('страницы под вид заведения и «Переезд» — в карте сайта, подробные, без превосходных степеней', () => {
+  const list = readLandings();
+  assert.ok(list.length >= 6, 'мало страниц');
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'zalpos-land-'));
+  fs.mkdirSync(path.join(out, 'vendor'));
+  fs.writeFileSync(path.join(out, 'vendor', 'keep.txt'), 'x');
+  build({ out, log: {} });
+  assert.ok(fs.existsSync(path.join(out, 'vendor', 'keep.txt')), 'сборка страниц стёрла чужую папку');
+  const map = fs.readFileSync(path.join(out, 'sitemap.xml'), 'utf8');
+  for (const l of list) {
+    assert.ok(map.includes(`https://zalpos.ru/${l.slug}/</loc>`), `нет в карте сайта: ${l.slug}`);
+    const html = fs.readFileSync(path.join(out, l.slug, 'index.html'), 'utf8');
+    assert.ok(html.includes(`<link rel="canonical" href="https://zalpos.ru/${l.slug}/">`));
+    const body = html.slice(html.indexOf('<article'), html.indexOf('</article>'));
+    const words = body.replace(/<[^>]+>/g, ' ').split(/\s+/).filter((w) => /[а-яёa-z0-9]/i.test(w)).length;
+    assert.ok(words >= 300, `короткая страница ${l.slug}: ${words}`);
+    assert.ok(!/лучш(ий|ая|ее|ие|его|ей|их)\b|№\s?1\b/i.test(JSON.stringify(l)), `превосходная степень: ${l.slug}`);
+    assert.ok(html.includes(`href="/${list[0].slug}/"`), 'нет ссылок «Для кого» в подвале');
+  }
   fs.rmSync(out, { recursive: true, force: true });
 });
 

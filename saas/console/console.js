@@ -4251,6 +4251,8 @@ function siteFooterHtml({ home = false, top: topHtml = '', extraDocs = '' } = {}
         <nav class="l-footer-cols" aria-label="Разделы сайта">
           <div><div class="l-footer-h">Продукт</div>
             <a href="/guide/">Инструкция</a><a href="/blog/">Блог</a><a href="/faq/">Частые вопросы</a><a href="#/status">Статус сервиса</a></div>
+          <div><div class="l-footer-h">Для кого</div>
+            <a href="/dlya/kalyannoy/">Для кальянной</a><a href="/dlya/kofeyni/">Для кофейни</a><a href="/dlya/bara/">Для бара</a><a href="/dlya/restorana/">Для ресторана</a><a href="/dlya/dostavki/">Для доставки</a><a href="/pereezd/">Переезд на ZalPOS</a></div>
           <div><div class="l-footer-h">Документы</div>
             <a href="#/legal/offer">Оферта</a><a href="#/legal/payment">Оплата и возврат</a><a href="#/legal/privacy">Конфиденциальность</a>${extraDocs}<a href="#" data-cookie-settings hidden>Настройки cookie</a></div>
           <div><div class="l-footer-h">Доверие</div>

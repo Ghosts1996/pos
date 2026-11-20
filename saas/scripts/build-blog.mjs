@@ -49,6 +49,7 @@ const POSTS_DIR = path.join(SAAS, 'blog', 'posts');
 const ASSETS_DIR = path.join(SAAS, 'blog');
 const CONSOLE = path.join(SAAS, 'console');
 const GUIDE_MORE_DIR = path.join(SAAS, 'blog', 'guide-more');
+const LANDINGS_FILE = path.join(SAAS, 'blog', 'landings.js');
 
 // ---------- даты ----------
 
@@ -276,6 +277,7 @@ ${body}
   </div>
   <nav class="foot-cols" aria-label="Разделы сайта">
     <div><div class="foot-h">Продукт</div><a href="/guide/">Инструкция</a><a href="/blog/">Блог</a><a href="/faq/">Частые вопросы</a><a href="/#/status">Статус сервиса</a></div>
+    ${landingLinks() ? `<div><div class="foot-h">Для кого</div>${landingLinks()}</div>` : ''}
     <div><div class="foot-h">Документы</div><a href="/#/legal/offer">Оферта</a><a href="/#/legal/payment">Оплата и возврат</a><a href="/#/legal/privacy">Конфиденциальность</a><a href="#" data-cookie-settings hidden>Настройки cookie</a></div>
     <div><div class="foot-h">Доверие</div><span>Персональные данные первично записываются на сервер в России (152-ФЗ)</span><span>Реквизиты исполнителя — в оферте, раздел 14</span></div>
   </nav>
@@ -376,6 +378,20 @@ function moreBlocks(items) {
     }
   }
   return out.map((x) => (Array.isArray(x) ? `<ul>${x.join('')}</ul>` : x)).join('\n');
+}
+
+/** Страницы под вид заведения и «Переезд» — saas/blog/landings.js. */
+export function readLandings(file = LANDINGS_FILE) {
+  let src;
+  try { src = fs.readFileSync(file, 'utf8'); } catch (_) { return []; }
+  const ctx = { LANDINGS: null };
+  vm.runInNewContext(src.replace(/^export const LANDINGS =/m, 'LANDINGS ='), ctx, { timeout: 1000 });
+  return Array.isArray(ctx.LANDINGS) ? ctx.LANDINGS.filter((l) => l && /^[a-z0-9/-]+$/.test(l.slug || '')) : [];
+}
+
+/** Ссылки «Для кого» в подвале — одни и те же на всех страницах. */
+function landingLinks() {
+  try { return readLandings().map((l) => `<a href="/${l.slug}/">${esc(l.nav)}</a>`).join(''); } catch (_) { return ''; }
 }
 
 /** Частые вопросы кабинета: массив FAQ_ITEMS в console.js — чистые литералы. */
@@ -557,8 +573,66 @@ ${appCta.replace('эта инструкция', 'есть подробная и�
       back: { href: '/', wide: 'На главную', narrow: 'Главная' },
     }), '0.7');
   }
+  // Страницы под вид заведения и «Переезд на ZalPOS».
+  const landings = readLandings();
+  // Старые страницы — заново. Только свои папки: блог, инструкцию и файлы
+  // кабинета в той же папке сайта не трогаем.
+  const KEEP = new Set(['blog', 'guide', 'faq', 'fonts', 'vendor', 'demo-menu', 'map', 'app']);
+  for (const top of new Set(landings.map((l) => l.slug.split('/')[0]))) {
+    if (!KEEP.has(top)) fs.rmSync(path.join(out, top), { recursive: true, force: true });
+  }
+  for (const l of landings) {
+    const url = `${SITE}/${l.slug}/`;
+    const faqL = l.faq || [];
+    const head = ldJson({
+      '@context': 'https://schema.org',
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        { '@type': 'ListItem', position: 1, name: BRAND, item: `${SITE}/` },
+        { '@type': 'ListItem', position: 2, name: l.h1, item: url },
+      ],
+    }) + (faqL.length ? ldJson({
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      mainEntity: faqL.map(([q, ans]) => ({ '@type': 'Question', name: String(q).replace(/[«»]/g, '"'), acceptedAnswer: { '@type': 'Answer', text: String(ans).replace(/[«»]/g, '"') } })),
+    }) : '');
+    const cta = l.cta === 'move'
+      ? `<aside class="cta">
+  <p>Пришлите выгрузку или фото меню — перенесём за вас бесплатно. После регистрации откройте в кабинете «Поддержку» и напишите «Перенесите за меня».</p>
+  <a class="btn" href="/#/signup">Перенесите за меня</a>
+  <a class="btn btn-ghost" href="/guide/perenos-dannyh-iz-drugoy-kassy/">Перенести самому</a>
+</aside>`
+      : `<aside class="cta">
+  <p>Подключение — за вечер, пробный период бесплатный. Попробуйте демо-кассу на своём телефоне или компьютере.</p>
+  <a class="btn" href="/">Подключить бесплатно</a>
+  <a class="btn btn-ghost" href="/pereezd/">Переезд с другой кассы</a>
+</aside>`;
+    const others = landings.filter((x) => x !== l);
+    const body = `<nav class="crumbs"><a href="/">Главная</a> / ${esc(l.h1)}</nav>
+<article class="post">
+  <h1>${typo(esc(l.h1))}</h1>
+  <div class="content">
+<p class="lead">${uiText(l.lead)}</p>
+${(l.parts || []).map(([h, items]) => `<h2>${uiText(h)}</h2>\n${moreBlocks(items)}`).join('\n')}
+${faqL.length ? `<h2>Частые вопросы</h2>\n${faqL.map(([q, ans]) => `<h3>${uiText(q)}</h3>\n<p>${uiText(ans)}</p>`).join('\n')}` : ''}
+  </div>
+</article>
+${cta}
+<section class="related"><p class="block-title">Ещё о ${BRAND}</p>${others.map((x) => `
+  <a class="rel" href="/${x.slug}/"><span>${typo(esc(x.h1))}</span></a>`).join('')}
+  <a class="rel" href="/guide/"><span>Инструкция ${BRAND}</span></a>
+</section>`;
+    page(out, `${l.slug}/index.html`, url, layout({
+      title: l.title,
+      description: l.description,
+      canonical: url,
+      body,
+      extraHead: head,
+      back: { href: '/', wide: 'На главную', narrow: 'Главная' },
+    }), '0.9');
+  }
   keep.save();
-  return { urls, guide: arts.length, faq: faq.length };
+  return { urls, guide: arts.length, faq: faq.length, landings: landings.length };
 }
 
 // ---------- сборка ----------
