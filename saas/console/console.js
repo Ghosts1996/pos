@@ -5747,7 +5747,7 @@ function watchDashboardData(tenantId) {
       for (const it of plan.create) {
         ops.push({ type: 'set', ref: doc(tcol('menuItems')), data: {
           categoryId: catId.get(I.nameKey(it.category)), name: it.name, price: it.price, description: it.description || '',
-          available: true, imageUrl: '', weight: 0, weightUnit: 'g', inventoryItemId: '', components: [], recipePortions: 1,
+          available: true, imageUrl: '', weight: it.weight || 0, weightUnit: it.weightUnit || 'g', inventoryItemId: '', components: [], recipePortions: 1,
           modifierGroups: [], staffBonus: 0, tobacco: false, vat: '', fiscalSubject: 'commodity', importId,
         } });
         result.created++;
@@ -5755,6 +5755,7 @@ function watchDashboardData(tenantId) {
       for (const it of plan.update) {
         ops.push({ type: 'update', ref: doc(tcol('menuItems'), it.id), data: {
           price: it.price, categoryId: catId.get(I.nameKey(it.category)), ...(it.description ? { description: it.description } : {}),
+          ...(it.weight > 0 ? { weight: it.weight, weightUnit: it.weightUnit || 'g' } : {}),
         } });
         result.updated++;
       }
@@ -5793,7 +5794,7 @@ function watchDashboardData(tenantId) {
         for (const d of [...plan.create, ...plan.update]) {
           ops.push({ type: 'update', ref: doc(tcol('menuItems'), d.id), data: {
             components: d.lines.map((l) => ({ inventoryItemId: stockId.get(I.nameKey(l.ingredient)), weight: l.amount, weightUnit: l.unit, ...(l.loss > 0 ? { lossPercent: l.loss } : {}) })),
-            recipePortions: d.portions, inventoryItemId: '', weight: 0, recipeImportId: importId,
+            recipePortions: d.portions, inventoryItemId: '', recipeImportId: importId,
           } });
           if (d.hadRecipe) result.updated++; else result.created++;
         }
@@ -7208,7 +7209,7 @@ function watchDashboardData(tenantId) {
       if (imp.step === 'preview') {
         const sample = plan.create.slice(0, 8);
         const line = (x) => ({
-          menu: () => `${esc(x.name)} — ${rub(x.price)} · ${esc(x.category)}`,
+          menu: () => `${esc(x.name)}${x.weight > 0 ? `, ${String(x.weight).replace('.', ',')} ${({ g: 'г', ml: 'мл', pcs: 'шт' })[x.weightUnit] || x.weightUnit}` : ''} — ${rub(x.price)} · ${esc(x.category)}`,
           stock: () => `${esc(x.name)} — ${x.quantity} ${x.unit}${x.cost ? ` · ${rub(x.cost)} за ${{ g: 'кг', ml: 'л' }[x.unit] || x.unit}` : ''}`,
           recipes: () => `${esc(x.dish)}: ${x.lines.map((l) => `${esc(l.ingredient)} ${l.amount} ${l.unit}`).join(', ')}${x.portions > 1 ? ` · на ${x.portions} порц.` : ''}`,
           staff: () => `${esc(x.name)} — ${x.role === 'admin' ? 'администратор' : 'сотрудник'}`,
@@ -7624,7 +7625,7 @@ function watchDashboardData(tenantId) {
           try {
             const pages = await menuPhotoPages(files, (t) => { imp.aiBusy = t; draw(); });
             if (!pages.length) throw new Error('не нашли ни одной картинки или страницы PDF');
-            const rows = [['Категория', 'Название', 'Цена', 'Описание']];
+            const rows = [['Категория', 'Название', 'Цена', 'Описание', 'Выход']];
             const seen = new Set();
             const failed = [];
             for (let i = 0; i < pages.length; i++) {
@@ -7687,7 +7688,7 @@ function watchDashboardData(tenantId) {
           const missing = I.KINDS[imp.kind].fields.filter((f) => f.required && imp.map[f.key] == null);
           if (missing.length) { imp.error = `Выберите столбец: ${missing.map((f) => f.label).join(', ')}`; draw(); return; }
           const rows = imp.sheets[imp.sheetIdx].rows.slice(imp.headerIdx + 1);
-          const { items, errors } = I.buildRows(imp.kind, rows, imp.map, { headerIndex: imp.headerIdx });
+          const { items, errors } = I.buildRows(imp.kind, rows, imp.map, { headerIndex: imp.headerIdx, headers: imp.sheets[imp.sheetIdx].rows[imp.headerIdx] || [] });
           if (!items.length) { imp.error = 'В файле не нашлось строк для переноса — проверьте столбцы и строку заголовков'; draw(); return; }
           try {
             imp.existing = await importExisting();

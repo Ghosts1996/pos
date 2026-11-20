@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../build_info.dart';
+
 import '../models/reservation_model.dart';
 import '../models/table_model.dart';
 import '../theme/app_colors.dart';
@@ -95,6 +97,17 @@ class TableTile extends StatelessWidget {
     // только от данных из базы — плитка перестраивается по общему тикеру.
     final end = plannedEnd ?? table.busyUntil;
     if (!editorMode && table.activeSessionIds.isNotEmpty && end != null) {
+      // SaaS: плитка перестраивается только когда меняется её состояние
+      // (занят → скоро конец → время вышло), а секунды таймера тикают в
+      // своём маленьком слое. Раньше вся плитка — с тенью, рамкой и
+      // подписями — перерисовывалась каждую секунду, и на слабых
+      // компьютерах (старый моноблок на Windows) зал подтормаживал.
+      if (kSaasMode) {
+        return _StateTicker(
+          stateAt: (now) => tableStateOf(table, now: now, plannedEnd: plannedEnd, reservation: reservation),
+          builder: (context, now) => _build(context, now),
+        );
+      }
       return TickerBuilder(builder: (context, now) => _build(context, now));
     }
     return _build(context, DateTime.now());
@@ -127,7 +140,8 @@ class TableTile extends StatelessWidget {
     if (!editorMode) {
       lines.add(const SizedBox(height: 4));
       if (busy && (plannedEnd ?? table.busyUntil) != null) {
-        lines.add(TimerDisplay(plannedEnd: (plannedEnd ?? table.busyUntil)!, startTime: startTime, fontSize: 13));
+        final timer = TimerDisplay(plannedEnd: (plannedEnd ?? table.busyUntil)!, startTime: startTime, fontSize: 13);
+        lines.add(kSaasMode ? _TimerSlot(fontSize: 13, child: timer) : timer);
       } else {
         lines.add(Row(mainAxisSize: MainAxisSize.min, children: [
           Container(width: 7, height: 7, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
@@ -366,4 +380,74 @@ class TableCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Перестраивает плитку только когда меняется состояние стола: общий
+/// секундомер тикает, но если состояние то же — плитка не трогается.
+class _StateTicker extends StatefulWidget {
+  const _StateTicker({required this.stateAt, required this.builder});
+
+  final TableState Function(DateTime now) stateAt;
+  final Widget Function(BuildContext context, DateTime now) builder;
+
+  @override
+  State<_StateTicker> createState() => _StateTickerState();
+}
+
+class _StateTickerState extends State<_StateTicker> {
+  // Секундомер мог стоять (не было занятых столов) — берём текущее время.
+  late DateTime _now = DateTime.now();
+  late TableState _state = widget.stateAt(_now);
+
+  @override
+  void initState() {
+    super.initState();
+    ClockTicker.instance.addListener(_tick);
+  }
+
+  @override
+  void didUpdateWidget(_StateTicker old) {
+    super.didUpdateWidget(old);
+    // Новые данные стола (продлили, закрыли чек) — состояние пересчитать.
+    _now = DateTime.now();
+    _state = widget.stateAt(_now);
+  }
+
+  void _tick() {
+    final now = ClockTicker.instance.value;
+    final next = widget.stateAt(now);
+    if (next == _state) return;
+    setState(() {
+      _now = now;
+      _state = next;
+    });
+  }
+
+  @override
+  void dispose() {
+    ClockTicker.instance.removeListener(_tick);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, _now);
+}
+
+/// Место под таймер фиксированного размера в своём слое: секунды меняют
+/// только эту строку — плитка с тенью и рамкой не перерисовывается и не
+/// пересчитывает раскладку.
+class _TimerSlot extends StatelessWidget {
+  const _TimerSlot({required this.fontSize, required this.child});
+
+  final double fontSize;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: fontSize * 5.6,
+        height: fontSize * 1.4,
+        child: RepaintBoundary(
+          child: FittedBox(fit: BoxFit.scaleDown, child: child),
+        ),
+      );
 }

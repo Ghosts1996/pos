@@ -47,7 +47,7 @@ dependencies:
   permission_handler: ^11.3.1        # запрос разрешения на камеру для сканера
   esc_pos_utils_plus: ^2.0.4         # сборка ESC/POS-команд для чекового принтера
   print_bluetooth_thermal: ^1.1.4    # печать на чековом принтере по Bluetooth
-  flutter_foreground_task: ^8.17.0
+  flutter_foreground_task: ^9.2.2      # 9.x: служба закрывается сама по лимиту Android 15 (onTimeout) — без «приложение снова вылетело»
   pointycastle: ^3.9.1                # RSA-SHA256 подпись запросов кассы OrangeData
   basic_utils: ^5.7.0                 # разбор PEM-сертификата/ключа кассы OrangeData
 

@@ -11,6 +11,7 @@ import '../../services/app_scope.dart';
 import '../../services/background_boot.dart';
 import '../../services/notification_service.dart';
 import 'kolibri_notifications.dart';
+import '../../services/resume_hook.dart';
 
 /// Держит приложение гостя на связи в фоне — как HallWatchService у кассы.
 ///
@@ -32,6 +33,7 @@ class GuestWatchService {
   static const titleKey = 'kolibri_watch_title_v1';
 
   bool _started = false;
+  late final ResumeHook _resume = ResumeHook(revive);
 
   static bool get supported => kSaasMode && !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
@@ -39,6 +41,7 @@ class GuestWatchService {
   /// Сменилось заведение — служба переключается на него. true — работает.
   Future<bool> start({required String tenantId, String? chainId, String venueName = ''}) async {
     if (!supported || tenantId.isEmpty) return false;
+    _resume.attach();
     var changed = false;
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -62,6 +65,21 @@ class GuestWatchService {
     if (await _tryStart(NotificationChannelImportance.MIN, 'min', venueName)) return true;
     _started = false;
     return false;
+  }
+
+  /// Приложение снова на экране: если система остановила службу (лимит
+  /// Android 15 на фоновую работу, нехватка памяти) — запускаем заново
+  /// для того же заведения.
+  Future<void> revive() async {
+    if (!supported || !_started) return;
+    try {
+      if (await FlutterForegroundTask.isRunningService) return;
+      final prefs = await SharedPreferences.getInstance();
+      final tenantId = prefs.getString(tenantKey) ?? '';
+      if (tenantId.isEmpty) return;
+      _started = false;
+      await start(tenantId: tenantId, chainId: prefs.getString(chainKey), venueName: prefs.getString(titleKey) ?? '');
+    } catch (_) {}
   }
 
   /// Гость вышел или удалил свои данные — служба больше не нужна.
@@ -188,8 +206,12 @@ class _GuestWatchHandler extends TaskHandler {
     unawaited(KolibriNotifications.instance.stop().then((_) => _enter()));
   }
 
+  /// [isTimeout] — Android 15+ остановил службу по лимиту времени (6 часов
+  /// в сутки в фоне). Закрываемся штатно — иначе система «роняет»
+  /// приложение; при следующем открытии службу поднимет
+  /// [GuestWatchService.revive].
   @override
-  Future<void> onDestroy(DateTime timestamp) async {
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
     await KolibriNotifications.instance.stop();
   }
 }

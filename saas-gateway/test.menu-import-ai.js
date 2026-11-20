@@ -70,9 +70,9 @@ const jpeg = Buffer.from("ffd8ffe000104a464946", "hex").toString("base64");
   r = await call(owner.idToken, { tenantId: "mai1", pages: [{ mediaType: "image/jpeg", data: jpeg }] }, { complete, vendorOf });
   assert.strictEqual(r.status, 200);
   assert.deepStrictEqual(r.json.rows, [
-    ["Категория", "Название", "Цена", "Описание"],
-    ["Горячее", "Борщ", "350", "300 г · со сметаной"],
-    ["Напитки", "Морс", "120.5", ""],
+    ["Категория", "Название", "Цена", "Описание", "Выход"],
+    ["Горячее", "Борщ", "350", "со сметаной", "300 г"],
+    ["Напитки", "Морс", "120.5", "", ""],
   ]);
   assert.deepStrictEqual(seen, ["image/jpeg"]); n++;
 
@@ -82,7 +82,11 @@ const jpeg = Buffer.from("ffd8ffe000104a464946", "hex").toString("base64");
   const map = I.guessMapping("menu", r.json.rows[head]);
   const built = I.buildRows("menu", r.json.rows.slice(head + 1), map, { headerIndex: head });
   assert.strictEqual(I.guessKind(r.json.rows[head]), "menu");
-  assert.deepStrictEqual(built.items.map((x) => [x.category, x.name, x.price]), [["Горячее", "Борщ", 350], ["Напитки", "Морс", 120.5]]); n++;
+  assert.deepStrictEqual(built.items.map((x) => [x.category, x.name, x.price]), [["Горячее", "Борщ", 350], ["Напитки", "Морс", 120.5]]);
+  // Выход распознанного меню — в граммовку позиции, а не в описание.
+  assert.strictEqual(map.weight, 4);
+  assert.deepStrictEqual([built.items[0].weight, built.items[0].weightUnit, built.items[0].description], [300, "g", "со сметаной"]);
+  assert.ok(!("weight" in built.items[1])); n++;
 
   // ИИ ничего не нашёл — 422 с понятной причиной.
   r = await call(owner.idToken, { tenantId: "mai1", pages: [{ mediaType: "image/jpeg", data: jpeg }] }, { complete: async () => "[]", vendorOf });

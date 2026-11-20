@@ -24,6 +24,7 @@ export const KINDS = {
       F('price', 'Цена продажи, ₽', ['цена', 'цена продажи', 'цена руб', 'стоимость', 'розничная цена', 'цена в меню', 'базовая цена', 'цена реализации', 'продажная цена', 'розница', 'price', 'sale price'], { required: true }),
       F('category', 'Категория', ['категория', 'группа', 'раздел', 'папка', 'родительская группа', 'группа меню', 'категория меню', 'группа товаров', 'категория товара', 'category', 'group']),
       F('description', 'Описание / состав', ['описание', 'состав', 'комментарий', 'description']),
+      F('weight', 'Граммовка (выход)', ['выход', 'выход г', 'выход гр', 'выход блюда', 'выход порции', 'граммовка', 'вес', 'вес г', 'вес гр', 'вес порции', 'вес нетто', 'масса', 'объем', 'объем мл', 'объем порции', 'порция', 'weight', 'yield', 'portion', 'volume']),
     ],
   },
   stock: {
@@ -96,6 +97,31 @@ export function parseUnit(v) {
   if (/^(л|литр|l)$|^литр/.test(s)) return 'l';
   if (/^(шт|штук|порц|ед|упак|бут|банк|pcs|pc|piece)/.test(s)) return 'pcs';
   return null;
+}
+
+/**
+ * Граммовка (выход) порции из ячейки меню: «300», «300 г», «0,3 кг»,
+ * «250 мл», «0,5 л», «150/30» (блюдо/соус — складываем), «1 шт».
+ * [unitHint] — единица из заголовка столбца («Выход, мл»). Килограммы и
+ * литры переводим в граммы и миллилитры — так позиция и показывается
+ * гостю («· 300 г»). Пусто или не число → null.
+ */
+export function parseWeight(v, unitHint = null) {
+  const raw = String(v ?? '').trim();
+  if (!raw) return null;
+  const s = raw.toLowerCase().replace(/ё/g, 'е');
+  const parts = s.split('/').map((x) => parseNumber(x.replace(/[^0-9.,\s-]/g, ' ').trim().split(/\s+/)[0] || ''));
+  if (!parts.length || parts.some((x) => x == null || x < 0)) return null;
+  const total = parts.reduce((a, b) => a + b, 0);
+  if (!(total > 0)) return null;
+  const unitText = (s.match(/[a-zа-я]+/) || [''])[0];
+  let unit = parseUnit(unitText) || unitHint || 'g';
+  let weight = total;
+  if (unit === 'kg') { unit = 'g'; weight = total * 1000; }
+  if (unit === 'l') { unit = 'ml'; weight = total * 1000; }
+  weight = Math.round(weight * 1000) / 1000;
+  if (weight > 100000) return null; // 100 кг в одной порции — опечатка, а не граммовка
+  return { weight, unit };
 }
 
 const FAMILY = { g: 'mass', kg: 'mass', ml: 'vol', l: 'vol', pcs: 'pcs' };
@@ -617,8 +643,11 @@ const cell = (r, i) => (i == null ? '' : String(r[i] ?? '').trim());
  * Строки таблицы (после заголовка) → записи нужного вида и ошибки по строкам.
  * Номер строки в ошибке — как в Excel (с учётом заголовка).
  */
-export function buildRows(kind, rows, map, { headerIndex = 0 } = {}) {
+export function buildRows(kind, rows, map, { headerIndex = 0, headers = null } = {}) {
   const items = [];
+  // Единица граммовки из заголовка: «Выход, мл», «Объём» — миллилитры.
+  const weightHead = headers && map.weight != null ? norm(headers[map.weight]) : '';
+  const weightHint = /(^| )(мл|ml|л|l|объем|volume)( |$)/.test(weightHead) ? 'ml' : /(^| )(кг|kg)( |$)/.test(weightHead) ? 'kg' : null;
   const errors = [];
   const line = (i) => headerIndex + i + 2;
   let group = '';
@@ -631,7 +660,11 @@ export function buildRows(kind, rows, map, { headerIndex = 0 } = {}) {
       // Строка-группа в выгрузке без столбца категории: «Горячее», а под ней блюда.
       if (price == null && map.category == null && r.filter((x) => String(x).trim()).length === 1) { group = name; return; }
       if (price == null || price < 0) return err(`«${name}»: нет цены`);
-      items.push({ name: name.slice(0, 120), price: Math.round(price * 100) / 100, category: (cell(r, map.category) || group || 'Перенесённое').slice(0, 60), description: cell(r, map.description).slice(0, 300) });
+      const w = map.weight == null ? null : parseWeight(cell(r, map.weight), weightHint);
+      items.push({
+        name: name.slice(0, 120), price: Math.round(price * 100) / 100, category: (cell(r, map.category) || group || 'Перенесённое').slice(0, 60), description: cell(r, map.description).slice(0, 300),
+        ...(w ? { weight: w.weight, weightUnit: w.unit } : {}),
+      });
     } else if (kind === 'stock') {
       const name = cell(r, map.name);
       if (!name) return;
@@ -785,7 +818,7 @@ export function newPin(role, taken, rnd = Math.random) {
 /** Шаблон CSV для Excel (UTF-8 с BOM, разделитель «;»). */
 export function templateCsv(kind) {
   const samples = {
-    menu: [['Название', 'Цена', 'Категория', 'Описание'], ['Капучино 0,3', '220', 'Кофе', 'Двойной эспрессо и молоко'], ['Борщ', '390', 'Супы', '']],
+    menu: [['Название', 'Цена', 'Категория', 'Описание', 'Выход'], ['Капучино 0,3', '220', 'Кофе', 'Двойной эспрессо и молоко', '300 мл'], ['Борщ', '390', 'Супы', '', '300/50 г']],
     stock: [['Продукт', 'Единица', 'Остаток', 'Цена закупки', 'Мин. остаток', 'Категория'], ['Молоко 3,2%', 'л', '12', '95', '4', 'Бар'], ['Свёкла', 'кг', '5', '40', '1', 'Овощи']],
     recipes: [['Блюдо', 'Продукт', 'Количество', 'Единица', 'Отход, %', 'Порций'], ['Борщ', 'Свёкла', '500', 'г', '15', '10'], ['Борщ', 'Говядина', '0,6', 'кг', '', '10']],
     staff: [['Имя', 'Должность'], ['Анна', 'Официант'], ['Илья', 'Администратор']],

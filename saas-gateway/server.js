@@ -8055,7 +8055,8 @@ const menuAiLimiter = new Map(); // точка → { count, resetAt }
 /** Ответ ИИ → строки таблицы для «Переноса данных» (первая — заголовки). */
 function menuAiRows(parsed) {
   const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed && parsed.items) ? parsed.items : [];
-  const rows = [["Категория", "Название", "Цена", "Описание"]];
+  // «Выход» — отдельным столбцом: перенос меню запишет его в граммовку позиции.
+  const rows = [["Категория", "Название", "Цена", "Описание", "Выход"]];
   const seen = new Set();
   for (const it of list.slice(0, 1500)) {
     if (!it || typeof it !== "object") continue;
@@ -8068,7 +8069,7 @@ function menuAiRows(parsed) {
     const key = `${category.toLowerCase()}|${name.toLowerCase()}|${price}`;
     if (seen.has(key)) continue; // одна и та же позиция на двух снимках
     seen.add(key);
-    rows.push([category, name, String(Math.round(price * 100) / 100), [weight, desc].filter(Boolean).join(" · ")]);
+    rows.push([category, name, String(Math.round(price * 100) / 100), desc, weight]);
   }
   return rows;
 }

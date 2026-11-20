@@ -1434,6 +1434,7 @@ function screenMenu() {
           ${isHit(i) ? '<span class="hit">Хит</span>' : ''}</div>
         <div class="mbody">
           <div class="mname">${esc(trMenu(i.name))}</div>
+          ${portionText(i) ? `<div class="small muted">${esc(portionText(i))}</div>` : ''}
           ${i.description ? `<div class="small muted mdesc">${esc(trMenu(i.description))}</div>` : ''}
           ${hasMods(i) ? '<div class="small muted">Можно выбрать добавки</div>' : ''}
           <div class="mfoot"><b class="mprice">${money(i.price)}</b>${atTable || canTakeAway(i) ? qtyControls(i)
@@ -1590,6 +1591,19 @@ function upsellBlock(list) {
           <div class="upsell-foot"><b>${money(i.price)}</b><button data-plus="${esc(i.id)}" aria-label="Добавить: ${esc(i.name)}">+</button></div>
         </div>`).join('')}</div>
     </div>`;
+}
+
+/** Граммовка порции, как в приложении гостя: «300 г», «0,5 л», «2 шт». */
+function portionText(i) {
+  const w = Number(i && i.weight) || 0;
+  if (w <= 0) return '';
+  const unit = String(i.weightUnit || 'g');
+  const fmt = (n) => String(Math.round(n * 100) / 100).replace('.', ',');
+  if (unit === 'ml') return w >= 1000 ? `${fmt(w / 1000)} л` : `${fmt(w)} мл`;
+  if (unit === 'l') return `${fmt(w)} л`;
+  if (unit === 'kg') return `${fmt(w)} кг`;
+  if (unit === 'pcs') return `${fmt(w)} шт`;
+  return w >= 1000 ? `${fmt(w / 1000)} кг` : `${fmt(w)} г`;
 }
 
 function cartBlock(items = [], delivery = false, upsell = '') {

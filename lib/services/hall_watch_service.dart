@@ -8,6 +8,7 @@ import 'background_boot.dart';
 import 'auth_service.dart';
 import 'notification_service.dart';
 import 'people_directory.dart';
+import 'resume_hook.dart';
 import 'session_alerts_service.dart';
 import 'tenant_config_service.dart';
 
@@ -26,6 +27,7 @@ class HallWatchService {
   static final HallWatchService instance = HallWatchService._();
 
   bool _started = false;
+  late final ResumeHook _resume = ResumeHook(revive);
 
   /// На этом устройстве вошёл другой сотрудник — пусть фоновая служба
   /// перечитает, кто это, и переставит напоминания (угли — только тем,
@@ -44,6 +46,7 @@ class HallWatchService {
   Future<bool> start() async {
     if (_started) return true;
     _started = true;
+    if (kSaasMode) _resume.attach();
     await _dropOldChannels();
     // Сначала пробуем совсем беззвучный вариант, а если система откажется
     // с ним запускать службу — обычный тихий. Подробности у _tryStart.
@@ -150,6 +153,20 @@ class HallWatchService {
       await FlutterForegroundTask.stopService();
     } catch (_) {}
   }
+
+  /// Касса снова на экране (SaaS): если система остановила службу — по
+  /// лимиту Android 15 на фоновую работу или из-за нехватки памяти, —
+  /// запускаем её заново. Пока приложение на экране, лимит не тратится.
+  Future<void> revive() async {
+    if (!kSaasMode || !_started) return;
+    try {
+      if (await FlutterForegroundTask.isRunningService) return;
+    } catch (_) {
+      return;
+    }
+    _started = false;
+    await start();
+  }
 }
 
 /// Точка входа сервиса. Обязана быть функцией верхнего уровня с этой
@@ -212,8 +229,11 @@ class _HallWatchHandler extends TaskHandler {
     if (data == 'identity') SessionAlertsService.instance.refreshIdentity();
   }
 
+  /// [isTimeout] — Android 15+ остановил службу по лимиту времени (тип
+  /// «синхронизация данных» — 6 часов в сутки в фоне). Служба закрывается
+  /// штатно; когда кассу снова откроют, её поднимет [HallWatchService.revive].
   @override
-  Future<void> onDestroy(DateTime timestamp) async {
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
     await SessionAlertsService.instance.stop();
   }
 }

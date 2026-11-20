@@ -4,6 +4,7 @@ import 'dart:ui' show PointMode;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import '../build_info.dart';
 import '../models/hall_label.dart';
 import '../models/hall_wall.dart';
 import '../models/table_model.dart';
@@ -185,7 +186,9 @@ class _HallPlanViewState extends State<HallPlanView> {
                     key: ValueKey(t.id),
                     left: hallTileOffset(t).left,
                     top: hallTileOffset(t).top,
-                    child: widget.tileBuilder(t),
+                    // SaaS: у каждой плитки свой слой — изменение одного
+                    // стола не перерисовывает остальные (и их тени).
+                    child: kSaasMode ? RepaintBoundary(child: widget.tileBuilder(t)) : widget.tileBuilder(t),
                   ),
                 if (widget.overlay != null) Positioned.fill(child: widget.overlay!),
               ],

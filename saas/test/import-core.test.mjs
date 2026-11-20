@@ -117,6 +117,33 @@ test('меню без столбца категории: строки-групп
   assert.equal(errors[0].row, 6);
 });
 
+test('меню: граммовка (выход) — «300 г», «0,3 кг», «0,5 л», «150/30», единица из заголовка', () => {
+  assert.deepEqual(I.parseWeight('300'), { weight: 300, unit: 'g' });
+  assert.deepEqual(I.parseWeight('300 г'), { weight: 300, unit: 'g' });
+  assert.deepEqual(I.parseWeight('0,3 кг'), { weight: 300, unit: 'g' });
+  assert.deepEqual(I.parseWeight('0,5 л'), { weight: 500, unit: 'ml' });
+  assert.deepEqual(I.parseWeight('250 мл'), { weight: 250, unit: 'ml' });
+  assert.deepEqual(I.parseWeight('150/30'), { weight: 180, unit: 'g' });
+  assert.deepEqual(I.parseWeight('200', 'ml'), { weight: 200, unit: 'ml' });
+  assert.deepEqual(I.parseWeight('1 шт'), { weight: 1, unit: 'pcs' });
+  assert.equal(I.parseWeight(''), null);
+  assert.equal(I.parseWeight('по запросу'), null);
+  assert.equal(I.parseWeight('0'), null);
+  const rows = [
+    ['Наименование', 'Цена', 'Группа', 'Выход, мл'],
+    ['Морс', '150', 'Напитки', '300'],
+    ['Лимонад', '250', 'Напитки', '0,5 л'],
+    ['Чай', '100', 'Напитки', ''],
+  ];
+  const map = I.guessMapping('menu', rows[0]);
+  assert.equal(map.weight, 3, 'столбец «Выход, мл» узнан');
+  const { items } = I.buildRows('menu', rows.slice(1), map, { headers: rows[0] });
+  assert.deepEqual(items.map((x) => [x.name, x.weight, x.weightUnit]), [['Морс', 300, 'ml'], ['Лимонад', 500, 'ml'], ['Чай', undefined, undefined]]);
+  const grams = [['Блюдо', 'Цена', 'Вес'], ['Борщ', '350', '300/50']];
+  const g = I.buildRows('menu', grams.slice(1), I.guessMapping('menu', grams[0]), { headers: grams[0] });
+  assert.deepEqual([g.items[0].weight, g.items[0].weightUnit], [350, 'g']);
+});
+
 test('склад: цена за грамм → за кг, минус в остатке → 0 с предупреждением', () => {
   const { items, errors } = I.buildRows('stock', [['Сахар', 'г', '1500', '0,08'], ['Молоко', 'л', '-2', '95']], { name: 0, unit: 1, quantity: 2, cost: 3 });
   assert.equal(items[0].cost, 80);
