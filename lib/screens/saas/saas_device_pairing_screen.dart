@@ -124,7 +124,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
         setState(() {
           _busy = false;
           _autoJoining = false;
-          _error = 'Нет входа в Firebase — проверьте интернет и перезапустите приложение';
+          _error = 'Не удалось войти — проверьте интернет и перезапустите приложение';
         });
       }
       return;
@@ -160,7 +160,7 @@ class _SaasDevicePairingScreenState extends State<SaasDevicePairingScreen> {
   Future<void> _tryDemo() async {
     final uid = AppAuth.instance.currentUser?.uid;
     if (uid == null) {
-      setState(() => _error = 'Нет входа в Firebase — перезапустите приложение');
+      setState(() => _error = 'Не удалось войти — перезапустите приложение');
       return;
     }
     setState(() {

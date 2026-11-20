@@ -1,9 +1,9 @@
-name: Windows-касса запускается (эмуляторы)
+name: Windows-касса запускается (свой сервер)
 
-# Касса на Windows работает поверх Firebase C++ SDK: его сбой закрывает окно
-# без сообщения. Проверка собирает кассу так же, как сборка заведения
-# (release, SaaS, код заведения в сборке), но против эмуляторов Firestore/Auth
-# и локального saas-gateway на этой же машине — к боевой базе не обращается.
+# Проверка собирает кассу так же, как сборка заведения (release, SaaS,
+# последний stable Flutter, код заведения в сборке) и запускает её против
+# локального saas-gateway на этой же машине — как в бою: своя база (SQLite)
+# и свой вход, без Firebase. К боевому серверу не обращается.
 # Сценарии: первая установка → отдельное заведение; та же касса →
 # переподключение к точке сети; повторный запуск уже подключённой кассы.
 # Касса должна дойти до экрана входа и проработать минуту. Упала — в логе
@@ -31,21 +31,13 @@ concurrency:
 
 jobs:
   smoke:
-    name: Windows smoke (Flutter ${{ matrix.flutter }})
+    name: Windows smoke (Flutter stable)
     runs-on: windows-latest
     timeout-minutes: 75
     env:
-      # firebase-admin без ключа ищет сервер метаданных облака — на машине
-      # GitHub (Azure) это долгое ожидание. С эмуляторами он не нужен.
+      # firebase-admin (шлюзу он нужен только ради классов меток времени) без
+      # ключа ищет сервер метаданных облака — на машине GitHub это долго.
       METADATA_SERVER_DETECTION: none
-      GCLOUD_PROJECT: demo-hookah
-      GOOGLE_CLOUD_PROJECT: demo-hookah
-    strategy:
-      fail-fast: false
-      matrix:
-        # Как у сборки заведений (последний stable) и последняя версия до
-        # известной регрессии Firestore на Windows (flutterfire#18248).
-        flutter: ['3.47.6', '3.41.6']
 
     steps:
       - name: Checkout
@@ -55,51 +47,32 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          flutter-version: ${{ matrix.flutter }}
           cache: true
-
-      - name: Setup Java (эмуляторы Firebase)
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '21'
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Install Firebase CLI and gateway deps
+      - name: Install gateway deps
         shell: bash
-        run: |
-          npm install -g firebase-tools@14
-          cd saas-gateway && npm ci --omit=dev
+        run: cd saas-gateway && npm ci --omit=dev
 
       - name: Generate Windows platform files
         shell: bash
         run: |
-          # Flutter 3.41 закрепляет intl 0.20.2 — ограничение ^0.20.3 не
-          # сходится; flutter create сам вызывает pub get, поэтому до него.
-          sed -i 's/intl: ^0.20.3/intl: ^0.20.2/' pubspec.yaml
           flutter config --enable-windows-desktop
           flutter create . --platforms=windows
           sed -i 's/L"hookah_pos"/L"ZalPOS"/' windows/runner/main.cpp
           # На весь экран без рамки по команде из приложения (канал zalpos/window).
           node .github/scripts/patch-windows-runner.js
           rm -f test/widget_test.dart
-          node .github/windows-smoke/patch-emulators.js
           # flutter create обновил pubspec.lock до свежих пакетов — вернуть
-          # версии из репозитория.
+          # версии из репозитория, как в сборке заведений.
           git checkout -- pubspec.lock
-          # Старый Flutter закрепляет свои версии meta, intl, test_api и др. —
-          # lock из репозитория (под сборку заведений) ему не подходит: там
-          # пакеты подбираются от него, как можно ближе к lock.
-          if [ "${{ matrix.flutter }}" = "3.47.6" ]; then
-            flutter pub get --enforce-lockfile
-          else
-            flutter pub get
-          fi
-          # Как в сборке заведений: исправление плагина cloud_firestore.
+          flutter pub get --enforce-lockfile
+          # Как в сборке заведений: исправления плагинов cloud_firestore и
+          # firebase_auth (их C++ всё ещё собирается вместе с кассой).
           node .github/scripts/patch-firestore-windows.js
           # И Firebase C++ SDK заранее, с повторами.
           bash .github/scripts/prefetch-firebase-cpp-sdk.sh
@@ -122,60 +95,79 @@ jobs:
             --dart-define=SAAS_PRESET_SLUG=win-smoke \
             --dart-define=SAAS_PRESET_INVITE_CODE=SMOKE1234
 
-      # Эмуляторы и шлюз — в том же шаге, что и касса: процессы, запущенные
-      # в отдельном шаге, раннер Windows завершает вместе с ним.
-      - name: Run scenarios (эмуляторы, шлюз, касса)
+      # Шлюз и касса — в одном шаге: процессы, запущенные в отдельном шаге,
+      # раннер Windows завершает вместе с ним.
+      - name: Run scenarios (шлюз и касса)
         shell: pwsh
         timeout-minutes: 30
         run: |
           $dir = "${{ github.workspace }}\.github\windows-smoke"
-          # Эмулятор берёт правила только из папки своего firebase.json.
-          Copy-Item "${{ github.workspace }}\saas\firestore.rules" "$dir\firestore.rules"
-          Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "firebase emulators:start --only firestore,auth --project demo-hookah --config `"$dir\firebase.json`" > `"$env:RUNNER_TEMP\emulators.log`" 2>&1" -WindowStyle Hidden
-          # Фиктивный сервисный ключ: шлюз с эмуляторами подпись не проверяет.
-          $sa = node -e "const {generateKeyPairSync}=require('crypto');const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048});console.log(Buffer.from(JSON.stringify({type:'service_account',project_id:'demo-hookah',private_key_id:'x',private_key:privateKey.export({type:'pkcs8',format:'pem'}),client_email:'smoke@demo-hookah.iam.gserviceaccount.com',client_id:'1',token_uri:'https://oauth2.googleapis.com/token'})).toString('base64'))"
-          $env:FIREBASE_SERVICE_ACCOUNT_B64 = $sa
-          $env:FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080'
-          $env:FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099'
-          $env:GCLOUD_PROJECT = 'demo-hookah'
+          $gw = "${{ github.workspace }}\saas-gateway"
+          $t = $env:RUNNER_TEMP
           $env:PORT = '8095'
-          $env:FIREBASE_WEB_CONFIG_JSON = '{"apiKey":"fake-api-key","authDomain":"demo-hookah.firebaseapp.com","projectId":"demo-hookah","appId":"1:1:web:1","messagingSenderId":"1"}'
-          $up = $false
-          for ($i = 0; $i -lt 90; $i++) {
-            try { Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8080/' -TimeoutSec 2 | Out-Null; $up = $true; break } catch { Start-Sleep 2 }
+          $env:DATA_BACKEND = 'local'
+          $env:AUTH_BACKEND = 'own'
+          $env:DATA_DB_FILE = "$t\smoke-data.sqlite"
+          $env:AUTH_DB_FILE = "$t\smoke-auth.json"
+          $env:SUPPORT_DB_FILE = "$t\smoke-support.sqlite"
+          $env:SUPER_ADMINS_CACHE = "$t\smoke-super.json"
+          $env:PII_GATEWAY_URL = 'http://127.0.0.1:8096/'
+          $env:TELEGRAM_SECRET_KEY = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
+
+          # Справочник персональных данных — заглушка «ок» на этой же машине.
+          Start-Process -FilePath 'node' -ArgumentList "`"$dir\pii-stub.js`"" -WindowStyle Hidden
+
+          # Шлюз держит данные в памяти: seed.js правит базу, пока он остановлен.
+          function Start-Gateway {
+            $p = Start-Process -FilePath 'node' -ArgumentList "`"$gw\server.js`"" -WorkingDirectory $gw -PassThru -WindowStyle Hidden `
+              -RedirectStandardOutput "$t\gateway-$([guid]::NewGuid().ToString('N').Substring(0,6)).log" `
+              -RedirectStandardError "$t\gateway-err-$([guid]::NewGuid().ToString('N').Substring(0,6)).log"
+            for ($i = 0; $i -lt 60; $i++) {
+              try { Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8095/health' -TimeoutSec 2 | Out-Null; Write-Host 'шлюз отвечает'; return $p } catch { Start-Sleep 2 }
+            }
+            Write-Host '::error::saas-gateway не запустился'
+            Get-ChildItem "$t\gateway-*.log" | ForEach-Object { Write-Host "---- $($_.Name)"; Get-Content $_ -Tail 60 }
+            exit 1
           }
-          if (-not $up) { Write-Host '::error::эмулятор Firestore не запустился'; Get-Content "$env:RUNNER_TEMP\emulators.log" -Tail 60; exit 1 }
-          Write-Host 'эмуляторы отвечают'
-          Start-Process -FilePath 'node' -ArgumentList "`"${{ github.workspace }}\saas-gateway\server.js`"" -RedirectStandardOutput "$env:RUNNER_TEMP\gateway.log" -RedirectStandardError "$env:RUNNER_TEMP\gateway.err.log" -WindowStyle Hidden
-          $up = $false
-          for ($i = 0; $i -lt 30; $i++) {
-            try { Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8095/firebaseConfig' -TimeoutSec 2 | Out-Null; $up = $true; break } catch { Start-Sleep 2 }
+          function Stop-Gateway($p) {
+            # Запись на диск — каждые доли секунды; касса к этому моменту
+            # уже минуту как ничего не пишет.
+            Start-Sleep 2
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Start-Sleep 2
           }
-          if (-not $up) { Write-Host '::error::saas-gateway не запустился'; Get-Content "$env:RUNNER_TEMP\gateway.log", "$env:RUNNER_TEMP\gateway.err.log" -Tail 60; exit 1 }
-          Write-Host 'шлюз отвечает'
-          Write-Host 'данные: демо-сеть через шлюз'
-          node "$dir\seed.js" demo
-          if ($LASTEXITCODE -ne 0) { Get-Content "$env:RUNNER_TEMP\emulators.log" -Tail 40; Get-Content "$env:RUNNER_TEMP\gateway.err.log" -Tail 40; exit 1 }
+          function Seed($mode) {
+            node "$dir\seed.js" $mode
+            if ($LASTEXITCODE -ne 0) { Write-Host "::error::seed.js $mode не прошёл"; exit 1 }
+          }
 
           $exe = Get-ChildItem -Recurse -Path build\windows -Filter hookah_pos.exe | Where-Object { $_.FullName -match '\\runner\\Release\\' } | Select-Object -First 1
           if (-not $exe) { Write-Host '::error::hookah_pos.exe не найден'; exit 1 }
           $syms = (Get-ChildItem -Recurse -Path build\windows -Filter *.pdb | ForEach-Object { $_.DirectoryName } | Sort-Object -Unique) -join ';'
-          $dir = "${{ github.workspace }}\.github\windows-smoke"
-          node "$dir\seed.js" single
+
+          Write-Host 'данные: демо-сеть через шлюз'
+          $p = Start-Gateway
+          Seed 'demo'
+          Stop-Gateway $p
+
+          Seed 'single'
+          $p = Start-Gateway
           & "$dir\run.ps1" -Exe $exe.FullName -Name 'single-first-run' -SymbolDirs $syms
           & "$dir\run.ps1" -Exe $exe.FullName -Name 'single-restart' -SymbolDirs $syms
-          node "$dir\seed.js" chain
+          Stop-Gateway $p
+
+          Seed 'chain'
+          $p = Start-Gateway
           & "$dir\run.ps1" -Exe $exe.FullName -Name 'chain-rejoin' -SymbolDirs $syms
           & "$dir\run.ps1" -Exe $exe.FullName -Name 'chain-restart' -SymbolDirs $syms
+          Stop-Gateway $p
 
       - name: Server logs
         if: always()
         shell: pwsh
         run: |
-          foreach ($f in 'gateway.log', 'gateway.err.log', 'emulators.log') {
-            $p = Join-Path $env:RUNNER_TEMP $f
-            if (Test-Path $p) { Write-Host "---- $f"; Get-Content $p -Tail 60 }
-          }
+          Get-ChildItem (Join-Path $env:RUNNER_TEMP 'gateway-*.log') -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "---- $($_.Name)"; Get-Content $_ -Tail 60 }
 
       - name: Result
         if: always()
