@@ -39,7 +39,7 @@ const net = require("net");
 const zlib = require("zlib");
 const { createLegalPapers } = require("./legal-papers");
 const {
-  authEmailLetter, passwordLetter, superAdminGrantedLetter, superAdminRevokedLetter, passwordChangedLetter, passwordAttackLetter, brandAuthLink,
+  authEmailLetter, passwordLetter, superAdminGrantedLetter, superAdminRevokedLetter, passwordChangedLetter, passwordAttackLetter, renewalReminderLetter, brandAuthLink,
   createMailer, AUTH_EMAIL_TYPES,
 } = require("./auth-email");
 const { createGuestPay, onlinePaySettings, credsPrint, sellerReady } = require("./guest-pay");
@@ -2743,11 +2743,76 @@ async function purgeChainData(chainId) {
   });
 }
 
-/** Раз в сутки продлевает подписки, у которых период кончается в
- *  ближайшие сутки. Повторы в тот же день отсекает 20-часовая защёлка. */
-async function runChargeRecurringSubscriptions() {
+/** Сумма и подписи очередного автопродления — одинаково в напоминании и при
+ *  списании: сеть платит за число точек на момент продления. */
+async function renewalQuote(sub, targetId) {
+  const isChain = !!sub.chainId;
+  const plan = (await db().collection("plans").doc(sub.planId).get()).data() || {};
+  const billingPeriod = normalizeBillingPeriod(sub.billingPeriod);
+  const locationCount = isChain ? Math.max(1, await countChainLocations(targetId)) : 1;
+  const price = billingPrice(plan, sub, sub.planId, (p) => (isChain ? chainPriceForPeriod(p, billingPeriod, locationCount) : planPriceForPeriod(p, billingPeriod)));
+  const periodLabel = { monthly: "месяц", semiannual: "полгода", yearly: "год" }[billingPeriod];
+  return { isChain, plan, billingPeriod, locationCount, price, periodLabel };
+}
+
+/** За сколько до списания предупреждаем и сколько минимум ждём после письма.
+ *  ЗоЗПП (поправки о подписках, с 01.03.2026): перед каждым автоматическим
+ *  списанием — уведомление о сумме со ссылкой на отказ. Срок в разборах
+ *  называют «за сутки» и «за три дня» — предупреждаем за три. */
+const RENEWAL_NOTICE_MS = 3 * 86400000;
+const RENEWAL_NOTICE_MIN_MS = 86400000;
+
+/** Напоминания об автопродлении: раз на период, за 3 дня до конца срока.
+ *  Письмо не ушло — списания не будет (см. runChargeRecurringSubscriptions). */
+async function runRenewalReminders(now = Date.now(), deps = {}) {
   const firestore = db();
-  const withinADay = admin.firestore.Timestamp.fromMillis(Date.now() + 86400000);
+  const send = deps.send || (async (to, letter) => {
+    if (authMailer === undefined) authMailer = createMailer();
+    if (!authMailer) throw new Error("почта сервера не настроена");
+    await authMailer.send({ to, ...letter });
+  });
+  const ownerEmail = deps.ownerEmail || billingOwnerEmail;
+  const soon = admin.firestore.Timestamp.fromMillis(now + RENEWAL_NOTICE_MS + 86400000);
+  const docs = (await firestore.collection("subscriptions")
+    .where("status", "==", "active")
+    .where("provider", "==", "robokassa")
+    .where("currentPeriodEnd", "<=", soon)
+    .get()).docs;
+  let sent = 0;
+  for (const subDoc of docs) {
+    const sub = subDoc.data();
+    if (sub.cancelAtPeriodEnd || !sub.robokassaParentInvId) continue;
+    const periodEndMs = sub.currentPeriodEnd?.toMillis?.() ?? 0;
+    if (!periodEndMs || sub.renewalReminderFor === periodEndMs) continue;
+    try {
+      const q = await renewalQuote(sub, subDoc.id);
+      if (q.price <= 0) continue;
+      const to = await ownerEmail(q.isChain, subDoc.id);
+      if (!to) throw new Error("нет email владельца");
+      const target = (await firestore.collection(q.isChain ? "chains" : "tenants").doc(subDoc.id).get()).data() || {};
+      const chargeDate = new Date(Math.max(periodEndMs - 86400000, now + RENEWAL_NOTICE_MIN_MS))
+        .toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Moscow" });
+      await send(to, renewalReminderLetter({
+        venueName: target.name || "", planName: q.plan.name || sub.planId, periodLabel: q.periodLabel,
+        amount: q.price, chargeDate, siteUrl: CONSOLE_URL,
+      }));
+      await subDoc.ref.update({ renewalReminderFor: periodEndMs, renewalReminderAt: admin.firestore.Timestamp.fromMillis(now) });
+      sent++;
+    } catch (e) {
+      console.error(`автопродление ${subDoc.id}: напоминание не отправлено — ${e.message || e}`);
+    }
+  }
+  return sent;
+}
+
+/** Раз в сутки продлевает подписки, у которых период кончается в
+ *  ближайшие сутки. Повторы в тот же день отсекает 20-часовая защёлка.
+ *  Списывает только после напоминания, отправленного не меньше суток назад. */
+async function runChargeRecurringSubscriptions(now = Date.now(), deps = {}) {
+  const firestore = db();
+  await runRenewalReminders(now, deps);
+  const charge = deps.charge || robokassaCharge;
+  const withinADay = admin.firestore.Timestamp.fromMillis(now + 86400000);
   const byProvider = async (provider) => (await firestore.collection("subscriptions")
     .where("status", "==", "active")
     .where("provider", "==", provider)
@@ -2772,19 +2837,17 @@ async function runChargeRecurringSubscriptions() {
     const lastAttemptMs = sub.renewalAttemptedAt?.toMillis?.() ?? 0;
     const periodEndMs = sub.currentPeriodEnd?.toMillis?.() ?? 0;
     if (lastAttemptMs >= periodEndMs - 86400000) continue;
+    // Без напоминания об этом списании (или если оно ушло меньше суток
+    // назад) карту не трогаем: закон требует предупредить заранее.
+    const reminded = sub.renewalReminderFor === periodEndMs ? (sub.renewalReminderAt?.toMillis?.() ?? 0) : 0;
+    if (!reminded || now - reminded < RENEWAL_NOTICE_MIN_MS) continue;
 
-    const planDoc = await firestore.collection("plans").doc(sub.planId).get();
-    const plan = planDoc.data() || {};
-    const billingPeriod = normalizeBillingPeriod(sub.billingPeriod);
-    // Сеть платит за число точек на момент продления: их могли добавить или закрыть.
-    const locationCount = isChain ? Math.max(1, await countChainLocations(targetId)) : 1;
-    const price = billingPrice(plan, sub, sub.planId, (p) => (isChain ? chainPriceForPeriod(p, billingPeriod, locationCount) : planPriceForPeriod(p, billingPeriod)));
+    const { plan, billingPeriod, locationCount, price, periodLabel } = await renewalQuote(sub, targetId);
     if (price <= 0) continue;
-    const periodLabel = { monthly: "месяц", semiannual: "полгода", yearly: "год" }[billingPeriod];
 
-    await subDoc.ref.update({ renewalAttemptedAt: admin.firestore.FieldValue.serverTimestamp() });
+    await subDoc.ref.update({ renewalAttemptedAt: admin.firestore.Timestamp.fromMillis(now) });
     try {
-      const invId = await robokassaCharge({
+      const invId = await charge({
         sub, targetId, isChain, price, billingPeriod, locationCount,
         description: `ZalPOS: продление тарифа «${plan.name || sub.planId}», ${periodLabel}`,
       });
@@ -10623,4 +10686,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, dataWriteGate, localDataStore });
+Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, runChargeRecurringSubscriptions, runRenewalReminders, dataWriteGate, localDataStore });

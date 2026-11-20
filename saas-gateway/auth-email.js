@@ -179,6 +179,23 @@ function passwordChangedLetter({ siteUrl = "https://zalpos.ru/" } = {}) {
   });
 }
 
+/** Напоминание перед автопродлением подписки (ЗоЗПП, поправки о подписках
+ *  с 01.03.2026): сумма, дата, тариф и ссылка, где отключить. */
+function renewalReminderLetter({ venueName = "", planName, periodLabel, amount, chargeDate, siteUrl = "https://zalpos.ru/" }) {
+  const sum = `${Number(amount).toLocaleString("ru-RU")} ₽`;
+  return renderLetter({
+    subject: `Автопродление ZalPOS: ${chargeDate} спишем ${sum}`,
+    title: "Скоро автопродление подписки",
+    lead: `${venueName ? `«${venueName}»: ` : ""}${chargeDate} с карты, которой вы оплачивали подписку, будет списано ${sum} за тариф «${planName}» на ${periodLabel}. `
+      + "Если продлевать не нужно — отключите автопродление в личном кабинете до этой даты: Оплата → «Отключить автопродление». Оплаченный срок при этом сохранится.",
+    button: "Отключить автопродление",
+    link: `${siteUrl}#/billing`,
+    note: "Если подписку продлеваем как обычно — ничего делать не нужно. Не получается отключить — напишите в поддержку в личном кабинете, отключим.",
+    siteUrl,
+    hideRawLink: true,
+  });
+}
+
 /** Уведомление о безопасности: к почте подбирали пароль (shield.js). */
 function passwordAttackLetter({ siteUrl = "https://zalpos.ru/" } = {}) {
   return renderLetter({
@@ -341,4 +358,4 @@ function createMailer(env = process.env) {
 
 module.exports = {
   authEmailLetter, passwordLetter, partnerInviteLetter, courierCodeLetter, courierWelcomeLetter, partnerWelcomeLetter, superAdminGrantedLetter, superAdminRevokedLetter,
-  partnerTelegramLetter, passwordChangedLetter, passwordAttackLetter, brandAuthLink, createMailer, AUTH_EMAIL_TYPES: Object.keys(LETTERS) };
+  partnerTelegramLetter, passwordChangedLetter, passwordAttackLetter, renewalReminderLetter, brandAuthLink, createMailer, AUTH_EMAIL_TYPES: Object.keys(LETTERS) };

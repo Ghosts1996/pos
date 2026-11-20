@@ -44,6 +44,46 @@ test("срок вышел — past_due сразу (не через сутки); 
   assert.equal(await st("autoRenew"), "past_due");
 });
 
+test("автопродление: письмо за 3 дня до списания; без письма карту не трогаем; отключили — ни письма, ни списания", async () => {
+  const D = 24 * H;
+  const end = now + 3 * D;
+  await set("plans/renewPlan", { name: "Бизнес", priceRub: 1990, active: true });
+  for (const id of ["rnOk", "rnOff", "rnNoMail"]) {
+    await set(`tenants/${id}`, { status: "active", name: `Кафе ${id}`, ownerUserId: `u_${id}` });
+    await set(`subscriptions/${id}`, { status: "active", provider: "robokassa", robokassaParentInvId: "77", planId: "renewPlan",
+      billingPeriod: "monthly", currentPeriodEnd: T(end), ...(id === "rnOff" ? { cancelAtPeriodEnd: true } : {}) });
+  }
+  const mails = [];
+  const charges = [];
+  const deps = {
+    ownerEmail: async (_, id) => (id === "rnNoMail" ? null : `${id}@test.ru`),
+    send: async (to, letter) => mails.push({ to, letter }),
+    charge: async ({ targetId, price }) => { charges.push([targetId, price]); return "inv1"; },
+  };
+  const { runChargeRecurringSubscriptions } = server;
+  // За 3 дня: письмо только тем, у кого автопродление включено и есть почта.
+  await runChargeRecurringSubscriptions(now, deps);
+  assert.deepEqual(mails.map((m) => m.to), ["rnOk@test.ru"]);
+  assert.match(mails[0].letter.subject, /1\s?990 ₽/);
+  assert.match(mails[0].letter.html, /#\/billing/);
+  assert.match(mails[0].letter.text, /Отключить автопродление/);
+  assert.equal(charges.length, 0, "за 3 дня не списываем");
+  // Повторный запуск в тот же период — второго письма нет.
+  await runChargeRecurringSubscriptions(now + H, deps);
+  assert.equal(mails.length, 1);
+  // За сутки до конца срока: списание только у того, кого предупредили.
+  await runChargeRecurringSubscriptions(end - 12 * H, deps);
+  assert.deepEqual(charges, [["rnOk", 1990]]);
+  // Письмо ушло меньше суток назад — списывать рано, даже если срок близко.
+  await set("subscriptions/rnLate", { status: "active", provider: "robokassa", robokassaParentInvId: "78", planId: "renewPlan",
+    billingPeriod: "monthly", currentPeriodEnd: T(now + 10 * H) });
+  await set("tenants/rnLate", { status: "active", ownerUserId: "u_late" });
+  const late = { ...deps, ownerEmail: async () => "late@test.ru" };
+  await runChargeRecurringSubscriptions(now, late);
+  assert.ok(mails.some((m) => m.to === "late@test.ru"));
+  assert.ok(!charges.some(([id]) => id === "rnLate"), "письмо только что ушло — ждём сутки");
+});
+
 test("неоплаченное заведение и сеть: записи не принимаются; оплаченное, чужие пути, супер-админ — можно", async () => {
   await set("tenants/paid", { status: "active" });
   await set("tenants/unpaid", { status: "past_due" });
