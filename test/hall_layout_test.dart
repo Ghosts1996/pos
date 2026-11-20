@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hookah_pos/build_info.dart';
 import 'dart:ui' show Size;
 import 'package:hookah_pos/models/reservation_model.dart';
 import 'package:hookah_pos/models/table_model.dart';
@@ -113,6 +114,26 @@ void main() {
       expect(o.top + kHallTile, kHallBasis.height);
       final lower = hallFractionForTopLeft(500, kHallCanvas.height - kHallTile, const Size(kHallTile, kHallTile));
       expect(lower.y, greaterThan(1));
+    });
+
+    test('SaaS: площадка 24×20 клеток, столы и дальний угол на местах', () {
+      if (kSaasMode) {
+        expect(kHallCanvas, const Size(2496, 2080));
+      } else {
+        expect(kHallCanvas, const Size(1248, 1040), reason: 'hookah-pos — как раньше');
+      }
+      // Стол, поставленный раньше (x/y в пределах прежней площадки), не сдвигается.
+      final old = hallTileOffset(_t('1', x: 0.7, y: 1.2));
+      expect(old.left, closeTo(0.7 * (kHallBasis.width - kHallTile), 1e-9));
+      expect(old.top, closeTo(1.2 * (kHallBasis.height - kHallTile), 1e-9));
+      // В правый нижний угол новой площадки стол встаёт и туда же возвращается.
+      const s = Size(kHallTile, kHallTile);
+      final f = hallFractionForTopLeft(kHallCanvas.width - kHallTile, kHallCanvas.height - kHallTile, s);
+      final o = hallTileOffset(_t('2', x: f.x, y: f.y));
+      expect(o.left + kHallTile, closeTo(kHallCanvas.width, 0.01));
+      expect(o.top + kHallTile, closeTo(kHallCanvas.height, 0.01));
+      final cells = (kHallCanvas.width ~/ kHallTile) * (kHallCanvas.height ~/ kHallTile);
+      expect(cells, kSaasMode ? 480 : 120);
     });
   });
 

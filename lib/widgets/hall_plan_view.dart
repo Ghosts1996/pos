@@ -311,7 +311,7 @@ class _HallPlanViewState extends State<HallPlanView> {
       final content = _content();
       final start = widget.fitWidth
           ? math.max(fit, math.min(HallPlanView.comfortableScale, math.min(w / content.width, h / content.height)))
-          : math.min(HallPlanView.comfortableScale, math.max(fit, h / kHallCanvas.height));
+          : math.min(HallPlanView.comfortableScale, math.max(fit, h / kHallCanvasClassic.height));
       final Widget viewer;
       if (widget.transformationController == null) {
         viewer = _zoomable(
@@ -427,6 +427,21 @@ class _FloorPainter extends CustomPainter {
       canvas.drawPoints(
         PointMode.points,
         points,
+        dot
+          ..strokeWidth = 2.8
+          ..strokeCap = StrokeCap.round,
+      );
+      return;
+    }
+    if (kSaasMode) {
+      // Площадка в SaaS вчетверо больше — точки одной командой, а не
+      // тысячами кругов (слабые моноблоки на Windows).
+      canvas.drawPoints(
+        PointMode.points,
+        [
+          for (var x = step; x < size.width; x += step)
+            for (var y = step; y < size.height; y += step) Offset(x, y),
+        ],
         dot
           ..strokeWidth = 2.8
           ..strokeCap = StrokeCap.round,

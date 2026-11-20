@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' show Rect, Size;
 
+import '../build_info.dart';
 import '../models/reservation_model.dart';
 import '../models/table_model.dart';
 import 'constants.dart';
@@ -17,7 +18,16 @@ const Size kHallBasis = Size(1000, 640);
 /// столам не хватало места вниз): столы правее и ниже прежней границы
 /// получают x/y больше 1, уже расставленные остаются на местах. Прежние
 /// версии приложений такие столы прижимают к краю схемы.
-const Size kHallCanvas = Size(1248, 1040);
+///
+/// SaaS (20.11.2026, просьба владельца «мало помещается»): площадка вдвое
+/// шире и вдвое выше — 24×20 клеток вместо 12×10. Базовый холст прежний,
+/// поэтому расставленные столы, стены и подписи остаются на своих местах.
+/// Та же площадка — в веб-версии гостя (HALL в saas/guest-web/app/app.js).
+const Size kHallCanvas = kSaasMode ? Size(2496, 2080) : kHallCanvasClassic;
+
+/// Прежняя площадка (12×10 клеток): по её высоте выбирается начальный
+/// масштаб схемы, чтобы на большой площадке столы не стали мельче.
+const Size kHallCanvasClassic = Size(1248, 1040);
 
 /// Размер плитки стола на логическом холсте.
 const double kHallTile = 104;
