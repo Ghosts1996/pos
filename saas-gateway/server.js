@@ -273,6 +273,47 @@ async function assertSlugFree(firestore, slug, message) {
   if (!tenants.empty || !chains.empty) throw new HttpError(409, message);
 }
 
+/** Код распущенной сети этого же владельца снова свободен: сеть стала
+ *  заведением, точек у неё нет, а владелец хочет вернуть прежний код. */
+async function releaseOwnDissolvedSlug(firestore, slug, uid) {
+  const snap = await firestore.collection("chains").where("slug", "==", slug).limit(1).get();
+  if (snap.empty) return;
+  const c = snap.docs[0].data() || {};
+  if (c.status !== "dissolved" || c.ownerUserId !== uid) return;
+  await snap.docs[0].ref.set({ slug: null, releasedSlug: slug }, { merge: true });
+}
+
+async function slugTaken(firestore, slug) {
+  const [tenants, chains] = await Promise.all([
+    firestore.collection("tenants").where("slug", "==", slug).limit(1).get(),
+    firestore.collection("chains").where("slug", "==", slug).limit(1).get(),
+  ]);
+  return !tenants.empty || !chains.empty;
+}
+
+/** Свободен ли код сети/точки и какой свободный предложить. Своя
+ *  распущенная сеть код не держит. */
+async function handleSlugAvailable(req, res) {
+  const decoded = await verifyAuth(req);
+  const body = await parseJsonBody(req);
+  const base = normalizeSlug(body.slug);
+  const firestore = db();
+  const ownDissolved = async (slug) => {
+    const snap = await firestore.collection("chains").where("slug", "==", slug).limit(1).get();
+    const c = snap.empty ? null : snap.docs[0].data() || {};
+    return !!c && c.status === "dissolved" && c.ownerUserId === decoded.uid;
+  };
+  const freeFor = async (slug) => !(await slugTaken(firestore, slug)) || (await ownDissolved(slug));
+  const free = await freeFor(base);
+  let suggestion = free ? base : null;
+  const stem = base.slice(0, 34).replace(/-+$/, "");
+  for (const tail of ["-set", "-net", "-2", "-3", "-4", "-5"]) {
+    if (suggestion) break;
+    if (await freeFor(stem + tail)) suggestion = stem + tail;
+  }
+  sendJson(res, 200, { slug: base, free, suggestion });
+}
+
 function randomInviteCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
@@ -1092,6 +1133,7 @@ async function handleConvertTenantToChain(req, res) {
   if (tenant.chainId) throw new HttpError(409, "Заведение уже состоит в сети");
 
   const slug = normalizeSlug(rawSlug || name);
+  await releaseOwnDissolvedSlug(firestore, slug, uid);
   // Код самого заведения сети тоже не подходит: его поддомен уже занят.
   await assertSlugFree(firestore, slug, "Этот код сети уже занят, выберите другой");
 
@@ -1107,6 +1149,12 @@ async function handleConvertTenantToChain(req, res) {
     firestore.collection("tenantMembers").where("tenantId", "==", tenantId).get(),
   ]);
   const oldSub = oldSubSnap.exists ? oldSubSnap.data() : null;
+  // Оплаченные дни — по цене тарифа сети (дороже — дней меньше).
+  let carriedEnd = (oldSub && oldSub.currentPeriodEnd) || null;
+  if (oldSub && oldSub.status === "active") {
+    const q = await planSwitchQuote(firestore, { tenantId, planId: resolvedPlanId });
+    if (q.newEndMs) carriedEnd = admin.firestore.Timestamp.fromMillis(q.newEndMs);
+  }
   // Подписки у заведения быть не может только при сбое — тогда даём пробный период.
   const trialDays = oldSub ? 0 : (Number((await firestore.collection("plans").doc(resolvedPlanId).get()).data()?.trialDays) || 7);
 
@@ -1138,8 +1186,9 @@ async function handleConvertTenantToChain(req, res) {
     startedAt: oldSub.startedAt || now,
     trialEndsAt: oldSub.trialEndsAt || null,
     currentPeriodStart: oldSub.currentPeriodStart || now,
-    currentPeriodEnd: oldSub.currentPeriodEnd || null,
+    currentPeriodEnd: carriedEnd,
     cancelAtPeriodEnd: !!oldSub.cancelAtPeriodEnd,
+    ...carryFields(oldSub),
   } : {
     chainId, planId: resolvedPlanId, status: "trial", provider: null, externalSubscriptionId: null,
     startedAt: now, trialEndsAt: admin.firestore.Timestamp.fromMillis(Date.now() + trialDays * 86400000),
@@ -1221,6 +1270,11 @@ async function handleConvertChainToSingle(req, res) {
   const chainSub = (await subRef.doc(chainId).get()).data() || null;
   const now = admin.firestore.FieldValue.serverTimestamp();
   const status = chainSub && ["trial", "active", "past_due"].includes(chainSub.status) ? chainSub.status : "active";
+  let carriedEnd = (chainSub && chainSub.currentPeriodEnd) || null;
+  if (chainSub && chainSub.status === "active") {
+    const q = await planSwitchQuote(firestore, { tenantId, planId: planSnap.id });
+    if (q.newEndMs) carriedEnd = admin.firestore.Timestamp.fromMillis(q.newEndMs);
+  }
 
   const batch = firestore.batch();
   batch.set(subRef.doc(tenantId), {
@@ -1230,8 +1284,9 @@ async function handleConvertChainToSingle(req, res) {
     startedAt: (chainSub && chainSub.startedAt) || now,
     trialEndsAt: (chainSub && chainSub.trialEndsAt) || null,
     currentPeriodStart: (chainSub && chainSub.currentPeriodStart) || now,
-    currentPeriodEnd: (chainSub && chainSub.currentPeriodEnd) || null,
+    currentPeriodEnd: carriedEnd,
     cancelAtPeriodEnd: !!(chainSub && chainSub.cancelAtPeriodEnd),
+    ...carryFields(chainSub),
     supersededByChainId: admin.firestore.FieldValue.delete(),
     updatedAt: now,
   }, { merge: true });
@@ -6224,6 +6279,144 @@ async function handleChangeTrialPlan(req, res) {
 }
 
 /**
+ * Смена тарифа без оплаты, с пересчётом срока. Оплаченные дни переводятся
+ * в дни нового тарифа по месячной цене: дороже — дней меньше, дешевле —
+ * больше; деньги не пропадают и не появляются из воздуха. Бесплатные дни
+ * (остаток пробного периода, «Приведи коллегу») переходят как есть.
+ * Пробный период — дата не меняется. Подписка не действует — переносить
+ * нечего, нужен новый платёж.
+ */
+const SWITCH_MIN_LEFT_MS = 86400000;
+const SWITCH_CARRY_FIELDS = ["billingPeriod", "robokassaParentInvId", "freeUntil", "referralCreditDays", "pastDueSince", "renewalReminderFor", "renewalReminderAt"];
+
+/** Поля подписки, которые переезжают вместе с ней (сеть ↔ заведение):
+ *  период оплаты, автопродление, бесплатные дни, просрочка. */
+function carryFields(sub) {
+  const out = {};
+  for (const k of SWITCH_CARRY_FIELDS) {
+    if (sub && sub[k] !== undefined && sub[k] !== null) out[k] = sub[k];
+  }
+  return out;
+}
+
+/** Месячная цена подписки на тарифе (сеть — за все её точки). */
+function monthlyValue(plan, sub, planId, isChain, points = 1) {
+  return billingPrice(plan || {}, sub, planId,
+    (p) => (isChain ? chainPriceForPeriod(p, "monthly", Math.max(1, points)) : planPriceForPeriod(p, "monthly")));
+}
+
+/** Новый конец срока при смене тарифа: { endMs, freeMs } или null (не действует). */
+function switchedPeriod({ now, cur, toPlanId, wasMonthly, nextMonthly }) {
+  const ms = (t) => (t && typeof t.toMillis === "function" ? t.toMillis() : Number(t) || 0);
+  const c = cur || {};
+  if (c.status !== "active" || ms(c.currentPeriodEnd) <= now) return null;
+  const carry = periodCarry({ now, cur: c, planId: toPlanId, wasMonthly, nextMonthly });
+  // Вниз до минуты: туда-обратно по тарифам срок не растёт.
+  return { endMs: now + Math.floor(carry.carryMs / 60000) * 60000, freeMs: carry.freeMs };
+}
+
+/**
+ * Расчёт смены тарифа для заведения (или его сети) — общий для «Сменить
+ * тариф», «Перевести в сеть» и «Перейти на тариф для одного заведения».
+ * → { billingId, isChain, toIsChain, sub, plan, fromPlanId, endMs, newEndMs, freeMs, wasMonthly, nextMonthly, status }
+ */
+async function planSwitchQuote(firestore, { tenantId, chainId, planId, now = Date.now() }) {
+  let isChain = typeof chainId === "string" && !!chainId;
+  let billingId = isChain ? chainId : tenantId;
+  if (!isChain) {
+    const t = (await firestore.collection("tenants").doc(tenantId).get()).data();
+    if (!t) throw new HttpError(404, "Заведение не найдено");
+    if (t.chainId) { isChain = true; billingId = t.chainId; }
+  }
+  const planSnap = await firestore.collection("plans").doc(planId).get();
+  const plan = planSnap.exists ? planSnap.data() : null;
+  if (!plan || plan.archived === true) throw new HttpError(404, "Тариф не найден");
+  const toIsChain = !!plan.isChainPlan;
+  const sub = (await firestore.collection("subscriptions").doc(billingId).get()).data() || null;
+  const ms = (t) => (t && typeof t.toMillis === "function" ? t.toMillis() : Number(t) || 0);
+  const out = { billingId, isChain, toIsChain, sub, plan, fromPlanId: sub?.planId || null, status: sub?.status || null,
+    endMs: 0, newEndMs: 0, freeMs: 0, wasMonthly: 0, nextMonthly: 0 };
+  if (!sub) return out;
+  if (sub.status === "trial") {
+    out.endMs = out.newEndMs = ms(sub.trialEndsAt);
+    return out;
+  }
+  out.endMs = ms(sub.currentPeriodEnd);
+  if (sub.status !== "active" || out.endMs <= now) return out;
+  const points = isChain ? Math.max(1, await countChainLocations(billingId)) : 1;
+  const fromPlan = sub.planId ? (await firestore.collection("plans").doc(sub.planId).get()).data() || {} : {};
+  out.wasMonthly = monthlyValue(fromPlan, sub, sub.planId, isChain, points);
+  // В сеть переходит одна точка; из сети уходит тоже одна.
+  out.nextMonthly = monthlyValue(plan, sub, planId, toIsChain, toIsChain && isChain ? points : 1);
+  const sw = switchedPeriod({ now, cur: sub, toPlanId: planId, wasMonthly: out.wasMonthly, nextMonthly: out.nextMonthly });
+  if (sw) { out.newEndMs = sw.endMs; out.freeMs = sw.freeMs; }
+  return out;
+}
+
+/** Предпросмотр: каким станет срок после смены тарифа. */
+async function handlePlanSwitchQuote(req, res) {
+  const decoded = await verifyAuth(req);
+  const { tenantId, planId } = await parseJsonBody(req);
+  if (typeof planId !== "string" || !/^[a-z0-9-]{1,40}$/.test(planId)) throw new HttpError(400, "Не указан тариф");
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
+  await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+  const q = await planSwitchQuote(db(), { tenantId, planId });
+  sendJson(res, 200, {
+    status: q.status, fromPlanId: q.fromPlanId, toPlanId: planId, isChain: q.isChain, toIsChain: q.toIsChain,
+    endAt: q.endMs || null, newEndAt: q.newEndMs || null, wasMonthly: q.wasMonthly, nextMonthly: q.nextMonthly,
+    canSwitch: q.status === "trial" || (q.status === "active" && q.newEndMs - Date.now() >= SWITCH_MIN_LEFT_MS),
+  });
+}
+
+/** Сменить тариф того же вида (заведение → заведение, сеть → сеть) без оплаты. */
+async function handleChangePlan(req, res) {
+  const decoded = await verifyAuth(req);
+  const { tenantId, planId } = await parseJsonBody(req);
+  if (typeof planId !== "string" || !/^[a-z0-9-]{1,40}$/.test(planId)) throw new HttpError(400, "Не указан тариф");
+  if (typeof tenantId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
+  const firestore = db();
+  const tenant = (await firestore.collection("tenants").doc(tenantId).get()).data();
+  if (!tenant || tenant.status === "deleted") throw new HttpError(404, "Заведение не найдено");
+  if (tenant.chainId) await requireChainRole(tenant.chainId, decoded.uid, ["owner", "admin"]);
+  else await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+  if (tenant.demo === true || tenant.isDemo === true) throw new HttpError(409, "В демо тариф не меняется");
+  const now = Date.now();
+  const q = await planSwitchQuote(firestore, { tenantId, planId, now });
+  if (q.toIsChain !== q.isChain) {
+    throw new HttpError(412, q.isChain ? "Для одного заведения — «Перейти на тариф для одного заведения» ниже" : "Тариф сети — «Перевести в сеть» ниже");
+  }
+  if (q.fromPlanId === planId) return sendJson(res, 200, { ok: true, planId, endAt: q.endMs || null });
+  if (q.status === "trial") {
+    await firestore.collection("subscriptions").doc(q.billingId).set({ planId }, { merge: true });
+  } else if (q.status === "active" && q.newEndMs) {
+    if (q.newEndMs - now < SWITCH_MIN_LEFT_MS) {
+      throw new HttpError(412, "Оплаченных дней почти не осталось — оплатите новый тариф, срок добавится к текущему");
+    }
+    const subRef = firestore.collection("subscriptions").doc(q.billingId);
+    await firestore.runTransaction(async (tx) => {
+      const cur = (await tx.get(subRef)).data() || {};
+      // Пока считали, подписку оплатили или сменили — посчитайте заново.
+      if (cur.planId !== q.fromPlanId || (cur.currentPeriodEnd?.toMillis?.() || 0) !== q.endMs) {
+        throw new HttpError(409, "Подписка только что изменилась — обновите страницу и попробуйте ещё раз");
+      }
+      tx.set(subRef, {
+        planId,
+        currentPeriodEnd: admin.firestore.Timestamp.fromMillis(q.newEndMs),
+        planSwitchedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    });
+  } else {
+    throw new HttpError(412, "Подписка не действует — выберите тариф и оплатите его");
+  }
+  await firestore.collection(q.isChain ? "chains" : "tenants").doc(q.billingId)
+    .set({ planId, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  await syncCapabilities(q.isChain ? { chainId: q.billingId } : { tenantId });
+  await writeAuditLog({ tenantId: q.isChain ? null : tenantId, actorId: decoded.uid, action: "planChanged",
+    metadata: { chainId: q.isChain ? q.billingId : null, from: q.fromPlanId, planId, endAt: q.endMs || null, newEndAt: q.newEndMs || null } });
+  sendJson(res, 200, { ok: true, planId, endAt: q.newEndMs || q.endMs || null });
+}
+
+/**
  * Каждые DEMO_CLEANUP_INTERVAL_MS удаляет демо старше DEMO_TTL_MS. Нужен
  * составной индекс demo+createdAt (saas/firestore.indexes.json); без него
  * запрос падает с FAILED_PRECONDITION и ссылкой на создание индекса.
@@ -10430,6 +10623,9 @@ const ROUTES = {
   "/savePlan": handleSavePlan,
   "/applyPlanCatalog": handleApplyPlanCatalog,
   "/changeTrialPlan": handleChangeTrialPlan,
+  "/changePlan": handleChangePlan,
+  "/slugAvailable": handleSlugAvailable,
+  "/planSwitchQuote": handlePlanSwitchQuote,
   "/deletePlan": handleDeletePlan,
   "/securityStatus": handleSecurityStatus,
   "/runCertificateCheck": handleRunCertificateCheck,
@@ -10716,4 +10912,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, runChargeRecurringSubscriptions, runRenewalReminders, dataWriteGate, localDataStore, applySubscriptionPayment, venueReferral });
+Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, runChargeRecurringSubscriptions, runRenewalReminders, dataWriteGate, localDataStore, applySubscriptionPayment, venueReferral, switchedPeriod, planSwitchQuote });

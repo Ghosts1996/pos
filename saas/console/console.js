@@ -2037,7 +2037,20 @@ function uiDialog({ title = '', text = '', html = '', fields = [], ok = 'OK', ca
     const ready = () => fields.every((f, i) => !f.match || inputs[i].value.trim().toLowerCase() === String(f.match).toLowerCase());
     const sync = () => { okBtn.disabled = !ready(); };
     let busy = false;
+    // Клавиатура телефона не сжимает страницу (Chrome на Android, Safari):
+    // окно встаёт в видимую часть экрана, над клавиатурой.
+    const vv = window.visualViewport;
+    const fit = () => {
+      if (!vv) return;
+      wrap.style.top = `${Math.max(0, vv.offsetTop)}px`;
+      wrap.style.height = `${vv.height}px`;
+      wrap.style.bottom = 'auto';
+      const a = document.activeElement;
+      if (a && card.contains(a) && a.matches('input,textarea')) a.scrollIntoView({ block: 'nearest' });
+    };
+    if (vv) { vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit(); }
     const done = (v) => {
+      if (vv) { vv.removeEventListener('resize', fit); vv.removeEventListener('scroll', fit); }
       document.removeEventListener('keydown', onKey, true);
       wrap.classList.add('closing');
       document.documentElement.classList.remove('zd-open');
@@ -6531,6 +6544,10 @@ function watchDashboardData(tenantId) {
                 ${isChain && planAdditionalPrice(p, 'monthly') > 0 ? `<div class="small muted">+ ${rub(planAdditionalPrice(p, 'monthly'))}/мес за каждую следующую точку</div>` : ''}
                 ${yearly || semi ? `<div class="small muted">${[semi ? `${rub(semi)} за 6 мес` : '', yearly ? `${rub(yearly)} за год${planPeriodDiscount(p, 'yearly') ? ` (−${planPeriodDiscount(p, 'yearly')}%)` : ''}` : ''].filter(Boolean).join(' · ')}</div>` : ''}
                 <ul class="plan-feats compact">${planFeatsHtml(p, { priorityRow: list.some((x) => x.prioritySupport === true) })}</ul>
+                ${subscription?.status === 'active' && !isCurrent && p.archived !== true ? `
+                  <button class="btn btn-primary f-plan-switch" data-plan="${esc(p.id)}" data-name="${esc(p.name || p.id)}" style="margin-bottom:4px">Перейти без доплаты</button>
+                ` : ''}
+                ${subscription?.status === 'active' && !isCurrent && p.archived !== true ? '<div class="small muted" style="margin-bottom:10px">Оплаченные дни пересчитаются по цене этого тарифа.</div>' : ''}
                 ${semi || yearly ? `
                   <select class="f-plan-period" id="f-plan-period-${esc(p.id)}" data-plan="${esc(p.id)}" style="margin-bottom:8px">
                     <option value="monthly">Оплатить на месяц</option>
@@ -8630,18 +8647,50 @@ function watchDashboardData(tenantId) {
         }
       };
     });
+    document.querySelectorAll('.f-plan-switch').forEach((el) => {
+      el.onclick = async () => {
+        el.disabled = true;
+        try {
+          const q = await planSwitchPreview(tenantId, el.dataset.plan);
+          if (!q) return;
+          if (!q.canSwitch) {
+            await uiDialog({ title: 'Сначала оплатите', text: 'Оплаченных дней почти не осталось — пересчитывать нечего. Выберите период и нажмите «Перейти и оплатить»: новый срок добавится к текущему.', cancel: '' });
+            return;
+          }
+          const fewer = planShrinkNote(plans, subscription?.planId, el.dataset.plan);
+          if (!(await uiDialog({
+            title: `Перейти на «${el.dataset.name}»?`,
+            text: `${planSwitchText(q)}${fewer ? `\n\n${fewer}` : ''}`,
+            ok: 'Перейти',
+          }))) return;
+          const r = (await callSaasGateway('changePlan', { tenantId, planId: el.dataset.plan })).data;
+          toast(`Готово: тариф «${el.dataset.name}»${r.endAt ? `, оплачено до ${fmtDayMs(r.endAt)}` : ''}`);
+          route();
+        } catch (e) {
+          toast(`Не удалось сменить тариф: ${e?.message || e}`);
+        } finally {
+          el.disabled = false;
+        }
+      };
+    });
     document.querySelectorAll('.f-convert-to-chain').forEach((el) => {
       el.onclick = () => convertTenantToChain(tenantId, tenant, el.dataset.plan);
     });
     document.querySelectorAll('.f-convert-to-single').forEach((el) => {
       el.onclick = async () => {
-        if (!(await uiConfirm(`Перевести сеть на тариф «${el.dataset.name}» для одного заведения? Оплаченный срок сохранится, гости и бонусы останутся в заведении. Добавить точки потом можно, снова перейдя на тариф сети.`))) return;
+        const q = await planSwitchPreview(tenantId, el.dataset.plan);
+        if (!q) return;
+        if (!(await uiDialog({
+          title: `Перейти на «${el.dataset.name}» для одного заведения?`,
+          text: `${planSwitchText(q)}\n\nГости, бонусы и брендинг останутся в заведении. Добавить точки потом можно, снова перейдя на тариф сети.`,
+          ok: 'Перейти',
+        }))) return;
         el.disabled = true;
         try {
           await callSaasGateway('convertChainToSingle', { tenantId, planId: el.dataset.plan });
           const entry = state.tenants.find((t) => t.id === tenantId);
           if (entry) { entry.chainId = null; entry.chainName = ''; }
-          toast('Готово: заведение на обычном тарифе');
+          toast(`Готово: заведение на тарифе «${el.dataset.name}»${q.newEndAt ? `, оплачено до ${fmtDayMs(q.newEndAt)}` : ''}`);
           route();
         } catch (e) {
           el.disabled = false;
@@ -13984,17 +14033,77 @@ async function screenBankAct(id) {
   $('f-act-print').onclick = () => window.print();
 }
 
+// Дата из миллисекунд (ответы сервера) — как fmtDate.
+function fmtDayMs(ms) {
+  const d = new Date(Number(ms) || 0);
+  return Number(ms) ? `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}` : '—';
+}
+
+/** Каким станет срок после смены тарифа (сервер: planSwitchQuote). */
+async function planSwitchPreview(tenantId, planId) {
+  try {
+    return (await callSaasGateway('planSwitchQuote', { tenantId, planId })).data;
+  } catch (e) {
+    toast(`Не удалось посчитать срок: ${e?.message || e}`);
+    return null;
+  }
+}
+
+/** «Оплачено до A → станет до B»: дороже — дней меньше, дешевле — больше. */
+function planSwitchText(q) {
+  if (q.status === 'trial') return `Пробный период продолжится до ${fmtDayMs(q.endAt)}, платить сейчас не нужно.`;
+  if (q.status !== 'active' || !q.newEndAt) return 'Подписка сейчас не действует — после перехода оплатите тариф.';
+  const daysLeft = (ms) => Math.max(0, Math.round((ms - Date.now()) / 86400000));
+  if (Math.abs(q.newEndAt - q.endAt) < 86400000) return `Оплаченный срок не меняется: до ${fmtDayMs(q.newEndAt)}. Доплачивать ничего не нужно.`;
+  return `Оплаченные дни пересчитаются по цене нового тарифа: сейчас оплачено до ${fmtDayMs(q.endAt)} (${daysLeft(q.endAt)} дн.), `
+    + `станет до ${fmtDayMs(q.newEndAt)} (${daysLeft(q.newEndAt)} дн.). Тариф ${q.nextMonthly > q.wasMonthly ? 'дороже — дней меньше' : 'дешевле — дней больше'}, `
+    + 'доплачивать ничего не нужно.';
+}
+
+/** Предупреждение, если на новом тарифе меньше касс или курьеров. */
+function planShrinkNote(plans, fromId, toId) {
+  const a = planCaps((plans || []).find((p) => p.id === fromId));
+  const b = planCaps((plans || []).find((p) => p.id === toId));
+  const less = [];
+  if (b.maxDevices && (!a.maxDevices || b.maxDevices < a.maxDevices)) less.push(`касс — до ${b.maxDevices}`);
+  if (b.maxCouriers >= 0 && (a.maxCouriers < 0 || b.maxCouriers < a.maxCouriers)) less.push(`курьеров — до ${b.maxCouriers}`);
+  return less.length ? `На этом тарифе ${less.join(', ')}: лишние устройства и курьеры перестанут работать, пока их не отключите или не вернёте тариф.` : '';
+}
+
+/** Код сети: свободен ли и какой свободный предложить (сервер: slugAvailable). */
+async function pickFreeSlug(text, initial) {
+  let value = slugify(initial || '');
+  try {
+    const r = (await callSaasGateway('slugAvailable', { slug: value.length >= 3 ? value : `${value}set` })).data;
+    if (r.suggestion) value = r.suggestion;
+  } catch (_) {}
+  for (;;) {
+    let slug = await uiPrompt(text, value);
+    if (slug === null) return null;
+    slug = slugify(slug);
+    if (slug.length < 3) { toast('Код — от 3 символов латиницей или цифрами, например «leto»'); value = slug; continue; }
+    try {
+      const r = (await callSaasGateway('slugAvailable', { slug })).data;
+      if (r.free) return slug;
+      text = `Код «${slug}» уже занят — вот свободный, можно поменять:`;
+      value = r.suggestion || `${slug}-2`;
+    } catch (_) {
+      return slug;
+    }
+  }
+}
+
 // Работающее заведение становится первой точкой новой сети вместе с гостями
 // и бонусами. Обратно не разделить — об этом прямо спрашиваем.
 async function convertTenantToChain(tenantId, tenant, planId) {
   const name = (await uiPrompt('Название сети:', tenant?.name || ''));
   if (!name || !name.trim()) return;
   const trimmedName = name.trim();
-  let slug = (await uiPrompt('Код сети (латиница, цифры, дефис):', slugify(trimmedName)));
-  if (slug === null) return;
-  slug = slugify(slug);
-  if (slug.length < 3) { toast('Код сети — от 3 символов латиницей или цифрами, например «leto»'); return; }
-  if (!(await uiConfirm(`Перевести «${tenant?.name || tenantId}» в сеть «${trimmedName}»? Заведение останется первой точкой сети со всеми гостями и бонусами — отменить это действие потом будет нельзя.`))) return;
+  const slug = await pickFreeSlug('Код сети (латиница, цифры, дефис) — для адреса сайта и приложения сети:', trimmedName);
+  if (!slug) return;
+  const q = await planSwitchPreview(tenantId, planId);
+  if (!q) return;
+  if (!(await uiConfirm(`Перевести «${tenant?.name || tenantId}» в сеть «${trimmedName}»?\n\n${planSwitchText(q)} Заведение станет первой точкой сети со всеми гостями и бонусами. Вернуть обычный тариф можно, пока в сети одна точка.`, { ok: 'Перевести', danger: false }))) return;
   try {
     const res = await callSaasGateway('convertTenantToChain', { tenantId, name: trimmedName, slug, planId });
     // Членства не менялись, watchMemberships сам state.tenants не обновит.
@@ -14003,7 +14112,7 @@ async function convertTenantToChain(tenantId, tenant, planId) {
       entry.chainId = res.data.chainId;
       entry.chainName = trimmedName;
     }
-    toast('Заведение переведено в сеть');
+    toast(`Заведение переведено в сеть${q.newEndAt ? `, оплачено до ${fmtDayMs(q.newEndAt)}` : ''}`);
     route();
   } catch (e) {
     toast(`Не удалось перевести в сеть: ${e?.message || e}`);
@@ -14018,10 +14127,8 @@ async function addChainLocation(chainId) {
   const name = (await uiPrompt('Название новой точки сети:'));
   if (!name || !name.trim()) return;
   const trimmedName = name.trim();
-  let slug = (await uiPrompt('Код точки (латиница, цифры, дефис) — используется в ссылках и как основа имени Android-приложения. Можно по-русски — переведу в латиницу:', slugify(trimmedName)));
-  if (slug === null) return;
-  slug = slugify(slug);
-  if (slug.length < 3) { toast('Код точки — от 3 символов латиницей или цифрами, например «leto-centr»'); return; }
+  const slug = await pickFreeSlug('Код точки (латиница, цифры, дефис) — используется в ссылках и как основа имени Android-приложения. Можно по-русски — переведу в латиницу:', trimmedName);
+  if (!slug) return;
   let quote;
   try {
     quote = (await callSaasGateway('chainLocationQuote', { chainId })).data;
