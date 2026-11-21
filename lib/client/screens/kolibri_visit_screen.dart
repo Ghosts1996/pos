@@ -63,9 +63,15 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
         // пропала связь) — пробуем снова, а не показываем «Мой стол» пустым,
         // пока гость сам не перезапустит приложение.
         if (kSaasMode && snap.hasError) {
-          _retrySessionSoon();
-          return const Center(child: CircularProgressIndicator());
+          // Не дольше полуминуты: дальше — обычный экран «Мой стол» (QR,
+          // карта зала), а не вечная крутилка.
+          if (_retries < 6) {
+            _retrySessionSoon();
+            return const Center(child: CircularProgressIndicator());
+          }
+          return _notAtTable();
         }
+        if (snap.hasData) _retries = 0;
         if (s == null) return _notAtTable();
         if (s.status != 'active') {
           // Чек закрыли на кассе — предлагаем оценить визит.
@@ -86,7 +92,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
 
   void _retrySessionSoon() {
     if (_retryTimer != null) return;
-    final delay = Duration(seconds: _retries < 5 ? 2 : 10);
+    final delay = Duration(seconds: _retries < 3 ? 2 : 6);
     _retries++;
     _retryTimer = Timer(delay, () {
       _retryTimer = null;

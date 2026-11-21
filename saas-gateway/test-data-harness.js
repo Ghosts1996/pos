@@ -50,6 +50,11 @@ const seeded = (async () => {
     "tenants/tenantA/tables/t1": { name: "Стол 1", x: 0.1, y: 0.2 },
     "tenants/tenantA/tables/t2": { name: "Стол 2", x: 0.3, y: 0.4 },
     "tenants/tenantB/tables/t1": { name: "Чужой стол" },
+    // Сеть из точки tenantC (гость сети: профиль в chains/chainC/clients).
+    "chains/chainC": { name: "Сеть C", slug: "set-c", status: "active" },
+    "tenants/tenantC": { name: "Точка C", slug: "set-c-1", status: "active", chainId: "chainC" },
+    "tenantMembers/tenantC_ownerA": { tenantId: "tenantC", userId: "ownerA", role: "owner", status: "active" },
+    "chainMembers/chainC_ownerA": { chainId: "chainC", userId: "ownerA", role: "owner", status: "active" },
   };
   for (const [p, d] of Object.entries(seed)) await store.doc(p).set(d);
 })();

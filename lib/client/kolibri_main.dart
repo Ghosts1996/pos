@@ -170,7 +170,31 @@ Future<({String tenantId, String? chainId})?> _resolveSaasTenantId() async {
   final cachedSlug = prefs.getString(slugCacheKey);
   if (cached != null && cached.isNotEmpty && (cachedSlug == null || cachedSlug == kSaasPresetSlug)) {
     if (cachedSlug == null && kSaasPresetSlug.isNotEmpty) await prefs.setString(slugCacheKey, kSaasPresetSlug);
-    return (tenantId: cached, chainId: prefs.getString(chainCacheKey));
+    final cachedChain = prefs.getString(chainCacheKey);
+    // Заведение могли перевести в сеть (или сеть — обратно в одно
+    // заведение) уже после установки приложения. Со старой отметкой гость
+    // садился за стол «по-старому», касса видела его за столом, а сервер,
+    // который знает про сеть, не давал прочитать счёт — «Мой стол» крутился
+    // бесконечно. Поэтому при запуске сверяемся с сервером (недолго; без
+    // связи — как запомнили).
+    if (kSaasPresetSlug.isNotEmpty) {
+      try {
+        final fresh = await SaasDeviceJoinService().resolveTenantIdBySlug(kSaasPresetSlug).timeout(const Duration(seconds: 4));
+        final freshChain = (fresh.chainId ?? '').isEmpty ? null : fresh.chainId;
+        if (fresh.tenantId != cached || freshChain != ((cachedChain ?? '').isEmpty ? null : cachedChain)) {
+          await prefs.setString(tenantCacheKey, fresh.tenantId);
+          if (freshChain == null) {
+            await prefs.remove(chainCacheKey);
+          } else {
+            await prefs.setString(chainCacheKey, freshChain);
+          }
+        }
+        return (tenantId: fresh.tenantId, chainId: freshChain);
+      } catch (_) {
+        // Нет связи или сервер не ответил — как запомнили.
+      }
+    }
+    return (tenantId: cached, chainId: cachedChain);
   }
 
   if (kSaasPresetSlug.isEmpty) {
