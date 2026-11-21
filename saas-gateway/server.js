@@ -64,6 +64,7 @@ const { createWebhooks } = require("./webhooks");
 const { createReviews } = require("./reviews");
 const { createFoodcost } = require("./foodcost");
 const { createHallImport } = require("./hall-import");
+const { createMercury } = require("./mercury");
 const { createBoard } = require("./board");
 const { createKiosk } = require("./kiosk");
 const { createGuestMarketing, rootKeyOf: guestRootKey } = require("./guest-marketing");
@@ -10307,6 +10308,15 @@ const hallImport = createHallImport({
   aiVendor: (tid) => venueAiVendor(tid), aiComplete: (v, o) => venueAiComplete(v, o), extractJson, limiter: menuAiLimiter,
 });
 
+// ФГИС «Меркурий»: входящие ВСД и гашение из кабинета (mercury.js).
+const mercury = createMercury({
+  db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole,
+  encrypt: tgEncrypt, decrypt: tgDecrypt, secretKey: tgSecretKey,
+  ownerAlert: (tid, text) => telegram.ownerAlert(tid, text),
+  // Только для стенда и проверок: свой адрес Ветис.API вместо api.vetrf.ru.
+  endpoints: process.env.MERCURY_ENDPOINT ? { prod: process.env.MERCURY_ENDPOINT, test: process.env.MERCURY_ENDPOINT } : undefined,
+});
+
 // Киоск самообслуживания: заказ на планшете, оплата на кассе (kiosk.js, kiosk-web/).
 const kiosk = createKiosk({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole });
 
@@ -10623,6 +10633,7 @@ const ROUTES = {
   "/guestReviews": (req, res) => reviews.handle(req, res),
   "/foodcost": (req, res) => foodcost.handle(req, res),
   "/hallImport": (req, res) => hallImport.handle(req, res),
+  "/mercury": (req, res) => mercury.handle(req, res),
   "/boardLink": (req, res) => board.handleLink(req, res),
   "/kioskLink": (req, res) => kiosk.handleLink(req, res),
   "/guestAdsConsent": (req, res) => guestMarketing.handleConsent(req, res),
@@ -10882,6 +10893,8 @@ scheduleDailyJob("deliveryPiiRetention", 24 * 3600 * 1000, runDeliveryPiiRetenti
 scheduleDailyJob("guestWinback", 60 * 60 * 1000, () => guestMarketing.runAll(), 12 * 60 * 1000);
 // Каждый час: подорожавшие блюда и вечерняя заявка на закупку (по настройке).
 scheduleDailyJob("foodcostWatch", 60 * 60 * 1000, () => foodcost.runAll(), 17 * 60 * 1000);
+// Новые входящие ВСД «Меркурия» — владельцу в бот (гасить в течение рабочего дня).
+scheduleDailyJob("mercuryWatch", 60 * 60 * 1000, () => mercury.runAll(), 23 * 60 * 1000);
 // Smoke-тесты поднимают сервер без секретов — бот там не нужен.
 if (process.env.PORT !== "8099") {
   telegram.start();

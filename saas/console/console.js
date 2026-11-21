@@ -1833,6 +1833,143 @@ async function hallUndo(tenantId, st, set) {
   }
 }
 
+// ---------- ФГИС «Меркурий» (saas-gateway/mercury.js): «Склад» → «Меркурий».
+// Входящие ветеринарные сертификаты площадки и их гашение «принято полностью».
+const mercuryCache = new Map(); // tenantId → { status, docs, busy, error, result, picked:Set, open }
+
+function mercuryFormHtml(st, canSettings) {
+  const s = st.status || {};
+  const dis = canSettings ? '' : 'disabled';
+  const keep = s.configured ? 'оставьте пустым, чтобы не менять' : '';
+  return `
+    <div class="merc-form">
+      <div class="merc-grid">
+        <label class="field"><span>Логин API (из письма Ветис)</span><input id="f-merc-login" autocomplete="off" placeholder="${keep}" ${dis}></label>
+        <label class="field"><span>Пароль API</span><input id="f-merc-password" type="password" autocomplete="new-password" placeholder="${keep}" ${dis}></label>
+        <label class="field"><span>Ключ API (apiKey)</span><input id="f-merc-apikey" autocomplete="off" placeholder="${keep}" ${dis}></label>
+        <label class="field"><span>Логин пользователя «Меркурий.ХС»</span><input id="f-merc-user" value="${esc(s.userLogin || '')}" ${dis}></label>
+        <label class="field"><span>GUID хозяйствующего субъекта</span><input id="f-merc-issuer" value="${esc(s.issuerId || '')}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" ${dis}></label>
+        <label class="field"><span>GUID площадки (заведения)</span><input id="f-merc-ent" value="${esc(s.enterpriseGuid || '')}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" ${dis}></label>
+        <label class="field"><span>Название площадки (для себя)</span><input id="f-merc-entname" maxlength="120" value="${esc(s.enterpriseName || '')}" ${dis}></label>
+        <label class="field"><span>Контур</span><select id="f-merc-env" ${dis}><option value="prod" ${s.env !== 'test' ? 'selected' : ''}>Рабочий</option><option value="test" ${s.env === 'test' ? 'selected' : ''}>Тестовый (api2.vetrf.ru)</option></select></label>
+      </div>
+      <label class="small" style="display:flex;gap:8px;align-items:center;margin:4px 0 10px"><input type="checkbox" id="f-merc-alerts" style="width:auto" ${s.alerts !== false ? 'checked' : ''} ${dis}>
+        <span>Сообщать в бот заведения о новых входящих ВСД</span></label>
+      <details class="small muted merc-help"><summary>Где взять эти данные</summary>
+        <p>Доступ к Ветис.API выдаёт Россельхознадзор по заявке, подписанной электронной подписью (КЭП): портал заявок ВетИС — aplms.vetrf.ru. В письме придут логин, пароль и ключ API (apiKey).</p>
+        <p>GUID хозяйствующего субъекта и GUID площадки — в «Меркурий.ХС» или в реестре «Цербер» (карточка организации и площадки). Логин пользователя — тот, под которым вы входите в «Меркурий.ХС»; у него должно быть право гасить ВСД на этой площадке.</p>
+        <p>Сначала можно проверить на тестовом контуре — доступ к нему выдают отдельно.</p>
+      </details>
+      ${canSettings ? `<div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn btn-primary" id="f-merc-save" style="width:auto">${s.configured ? 'Сохранить' : 'Подключить'}</button>
+        ${s.configured ? '<button class="btn-link" id="f-merc-off" style="width:auto">Отключить «Меркурий»</button>' : ''}</div>` : '<p class="small muted">Подключает владелец или администратор.</p>'}
+    </div>`;
+}
+
+function mercuryBoxHtml(tenantId, role) {
+  const st = mercuryCache.get(tenantId) || {};
+  const canSettings = role === 'owner' || role === 'admin';
+  const head = '<h2>«Меркурий»: входящие ВСД</h2>';
+  const intro = `<p class="small" style="margin-top:0;line-height:1.55">Мясо, молочка, рыба, яйца от поставщиков приходят с ветеринарным
+    сертификатом (ВСД) в ФГИС «Меркурий». Принятый товар нужно «погасить» в течение рабочего дня — здесь это одна кнопка.</p>`;
+  if (!st.status) return `${head}<div class="card"><p class="small muted" style="margin:0">Загружаю…</p></div>`;
+  if (!st.status.configured) {
+    return `${head}<div class="card">${intro}${st.error ? `<p class="small" style="color:var(--danger)">${esc(st.error)}</p>` : ''}${mercuryFormHtml(st, canSettings)}</div>`;
+  }
+  const s = st.status;
+  const picked = st.picked || new Set();
+  const docs = st.docs;
+  const fmtV = (d) => `${String(d.volume).replace('.', ',')} ${esc(d.unit || '')}`;
+  const list = !docs ? `<p class="small muted">${st.busy ? esc(st.busy) : 'Нажмите «Проверить ВСД», чтобы загрузить входящие.'}</p>`
+    : !docs.length ? '<p class="small muted">Непогашенных входящих ВСД нет.</p>'
+    : `<div class="merc-list">${docs.map((d) => `
+        <label class="merc-row">
+          <input type="checkbox" class="f-merc-pick" data-u="${esc(d.uuid)}" ${picked.has(d.uuid) ? 'checked' : ''} style="width:auto">
+          <span class="merc-main"><b>${esc(d.product)}</b> <span class="merc-vol">${fmtV(d)}</span>
+            <span class="small muted">${esc(d.supplier)}${d.produced ? ` · выработано ${esc(d.produced)}` : ''}${d.expires ? ` · годен до ${esc(d.expires)}` : ''}${d.issueDate ? ` · ВСД от ${esc(d.issueDate.split('-').reverse().join('.'))}` : ''}</span></span>
+          <button type="button" class="btn btn-ghost f-merc-one" data-u="${esc(d.uuid)}" style="width:auto" ${st.busy ? 'disabled' : ''}>Погасить</button>
+        </label>`).join('')}</div>`;
+  return `${head}
+    <div class="card">
+      ${intro}
+      <div class="small muted" style="margin-bottom:10px">Площадка: <b>${esc(s.enterpriseName || s.enterpriseGuid)}</b>${s.env === 'test' ? ' · <b>тестовый контур</b>' : ''} · пользователь ${esc(s.userLogin)}</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <button class="btn btn-ghost" id="f-merc-refresh" style="width:auto" ${st.busy ? 'disabled' : ''}>Проверить ВСД</button>
+        ${docs && docs.length ? `<button class="btn btn-primary" id="f-merc-many" style="width:auto" ${st.busy || !picked.size ? 'disabled' : ''}>Погасить выбранные${picked.size ? ` (${picked.size})` : ''}</button>
+          <button class="btn-link" id="f-merc-all" style="width:auto">${picked.size === docs.length ? 'Снять все' : 'Выбрать все'}</button>` : ''}
+      </div>
+      ${st.busy && docs ? `<p class="small muted">${esc(st.busy)}</p>` : ''}
+      ${st.error ? `<p class="small" style="color:var(--danger)">${esc(st.error)}</p>` : ''}
+      ${st.result ? `<p class="small">${st.result}</p>` : ''}
+      ${list}
+      <p class="small muted" style="margin:12px 0 0">Здесь — гашение «принято полностью»: товар соответствует документам и ветосмотру.
+        Недостача, брак, возврат — оформите в «Меркурий.ХС»: там составляется акт несоответствия.</p>
+      <details class="merc-settings" ${st.open ? 'open' : ''}><summary class="small">Настройки доступа к «Меркурию»</summary>${mercuryFormHtml(st, canSettings)}</details>
+    </div>`;
+}
+
+function bindMercuryBox(tenantId, role, redraw) {
+  const st = mercuryCache.get(tenantId) || {};
+  mercuryCache.set(tenantId, st);
+  const set = (patch) => { Object.assign(st, patch); redraw(); };
+  const call = (body) => callSaasGateway('mercury', { tenantId, ...body }).then((r) => r.data);
+  if (!st.status && !st.loading) {
+    st.loading = true;
+    call({ action: 'status' }).then((status) => set({ status, loading: false })).catch((e) => set({ status: { configured: false }, error: e.message, loading: false }));
+    return;
+  }
+  const det = document.querySelector('.merc-settings');
+  if (det) det.ontoggle = () => { st.open = det.open; };
+  const load = async () => {
+    set({ busy: 'Спрашиваю «Меркурий»… (до минуты)', error: '', result: '' });
+    try {
+      const { docs } = await call({ action: 'list' });
+      const keep = new Set(docs.map((d) => d.uuid));
+      set({ docs, busy: '', picked: new Set([...(st.picked || [])].filter((u) => keep.has(u))) });
+    } catch (e) { set({ busy: '', error: e.message || 'Не удалось получить ВСД' }); }
+  };
+  if ($('f-merc-refresh')) $('f-merc-refresh').onclick = load;
+  const accept = async (uuids) => {
+    const ok = await uiConfirm(`Погасить ${uuids.length === 1 ? 'ВСД' : `${uuids.length} ВСД`} в «Меркурии» как «принято полностью»? Отменить гашение можно только в «Меркурий.ХС».`, { title: 'Погасить ВСД?', ok: 'Погасить' });
+    if (!ok) return;
+    set({ busy: `Гашу ${uuids.length === 1 ? 'ВСД' : `${uuids.length} ВСД`}… (до минуты на каждый)`, error: '', result: '' });
+    try {
+      const r = await call({ action: 'accept', uuids });
+      const doneSet = new Set(r.done.map((d) => d.uuid));
+      const lines = [];
+      if (r.done.length) lines.push(`Погашено: <b>${r.done.length}</b> — ${r.done.map((d) => esc(d.product)).join(', ')}.`);
+      if (r.failed.length) lines.push(`<span style="color:var(--danger)">Не погашено: ${r.failed.map((f) => esc(f.error)).join('; ')}</span>`);
+      set({ busy: '', result: lines.join('<br>'), docs: (st.docs || []).filter((d) => !doneSet.has(d.uuid)), picked: new Set([...(st.picked || [])].filter((u) => !doneSet.has(u))) });
+      if (r.done.length) toast(`Погашено ВСД: ${r.done.length}`);
+    } catch (e) { set({ busy: '', error: e.message || 'Не удалось погасить' }); }
+  };
+  document.querySelectorAll('.f-merc-one').forEach((b) => { b.onclick = (e) => { e.preventDefault(); accept([b.dataset.u]); }; });
+  document.querySelectorAll('.f-merc-pick').forEach((c) => { c.onchange = () => { const p = st.picked || new Set(); if (c.checked) p.add(c.dataset.u); else p.delete(c.dataset.u); set({ picked: p }); }; });
+  if ($('f-merc-all')) $('f-merc-all').onclick = () => { const all = st.docs || []; set({ picked: (st.picked && st.picked.size === all.length) ? new Set() : new Set(all.map((d) => d.uuid)) }); };
+  if ($('f-merc-many')) $('f-merc-many').onclick = () => accept([...(st.picked || [])].slice(0, 30));
+  if ($('f-merc-save')) {
+    $('f-merc-save').onclick = async () => {
+      const v = (id) => ($(id)?.value || '').trim();
+      $('f-merc-save').disabled = true;
+      try {
+        const status = await call({ action: 'settings', settings: {
+          login: v('f-merc-login'), password: v('f-merc-password'), apiKey: v('f-merc-apikey'), userLogin: v('f-merc-user'),
+          issuerId: v('f-merc-issuer'), enterpriseGuid: v('f-merc-ent'), enterpriseName: v('f-merc-entname'),
+          env: $('f-merc-env').value, alerts: $('f-merc-alerts').checked,
+        } });
+        toast('«Меркурий» подключён');
+        set({ status, error: '', open: false, docs: null });
+        load();
+      } catch (e) { set({ error: e.message || 'Не удалось сохранить' }); }
+    };
+  }
+  if ($('f-merc-off')) {
+    $('f-merc-off').onclick = async () => {
+      if (!(await uiConfirm('Отключить «Меркурий»? Доступы к Ветис.API удалятся из ZalPOS.', { title: 'Отключить?', ok: 'Отключить' }))) return;
+      try { set({ status: await call({ action: 'disconnect' }), docs: null, result: '' }); } catch (e) { set({ error: e.message }); }
+    };
+  }
+}
+
 // ---------- Вебхуки (saas-gateway/webhooks.js): события заведения на адрес владельца
 const webhooksCache = new Map(); // tenantId → { hooks, events, max } | { error } | null
 const webhookFresh = new Map(); // tenantId → { id, secret } — секрет показываем один раз
@@ -3631,7 +3768,7 @@ const LANDING_ROLES = [
     points: [
       ['Склад по техкартам. ', 'Продали блюдо — продукты списались по граммовке. Бар, кухня и кальянная — отдельные склады с перемещением.'],
       ['Заявка на закупку. ', 'Касса считает расход за две недели и предлагает, сколько докупить; по желанию — каждый день в бот.'],
-      ['Накладные и ЕГАИС. ', 'Накладная из ЭДО загружается файлом, накладную ЕГАИС принимаете с кассы через свой УТМ.'],
+      ['Накладные, ЕГАИС и «Меркурий». ', 'Накладная из ЭДО — файлом, ЕГАИС — с кассы через свой УТМ, ветеринарные сертификаты на мясо и молочку гасятся из кабинета.'],
       ['Смены и зарплата. ', 'Время прихода — с сервера, ставки, проценты и бонус за план; любая ручная правка видна.'],
       ['Учебный режим. ', 'Новичок учится на настоящей кассе: его чеки не уходят в налоговую, отчёты и склад.'],
     ] },
@@ -4200,7 +4337,7 @@ function renderLandingFacts(plans, recommendedId, chainPlans) {
   if (chips) {
     const items = [
       'Касса на Android и Windows', 'Карта зала и брони', 'Склад и техкарты',
-      'Чеки через вашу ККТ АТОЛ', 'ЕГАИС через ваш УТМ', 'Бонусы, скидочные карты, сертификаты',
+      'Чеки через вашу ККТ АТОЛ', 'ЕГАИС через ваш УТМ', '«Меркурий»: гашение ВСД', 'Бонусы, скидочные карты, сертификаты',
       'Смены и зарплата', 'Отчёты и кабинет владельца',
       ...(all((p) => planCaps(p).guestApp)
         ? ['Приложение гостя с вашим логотипом', 'Доставка и самовывоз из приложения', 'Онлайн-оплата гостей через ваш банк']
@@ -8192,7 +8329,8 @@ function watchDashboardData(tenantId) {
               ${shown.length > 400 ? `<p class="small muted">Показаны первые 400 из ${shown.length} — уточните поиск.</p>` : ''}`}
           <p class="small muted" style="margin-top:8px">Списание по техкартам при продаже, инвентаризация и заготовки — в кассе: Админ → Склад.</p>
         </div>
-        ${foodcostBoxHtml(tenantId, canPost)}`;
+        ${foodcostBoxHtml(tenantId, canPost)}
+        ${mercuryBoxHtml(tenantId, role)}`;
     };
 
     const TAB_RENDERERS = {
@@ -8234,6 +8372,7 @@ function watchDashboardData(tenantId) {
       }
       if (!updCore) loadUpdCore().then(() => { if (activeTab === 'stock') draw(); }).catch(() => {});
       bindFoodcostBox(tenantId, draw);
+      bindMercuryBox(tenantId, role, draw);
       if ($('f-stock-filter')) $('f-stock-filter').oninput = (e) => { stockFilter = e.target.value; draw(); };
       const keepMove = () => {
         stockMove.itemId = ($('f-move-item') || {}).value || '';

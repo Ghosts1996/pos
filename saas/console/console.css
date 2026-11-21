@@ -1875,3 +1875,18 @@ html.zd-open { overflow: hidden; }
 .hp-trow { display: flex; gap: 8px; align-items: center; }
 .hp-trow .f-hall-tname { flex: 1; min-width: 0; }
 .hp-trow .f-hall-tseats { width: 72px; flex: none; }
+
+/* ---- «Склад» → «Меркурий»: входящие ВСД ---- */
+.merc-grid { display: grid; gap: 0 14px; grid-template-columns: 1fr; }
+@media (min-width: 760px) { .merc-grid { grid-template-columns: 1fr 1fr; } }
+.merc-help { margin: 0 0 12px; }
+.merc-help summary, .merc-settings summary { cursor: pointer; color: var(--primary); font-weight: 600; }
+.merc-help p { margin: 6px 0; line-height: 1.5; }
+.merc-settings { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.merc-settings .merc-form { margin-top: 10px; }
+.merc-list { border-top: 1px solid var(--border); }
+.merc-row { display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+.merc-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.merc-main b { font-weight: 600; }
+.merc-vol { font-variant-numeric: tabular-nums; font-weight: 600; }
+@media (max-width: 560px) { .merc-row { flex-wrap: wrap; } .merc-row .f-merc-one { margin-left: 28px; } }
