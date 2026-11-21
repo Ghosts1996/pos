@@ -79,3 +79,36 @@ https://pii.zalpos.ru/saas/api/v1/<метод>
 curl -H "Authorization: Bearer $ZALPOS_KEY" \
   "https://pii.zalpos.ru/saas/api/v1/sales?from=2026-11-01&to=2026-11-07"
 ```
+
+## Вебхуки (события сами)
+
+Владелец добавляет адрес в Кабинет · «Настройки» → «Вебхуки» (до 5 на точку) и выбирает события. ZalPOS отправляет `POST` с JSON:
+
+```json
+{"id": "evt_…", "type": "order.closed", "createdAt": "2026-11-21T12:00:00.000Z", "venueId": "…", "data": { … }}
+```
+
+События и `data`:
+
+| type | data |
+|---|---|
+| `order.closed` | чек — как в `/sales` |
+| `order.refunded` | чек — как в `/sales`, `refunded: true` |
+| `shift.closed` | смена — как в `/shifts` |
+| `reservation.created`, `reservation.updated` | `id, status, startAt, durationMinutes, guests, tableId, table, source, guestConfirmed, createdAt` |
+| `delivery.status` | `id, status, courierStage, courierNo, total, paidOnline, createdAt` |
+| `stoplist.changed` | `id, name, available` |
+| `stock.low` | `id, name, unit, quantity, minQuantity` |
+| `ping` | кнопка «Проверить» в кабинете |
+
+Заголовки: `X-ZalPOS-Event` (тип), `X-ZalPOS-Delivery` (id события — повтор приходит с тем же id, обрабатывайте один раз), `X-ZalPOS-Signature: t=<unix>,v1=<hex>`, где `v1 = HMAC-SHA256(секрет, "<t>.<тело запроса>")`. Секрет (`whsec_…`) показывается один раз при создании. Отбрасывайте запросы, где `t` старше 5 минут.
+
+Ответьте `2xx` за 10 секунд. Иначе повтор через 1 мин, 5 мин, 30 мин, 2 ч, 6 ч; после 20 неудач подряд вебхук выключается, владельцу — сигнал в бот заведения. Адрес — только внешний `https://` (внутренние сети и localhost запрещены). Персональных данных гостей в событиях нет. Учебные чеки (режим «Стажёр») не отправляются.
+
+Проверка подписи (Node.js):
+
+```js
+const [t, v1] = sig.split(",").map((x) => x.split("=")[1]);
+const ok = crypto.createHmac("sha256", SECRET).update(`${t}.${rawBody}`).digest("hex") === v1
+  && Math.abs(Date.now() / 1000 - Number(t)) < 300;
+```

@@ -1403,6 +1403,129 @@ function bindDeliveryTab(tenantId, redraw) {
   if ($('f-dr-load')) $('f-dr-load').onclick = () => { st.reportDay = $('f-dr-day').value; st.report = undefined; redraw(); loadReport(); };
 }
 
+// ---------- Вебхуки (saas-gateway/webhooks.js): события заведения на адрес владельца
+const webhooksCache = new Map(); // tenantId → { hooks, events, max } | { error } | null
+const webhookFresh = new Map(); // tenantId → { id, secret } — секрет показываем один раз
+
+function webhooksBoxHtml(tenantId) {
+  const st = webhooksCache.get(tenantId);
+  const fresh = webhookFresh.get(tenantId);
+  const intro = `<p class="small muted" style="margin-top:0">ZalPOS сам отправит событие на ваш адрес, как только оно случится:
+    чек закрыт, смена закрыта, новая бронь, доставка, стоп-лист, склад. Так подключаются amoCRM, Битрикс24, 1С, свой сайт
+    или сервисы-связки (Albato, ApiX-Drive, n8n): там создайте «вебхук» и вставьте его адрес сюда. Имён, телефонов и адресов
+    гостей в событиях нет.</p>`;
+  if (st === undefined || st === null) return `${intro}<p class="small muted">Загружаю…</p>`;
+  if (st.error) return `${intro}<p class="small" style="color:var(--danger)">${esc(st.error)}</p><button class="btn btn-ghost" id="f-wh-retry">Повторить</button>`;
+  const ev = st.events || {};
+  const last = (h) => {
+    const r = (h.recent || [])[0];
+    if (!r) return 'отправок ещё не было';
+    const ok = r.status >= 200 && r.status < 300;
+    return `${ok ? '✅' : '⚠️'} ${esc(isoToText(r.at))} · ${esc(r.event)} · ${r.status ? `ответ ${r.status}` : esc(r.error || 'нет связи')}`;
+  };
+  const row = (h) => `
+    <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="word-break:break-all"><b>${esc(h.url)}</b>${h.active ? '' : ' <span class="small" style="color:var(--danger)">выключен</span>'}</div>
+      <div class="small muted">${h.events.map((e) => esc(ev[e] || e)).join(' · ')}</div>
+      <div class="small muted">Последняя отправка: ${last(h)}${h.disabledReason ? ` · ${esc(h.disabledReason)}` : ''}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+        <button class="btn btn-ghost f-wh-test" data-id="${esc(h.id)}" style="width:auto;padding:0 16px">Проверить</button>
+        <button class="btn btn-ghost f-wh-toggle" data-id="${esc(h.id)}" data-on="${h.active ? '0' : '1'}" style="width:auto;padding:0 16px">${h.active ? 'Выключить' : 'Включить'}</button>
+        <button class="btn btn-ghost f-wh-del" data-id="${esc(h.id)}" style="width:auto;padding:0 16px;color:var(--danger)">Удалить</button>
+      </div>
+    </div>`;
+  return `${intro}
+    ${fresh ? `
+      <div style="border:1px solid var(--primary);border-radius:10px;padding:12px;margin-bottom:12px">
+        <div class="small"><b>Секрет подписи — сохраните его сейчас.</b> Больше мы его не покажем. По нему ваш сервис
+        проверяет, что событие пришло от ZalPOS (заголовок <code>X-ZalPOS-Signature</code>). Если сервис-связка подпись не
+        проверяет — секрет можно не вставлять.</div>
+        <div style="font-family:var(--mono, monospace);word-break:break-all;margin:8px 0;user-select:all">${esc(fresh.secret)}</div>
+        <button class="btn btn-primary" id="f-wh-copy">Скопировать секрет</button>
+        <button class="btn btn-ghost" id="f-wh-hide" style="margin-top:8px">Я сохранил секрет</button>
+      </div>` : ''}
+    ${st.hooks.length ? st.hooks.map(row).join('') : '<p class="small muted">Вебхуков пока нет.</p>'}
+    ${st.hooks.length < (st.max || 5) ? `
+      <label class="field" style="margin-top:12px"><span>Адрес (https://…)</span>
+        <input id="f-wh-url" maxlength="500" inputmode="url" placeholder="https://… — адрес вебхука из вашей CRM или сервиса">
+      </label>
+      <div class="small" style="font-weight:600;margin:4px 0 6px">Какие события отправлять</div>
+      ${Object.entries(ev).map(([k, label]) => `
+        <label class="small" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0">
+          <input type="checkbox" class="f-wh-ev" value="${esc(k)}" ${k === 'order.closed' ? 'checked' : ''} style="width:auto;margin-top:2px">
+          <span>${esc(label)}</span>
+        </label>`).join('')}
+      <button class="btn btn-ghost" id="f-wh-create" style="margin-top:8px">Добавить вебхук</button>` : `<p class="small muted">Не больше ${st.max || 5} вебхуков — удалите ненужный, чтобы добавить новый.</p>`}
+    <div id="f-wh-msg" class="small" style="margin-top:8px"></div>
+    <details style="margin-top:12px"><summary class="small"><b>Для программиста</b></summary>
+      <div class="small" style="margin-top:8px">POST JSON: <code>{"id":"evt_…","type":"order.closed","createdAt":"…","venueId":"…","data":{…}}</code>.
+        Заголовки: <code>X-ZalPOS-Event</code>, <code>X-ZalPOS-Delivery</code> (id события — повтор приходит с тем же id),
+        <code>X-ZalPOS-Signature: t=&lt;unix&gt;,v1=&lt;HMAC-SHA256(секрет, "t.тело")&gt;</code>.</div>
+      <div class="small muted" style="margin-top:6px">Ответьте 2xx за 10 секунд. Нет ответа — повторим через 1 мин, 5 мин, 30 мин, 2 ч и 6 ч;
+        20 неудач подряд — вебхук выключится, владельцу придёт сигнал в бот заведения. Данные чека и Z-отчёта — в том же
+        виде, что в открытом API.</div>
+    </details>`;
+}
+
+function bindWebhooksBox(tenantId, redraw) {
+  const load = async () => {
+    try {
+      const r = await callSaasGateway('webhooks', { tenantId, action: 'list' });
+      webhooksCache.set(tenantId, r.data);
+    } catch (e) {
+      webhooksCache.set(tenantId, { error: e.message || 'Не удалось загрузить вебхуки' });
+    }
+    redraw();
+  };
+  if (!webhooksCache.has(tenantId)) { webhooksCache.set(tenantId, null); load(); return; }
+  const msg = (t, bad) => { const el = $('f-wh-msg'); if (el) { el.textContent = t; el.style.color = bad ? 'var(--danger)' : ''; } };
+  const act = async (body, okText) => {
+    try {
+      const r = await callSaasGateway('webhooks', { tenantId, ...body });
+      webhooksCache.set(tenantId, { ...webhooksCache.get(tenantId), hooks: r.data.hooks });
+      if (okText) toast(okText);
+      redraw();
+      return r.data;
+    } catch (e) {
+      msg(e.message || 'Не получилось', true);
+      return null;
+    }
+  };
+  if ($('f-wh-retry')) $('f-wh-retry').onclick = () => { webhooksCache.set(tenantId, null); redraw(); load(); };
+  if ($('f-wh-copy')) $('f-wh-copy').onclick = () => copyToClipboard(webhookFresh.get(tenantId)?.secret || '');
+  if ($('f-wh-hide')) $('f-wh-hide').onclick = () => { webhookFresh.delete(tenantId); redraw(); };
+  if ($('f-wh-create')) {
+    $('f-wh-create').onclick = async () => {
+      const url = ($('f-wh-url').value || '').trim();
+      const events = [...document.querySelectorAll('.f-wh-ev:checked')].map((x) => x.value);
+      if (!/^https:\/\//i.test(url)) { msg('Вставьте адрес, который начинается с https://', true); return; }
+      if (!events.length) { msg('Отметьте хотя бы одно событие', true); return; }
+      $('f-wh-create').disabled = true;
+      const d = await act({ action: 'create', url, events });
+      if (d) { webhookFresh.set(tenantId, { id: d.id, secret: d.secret }); redraw(); }
+      else if ($('f-wh-create')) $('f-wh-create').disabled = false;
+    };
+  }
+  document.querySelectorAll('.f-wh-test').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      const d = await act({ action: 'test', hookId: b.dataset.id });
+      const r = d && d.result;
+      if (r) toast(r.status >= 200 && r.status < 300 ? `Работает: адрес ответил ${r.status} за ${r.ms} мс` : `Не дошло: ${r.status ? `ответ ${r.status}` : r.error || 'нет связи'}`);
+    };
+  });
+  document.querySelectorAll('.f-wh-toggle').forEach((b) => {
+    b.onclick = () => { b.disabled = true; act({ action: 'update', hookId: b.dataset.id, active: b.dataset.on === '1' }, b.dataset.on === '1' ? 'Вебхук включён' : 'Вебхук выключен'); };
+  });
+  document.querySelectorAll('.f-wh-del').forEach((b) => {
+    b.onclick = async () => {
+      if (!(await uiConfirm('Удалить вебхук? События на этот адрес больше не придут.'))) return;
+      b.disabled = true;
+      act({ action: 'delete', hookId: b.dataset.id }, 'Вебхук удалён');
+    };
+  });
+}
+
 function bindApiKeysBox(tenantId, redraw) {
   const load = async () => {
     try {
@@ -6902,6 +7025,8 @@ function watchDashboardData(tenantId) {
       ${role === 'owner' ? `
         <h2>Открытый API</h2>
         <div class="card" id="f-api-box">${apiKeysBoxHtml(tenantId)}</div>
+        <h2>Вебхуки</h2>
+        <div class="card" id="f-wh-box">${webhooksBoxHtml(tenantId)}</div>
       ` : ''}
 
       ${role === 'owner' ? `
@@ -7801,6 +7926,7 @@ function watchDashboardData(tenantId) {
     if ($('f-copy-slug')) $('f-copy-slug').onclick = () => copyToClipboard(tenant.slug || '');
     if ($('f-tg-box')) bindTelegramBox(tenantId, draw);
     if ($('f-api-box')) bindApiKeysBox(tenantId, draw);
+    if ($('f-wh-box')) bindWebhooksBox(tenantId, draw);
     if ($('f-backup-tenant')) $('f-backup-tenant').onclick = () => exportVenueBackup({ tenantId, fileKey: tenant.slug, label: tenant.name });
     if ($('f-backup-chain')) $('f-backup-chain').onclick = () => {
       const chain = state.tenants.find((t) => t.chainId === tenant.chainId) || {};
