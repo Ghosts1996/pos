@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Табло заказов</title>
+<link rel="stylesheet" href="board.css">
+</head>
+<body>
+<header>
+  <div id="venue">Табло заказов</div>
+  <div class="right"><span id="clock"></span><button id="full" type="button" title="На весь экран">⛶</button></div>
+</header>
+<main>
+  <section class="col cooking"><h2>Готовится</h2><div id="cooking" class="nums"></div></section>
+  <section class="col ready"><h2>Готов — заберите</h2><div id="ready" class="nums"></div></section>
+</main>
+<div id="msg" hidden></div>
+<script src="board.js"></script>
+</body>
+</html>

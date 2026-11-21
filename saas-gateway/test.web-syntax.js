@@ -21,6 +21,10 @@ const files = [];
 for (const e of fs.readdirSync(path.join(__dirname, "courier-web"))) {
   if (/\.(m?js|html)$/.test(e)) files.push(path.join(__dirname, "courier-web", e));
 }
+// Табло заказов — тоже отдаёт шлюз (board-web/).
+for (const e of fs.readdirSync(path.join(__dirname, "board-web"))) {
+  if (/\.(m?js|html)$/.test(e)) files.push(path.join(__dirname, "board-web", e));
+}
 // Своя карта: наша обёртка (движок MapLibre — готовая сборка, его не проверяем).
 files.push(path.join(__dirname, "map-web", "zal-map.js"));
 

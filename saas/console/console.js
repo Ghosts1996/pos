@@ -1478,6 +1478,51 @@ function bindDeliveryTab(tenantId, redraw) {
   if ($('f-dr-load')) $('f-dr-load').onclick = () => { st.reportDay = $('f-dr-day').value; st.report = undefined; redraw(); loadReport(); };
 }
 
+// ---------- Настройки → «Табло заказов» (saas-gateway/board.js)
+const boardCache = new Map(); // tenantId → { url, hall } | { error } | null
+
+function boardBoxHtml(tenantId) {
+  const st = boardCache.get(tenantId);
+  const intro = `<p class="small muted" style="margin-top:0">Экран для гостей: «Готовится» и «Готов — заберите» с номерами
+    заказов с собой. Номер переходит в «Готов», когда кухня или бар отметили заказ готовым, и пропадает, когда его выдали.
+    Откройте ссылку на телевизоре, планшете или мониторе с браузером. Имён и состава заказов на табло нет.</p>`;
+  if (st === undefined) return `${intro}<button class="btn btn-ghost" id="f-board-get">Получить ссылку на табло</button>`;
+  if (st === null) return `${intro}<p class="small muted">Загружаю…</p>`;
+  if (st.error) return `${intro}<p class="small" style="color:var(--danger)">${esc(st.error)}</p><button class="btn btn-ghost" id="f-board-get">Повторить</button>`;
+  return `${intro}
+    <div style="font-family:var(--mono, monospace);word-break:break-all;margin:6px 0 10px;user-select:all">${esc(st.url)}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      <button class="btn btn-primary" id="f-board-copy" style="width:auto;padding:0 18px">Скопировать ссылку</button>
+      <a class="btn btn-ghost" href="${esc(st.url)}" target="_blank" rel="noopener" style="width:auto;padding:0 18px">Открыть табло</a>
+      <button class="btn btn-ghost" id="f-board-rotate" style="width:auto;padding:0 18px">Сменить ссылку</button>
+    </div>
+    <label class="small" style="display:flex;gap:8px;align-items:flex-start;margin-top:12px">
+      <input type="checkbox" id="f-board-hall" style="width:auto;margin-top:2px" ${st.hall ? 'checked' : ''}>
+      <span>Показывать и заказы в зале — по названию стола (для фудкортов и кафе с выдачей у стойки)</span></label>
+    <p class="small muted" style="margin:8px 0 0">«Сменить ссылку» — если её узнали посторонние: старая перестанет работать.</p>`;
+}
+
+function bindBoardBox(tenantId, redraw) {
+  const call = async (body) => {
+    boardCache.set(tenantId, boardCache.get(tenantId) || null);
+    try {
+      boardCache.set(tenantId, (await callSaasGateway('boardLink', { tenantId, ...body })).data);
+    } catch (e) {
+      boardCache.set(tenantId, { error: e.message || 'Не удалось получить ссылку' });
+    }
+    redraw();
+  };
+  if ($('f-board-get')) $('f-board-get').onclick = () => { boardCache.set(tenantId, null); redraw(); call({ action: 'get' }); };
+  if ($('f-board-copy')) $('f-board-copy').onclick = () => copyToClipboard(boardCache.get(tenantId)?.url || '');
+  if ($('f-board-rotate')) {
+    $('f-board-rotate').onclick = async () => {
+      if (!(await uiConfirm('Сменить ссылку на табло? Табло со старой ссылкой перестанут обновляться — откройте на них новую.', { ok: 'Сменить', danger: false }))) return;
+      call({ action: 'rotate' }).then(() => toast('Ссылка сменена'));
+    };
+  }
+  if ($('f-board-hall')) $('f-board-hall').onchange = (e) => call({ action: 'settings', hall: e.target.checked });
+}
+
 // ---------- Склад → «Фудкост и закупка» (saas-gateway/foodcost.js)
 const foodcostCache = new Map(); // tenantId → данные | { error } | null
 
@@ -7177,6 +7222,8 @@ function watchDashboardData(tenantId) {
         </label>
       </div>
 
+      ${canManage ? `<h2>Табло заказов</h2>
+        <div class="card" id="f-board-box">${boardBoxHtml(tenantId)}</div>` : ''}
       </section>
 
       ${canManage ? `<section class="set-group" id="set-conn">
@@ -8124,6 +8171,7 @@ function watchDashboardData(tenantId) {
     document.querySelectorAll('.set-chip').forEach((b) => {
       b.onclick = () => { const g = document.getElementById(b.dataset.goto); if (g) g.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
     });
+    if ($('f-board-box')) bindBoardBox(tenantId, draw);
     if ($('f-api-box')) bindApiKeysBox(tenantId, draw);
     if ($('f-wh-box')) bindWebhooksBox(tenantId, draw);
     if ($('f-backup-tenant')) $('f-backup-tenant').onclick = () => exportVenueBackup({ tenantId, fileKey: tenant.slug, label: tenant.name });
