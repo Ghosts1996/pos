@@ -63,7 +63,20 @@ function req(method, p, body) {
   r = await req("POST", "/findTableVenue", { tableId: "tbl-uuid-1", key: "SECRETKEY123", slug: "kolibri-x" });
   assert.deepEqual([r.status, r.json.tenantId, r.json.slug], [200, "real1", "kolibri-x"]);
   r = await req("POST", "/findTableVenue", { tableId: "tbl-uuid-1", key: "wrong", slug: "kolibri-x" });
-  assert.equal(r.status, 404, "без верного секрета — не раскрываем заведение");
+  assert.deepEqual([r.status, r.json.tenantId, r.json.keyStale], [200, "real1", true], "старая наклейка, тот же код — заведение стола (чек не дадут правила)");
+  r = await req("POST", "/findTableVenue", { tableId: "tbl-uuid-1", key: "wrong", slug: "other-x" });
+  assert.equal(r.status, 404, "чужой код без верного секрета — не раскрываем заведение");
+  r = await req("POST", "/findTableVenue", { tableId: "tbl-uuid-1", slug: "" });
+  assert.equal(r.status, 404, "без кода и секрета — не раскрываем");
+  // Копия «оживлена» (касса, столы, новее) — по старой наклейке всё равно туда, где стол.
+  await set("tenants/copy1/devices/d2", { name: "Касса 2" });
+  await set("tenants/copy1/tables/tbl-copy", { name: "Стол 1" });
+  r = await req("POST", "/resolveTenantBySlug", { slug: "kolibri-x" });
+  assert.equal(r.json.tenantId, "copy1", "без QR — самое свежее живое");
+  r = await req("POST", "/resolveTenantBySlug", { slug: "kolibri-x", tableId: "tbl-uuid-1", key: "OLDKEY" });
+  assert.equal(r.json.tenantId, "real1", "по QR со старым секретом — всё равно где стол");
+  r = await req("POST", "/resolveTenantBySlug", { slug: "kolibri-x", tableId: "tbl-uuid-1" });
+  assert.equal(r.json.tenantId, "real1", "наклейка без секрета — где стол");
   r = await req("POST", "/findTableVenue", { tableId: "tbl-other", slug: "kolibri-x" });
   assert.deepEqual([r.status, r.json.slug], [200, "other-x"], "стол другого заведения — его код");
   r = await req("POST", "/findTableVenue", { tableId: "../x", slug: "kolibri-x" });

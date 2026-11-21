@@ -608,10 +608,11 @@ const TABLE_ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
 
 /** Есть ли у заведения стол tableId и подходит ли секрет с наклейки (у
  *  стола без выпущенного секрета — старые наклейки — секрет не нужен). */
-async function tenantHasTable(firestore, tenantId, tableId, key = "") {
+async function tenantHasTable(firestore, tenantId, tableId, key = "", { anyKey = false } = {}) {
   const ref = firestore.collection("tenants").doc(tenantId);
   const t = await ref.collection("tables").doc(tableId).get();
   if (!t.exists) return false;
+  if (anyKey) return true;
   const k = await ref.collection("tableKeys").doc(tableId).get();
   if (!k.exists || !k.data().key) return true;
   return typeof key === "string" && key === k.data().key;
@@ -632,7 +633,11 @@ async function pickTenantBySlug(firestore, slug, { tableId = "", key = "", prefe
   if (preferred && !tableId) return preferred;
   console.warn(`saas-gateway: код ${slug} — у ${alive.length} заведений: ${alive.map((d) => d.id).join(", ")}`);
   if (tableId) {
+    // Стол из QR — главный признак. Секрет с наклейки мог устареть («Новый
+    // код» на кассе): заведение всё равно то, где стол, а занять чек со
+    // старой наклейкой не дадут правила — гость увидит «код устарел».
     for (const d of alive) if (await tenantHasTable(firestore, d.id, tableId, key)) return d;
+    for (const d of alive) if (await tenantHasTable(firestore, d.id, tableId, "", { anyKey: true })) return d;
   }
   const rank = { active: 3, trial: 3, past_due: 2, suspended: 1 };
   const scored = await Promise.all(alive.map(async (d) => {
@@ -681,18 +686,25 @@ async function handleFindTableVenue(req, res) {
   const firestore = db();
   const hint = body.slug ? normalizeSlugSafe(body.slug) : "";
   const tried = new Set();
-  const check = async (doc) => {
+  const check = async (doc, anyKey = false) => {
     if (!doc || tried.has(doc.id)) return null;
-    tried.add(doc.id);
     const x = doc.data() || {};
-    if (x.status === "deleted") return null;
-    return (await tenantHasTable(firestore, doc.id, tableId, key)) ? { tenantId: doc.id, slug: x.slug || doc.id, chainId: x.chainId || null } : null;
+    if (x.status === "deleted") { tried.add(doc.id); return null; }
+    if (!(await tenantHasTable(firestore, doc.id, tableId, key, { anyKey }))) return null;
+    tried.add(doc.id);
+    return { tenantId: doc.id, slug: x.slug || doc.id, chainId: x.chainId || null, ...(anyKey ? { keyStale: true } : {}) };
   };
-  // Сначала заведения с тем же кодом, потом — все.
+  // Сначала заведения с тем же кодом, потом — все. В заведениях с тем же
+  // кодом стол узнаём и по старой наклейке (адрес гость уже знает); среди
+  // остальных — только с верным секретом: номер стола не раскрывает заведение.
   if (hint) {
     const same = await firestore.collection("tenants").where("slug", "==", hint).limit(10).get();
     for (const d of same.docs) {
       const hit = await check(d);
+      if (hit) return sendJson(res, 200, hit);
+    }
+    for (const d of same.docs) {
+      const hit = await check(d, true);
       if (hit) return sendJson(res, 200, hit);
     }
   }
@@ -701,6 +713,7 @@ async function handleFindTableVenue(req, res) {
     const hit = await check(d);
     if (hit) return sendJson(res, 200, hit);
   }
+  console.warn(`saas-gateway: findTableVenue — стол ${tableId.slice(0, 8)} (код ${hint || "-"}) не найден ни в одном заведении`);
   throw new HttpError(404, "Стол не найден");
 }
 

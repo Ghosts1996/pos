@@ -1980,7 +1980,7 @@ async function bindToTable(tableId, tableKey = '') {
           return;
         }
       }
-      return failBind('Такого стола нет. Отсканируйте код ещё раз.');
+      return failBind('Такого стола нет. Отсканируйте код ещё раз.', tableDiag(tableId, tableKey));
     }
     const data = t.data();
     const checks = (data.openChecks || []).filter((c) => c && c.id);
@@ -2006,6 +2006,7 @@ async function bindToTable(tableId, tableKey = '') {
 }
 
 /// Где стол из QR (сервер сверяет секрет с наклейки). null — не нашли.
+/// Ответ сервера — в state.lastTableLookup: строка для проверки на экране ошибки.
 async function findTableVenue(tableId, key) {
   try {
     const slug = (location.hostname.split('.')[0] || '').trim();
@@ -2014,19 +2015,32 @@ async function findTableVenue(tableId, key) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tableId, key: key || '', slug }),
     });
-    if (!r.ok) return null;
+    if (!r.ok) { state.lastTableLookup = `поиск ${r.status}`; return null; }
     const j = await r.json();
+    state.lastTableLookup = j && j.tenantId ? `найден ${String(j.tenantId).slice(0, 6)}/${j.slug || '-'}` : 'поиск пусто';
     return j && j.tenantId ? j : null;
   } catch (_) {
+    state.lastTableLookup = 'поиск: нет связи';
     return null;
   }
 }
 
-function failBind(message) {
+/// Строка для проверки (мелко под ошибкой): какое заведение открыто, какой
+/// стол из QR, что ответил сервер. По скриншоту видно причину.
+function tableDiag(tableId, tableKey) {
+  const hop = (() => { try { return sessionStorage.getItem('zalVenueHop') ? 'h' : ''; } catch (_) { return ''; } })();
+  return [`${location.hostname.split('.')[0]}`, `${String(state.tenantId || '').slice(0, 6)}`, `стол ${String(tableId).slice(0, 8)}`,
+    tableKey ? 'k+' : 'k-', state.lastTableLookup || '—', hop, state.chainId ? 'сеть' : ''].filter(Boolean).join(' · ');
+}
+
+function failBind(message, diag = '') {
   screenEl().innerHTML = `
     <h1>Мой стол</h1>
     <div class="card warn"><p class="small">${esc(message)}</p></div>
-    <a class="btn btn-ghost" href="#/">На главную</a>`;
+    <a class="btn btn-ghost" href="#/">На главную</a>
+    ${diag ? `<p class="small muted center" style="margin-top:18px;font-size:11px;opacity:.6">${esc(diag)}</p>` : ''}`;
+  // Повтор скана — с чистого листа (защита от круга переходов — на один раз).
+  try { sessionStorage.removeItem('zalVenueHop'); sessionStorage.removeItem('zalTableHop'); } catch (_) {}
 }
 
 /// Кто занял чек: sessionClaims/{sessionId} → {uid}. Читать эту коллекцию
