@@ -136,6 +136,11 @@ class FiscalReceiptItem {
   /// Результат онлайн-проверки кода в «Честном знаке» — если проверка была.
   final MarkingPermit? markingPermit;
 
+  /// Чьё это (SaaS, два юрлица в заведении): '' — основное юрлицо,
+  /// '2' — второе (например, кальяны на другое ИП). По нему чек делится
+  /// на два ([splitReceiptByEntity]); в кассу не передаётся.
+  final String entity;
+
   const FiscalReceiptItem({
     required this.name,
     required this.price,
@@ -144,6 +149,7 @@ class FiscalReceiptItem {
     this.paymentObject = FiscalPaymentObject.commodity,
     this.markingCode,
     this.markingPermit,
+    this.entity = '',
   });
 
   Map<String, dynamic> toJson() => {
@@ -155,6 +161,7 @@ class FiscalReceiptItem {
         if (markingCode != null) 'markingCode': markingCode,
         if (markingPermit != null) 'permitId': markingPermit!.reqId,
         if (markingPermit != null) 'permitTs': markingPermit!.reqTimestamp,
+        if (entity.isNotEmpty) 'entity': entity,
       };
 
   factory FiscalReceiptItem.fromJson(Map<String, dynamic> j) => FiscalReceiptItem(
@@ -167,6 +174,7 @@ class FiscalReceiptItem {
         markingPermit: j['permitId'] == null
             ? null
             : MarkingPermit(reqId: j['permitId'] as String, reqTimestamp: j['permitTs'] as String? ?? ''),
+        entity: j['entity'] as String? ?? '',
       );
 
   /// С копейками: price * quantity в double даёт хвосты вроде 999.98999…
@@ -207,6 +215,10 @@ class FiscalReceipt {
   /// чек — «полный расчёт» с зачётом предоплаты (оплата 'prepayment').
   final bool fullPrepayment;
 
+  /// На какую кассу (SaaS, два юрлица): '' — основное юрлицо, '2' —
+  /// второе. Очередь чеков ([FiscalQueue]) по нему выбирает кассу.
+  final String entity;
+
   const FiscalReceipt({
     required this.receiptId,
     required this.items,
@@ -215,7 +227,20 @@ class FiscalReceipt {
     this.refund = false,
     this.fullPrepayment = false,
     this.cashier = '',
+    this.entity = '',
   });
+
+  FiscalReceipt copyWith({String? receiptId, List<FiscalReceiptItem>? items, List<FiscalPayment>? payments, String? entity}) =>
+      FiscalReceipt(
+        receiptId: receiptId ?? this.receiptId,
+        items: items ?? this.items,
+        payments: payments ?? this.payments,
+        buyerContact: buyerContact,
+        refund: refund,
+        fullPrepayment: fullPrepayment,
+        cashier: cashier,
+        entity: entity ?? this.entity,
+      );
 
   /// Возврат этого чека: те же позиции и формы оплаты. Свой номер — по
   /// [receiptId] провайдер отсекает повторы и принял бы возврат за дубль.
@@ -227,6 +252,7 @@ class FiscalReceipt {
         refund: true,
         fullPrepayment: fullPrepayment,
         cashier: cashier,
+        entity: entity,
       );
 
   double get total => (items.fold<double>(0, (sum, i) => sum + i.sum) * 100).roundToDouble() / 100;
@@ -241,6 +267,7 @@ class FiscalReceipt {
         if (refund) 'refund': true,
         if (fullPrepayment) 'fullPrepayment': true,
         if (cashier.isNotEmpty) 'cashier': cashier,
+        if (entity.isNotEmpty) 'entity': entity,
       };
 
   factory FiscalReceipt.fromJson(Map<String, dynamic> j) => FiscalReceipt(
@@ -257,7 +284,31 @@ class FiscalReceipt {
         refund: j['refund'] == true,
         fullPrepayment: j['fullPrepayment'] == true,
         cashier: j['cashier'] as String? ?? '',
+        entity: j['entity'] as String? ?? '',
       );
+}
+
+/// Два юрлица в одном заведении (SaaS): позиции второго юрлица ([FiscalReceiptItem.entity]
+/// == '2') уходят отдельным чеком на его кассу. Оплата делится в той же
+/// пропорции, что и суммы позиций (гость платил картой — оба чека картой),
+/// копейки подгоняет [balancePayments]. Все позиции одного юрлица — один чек.
+/// Номер второго чека — `<номер>-2`, чтобы касса не приняла его за повтор.
+List<FiscalReceipt> splitReceiptByEntity(FiscalReceipt r) {
+  final second = r.items.where((i) => i.entity == '2').toList();
+  if (second.isEmpty) return [r.copyWith(entity: '')];
+  final first = r.items.where((i) => i.entity != '2').toList();
+  if (first.isEmpty) return [r.copyWith(entity: '2')];
+  double sumOf(List<FiscalReceiptItem> l) => (l.fold<double>(0, (a, i) => a + i.sum) * 100).roundToDouble() / 100;
+  final t2 = sumOf(second);
+  final total = r.total;
+  final ratio = total > 0 ? t2 / total : 0.0;
+  double k(double v) => (v * 100).roundToDouble() / 100;
+  final p2 = [for (final p in r.payments) FiscalPayment(p.type, k(p.amount * ratio))];
+  final p1 = [for (var i = 0; i < r.payments.length; i++) FiscalPayment(r.payments[i].type, k(r.payments[i].amount - p2[i].amount))];
+  return [
+    r.copyWith(items: first, payments: balancePayments(p1, sumOf(first)), entity: ''),
+    r.copyWith(receiptId: '${r.receiptId}-2', items: second, payments: balancePayments(p2, t2), entity: '2'),
+  ];
 }
 
 /// Скидка суммой (бонусы своей программы лояльности, «за счёт заведения»)
@@ -305,7 +356,7 @@ class FiscalReceipt {
     final sum = k(it.sum) - c;
     FiscalReceiptItem copy(double price, double qty) => FiscalReceiptItem(
         name: it.name, price: price, quantity: qty, vat: it.vat, paymentObject: it.paymentObject,
-        markingCode: it.markingCode, markingPermit: it.markingPermit);
+        markingCode: it.markingCode, markingPermit: it.markingPermit, entity: it.entity);
     final q = it.quantity;
     final whole = q == q.roundToDouble() && q >= 1;
     if (!whole || sum % q.round() == 0) {

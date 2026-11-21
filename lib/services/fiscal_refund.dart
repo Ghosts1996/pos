@@ -14,14 +14,22 @@ Future<String?> sendFiscalRefund(SessionModel s, {FirestoreService? fs}) async {
   final db = fs ?? FirestoreService();
   String? error;
   try {
-    final saved = await db.fiscalReceiptOf(s.id);
-    if (saved == null) {
+    // Два юрлица — возврат по каждому чеку на его кассу.
+    final saved = await db.fiscalReceiptsOf(s.id);
+    if (saved.isEmpty) {
       error = 'чек продажи пробит до обновления кассы, и его состава нет в базе';
-    } else if (!kassaService.isAvailable) {
-      error = 'касса не настроена (Настройки → Интеграции)';
     } else {
-      final result = await FiscalQueue.send(FiscalReceipt.fromJson(saved).asRefund());
-      if (!result.success && !result.queued) error = 'касса отклонила чек возврата: ${result.errorMessage ?? 'без описания'}';
+      for (final raw in saved) {
+        final sale = FiscalReceipt.fromJson(raw);
+        if (!kassaFor(sale).isAvailable) {
+          error ??= 'касса не настроена (Настройки → Интеграции)';
+          continue;
+        }
+        final result = await FiscalQueue.send(sale.asRefund());
+        if (!result.success && !result.queued) {
+          error ??= 'касса отклонила чек возврата: ${result.errorMessage ?? 'без описания'}';
+        }
+      }
     }
   } catch (e) {
     error = 'не удалось отправить чек возврата: ${humanError(e, lower: true)}';

@@ -692,6 +692,42 @@ Future<void> loadSavedKassaSettings() async {
 KassaService buildKassaService(Map<String, dynamic> data) {
   kassaDefaultVat = FiscalVatRateX.fromId(data['kassaVat'] as String?);
   deliveryAutoFiscal = data['deliveryAutoFiscal'] != false;
+  // Экран настроек собирает основную кассу без kassa2 — второе юрлицо
+  // тогда не трогаем.
+  if (data.containsKey('kassa2')) applySecondEntity(data['kassa2']);
+  return kassaProviderFrom(data);
+}
+
+/// Второе юрлицо в заведении (SaaS): например, кальяны пробиваются на
+/// другое ИП. Своя касса, ставка НДС и цеха, чьи позиции идут на неё.
+/// Настройки — `settings/integrations.kassa2` (те же поля, что у основной
+/// кассы, плюс `enabled`, `name`, `kinds`).
+KassaService kassaService2 = NoKassaService();
+Set<String> kassa2Kinds = const {};
+String kassa2Name = '';
+FiscalVatRate kassa2DefaultVat = FiscalVatRate.none;
+
+/// Второе юрлицо включено и ему отданы цеха.
+bool get kassa2Active => kSaasMode && kassa2Kinds.isNotEmpty;
+
+void applySecondEntity(Object? raw) {
+  final m = raw is Map ? Map<String, dynamic>.from(raw) : const <String, dynamic>{};
+  if (!kSaasMode || m['enabled'] != true) {
+    kassaService2 = NoKassaService();
+    kassa2Kinds = const {};
+    kassa2Name = '';
+    return;
+  }
+  kassa2Kinds = {for (final k in (m['kinds'] as List? ?? const [])) if (k is String && k.isNotEmpty) k};
+  kassa2Name = (m['name'] as String? ?? '').trim();
+  kassa2DefaultVat = FiscalVatRateX.fromId(m['kassaVat'] as String?);
+  kassaService2 = kassaProviderFrom(m);
+}
+
+/// Касса для чека: второе юрлицо — его касса, иначе основная.
+KassaService kassaFor(FiscalReceipt r) => r.entity == '2' ? kassaService2 : kassaService;
+
+KassaService kassaProviderFrom(Map<String, dynamic> data) {
   final type = data['kassaType'] as String? ?? 'none';
   String s(String key) => data[key] as String? ?? '';
   final sno = FiscalTaxSystemX.fromId(data['kassaSno'] as String?);

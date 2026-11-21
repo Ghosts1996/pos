@@ -37,12 +37,13 @@ class FiscalQueue {
   /// Отправить чек сейчас, а если касса недоступна — поставить в очередь.
   static Future<FiscalReceiptResult> send(FiscalReceipt receipt) async {
     // Регистратор в зале доступен и без интернета — его пробуем всегда.
-    final cloud = kassaService is! AtolLocalKassaService;
+    final kassa = kassaFor(receipt);
+    final cloud = kassa is! AtolLocalKassaService;
     if (cloud && !NetStatus.online.value) {
       await enqueue(receipt);
       return const FiscalReceiptResult.queued();
     }
-    final result = await kassaService.sendReceipt(receipt);
+    final result = await kassa.sendReceipt(receipt);
     if (result.unreachable) {
       await enqueue(receipt);
       return const FiscalReceiptResult.queued();
@@ -86,7 +87,7 @@ class FiscalQueue {
       while (q.isNotEmpty) {
         final entry = q.first;
         final receipt = FiscalReceipt.fromJson(Map<String, dynamic>.from(entry['receipt'] as Map));
-        final result = await kassaService.sendReceipt(receipt);
+        final result = await kassaFor(receipt).sendReceipt(receipt);
         if (result.unreachable) break;
         q = await _load();
         q.removeWhere((e) => (e['receipt'] as Map?)?['receiptId'] == receipt.receiptId);

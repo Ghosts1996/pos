@@ -86,6 +86,15 @@ class DeliveryFiscalService {
         await ref.update({'fiscalNeed': false});
         return;
       }
+      // Два юрлица (SaaS): заказ с позициями второго юрлица сам не
+      // пробиваем — чек делится на две кассы на экране оплаты.
+      if (kassa2Active && session.orderItems.any((l) => kassa2Kinds.contains(l.effectiveKind))) {
+        await ref.update({'fiscalNeed': false});
+        if (step.kind != DeliveryFiscalKind.refund) {
+          await _alert(raw, id, 'В заказе позиции второго юрлица — пробейте чек при закрытии на кассе');
+        }
+        return;
+      }
       if (!await _claim(ref, step.kind)) return;
       final contact = session.customerPhone.isNotEmpty ? session.customerPhone : (raw['guestContact'] ?? '').toString();
       final receipt = step.kind == DeliveryFiscalKind.refund

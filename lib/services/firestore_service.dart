@@ -1697,15 +1697,27 @@ class FirestoreService {
   /// Фискальный чек, отправленный при оплате, — по нему пробивается
   /// возврат с теми же позициями и формами оплаты. Контакт гостя не
   /// храним: это персональные данные.
-  Future<void> saveFiscalReceipt(String sessionId, Map<String, dynamic> receipt) {
+  /// [more] — чеки второго юрлица (SaaS, два юрлица в заведении).
+  Future<void> saveFiscalReceipt(String sessionId, Map<String, dynamic> receipt,
+      {List<Map<String, dynamic>> more = const []}) {
     return _write(AppScope.col('sessions').doc(sessionId).update({
       'fiscalReceipt': {...receipt}..remove('buyerContact'),
+      if (more.isNotEmpty) 'fiscalReceiptMore': [for (final m in more) {...m}..remove('buyerContact')],
     }));
   }
 
   Future<Map<String, dynamic>?> fiscalReceiptOf(String sessionId) async {
     final r = (await AppScope.col('sessions').doc(sessionId).get()).data()?['fiscalReceipt'];
     return r is Map ? Map<String, dynamic>.from(r) : null;
+  }
+
+  /// Все чеки продажи по счёту: основной и чеки второго юрлица.
+  Future<List<Map<String, dynamic>>> fiscalReceiptsOf(String sessionId) async {
+    final d = (await AppScope.col('sessions').doc(sessionId).get()).data() ?? const {};
+    return [
+      if (d['fiscalReceipt'] is Map) Map<String, dynamic>.from(d['fiscalReceipt'] as Map),
+      for (final m in (d['fiscalReceiptMore'] as List? ?? const [])) if (m is Map) Map<String, dynamic>.from(m),
+    ];
   }
 
   Future<void> markFiscalRefund(String sessionId, {String? error}) {

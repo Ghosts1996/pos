@@ -9,6 +9,7 @@ import '../../services/printers/device_printers.dart';
 import '../../services/printers/lan_scan.dart';
 import '../../services/egais_service.dart';
 import 'egais_waybills_screen.dart';
+import 'second_legal_entity_screen.dart';
 import '../../services/atol_local_kassa.dart';
 import '../../services/kassa_service.dart';
 import '../../services/chestny_znak_api_service.dart';
@@ -1547,6 +1548,20 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                 title: const Text('Чеки доставки автоматически'),
                 subtitle: const Text('Оплата онлайн — чек предоплаты сразу; курьер вручил заказ — чек полного расчёта. '
                     'Гостю чек приходит по телефону. Работает, пока открыта хотя бы одна касса.'),
+              ),
+            if (kSaasMode)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.account_balance_outlined),
+                title: const Text('Второе юрлицо'),
+                subtitle: Text(kassa2Active
+                    ? '${kassa2Name.isEmpty ? 'Включено' : kassa2Name} · ${kassa2Kinds.map(SaleKind.label).join(', ')}'
+                    : 'Например, кальяны на другое ИП — чек разделится на две кассы'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () async {
+                  await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SecondLegalEntityScreen()));
+                  if (mounted) setState(() {});
+                },
               ),
           ],
           OutlinedButton.icon(

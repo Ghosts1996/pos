@@ -850,9 +850,17 @@ class _PaymentScreenState extends State<PaymentScreen> {
       // ставка заведения по умолчанию).
       final menu = await _fs.menuItemsByIds(
           widget.session.orderItems.map((l) => l.menuItemId).where((id) => id.isNotEmpty).toSet());
+      // Два юрлица (SaaS): позиции цехов второго юрлица — на его кассу.
+      // Строка «Доставка» — всегда основному.
+      String entityOf(OrderItem line) => kassa2Active &&
+              line.menuItemId != kDeliveryFeeItemId &&
+              kassa2Kinds.contains(line.effectiveKind)
+          ? '2'
+          : '';
       FiscalVatRate vatOf(OrderItem line) {
         final own = menu[line.menuItemId]?.vat ?? '';
-        return own.isEmpty ? kassaDefaultVat : FiscalVatRateX.fromId(own, fallback: kassaDefaultVat);
+        final def = entityOf(line) == '2' ? kassa2DefaultVat : kassaDefaultVat;
+        return own.isEmpty ? def : FiscalVatRateX.fromId(own, fallback: def);
       }
 
       // Строка «Доставка» (SaaS, добавляет сервер) — услуга, в меню её нет.
@@ -892,6 +900,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
             paymentObject: subjectOf(line),
             markingCode: codes[i].code.raw,
             markingPermit: codes[i].permit,
+            entity: entityOf(line),
           ));
           discountable.add(!PromoPolicy.restricted(line));
         }
@@ -910,6 +919,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
             quantity: rest.toDouble(),
             vat: vatOf(line),
             paymentObject: subjectOf(line),
+            entity: entityOf(line),
           ));
           discountable.add(!PromoPolicy.restricted(line));
         }
@@ -959,9 +969,29 @@ class _PaymentScreenState extends State<PaymentScreen> {
             ? widget.session.employeeName.trim()
             : '',
       );
-      final result = await FiscalQueue.send(receipt);
-      if (result.success || result.queued) {
-        unawaited(_fs.saveFiscalReceipt(widget.session.id, receipt.toJson()).catchError((Object _) {}));
+      // Два юрлица — два чека, каждый на свою кассу.
+      final parts = kassa2Active ? splitReceiptByEntity(receipt) : [receipt];
+      if (parts.any((r) => r.entity == '2') && !kassaService2.isAvailable) {
+        return 'касса второго юрлица${kassa2Name.isEmpty ? '' : ' «$kassa2Name»'} не настроена (Настройки → Интеграции)';
+      }
+      final sent = <FiscalReceipt>[];
+      final results = <FiscalReceiptResult>[];
+      for (final part in parts) {
+        final r = await FiscalQueue.send(part);
+        results.add(r);
+        if (r.success || r.queued) sent.add(part);
+      }
+      // Итог — по худшему из чеков: ошибка важнее очереди, очередь — успеха.
+      final failed = results.where((r) => !r.success && !r.queued);
+      final result = failed.isNotEmpty
+          ? failed.first
+          : results.any((r) => r.queued)
+              ? const FiscalReceiptResult.queued()
+              : results.firstWhere((r) => r.pending, orElse: () => results.first);
+      if (sent.isNotEmpty) {
+        unawaited(_fs
+            .saveFiscalReceipt(widget.session.id, sent.first.toJson(), more: [for (final r in sent.skip(1)) r.toJson()])
+            .catchError((Object _) {}));
       }
 
       if (result.queued) {
