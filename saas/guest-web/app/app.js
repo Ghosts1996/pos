@@ -3991,7 +3991,7 @@ function screenProfile() {
       </p>` : ''}
 
     <p class="center" style="margin-top:24px">
-      <button class="btn-ghost" id="logoutBtn" style="width:auto;min-width:200px">Выйти из профиля</button>
+      <button class="btn-ghost" id="logoutBtn">Выйти из профиля</button>
     </p>
 
     <p class="center" style="margin-top:12px">
