@@ -1478,6 +1478,97 @@ function bindDeliveryTab(tenantId, redraw) {
   if ($('f-dr-load')) $('f-dr-load').onclick = () => { st.reportDay = $('f-dr-day').value; st.report = undefined; redraw(); loadReport(); };
 }
 
+// ---------- Склад → «Фудкост и закупка» (saas-gateway/foodcost.js)
+const foodcostCache = new Map(); // tenantId → данные | { error } | null
+
+function foodcostBoxHtml(tenantId, canEdit) {
+  const st = foodcostCache.get(tenantId);
+  const head = '<h2>Фудкост и закупка</h2>';
+  if (st === undefined || st === null) return `${head}<div class="card"><p class="small muted" style="margin:0">Считаю себестоимость…</p></div>`;
+  if (st.error) return `${head}<div class="card"><p class="small" style="color:var(--danger);margin-top:0">${esc(st.error)}</p>
+    <button class="btn btn-ghost" id="f-fc-retry" style="width:auto">Повторить</button></div>`;
+  const c = st.settings;
+  const dis = canEdit ? '' : 'disabled';
+  const pct = (x) => `${String(x).replace('.', ',')}%`;
+  const qty = (x) => String(x).replace('.', ',');
+  const U = { g: 'г', kg: 'кг', ml: 'мл', l: 'л', pcs: 'шт' };
+  return `${head}
+    <div class="card">
+      <p class="small" style="margin-top:0;line-height:1.55">Себестоимость порции по техкарте и ценам последних накладных —
+        как в кассе. Блюдо подорожало и стало дороже порога — владельцу придёт сигнал в бот заведения с причиной:
+        какой продукт подорожал.</p>
+      ${st.withRecipe ? '' : '<p class="small muted">Пока ни у одного блюда нет техкарты или привязки к складу — заполните их в кассе: Админ → Меню → блюдо → «Состав».</p>'}
+      ${st.uncosted > 0 ? `<p class="small muted">У ${fmtInt(st.uncosted)} блюд с техкартой не посчитать себестоимость: у продуктов нет цены закупки. Цена появится после прихода по накладной.</p>` : ''}
+      ${st.dishes.length ? `
+        <div class="small" style="margin:6px 0">Выше ${c.threshold}% от цены: <b>${fmtInt(st.over)}</b> из ${fmtInt(st.dishes.length)} блюд</div>
+        <div style="overflow-x:auto"><table class="table"><thead><tr><th>Блюдо</th><th>Цена</th><th>Себестоимость</th><th>Фудкост</th></tr></thead><tbody>
+          ${st.dishes.slice(0, 60).map((d) => `<tr><td>${esc(d.name)}</td><td style="white-space:nowrap">${fmtInt(d.price)} ₽</td>
+            <td style="white-space:nowrap">${d.cost.toLocaleString('ru-RU')} ₽</td>
+            <td style="white-space:nowrap;font-weight:600;color:${d.pct >= c.threshold ? 'var(--danger)' : 'inherit'}">${pct(d.pct)}</td></tr>`).join('')}
+        </tbody></table></div>` : ''}
+      <label class="small" style="display:flex;gap:8px;align-items:center;margin:12px 0 6px">
+        <input type="checkbox" id="f-fc-alerts" style="width:auto" ${c.alerts ? 'checked' : ''} ${dis}>
+        <span>Сигнал в бот, если блюдо подорожало и фудкост выше</span>
+        <input id="f-fc-threshold" type="number" min="10" max="90" value="${c.threshold}" style="width:72px" ${dis}><span>%</span></label>
+    </div>
+
+    <div class="card">
+      <b>Заявка на закупку</b>
+      <p class="small muted" style="margin:4px 0 8px">По расходу за 14 дней и остаткам: чего не хватит на выбранное число дней
+        и что ниже минимума. Количество округлено вверх.</p>
+      <label class="small" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">Запас на
+        <select id="f-fc-cover" style="width:auto" ${dis}>${[1, 2, 3, 5, 7, 10, 14].map((d) => `<option value="${d}" ${d === c.coverDays ? 'selected' : ''}>${d} ${pluralDays(d)}</option>`).join('')}</select></label>
+      ${st.order.length ? `
+        <div style="overflow-x:auto"><table class="table"><thead><tr><th>Продукт</th><th>Заказать</th><th>Остаток</th><th>Почему</th></tr></thead><tbody>
+          ${st.order.map((x) => `<tr><td>${esc(x.name)}</td><td style="white-space:nowrap;font-weight:600">${qty(x.order)} ${U[x.unit] || ''}</td>
+            <td style="white-space:nowrap">${qty(x.quantity)} ${U[x.unit] || ''}</td><td class="small">${esc(x.why)}</td></tr>`).join('')}
+        </tbody></table></div>
+        ${st.orderTotal > 0 ? `<div class="small" style="margin-top:6px">Примерно на <b>${fmtInt(st.orderTotal)} ₽</b> по последним ценам закупки.</div>` : ''}
+        <button class="btn btn-ghost" id="f-fc-copy" style="margin-top:8px">Скопировать заявку</button>`
+        : '<p class="small muted">Всего хватает — заказывать нечего.</p>'}
+      <label class="small" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
+        <input type="checkbox" id="f-fc-daily" style="width:auto" ${c.orderDaily ? 'checked' : ''} ${dis}>
+        <span>Присылать заявку в бот каждый день в</span>
+        <select id="f-fc-hour" style="width:auto" ${dis}>${[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19].map((h) => `<option value="${h}" ${h === c.orderHour ? 'selected' : ''}>${h}:00</option>`).join('')}</select></label>
+      <div id="f-fc-msg" class="small" style="margin-top:8px"></div>
+      ${canEdit ? '<button class="btn btn-ghost" id="f-fc-save" style="margin-top:6px">Сохранить настройки</button>' : ''}
+    </div>`;
+}
+
+function bindFoodcostBox(tenantId, redraw) {
+  const load = async (body = { action: 'summary' }) => {
+    try {
+      foodcostCache.set(tenantId, (await callSaasGateway('foodcost', { tenantId, ...body })).data);
+      return true;
+    } catch (e) {
+      if (body.action === 'settings') { const m = $('f-fc-msg'); if (m) { m.textContent = e.message || 'Не удалось сохранить'; m.style.color = 'var(--danger)'; } return false; }
+      foodcostCache.set(tenantId, { error: e.message || 'Не удалось посчитать фудкост' });
+      return false;
+    } finally {
+      if (body.action !== 'settings') redraw();
+    }
+  };
+  if (!foodcostCache.has(tenantId)) { foodcostCache.set(tenantId, null); load(); return; }
+  if ($('f-fc-retry')) $('f-fc-retry').onclick = () => { foodcostCache.set(tenantId, null); redraw(); load(); };
+  const st = foodcostCache.get(tenantId);
+  if ($('f-fc-copy') && st && st.order) {
+    $('f-fc-copy').onclick = () => {
+      const U = { g: 'г', kg: 'кг', ml: 'мл', l: 'л', pcs: 'шт' };
+      copyToClipboard(st.order.map((x) => `${x.name} — ${String(x.order).replace('.', ',')} ${U[x.unit] || ''}`).join('\n'));
+    };
+  }
+  if ($('f-fc-save')) {
+    $('f-fc-save').onclick = async () => {
+      $('f-fc-save').disabled = true;
+      const ok = await load({ action: 'settings', settings: {
+        alerts: $('f-fc-alerts').checked, threshold: Number($('f-fc-threshold').value),
+        coverDays: Number($('f-fc-cover').value), orderDaily: $('f-fc-daily').checked, orderHour: Number($('f-fc-hour').value),
+      } });
+      if (ok) { toast('Настройки сохранены'); redraw(); } else if ($('f-fc-save')) $('f-fc-save').disabled = false;
+    };
+  }
+}
+
 // ---------- Вебхуки (saas-gateway/webhooks.js): события заведения на адрес владельца
 const webhooksCache = new Map(); // tenantId → { hooks, events, max } | { error } | null
 const webhookFresh = new Map(); // tenantId → { id, secret } — секрет показываем один раз
@@ -7661,7 +7752,8 @@ function watchDashboardData(tenantId) {
               </table></div>
               ${shown.length > 400 ? `<p class="small muted">Показаны первые 400 из ${shown.length} — уточните поиск.</p>` : ''}`}
           <p class="small muted" style="margin-top:8px">Списание по техкартам при продаже, инвентаризация и заготовки — в кассе: Админ → Склад.</p>
-        </div>`;
+        </div>
+        ${foodcostBoxHtml(tenantId, canPost)}`;
     };
 
     const TAB_RENDERERS = {
@@ -7702,6 +7794,7 @@ function watchDashboardData(tenantId) {
         }, () => { stockItems = stockItems || []; if (activeTab === 'stock') draw(); }));
       }
       if (!updCore) loadUpdCore().then(() => { if (activeTab === 'stock') draw(); }).catch(() => {});
+      bindFoodcostBox(tenantId, draw);
       if ($('f-stock-filter')) $('f-stock-filter').oninput = (e) => { stockFilter = e.target.value; draw(); };
       const keepMove = () => {
         stockMove.itemId = ($('f-move-item') || {}).value || '';

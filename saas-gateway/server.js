@@ -62,6 +62,7 @@ const { createVenueReferral } = require("./venue-referral");
 const { createOpenApi } = require("./open-api");
 const { createWebhooks } = require("./webhooks");
 const { createReviews } = require("./reviews");
+const { createFoodcost } = require("./foodcost");
 const { createGuestMarketing, rootKeyOf: guestRootKey } = require("./guest-marketing");
 const { createRushHour } = require("./rush-hour");
 const { createShield } = require("./shield");
@@ -10289,6 +10290,13 @@ const webhooks = createWebhooks({
 // Отзывы гостей: сводка и ссылки на Яндекс Карты/2ГИС для кабинета (reviews.js).
 const reviews = createReviews({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole });
 
+// Фудкост-сторож и заявка на закупку (foodcost.js): раз в час — сигнал
+// владельцу о подорожавших блюдах и вечерняя заявка по настройке.
+const foodcost = createFoodcost({
+  db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole,
+  ownerAlert: (tid, text) => telegram.ownerAlert(tid, text),
+});
+
 // Гости: сегменты, согласие на рекламные сообщения, «Вернуть гостя»
 // (guest-marketing.js). Рассылка — раз в час проверка, раз в день по поясу заведения.
 const guestMarketing = createGuestMarketing({
@@ -10597,6 +10605,7 @@ const ROUTES = {
   "/apiKeys": (req, res) => openApi.handleKeys(req, res),
   "/webhooks": (req, res) => webhooks.handle(req, res),
   "/guestReviews": (req, res) => reviews.handle(req, res),
+  "/foodcost": (req, res) => foodcost.handle(req, res),
   "/guestAdsConsent": (req, res) => guestMarketing.handleConsent(req, res),
   "/guestSegments": (req, res) => guestMarketing.handleSegments(req, res),
   "/guestCampaign": (req, res) => guestMarketing.handleCampaign(req, res),
@@ -10836,6 +10845,8 @@ scheduleMenuPopularity();
 scheduleDailyJob("deliveryPiiRetention", 24 * 3600 * 1000, runDeliveryPiiRetention, 40 * 60 * 1000);
 // Каждый час: у кого из заведений сейчас день — тем «Вернуть гостя».
 scheduleDailyJob("guestWinback", 60 * 60 * 1000, () => guestMarketing.runAll(), 12 * 60 * 1000);
+// Каждый час: подорожавшие блюда и вечерняя заявка на закупку (по настройке).
+scheduleDailyJob("foodcostWatch", 60 * 60 * 1000, () => foodcost.runAll(), 17 * 60 * 1000);
 // Smoke-тесты поднимают сервер без секретов — бот там не нужен.
 if (process.env.PORT !== "8099") {
   telegram.start();
@@ -10928,4 +10939,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, runChargeRecurringSubscriptions, runRenewalReminders, dataWriteGate, localDataStore, applySubscriptionPayment, venueReferral, switchedPeriod, planSwitchQuote, webhooks });
+Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, runChargeRecurringSubscriptions, runRenewalReminders, dataWriteGate, localDataStore, applySubscriptionPayment, venueReferral, switchedPeriod, planSwitchQuote, webhooks, foodcost });
