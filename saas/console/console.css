@@ -1830,3 +1830,6 @@ html.zd-open { overflow: hidden; }
   .l-sticky .btn-ghost { width: auto; flex: none; }
 }
 @media (prefers-reduced-motion: reduce) { .l-sticky { transition: none; } }
+
+/* Контурный значок в круглой кнопке «Как это выглядит…» (у «play» — заливка). */
+.l-more-ico.line .li { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; width: 24px; height: 24px; margin-left: 0; }

@@ -3922,6 +3922,8 @@ const LI = (() => {
     star: svg('<path d="m12 3.8 2.5 5.1 5.6.8-4 3.9.9 5.6-5-2.6-5 2.6.9-5.6-4-3.9 5.6-.8z"/>'),
     plug: svg('<path d="M9 3.5v5M15 3.5v5M6.5 8.5h11v3a5.5 5.5 0 0 1-11 0zM12 17v3.5"/>'),
     file: svg('<path d="M7 3.5h7l4 4v13H7z"/><path d="M14 3.5v4h4M9.5 12.5h6M9.5 16h6"/>'),
+    // Касса и телефон гостя рядом — для ссылки «Как это выглядит у кассира и у гостя».
+    screens: svg('<rect x="2.5" y="4.5" width="13" height="10" rx="1.6"/><path d="M6.5 19h5M9 14.5V19"/><rect x="15.5" y="8" width="6" height="12" rx="1.4"/><path d="M17.9 17.4h1.2"/>'),
     route: svg('<circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8"/>'),
   };
 })();
@@ -4292,7 +4294,7 @@ function screenLanding() {
           <div><b>По&nbsp;закону</b><span>Чек по&nbsp;54-ФЗ пробивает ваша онлайн-касса. Имена, телефоны и&nbsp;адреса
             гостей хранятся в&nbsp;России, а&nbsp;через 30&nbsp;дней после заказа мы их обезличиваем.</span></div>
         </div>
-        <a class="l-more" href="#/guide"><span class="l-more-ico">${LI.bag}</span><span><b>Как это выглядит у&nbsp;кассира и&nbsp;у&nbsp;гостя</b>
+        <a class="l-more" href="#/guide"><span class="l-more-ico line">${LI.screens}</span><span><b>Как это выглядит у&nbsp;кассира и&nbsp;у&nbsp;гостя</b>
           <span>Обзор с&nbsp;анимацией: заказ, звонок, подтверждение, оплата</span></span>${LI.arrow}</a>
       </div>
     </section>
