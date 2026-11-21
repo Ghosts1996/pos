@@ -527,6 +527,13 @@ class _PaymentScreenState extends State<PaymentScreen> {
   // Выручка по способам оплаты — без чаевых.
   double get _revenueCash => _cashNet - _tipsSplit.cash;
   double get _revenueCard => _card.parse() - _tipsSplit.card;
+
+  /// Часть оплаты с терминала — предоплата брони с уже пробитым авансом.
+  double get _advanceOffset {
+    final a = kSaasMode ? widget.session.advancePaid : 0.0;
+    if (a <= 0) return 0;
+    return a < _revenueTerminal ? a : _revenueTerminal;
+  }
   double get _revenueTerminal => _terminal.parse() - _tipsSplit.terminal;
 
   /// Кассир уже согласился закрыть чек, хотя остатка на складе не хватает.
@@ -948,7 +955,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
           // Чаевые — не выручка и в фискальный чек не входят.
           if (_revenueCash > 0.004) FiscalPayment('cash', _revenueCash),
           if (_revenueCard > 0.004) FiscalPayment('card', _revenueCard),
-          if (_revenueTerminal > 0.004) FiscalPayment('card', _revenueTerminal),
+          // Предоплата брони/банкета, по которой касса уже пробила чек
+          // «аванс», — зачётом аванса, а не второй оплатой картой (SaaS).
+          if (_revenueTerminal - _advanceOffset > 0.004) FiscalPayment('card', _revenueTerminal - _advanceOffset),
+          if (_advanceOffset > 0.004) FiscalPayment('prepayment', _advanceOffset),
           // Агрегатор, если чек по договору пробивает заведение: гость
           // заплатил безналично в приложении агрегатора.
           if (_aggAmount > 0.004) FiscalPayment('card', _aggAmount),
@@ -1086,8 +1096,11 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Text(
-                    'Гость оплатил по СБП со стола: ${_fmt(_guestPaid)} ${AppConstants.currencySymbol} — '
-                    'сумма уже в «Оплате с терминала»',
+                    widget.session.advancePaid > 0.004
+                        ? 'Предоплата брони онлайн: ${_fmt(_guestPaid)} ${AppConstants.currencySymbol} — '
+                            'сумма уже в «Оплате с терминала», чек «аванс» пробит'
+                        : 'Гость оплатил по СБП со стола: ${_fmt(_guestPaid)} ${AppConstants.currencySymbol} — '
+                            'сумма уже в «Оплате с терминала»',
                     style: TextStyle(color: AppColors.success, fontWeight: FontWeight.w600),
                   ),
                 ),

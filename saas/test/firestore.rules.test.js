@@ -1825,6 +1825,9 @@ describe("Брони и заказы гостя: только своё и тол
     await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/s"), r({ sessionId: "sess1" })));
     const item = { menuItemId: "m1", name: "Чай", price: 100, qty: 1 };
     await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/big"), r({ preOrder: Array(51).fill(item) })));
+    // Предоплату и чек по ней ставит только сервер (guest-pay.js).
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/paid"), r({ prepaidTotal: 5000 })));
+    await assertFails(setDoc(doc(g, "tenants/tenantA/reservations/bq"), r({ kind: "banquet", banquetPrepay: 1 })));
   });
 
   it("бронь гостя — только с номером телефона", async () => {

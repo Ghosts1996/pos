@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../build_info.dart';
 import '../../models/employee.dart';
 import '../../models/reservation_model.dart';
 import '../../models/table_model.dart';
@@ -330,6 +331,15 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                       '${r.guestConfirmed ? ' · гость подтвердил' : ''}',
                       style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                     ),
+                    // Предоплата онлайн (SaaS): гость внёс — при посадке она в счёте.
+                    if (kSaasMode && r.prepaidTotal > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          '${r.kind == 'banquet' ? 'Банкет · ' : ''}Предоплата ${r.prepaidTotal.toStringAsFixed(0)} ₽ внесена онлайн',
+                          style: TextStyle(color: AppColors.success, fontSize: 13, fontWeight: FontWeight.w600),
+                        ),
+                      ),
                   ],
                 ),
               ),

@@ -3885,7 +3885,9 @@ async function sendBooking() {
     }
     pickedTable = null;
     bookingDraft.time = '';
-    toast('Заявка отправлена — скоро подтвердим');
+    toast(bookingPrepayDue(state.venue || {}, { guestsCount: guests }) > 0 && onlinePayReady()
+      ? 'Заявка отправлена — внесите предоплату в «Моих бронях»'
+      : 'Заявка отправлена — скоро подтвердим');
   } catch (e) {
     toast('Не удалось отправить заявку');
   } finally {
@@ -3893,6 +3895,59 @@ async function sendBooking() {
     // осталось», и без него кнопка навсегда оставалась бы серой.
     const btn = $('bSend');
     if (btn) btn.disabled = false;
+  }
+}
+
+/// Сколько предоплаты нужно за бронь — та же формула, что на шлюзе
+/// (guest-pay.js, bookingPrepayDue); сумму к оплате всё равно считает сервер.
+function bookingPrepayDue(v, r) {
+  const n = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
+  if (r && r.kind === 'banquet') return Math.max(n(r.banquetPrepay), 0);
+  if (!v || v.bookingPrepay !== true) return 0;
+  const guests = Math.max(1, Math.round(n(r && r.guestsCount) || 1));
+  if (guests < Math.max(1, Math.round(n(v.bookingPrepayFrom) || 1))) return 0;
+  return Math.max(n(v.bookingPrepayPerGuest) > 0 ? n(v.bookingPrepayPerGuest) * guests : n(v.bookingPrepayAmount), 0);
+}
+
+/// Строка о предоплате в карточке брони: внесена или кнопка «Внести».
+function prepayHtml(r, active) {
+  const need = bookingPrepayDue(state.venue || {}, r);
+  const paid = Number(r.prepaidTotal) || 0;
+  if (need <= 0 && paid <= 0) return '';
+  if (paid >= need - 0.004) {
+    return `<p class="small" style="margin:10px 0 0;color:var(--success, #3fae6a)">Предоплата ${money(paid)} внесена — она будет в счёте</p>`;
+  }
+  const rest = need - paid;
+  if (!active) return '';
+  if (!onlinePayReady()) {
+    return `<p class="small muted" style="margin:10px 0 0">Нужна предоплата ${money(rest)} — заведение свяжется с вами</p>`;
+  }
+  return `<p class="small muted" style="margin:10px 0 6px">${r.kind === 'banquet' ? 'Предоплата банкета' : 'Бронь подтвердится после предоплаты'}: ${money(rest)}. Она войдёт в ваш счёт.</p>
+    <button class="btn-primary" data-prepay="${esc(r.id)}">Внести предоплату ${money(rest)}</button>`;
+}
+
+async function startBookingPrepay(reservationId, btn) {
+  btn.disabled = true;
+  try {
+    const r = await gatewayPost('/guestBookingPay', { reservationId });
+    const link = r.url || r.payload;
+    if (link && r.provider !== 'demo') window.open(link, '_blank', 'noopener');
+    if (r.provider === 'demo') { toast('Демо: предоплата отмечена без денег'); return; }
+    toast('Оплатите в банке — бронь обновится сама');
+    const started = Date.now();
+    const tick = async () => {
+      if (Date.now() - started > 16 * 60 * 1000) return;
+      try {
+        const st = await gatewayPost('/guestPayStatus', { paymentId: r.paymentId });
+        if (st.status === 'paid') { toast('Предоплата внесена'); return; }
+        if (st.status === 'failed') { toast('Оплата не прошла'); btn.disabled = false; return; }
+      } catch (_) { /* сеть моргнула — следующий опрос */ }
+      setTimeout(tick, 3000);
+    };
+    setTimeout(tick, 3000);
+  } catch (e) {
+    toast(e.message || 'Не удалось начать оплату');
+    btn.disabled = false;
   }
 }
 
@@ -3922,6 +3977,7 @@ function watchMyBookings() {
                   ${esc(STATUS_LABEL[r.status] || r.status)}${r.guestConfirmed ? ' · вы подтвердили' : ''}</div>
               </div>
             </div>
+            ${prepayHtml(r, active)}
             ${active ? `
               <div class="btn-row" style="margin-top:12px">
                 ${(r.status === 'new' || r.status === 'confirmed') && !r.guestConfirmed
@@ -3945,6 +4001,9 @@ function watchMyBookings() {
             toast('Бронь отменена');
           } catch (_) { toast('Не удалось отменить'); el.disabled = false; }
         };
+      });
+      box.querySelectorAll('[data-prepay]').forEach((el) => {
+        el.onclick = () => startBookingPrepay(el.dataset.prepay, el);
       });
       box.querySelectorAll('[data-come]').forEach((el) => {
         el.onclick = async () => {

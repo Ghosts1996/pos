@@ -766,6 +766,8 @@ service cloud.firestore {
          request.resource.data.status == 'new' &&
          contactPhoneOk(tenantId, 'reservation', doc) &&
          request.resource.data.get('sessionId', '') == '' &&
+         // Предоплату и чек по ней ставит только сервер (guest-pay.js).
+         !request.resource.data.keys().hasAny(['prepaidTotal', 'prepayPaymentIds', 'prepaidAt', 'fiscalNeed', 'fiscalAuto', 'banquetPrepay', 'kind']) &&
          request.resource.data.get('preOrder', []) is list &&
          request.resource.data.get('preOrder', []).size() <= 50);
       // Гость может только отменить ещё не состоявшуюся бронь (не ту, где

@@ -10788,6 +10788,7 @@ const ROUTES = {
   // Гость платит онлайн (счёт за столом, доставка) через банк заведения — см. guest-pay.js.
   "/guestPayStart": guestPay.handleStart,
   "/guestPayStatus": guestPay.handleStatus,
+  "/guestBookingPay": guestPay.handleBookingStart,
   "/guestPayNotify": guestPay.handleNotify,
   "/guestPayRobokassa": handleAnyRobokassaResult,
   "/onlinePayCheck": guestPay.handleCheck,

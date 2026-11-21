@@ -422,6 +422,10 @@ class SessionModel {
   /// Гость уже оплатил со стола по СБП (пишет шлюз после подтверждения банка).
   final double guestPaidTotal;
 
+  /// Часть [guestPaidTotal] — предоплата брони/банкета, по которой касса уже
+  /// пробила чек «аванс» (SaaS). При закрытии она идёт зачётом аванса.
+  final double advancePaid;
+
   /// '' — заказ за столом, 'takeaway' — с собой, 'delivery' — доставка.
   final String orderType;
   final String _customerPhone;
@@ -545,6 +549,7 @@ class SessionModel {
     this.aggregatorName = '',
     this.aggregatorCommission = 0,
     this.guestPaidTotal = 0,
+    this.advancePaid = 0,
     this.orderType = '',
     String customerPhone = '',
     String deliveryAddress = '',
@@ -612,6 +617,7 @@ class SessionModel {
       aggregatorName: asText(data['aggregatorName']),
       aggregatorCommission: (data['aggregatorCommission'] as num?)?.toDouble() ?? 0,
       guestPaidTotal: (data['guestPaidTotal'] as num?)?.toDouble() ?? 0,
+      advancePaid: (data['advancePaid'] as num?)?.toDouble() ?? 0,
       orderType: asText(data['orderType']),
       customerPhone: asText(data['customerPhone']),
       deliveryAddress: asText(data['deliveryAddress']),

@@ -7622,6 +7622,7 @@ function watchDashboardData(tenantId) {
         <div id="f-tents-status" class="small muted" style="margin-top:8px" role="status" aria-live="polite"></div>
       </div>
       ${bookingLinkCardHtml(tenant, tenantId, buttonColor)}
+      ${bookingPrepayCardHtml(venueProfile, canManage)}
     `;
 
     const teamHtml = () => `
@@ -8426,6 +8427,7 @@ function watchDashboardData(tenantId) {
       $('f-tents').onclick = () => downloadTableTents(tenantId, tenant, branding);
     }
     if (activeTab === 'branding') bindBookingLinkCard(tenant, tenantId, buttonColor);
+    if (activeTab === 'branding') bindBookingPrepayCard(tenantId);
     if (activeTab === 'guests') bindGuestsTab(tenantId, draw);
     if (activeTab === 'delivery') bindDeliveryTab(tenantId, draw);
     if (activeTab === 'stock') {
@@ -10242,6 +10244,64 @@ function bookingLinkCardHtml(tenant, tenantId, color) {
           <p class="small muted">Ссылка постоянная: меняется, только если поменять адрес заведения.</p>
         </details>
       </div>`;
+}
+
+/** Предоплата брони: гость вносит её онлайн через банк заведения сразу
+ *  после заявки, касса пробивает чек «аванс», при посадке сумма в счёте.
+ *  Поля — meta/venueProfile (шлюз считает сумму по ним: guest-pay.js). */
+function bookingPrepayCardHtml(v, canManage) {
+  const p = v || {};
+  const on = p.bookingPrepay === true;
+  const dis = canManage ? '' : 'disabled';
+  const bankOk = p.guestSbpPay === true && !!p.onlinePay;
+  return `
+      <div class="card" id="f-prepay-card">
+        <h3 style="margin-top:0">Предоплата брони</h3>
+        <p class="small muted">Гость оставил заявку — и сразу вносит предоплату онлайн через банк заведения.
+        Касса сама пробьёт чек «аванс», а при посадке предоплата будет в счёте гостя.</p>
+        ${bankOk ? '' : `<p class="small" style="color:var(--warning)">Сначала подключите онлайн-оплату гостей:
+          касса → Админ → «Интеграции» → «Онлайн-оплата гостей». Без неё гость увидит «заведение свяжется с вами».</p>`}
+        <label class="field-checkbox" style="display:flex;align-items:flex-start;gap:10px">
+          <input type="checkbox" id="f-prepay-on" style="width:auto;margin-top:3px" ${on ? 'checked' : ''} ${dis}>
+          <span><b>Брать предоплату за бронь</b></span></label>
+        <div class="prepay-grid">
+          <label class="field"><span>За гостя, ₽</span>
+            <input id="f-prepay-guest" type="number" min="0" step="50" value="${esc(String(p.bookingPrepayPerGuest || ''))}" placeholder="500" ${dis}></label>
+          <label class="field"><span>или за всю бронь, ₽</span>
+            <input id="f-prepay-amount" type="number" min="0" step="100" value="${esc(String(p.bookingPrepayAmount || ''))}" placeholder="2000" ${dis}></label>
+          <label class="field"><span>Начиная от гостей</span>
+            <input id="f-prepay-from" type="number" min="1" step="1" value="${esc(String(p.bookingPrepayFrom || 1))}" ${dis}></label>
+        </div>
+        <p class="small muted">Если указана сумма за гостя — берётся она (гостей × сумма). Банкеты — своя предоплата в карточке банкета.</p>
+        ${canManage ? '<button class="btn btn-primary" id="f-prepay-save" style="width:auto">Сохранить</button>' : ''}
+      </div>`;
+}
+
+function bindBookingPrepayCard(tenantId) {
+  const btn = $('f-prepay-save');
+  if (!btn) return;
+  btn.onclick = async () => {
+    const num = (id) => Math.max(0, Math.round(Number($(id).value) || 0));
+    const data = {
+      bookingPrepay: $('f-prepay-on').checked,
+      bookingPrepayPerGuest: num('f-prepay-guest'),
+      bookingPrepayAmount: num('f-prepay-amount'),
+      bookingPrepayFrom: Math.max(1, num('f-prepay-from')),
+    };
+    if (data.bookingPrepay && !data.bookingPrepayPerGuest && !data.bookingPrepayAmount) {
+      toast('Укажите сумму предоплаты — за гостя или за бронь');
+      return;
+    }
+    btn.disabled = true;
+    try {
+      await setDoc(doc(state.db, 'tenants', tenantId, 'meta', 'venueProfile'), data, { merge: true });
+      toast('Сохранено');
+    } catch (e) {
+      toast(`Не сохранилось: ${e?.message || e}`);
+    } finally {
+      btn.disabled = false;
+    }
+  };
 }
 
 function bindBookingLinkCard(tenant, tenantId, color) {

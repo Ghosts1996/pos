@@ -110,10 +110,11 @@ extension FiscalTaxSystemX on FiscalTaxSystem {
 /// «полный расчёт»; заказ, оплаченный заранее (доставка, оплата онлайн), —
 /// «предоплата 100%» ([FiscalReceipt.fullPrepayment]), а при вручении —
 /// снова «полный расчёт» с зачётом предоплаты.
-String atolPaymentMethod(FiscalReceipt r) => r.fullPrepayment ? 'full_prepayment' : 'full_payment';
+String atolPaymentMethod(FiscalReceipt r) =>
+    r.advance ? 'advance' : r.fullPrepayment ? 'full_prepayment' : 'full_payment';
 
 /// Код способа расчёта (тег 1214) для OrangeData: 1 — предоплата 100%, 4 — полный расчёт.
-int orangeDataPaymentMethod(FiscalReceipt r) => r.fullPrepayment ? 1 : 4;
+int orangeDataPaymentMethod(FiscalReceipt r) => r.advance ? 3 : r.fullPrepayment ? 1 : 4;
 
 int orangeDataVatCode(FiscalVatRate v) => v.orangeDataCode;
 
@@ -138,6 +139,8 @@ String atolPaymentObjectCode(FiscalPaymentObject o) {
   switch (o) {
     case FiscalPaymentObject.service:
       return 'service';
+    case FiscalPaymentObject.payment:
+      return 'payment';
     case FiscalPaymentObject.excise:
       return 'excise';
     case FiscalPaymentObject.commodity:
@@ -323,7 +326,7 @@ class AtolCloudKassaService implements KassaService {
 
   Map<String, dynamic> _itemV5(FiscalReceiptItem i, FiscalReceipt r) {
     // Код маркировки выбывает при передаче товара — в чек предоплаты не идёт.
-    final marked = !r.fullPrepayment && i.markingCode != null && i.markingCode!.isNotEmpty;
+    final marked = !r.fullPrepayment && !r.advance && i.markingCode != null && i.markingCode!.isNotEmpty;
     final permit = i.markingPermit;
     return {
       'name': i.name,
@@ -545,7 +548,7 @@ class OrangeDataKassaService implements KassaService {
         'ffdVersion': 4, // ФФД 1.2
         'type': receipt.refund ? 2 : 1, // приход или возврат прихода
         'positions': receipt.items.map((i) {
-          final marked = !receipt.fullPrepayment && (i.markingCode ?? '').isNotEmpty;
+          final marked = !receipt.fullPrepayment && !receipt.advance && (i.markingCode ?? '').isNotEmpty;
           final permit = i.markingPermit;
           return {
             'quantity': i.quantity,

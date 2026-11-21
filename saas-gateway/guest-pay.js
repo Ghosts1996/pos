@@ -310,6 +310,21 @@ function xmlCode(xml, block) {
   return m ? Number(m[1]) : null;
 }
 
+/**
+ * Сколько предоплаты нужно за бронь. Банкет — своя сумма (banquetPrepay).
+ * Иначе по настройкам заведения: за гостя (perGuest × гостей) или за бронь,
+ * если гостей не меньше «от скольких». 0 — предоплата не нужна.
+ */
+function bookingPrepayDue(v, r) {
+  const n = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
+  if (r && r.kind === "banquet") return round2(Math.min(Math.max(n(r.banquetPrepay), 0), 5e6));
+  if (!v || v.bookingPrepay !== true) return 0;
+  const guests = Math.max(1, Math.round(n(r && r.guestsCount) || 1));
+  if (guests < Math.max(1, Math.round(n(v.bookingPrepayFrom) || 1))) return 0;
+  const sum = n(v.bookingPrepayPerGuest) > 0 ? n(v.bookingPrepayPerGuest) * guests : n(v.bookingPrepayAmount);
+  return round2(Math.min(Math.max(sum, 0), 1e6));
+}
+
 function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJson, HttpError, requireTenantRole, publicUrl, httpImpl, beforeBill = null }) {
   const http = httpImpl || bankHttp;
   const tenantRef = (t) => db().collection("tenants").doc(t);
@@ -564,6 +579,36 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       const pay = await tx.get(payRef);
       const p = pay.data();
       if (!p || p.status !== "pending") return;
+      // Предоплата брони (банкета): деньги — в бронь, касса пробьёт чек
+      // «аванс» сама (lib/services/booking_fiscal_service.dart), при посадке
+      // предоплата переходит в счёт.
+      if (p.reservationId) {
+        const resRef = t.collection("reservations").doc(p.reservationId);
+        const r = (await tx.get(resRef)).data();
+        const now = admin.firestore.Timestamp.now();
+        tx.update(payRef, { status: "paid", paidAt: now });
+        if (r) {
+          tx.update(resRef, {
+            prepaidTotal: admin.firestore.FieldValue.increment(p.amount),
+            prepayPaymentIds: admin.firestore.FieldValue.arrayUnion(paymentId),
+            prepaidAt: now,
+            fiscalNeed: true,
+          });
+        }
+        const bank = p.provider === "demo" ? "демо, деньги не списаны" : PROVIDERS[p.provider] || "банк";
+        notice = {
+          tableId: (r && r.tableId) || "",
+          tableName: (r && r.tableName) || "",
+          sessionId: "",
+          clientUid: p.clientUid || "",
+          guestName: "",
+          type: "paid",
+          comment: `Предоплата ${p.banquet ? "банкета" : "брони"} (${bank}): ${p.amount} ₽${r && r.startTime ? ` — бронь ${p.when || ""}` : ""}. Чек «аванс» касса пробьёт сама, при посадке предоплата будет в счёте`,
+          status: "new",
+          createdAt: now,
+        };
+        return;
+      }
       const sesRef = t.collection("sessions").doc(p.sessionId);
       const ses = (await tx.get(sesRef)).data();
       const now = admin.firestore.Timestamp.now();
@@ -711,6 +756,68 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       test: HAS_TEST.has(creds.provider) && creds.test === true,
       status: "pending",
       createdAt: now,
+    });
+    await pendingCol().doc(`${tenantId}__${paymentId}`).set({ tenantId, paymentId, createdAt: now });
+    pendingMaybe = true;
+    sendJson(res, 200, { paymentId, payload: made.url, url: made.url, amount: due, provider: creds.provider });
+  }
+
+  // ------------------------------------------------------------ предоплата брони
+
+  /**
+   * Предоплата брони гостем. Сумму считает сервер по настройкам заведения
+   * (meta/venueProfile: bookingPrepay, bookingPrepayAmount — за бронь,
+   * bookingPrepayPerGuest — за гостя, bookingPrepayFrom — от скольких
+   * гостей), у банкета — его сумма предоплаты (banquetPrepay). Платёж —
+   * через тот же банк заведения, что и счёт за столом.
+   */
+  async function handleBookingStart(req, res) {
+    const decoded = await verifyAuth(req);
+    const { tenantId, reservationId } = await parseJsonBody(req);
+    checkTenantId(tenantId);
+    if (typeof reservationId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(reservationId)) throw new HttpError(400, "Не указана бронь");
+    const t = tenantRef(tenantId);
+    const r = (await t.collection("reservations").doc(reservationId).get()).data();
+    if (!r || r.clientUid !== decoded.uid) throw new HttpError(404, "Бронь не найдена");
+    if (!["new", "confirmed"].includes(r.status || "new")) throw new HttpError(409, "Эту бронь уже нельзя оплатить");
+    const start = r.startTime && typeof r.startTime.toMillis === "function" ? r.startTime.toMillis() : 0;
+    if (start && start < Date.now() - 30 * 60 * 1000) throw new HttpError(409, "Время брони прошло");
+    const v = (await t.collection("meta").doc("venueProfile").get()).data() || {};
+    const need = bookingPrepayDue(v, r);
+    const paid = Number(r.prepaidTotal) || 0;
+    const due = round2(need - paid);
+    if (due < 1) throw new HttpError(409, need > 0 ? "Предоплата уже внесена" : "Для этой брони предоплата не нужна");
+    const demo = (await t.get()).data()?.demo === true;
+    const { enabled, creds, verified, seller } = demo ? { enabled: true, creds: { provider: "demo" }, verified: true, seller: true } : await venueSettings(tenantId);
+    if (!enabled || !creds) throw new HttpError(409, "Онлайн-оплата в этом заведении не включена");
+    if (!verified) throw new HttpError(409, "Заведение ещё не проверило подключение банка");
+    if (!seller) throw new HttpError(409, "Заведение не указало реквизиты продавца");
+    // Повторное нажатие — та же ссылка.
+    const fresh = Date.now() - 10 * 60 * 1000;
+    const prev = (await t.collection("guestPayments").where("reservationId", "==", reservationId).get()).docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .find((p) => p.status === "pending" && p.clientUid === decoded.uid && Math.abs((p.amount || 0) - due) < 0.005 &&
+        p.provider === creds.provider && p.url && (p.createdAt?.toMillis?.() || 0) > fresh);
+    if (prev) return sendJson(res, 200, { paymentId: prev.id, payload: prev.url, url: prev.url, amount: due, provider: creds.provider });
+    const orderId = `b${Date.now().toString(36)}${crypto.randomBytes(4).toString("hex")}`;
+    const when = start ? new Date(start + 3 * 3600e3).toISOString().slice(5, 16).replace("T", " ").replace(/^(\d\d)-(\d\d)/, "$2.$1") : "";
+    const base = {
+      reservationId, sessionId: "", tableId: r.tableId || "", tableName: r.tableName || "", orderType: "",
+      clientUid: decoded.uid, amount: due, bill: due, tips: 0, orderId, banquet: r.kind === "banquet", when,
+    };
+    if (demo) {
+      const paymentId = `p_${orderId}`;
+      const url = `${publicUrl}/guestPayDemo?a=${encodeURIComponent(String(due))}`;
+      await t.collection("guestPayments").doc(paymentId).set({ ...base, provider: "demo", providerId: "", url, test: true, status: "pending", createdAt: admin.firestore.Timestamp.now() });
+      await markPaid(tenantId, paymentId);
+      return sendJson(res, 200, { paymentId, payload: url, url, amount: due, provider: "demo" });
+    }
+    const made = await createPayment(creds, { tenantId, amount: due, orderId, description: r.kind === "banquet" ? "Предоплата банкета" : "Предоплата брони" });
+    const paymentId = made.docId || `p_${orderId}`;
+    const now = admin.firestore.Timestamp.now();
+    await t.collection("guestPayments").doc(paymentId).set({
+      ...base, provider: creds.provider, providerId: made.providerId, url: made.url,
+      test: HAS_TEST.has(creds.provider) && creds.test === true, status: "pending", createdAt: now,
     });
     await pendingCol().doc(`${tenantId}__${paymentId}`).set({ tenantId, paymentId, createdAt: now });
     pendingMaybe = true;
@@ -1194,13 +1301,13 @@ function createGuestPay({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   return {
     handleStart, handleStatus, handleNotify, handleRobokassaResult, handleDone, handleDemoPage, handleCheck,
     handleKassaStart, handleKassaStatus, handleKassaCancel,
-    courierPayStart, courierPayStatus,
+    courierPayStart, courierPayStatus, handleBookingStart,
     markPaid, sweep, startSweeper, createPayment, bankStatus, cancelPayment, checkCreds,
   };
 }
 
 module.exports = {
-  createGuestPay, tbankToken, tokenValid, sessionBill, amountDue, onlinePaySettings, robokassaSig, xmlCode,
+  createGuestPay, tbankToken, tokenValid, sessionBill, amountDue, onlinePaySettings, robokassaSig, xmlCode, bookingPrepayDue,
   sellerReady, credsPrint, rbsCustomUrl, privateIp, moscowIso,
   PROVIDERS, RBS_URLS, RAIF_URLS, SBP_ONLY, BankUnreachable,
 };

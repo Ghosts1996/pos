@@ -110,6 +110,15 @@ class ReservationModel {
   /// повод позвонить.
   final bool guestConfirmed;
 
+  /// Предоплата, которую гость внёс онлайн (пишет шлюз, SaaS).
+  final double prepaidTotal;
+
+  /// Из неё касса уже пробила чек «аванс» (fiscalAuto.advance.amount).
+  final double advanceFiscalized;
+
+  /// '' — обычная бронь, 'banquet' — банкет.
+  final String kind;
+
   final DateTime createdAt;
   final DateTime? confirmedAt;
   final String _handledBy;
@@ -132,6 +141,9 @@ class ReservationModel {
     this.aiNote = '',
     this.sessionId = '',
     this.guestConfirmed = false,
+    this.prepaidTotal = 0,
+    this.advanceFiscalized = 0,
+    this.kind = '',
     required this.createdAt,
     this.confirmedAt,
     String handledBy = '',
@@ -169,6 +181,9 @@ class ReservationModel {
       aiNote: asText(data['aiNote']),
       sessionId: asText(data['sessionId']),
       guestConfirmed: data['guestConfirmed'] == true,
+      prepaidTotal: asNum(data['prepaidTotal'])?.toDouble() ?? 0,
+      advanceFiscalized: asNum(((data['fiscalAuto'] as Map?)?['advance'] as Map?)?['amount'])?.toDouble() ?? 0,
+      kind: asText(data['kind']),
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       confirmedAt: confirmed is Timestamp ? confirmed.toDate() : null,
       handledBy: asText(data['handledBy']),

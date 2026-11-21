@@ -74,6 +74,8 @@ class AtolLocalKassaService implements KassaService {
     switch (i.paymentObject) {
       case FiscalPaymentObject.service:
         return 'service';
+      case FiscalPaymentObject.payment:
+        return 'payment';
       case FiscalPaymentObject.excise:
         return marked ? 'exciseWithMarking' : 'excise';
       case FiscalPaymentObject.commodity:
@@ -82,7 +84,7 @@ class AtolLocalKassaService implements KassaService {
     }
   }
 
-  Map<String, dynamic> _item(FiscalReceiptItem i, [bool fullPrepayment = false]) {
+  Map<String, dynamic> _item(FiscalReceiptItem i, [bool fullPrepayment = false, bool advance = false]) {
     // Код маркировки выбывает при передаче товара — в чек предоплаты не идёт.
     final marked = ffd12 && !fullPrepayment && (i.markingCode ?? '').isNotEmpty;
     final permit = i.markingPermit;
@@ -92,7 +94,7 @@ class AtolLocalKassaService implements KassaService {
       'price': roundKopecks(i.price),
       'quantity': i.quantity,
       'amount': i.sum,
-      'paymentMethod': fullPrepayment ? 'fullPrepayment' : 'fullPayment',
+      'paymentMethod': advance ? 'advance' : fullPrepayment ? 'fullPrepayment' : 'fullPayment',
       'paymentObject': _paymentObject(i, fullPrepayment),
       'tax': {'type': i.vat.providerCode},
       if (ffd12) 'measurementUnit': 'piece',
@@ -126,7 +128,7 @@ class AtolLocalKassaService implements KassaService {
       if (cashierName.isNotEmpty || receipt.cashier.isNotEmpty)
         'operator': {'name': cashierName.isNotEmpty ? cashierName : receipt.cashier, if (cashierInn.isNotEmpty && cashierName.isNotEmpty) 'vatin': cashierInn},
       if (emailOrPhone != null) 'clientInfo': {'emailOrPhone': emailOrPhone},
-      'items': receipt.items.map((i) => _item(i, receipt.fullPrepayment)).toList(),
+      'items': receipt.items.map((i) => _item(i, receipt.fullPrepayment || receipt.advance, receipt.advance)).toList(),
       'payments': receipt.payments
           .map((p) => {'type': paymentType(p.type), 'sum': roundKopecks(p.amount)})
           .toList(),

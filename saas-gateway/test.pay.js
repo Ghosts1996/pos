@@ -198,6 +198,36 @@ test("демо-заведение: оплата проходит сразу, б�
   assert.match(page.text, /деньги не списываются/);
 });
 
+test("предоплата брони: сумма по настройкам, только своя бронь, деньги — в бронь", async () => {
+  const due = gp.bookingPrepayDue;
+  assert.equal(due({}, { guestsCount: 4 }), 0, "не включена");
+  assert.equal(due({ bookingPrepay: true, bookingPrepayAmount: 1000 }, { guestsCount: 2 }), 1000);
+  assert.equal(due({ bookingPrepay: true, bookingPrepayPerGuest: 500, bookingPrepayFrom: 4 }, { guestsCount: 3 }), 0, "мало гостей");
+  assert.equal(due({ bookingPrepay: true, bookingPrepayPerGuest: 500, bookingPrepayFrom: 4 }, { guestsCount: 6 }), 3000);
+  assert.equal(due({}, { kind: "banquet", banquetPrepay: 15000 }), 15000, "у банкета — своя сумма");
+
+  const { pay, calls, store } = makePay(() => { throw new Error("в демо к банку не ходим"); });
+  store.set("tenants/d1", { status: "active", demo: true });
+  store.set("tenants/d1/meta/venueProfile", { guestSbpPay: true, bookingPrepay: true, bookingPrepayPerGuest: 500 });
+  const soon = { toMillis: () => Date.now() + 3600e3 };
+  store.set("tenants/d1/reservations/r1", { clientUid: "guest1", status: "new", guestsCount: 4, tableId: "t1", tableName: "Стол 1", startTime: soon });
+  store.set("tenants/d1/reservations/r2", { clientUid: "other", status: "new", guestsCount: 4, startTime: soon });
+  await assert.rejects(pay.handleBookingStart({ body: { tenantId: "d1", reservationId: "r2" } }, {}), /не найдена/, "чужая бронь");
+  const res = {};
+  await pay.handleBookingStart({ body: { tenantId: "d1", reservationId: "r1", amount: 1 } }, res);
+  assert.equal(calls.length, 0);
+  assert.equal(res.body.amount, 2000, "сумму считает сервер, а не телефон");
+  const r = store.get("tenants/d1/reservations/r1");
+  assert.equal(r.prepaidTotal, 2000);
+  assert.equal(r.fiscalNeed, true, "касса пробьёт чек «аванс»");
+  assert.equal(store.get(`tenants/d1/guestPayments/${res.body.paymentId}`).reservationId, "r1");
+  const call = [...store.entries()].find(([k, v]) => k.startsWith("tenants/d1/waiterCalls/") && /Предоплата брони/.test(v.comment || ""));
+  assert.ok(call, "персонал видит предоплату");
+  await assert.rejects(pay.handleBookingStart({ body: { tenantId: "d1", reservationId: "r1" } }, {}), /уже внесена/);
+  store.set("tenants/d1/reservations/r1", { ...store.get("tenants/d1/reservations/r1"), status: "seated" });
+  await assert.rejects(pay.handleBookingStart({ body: { tenantId: "d1", reservationId: "r1" } }, {}), /нельзя оплатить/);
+});
+
 test("реквизиты продавца: ИНН 10/12 цифр, ОГРН 13/15, имя и адрес", () => {
   const v = { sellerName: "ИП Иванов И. И.", sellerInn: "500100732259", sellerOgrn: "304500116000157", sellerAddress: "Москва, ул. 1" };
   assert.equal(gp.sellerReady(v), true);

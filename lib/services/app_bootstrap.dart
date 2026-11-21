@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'fiscal_queue.dart';
 import 'delivery_fiscal_service.dart';
+import 'booking_fiscal_service.dart';
 import '../build_info.dart';
 import 'net_status.dart';
 import '../models/client_models.dart';
@@ -45,6 +46,8 @@ void startBackgroundServices() {
   unawaited(loadSavedKassaSettings());
   // Чеки доставки без кассира: предоплата и полный расчёт при вручении.
   if (kSaasMode) DeliveryFiscalService.instance.start();
+  // Чек «аванс» за предоплату брони и банкета.
+  if (kSaasMode) BookingFiscalService.instance.start();
   unawaited(loadSavedTerminalSettings());
   unawaited(loadSavedEgaisSettings());
   unawaited(loadSavedChestnyZnakSettings());

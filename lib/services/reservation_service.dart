@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../build_info.dart';
 import 'app_scope.dart';
 import '../utils/shared_stream.dart';
 import '../models/reservation_model.dart';
@@ -617,7 +618,19 @@ class ReservationService {
         plannedEnd: now.add(Duration(minutes: reservation.durationMinutes)),
         orderItems: preOrder,
       );
-      tx.set(sessionRef, session.toMap());
+      // Предоплата брони (SaaS) — уже оплачена онлайн: в счёт как оплата
+      // гостя; то, по чему касса пробила «аванс», при закрытии — зачётом аванса.
+      final prepaid = (resData['prepaidTotal'] as num?)?.toDouble() ?? 0;
+      final advance = ((((resData['fiscalAuto'] as Map?)?['advance'] as Map?)?['amount']) as num?)?.toDouble() ?? 0;
+      tx.set(sessionRef, {
+        ...session.toMap(),
+        if (kSaasMode && prepaid > 0) ...{
+          'guestPaidTotal': prepaid,
+          'guestPaymentIds': (resData['prepayPaymentIds'] as List?) ?? const [],
+          'advancePaid': advance > prepaid ? prepaid : advance,
+          'reservationId': reservation.id,
+        },
+      });
 
       ids.add(sessionRef.id);
       tx.update(tableRef, {'activeSessionIds': ids, 'status': 'occupied'});

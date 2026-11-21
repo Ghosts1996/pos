@@ -67,7 +67,7 @@ extension FiscalVatRateX on FiscalVatRate {
 /// Признак предмета расчёта (тег ФФД 1212). Для маркированного товара
 /// провайдеру уходит «с кодом маркировки»: подакцизный (табак, пиво) —
 /// 31, прочий (вода, соки) — 33.
-enum FiscalPaymentObject { commodity, service, excise, markedGood }
+enum FiscalPaymentObject { commodity, service, excise, markedGood, payment }
 
 extension FiscalPaymentObjectX on FiscalPaymentObject {
   String get id => name;
@@ -82,6 +82,8 @@ extension FiscalPaymentObjectX on FiscalPaymentObject {
         return 'Подакцизный товар (табак, пиво, алкоголь)';
       case FiscalPaymentObject.markedGood:
         return 'Маркированный товар';
+      case FiscalPaymentObject.payment:
+        return 'Платёж (аванс)';
     }
   }
 
@@ -90,6 +92,8 @@ extension FiscalPaymentObjectX on FiscalPaymentObject {
     switch (this) {
       case FiscalPaymentObject.service:
         return 4;
+      case FiscalPaymentObject.payment:
+        return 10;
       case FiscalPaymentObject.excise:
         return marked ? 31 : 2;
       case FiscalPaymentObject.commodity:
@@ -215,6 +219,11 @@ class FiscalReceipt {
   /// чек — «полный расчёт» с зачётом предоплаты (оплата 'prepayment').
   final bool fullPrepayment;
 
+  /// Способ расчёта «аванс» (тег 1214 = 3): деньги вперёд, когда ещё не
+  /// известно, что именно купит гость (предоплата брони, банкета). При
+  /// закрытии счёта аванс зачитывается оплатой 'prepayment'.
+  final bool advance;
+
   /// На какую кассу (SaaS, два юрлица): '' — основное юрлицо, '2' —
   /// второе. Очередь чеков ([FiscalQueue]) по нему выбирает кассу.
   final String entity;
@@ -228,6 +237,7 @@ class FiscalReceipt {
     this.fullPrepayment = false,
     this.cashier = '',
     this.entity = '',
+    this.advance = false,
   });
 
   FiscalReceipt copyWith({String? receiptId, List<FiscalReceiptItem>? items, List<FiscalPayment>? payments, String? entity}) =>
@@ -240,6 +250,7 @@ class FiscalReceipt {
         fullPrepayment: fullPrepayment,
         cashier: cashier,
         entity: entity ?? this.entity,
+        advance: advance,
       );
 
   /// Возврат этого чека: те же позиции и формы оплаты. Свой номер — по
@@ -253,6 +264,7 @@ class FiscalReceipt {
         fullPrepayment: fullPrepayment,
         cashier: cashier,
         entity: entity,
+        advance: advance,
       );
 
   double get total => (items.fold<double>(0, (sum, i) => sum + i.sum) * 100).roundToDouble() / 100;
@@ -268,6 +280,7 @@ class FiscalReceipt {
         if (fullPrepayment) 'fullPrepayment': true,
         if (cashier.isNotEmpty) 'cashier': cashier,
         if (entity.isNotEmpty) 'entity': entity,
+        if (advance) 'advance': true,
       };
 
   factory FiscalReceipt.fromJson(Map<String, dynamic> j) => FiscalReceipt(
@@ -285,6 +298,7 @@ class FiscalReceipt {
         fullPrepayment: j['fullPrepayment'] == true,
         cashier: j['cashier'] as String? ?? '',
         entity: j['entity'] as String? ?? '',
+        advance: j['advance'] == true,
       );
 }
 
