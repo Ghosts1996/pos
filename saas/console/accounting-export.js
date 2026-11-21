@@ -1,7 +1,8 @@
 // «Для бухгалтера»: выгрузка за период одним файлом Excel (.xlsx) — продажи,
 // чеки с видами оплаты, возвраты, приходы по накладным, смены сотрудников и
 // корректировки зарплаты. Excel, «1С: загрузка из табличного документа» и
-// бухгалтерские сервисы открывают такой файл без настроек.
+// бухгалтерские сервисы открывают такой файл без настроек. Листы «1С — …» —
+// в виде табличных частей «Отчёта о розничных продажах» и справочника номенклатуры.
 // Чистые функции без DOM и сети — их проверяет saas-gateway/test.accounting.mjs.
 
 const toDate = (v) => {
@@ -102,6 +103,8 @@ export function buildAccountingSheets(data, { tz = 'Europe/Moscow', excludeTobac
     ['Картой и переводом, ₽', r2(sessions.reduce((a, s) => a + num(s.paymentCard) + num(s.paymentTerminal), 0))],
     ['Через агрегаторы, ₽', r2(sessions.reduce((a, s) => a + num(s.paymentAggregator), 0))]];
 
+  const for1c = build1cSheets(sessions, data.menu || null, { tz, excludeTobacco, tobaccoRe });
+
   return [
     { name: 'Сводка', rows: summary },
     { name: 'Чеки', rows: checks },
@@ -110,6 +113,90 @@ export function buildAccountingSheets(data, { tz = 'Europe/Moscow', excludeTobac
     { name: 'Приходы по накладным', rows: rec },
     { name: 'Смены сотрудников', rows: sh },
     { name: 'Зарплата — корректировки', rows: adj },
+    ...for1c,
+  ];
+}
+
+// ------------------------------------------------------------- листы для 1С
+
+// Ставка НДС позиции меню (FiscalVatRate в кассе) → как в 1С.
+const VAT_1C = { none: 'Без НДС', vat0: '0%', vat5: '5%', vat7: '7%', vat10: '10%', vat20: '20%', vat22: '22%' };
+
+/** «21.11.2026» в поясе заведения. */
+export function fmtDay(v, tz = 'Europe/Moscow') {
+  const d = toDate(v);
+  return d ? new Intl.DateTimeFormat('ru-RU', { timeZone: tz, day: '2-digit', month: '2-digit', year: 'numeric' }).format(d) : '';
+}
+
+/**
+ * Листы в виде табличных частей документов 1С («Загрузить из файла» /
+ * «Загрузка данных из табличного документа»):
+ *  • «1С — розничные продажи»: по дням — номенклатура, количество, цена,
+ *    сумма со скидкой, ставка НДС (для «Отчёта о розничных продажах»).
+ *    Скидка чека разнесена по строкам так же, как на кассе (кальяны и
+ *    позиции «без скидок» — без скидки), сумма дня = сумма чеков дня.
+ *  • «1С — оплаты по дням»: наличные, безналичные, агрегаторы, за счёт заведения.
+ *  • «1С — номенклатура»: наименование, ед., ставка НДС, вид (товар/услуга).
+ * menu — { id: позиция меню } (ставка НДС и вид); без него ставка пустая.
+ */
+export function build1cSheets(sessions, menu, { tz = 'Europe/Moscow', excludeTobacco = true, tobaccoRe = BILL_TOBACCO_RE } = {}) {
+  const days = new Map(); // день → { lines: Map(ключ → {name, vat, kind, qty, sum}), total, pay }
+  const items = new Map(); // наименование → {vat, kind}
+  const vatOf = (i) => {
+    const m = (menu && i.menuItemId && menu[i.menuItemId]) || null;
+    return m && VAT_1C[m.vat] ? VAT_1C[m.vat] : '';
+  };
+  const kindOf = (i) => {
+    const m = (menu && i.menuItemId && menu[i.menuItemId]) || null;
+    const subj = m ? String(m.fiscalSubject || '') : '';
+    return subj === 'service' || i.menuItemId === 'zalpos_delivery' ? 'Услуга' : 'Товар';
+  };
+  for (const s of sessions) {
+    const day = fmtDay(s.closedAt, tz);
+    if (!day) continue;
+    if (!days.has(day)) days.set(day, { lines: new Map(), total: 0, pay: { cash: 0, card: 0, agg: 0, comp: 0 } });
+    const d = days.get(day);
+    const disc = num(s.discountPercent);
+    d.total += checkTotal(s, excludeTobacco, tobaccoRe);
+    d.pay.cash += num(s.paymentCash);
+    d.pay.card += num(s.paymentCard) + num(s.paymentTerminal);
+    d.pay.agg += num(s.paymentAggregator);
+    d.pay.comp += num(s.paymentComp);
+    for (const i of Array.isArray(s.orderItems) ? s.orderItems : []) {
+      const qty = num(i.qty);
+      if (qty <= 0) continue;
+      const name = String(i.name || '').trim() || 'Позиция';
+      const noDisc = excludeTobacco && (i.noPromo === true || tobaccoRe.test(name));
+      const sum = num(i.price) * qty * (noDisc ? 1 : 1 - disc / 100);
+      const vat = vatOf(i);
+      const kind = kindOf(i);
+      const key = `${name}\u0000${vat}`;
+      const line = d.lines.get(key) || { name, vat, kind, qty: 0, sum: 0 };
+      line.qty += qty;
+      line.sum += sum;
+      d.lines.set(key, line);
+      if (!items.has(name)) items.set(name, { vat, kind });
+    }
+  }
+  const sales = [['Дата', 'Номенклатура', 'Количество', 'Цена, ₽', 'Сумма, ₽', 'Ставка НДС', 'Вид']];
+  const pays = [['Дата', 'Наличные, ₽', 'Безналичные (карта, СБП, терминал), ₽', 'Агрегаторы, ₽', 'За счёт заведения, ₽', 'Итого выручка, ₽']];
+  const order = [...days.keys()].sort((a, b) => a.split('.').reverse().join('').localeCompare(b.split('.').reverse().join('')));
+  for (const day of order) {
+    const d = days.get(day);
+    const lines = [...d.lines.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    for (const l of lines) l.sum = r2(l.sum);
+    // Копейки от разнесения скидки — в самую большую строку: сумма дня = сумме чеков.
+    const diff = r2(r2(d.total) - lines.reduce((a, l) => a + l.sum, 0));
+    if (diff && lines.length) { const big = lines.reduce((a, l) => (l.sum > a.sum ? l : a)); big.sum = r2(big.sum + diff); }
+    for (const l of lines) sales.push([day, l.name, r2(l.qty), l.qty ? r2(l.sum / l.qty) : 0, l.sum, l.vat, l.kind]);
+    pays.push([day, r2(d.pay.cash), r2(d.pay.card), r2(d.pay.agg), r2(d.pay.comp), r2(d.total)]);
+  }
+  const nom = [['Наименование', 'Единица', 'Ставка НДС', 'Вид номенклатуры']];
+  for (const [name, x] of [...items.entries()].sort((a, b) => a[0].localeCompare(b[0], 'ru'))) nom.push([name, 'шт', x.vat, x.kind]);
+  return [
+    { name: '1С — розничные продажи', rows: sales },
+    { name: '1С — оплаты по дням', rows: pays },
+    { name: '1С — номенклатура', rows: nom },
   ];
 }
 

@@ -34,10 +34,35 @@ assert.equal(checkTotal(data.sessions[0]), 400 - 40 + 1500); n++;
 
 const sheets = buildAccountingSheets(data, { tz: 'Europe/Moscow' });
 const by = Object.fromEntries(sheets.map((s) => [s.name, s.rows]));
-assert.deepEqual(Object.keys(by), ['Сводка', 'Чеки', 'Продажи по позициям', 'Возвраты', 'Приходы по накладным', 'Смены сотрудников', 'Зарплата — корректировки']); n++;
+assert.deepEqual(Object.keys(by), ['Сводка', 'Чеки', 'Продажи по позициям', 'Возвраты', 'Приходы по накладным', 'Смены сотрудников', 'Зарплата — корректировки',
+  '1С — розничные продажи', '1С — оплаты по дням', '1С — номенклатура']); n++;
 assert.equal(by['Чеки'].length, 1 + 2 + 1, 'без «закрыт без оплаты» и учебного чека'); n++;
 assert.equal(by['Чеки'][1][0], '14.11.2026 13:00', 'время по поясу заведения'); n++;
 assert.equal(by['Чеки'].at(-1)[3], 1860 + 300); n++;
+
+// 1С: по дням, скидка разнесена по строкам, сумма дня = сумме чеков, НДС из меню.
+{
+  const s1c = buildAccountingSheets({ ...data, menu: { latte: { vat: 'vat22' }, hk: { vat: 'none', fiscalSubject: 'service' } } }, { tz: 'Europe/Moscow' });
+  const b = Object.fromEntries(s1c.map((x) => [x.name, x.rows]));
+  const sales = b['1С — розничные продажи'];
+  assert.deepEqual(sales[0], ['Дата', 'Номенклатура', 'Количество', 'Цена, ₽', 'Сумма, ₽', 'Ставка НДС', 'Вид']); n++;
+  const total = sales.slice(1).reduce((a, r) => a + r[4], 0);
+  assert.equal(Math.round(total * 100) / 100, 1860 + 300, 'сумма продаж дня = сумма чеков (без учебных и без оплаты)'); n++;
+  const latte = sales.find((r) => r[1] === 'Латте');
+  assert.deepEqual(latte.slice(0, 5), ['14.11.2026', 'Латте', 2, 180, 360], 'скидка 10% на латте'); n++;
+  assert.equal(sales.find((r) => r[1] === 'Кальян классика')[4], 1500, 'кальян без скидки'); n++;
+  const pays = b['1С — оплаты по дням'];
+  assert.deepEqual(pays[1], ['14.11.2026', 1860, 300, 0, 0, 2160]); n++;
+  assert.ok(b['1С — номенклатура'].some((r) => r[0] === 'Латте'));
+  const withVat = buildAccountingSheets({ ...data, sessions: [{ ...data.sessions[0], orderItems: [{ menuItemId: 'latte', name: 'Латте', price: 200, qty: 2 }] }],
+    menu: { latte: { vat: 'vat22' } } }, { tz: 'Europe/Moscow' });
+  assert.equal(Object.fromEntries(withVat.map((x) => [x.name, x.rows]))['1С — розничные продажи'][1][5], '22%'); n++;
+  // Неровная скидка: копейки не теряются.
+  const odd = buildAccountingSheets({ sessions: [{ status: 'closed', closedAt: ts('2026-11-15T10:00:00Z'), discountPercent: 7,
+    orderItems: [{ name: 'А', price: 33.33, qty: 3 }, { name: 'Б', price: 17.17, qty: 1 }], paymentCash: 108 }] }, { tz: 'Europe/Moscow' });
+  const oddSales = Object.fromEntries(odd.map((x) => [x.name, x.rows]))['1С — розничные продажи'];
+  assert.equal(Math.round(oddSales.slice(1).reduce((a, r) => a + r[4], 0) * 100) / 100, checkTotal({ discountPercent: 7, orderItems: [{ name: 'А', price: 33.33, qty: 3 }, { name: 'Б', price: 17.17, qty: 1 }] })); n++;
+}
 assert.equal(by['Возвраты'].at(-1)[2], 400); n++;
 assert.equal(by['Приходы по накладным'].length, 2, 'только приходы'); n++;
 assert.equal(by['Смены сотрудников'][1][3], 8.5); n++;

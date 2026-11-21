@@ -6663,7 +6663,8 @@ function watchDashboardData(tenantId) {
       <div class="card acc-export">
         <div class="acc-export-head"><b>Для бухгалтера</b>
           <span class="small muted">Один файл Excel за месяц: чеки и виды оплаты, продажи по позициям, возвраты, приходы по накладным,
-          смены сотрудников, премии и штрафы. Открывается в Excel, «1С» (загрузка из табличного документа) и бухгалтерских сервисах.</span></div>
+          смены сотрудников, премии и штрафы. Отдельные листы «1С — …»: продажи по дням со ставкой НДС, оплаты по дням
+          и номенклатура — в виде таблиц «Отчёта о розничных продажах» для загрузки в 1С.</span></div>
         <div class="row acc-export-row">
           <select id="f-acc-month" aria-label="Месяц выгрузки">${accMonthOptions()}</select>
           <button type="button" class="btn btn-primary" id="f-acc-export" style="width:auto">Скачать Excel</button>
@@ -9504,19 +9505,22 @@ async function exportForAccountant(tenantId, venueName, tz) {
     const tcol = (name) => collection(state.db, 'tenants', tenantId, name);
     const inRange = (v) => { const d = v && typeof v.toDate === 'function' ? v.toDate() : null; return d && d >= from && d < to; };
     const fromTs = Timestamp.fromDate(from);
-    const [sales, refunds, moves, shifts, adj, loyalty] = await Promise.all([
+    const [sales, refunds, moves, shifts, adj, loyalty, menuSnap] = await Promise.all([
       getDocs(query(tcol('sessions'), where('status', '==', 'closed'), where('closedAt', '>=', fromTs))),
       getDocs(query(tcol('sessions'), where('refundedAt', '>=', fromTs))),
       getDocs(query(tcol('inventoryMovements'), where('createdAt', '>=', fromTs))),
       getDocs(query(tcol('staffShifts'), where('startedAt', '>=', fromTs))),
       getDocs(query(tcol('payrollAdjustments'), where('at', '>=', fromTs))),
       getDoc(doc(state.db, 'tenants', tenantId, 'settings', 'loyalty')).catch(() => null),
+      getDocs(tcol('menuItems')).catch(() => null),
     ]);
+    const menu = {};
+    if (menuSnap) menuSnap.docs.forEach((d) => { menu[d.id] = d.data(); });
     const rows = (snap, field) => snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((x) => inRange(x[field]));
     const ex = loyalty && loyalty.data ? loyalty.data()?.excludeTobaccoFromPromo : undefined;
     const sheets = buildAccountingSheets({
       sessions: rows(sales, 'closedAt'), refunds: rows(refunds, 'refundedAt'), movements: rows(moves, 'createdAt'),
-      shifts: rows(shifts, 'startedAt'), adjustments: rows(adj, 'at'),
+      shifts: rows(shifts, 'startedAt'), adjustments: rows(adj, 'at'), menu,
     }, { tz, excludeTobacco: typeof ex === 'boolean' ? ex : true, tobaccoRe: BILL_TOBACCO_RE });
     const blob = new Blob([buildXlsx(sheets)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
