@@ -984,6 +984,9 @@ function tierMetal(tier) {
 // ---------- МАРШРУТЫ ----------
 
 function route() {
+  // Открыли ссылку для входа, когда приложение уже было открыто, — ключ
+  // читается при запуске: перезапускаемся.
+  if (KEY_RE.test(location.hash)) { location.reload(); return; }
   clearScreen();
   const hash = location.hash || '#/';
   // #/t/{стол} или #/t/{стол}/{секрет стола из QR}.
@@ -3987,7 +3990,11 @@ function screenProfile() {
         <button class="btn-ghost" id="switchVenueBtn">Сменить заведение сети</button>
       </p>` : ''}
 
-    <p class="center" style="margin-top:20px">
+    <p class="center" style="margin-top:24px">
+      <button class="btn-ghost" id="logoutBtn" style="width:auto;min-width:200px">Выйти из профиля</button>
+    </p>
+
+    <p class="center" style="margin-top:12px">
       <button class="btn-link" id="deleteDataBtn" style="color:var(--muted);font-weight:500;width:auto;margin:0 auto">Удалить мои данные</button>
     </p>
 
@@ -3997,6 +4004,7 @@ function screenProfile() {
   bindConsent($('pSave'));
   $('pSave').onclick = saveProfile;
   $('deleteDataBtn').onclick = deleteMyData;
+  $('logoutBtn').onclick = askLogout;
   bindAdsConsent();
   state.profileDirty = false;
   ['pName', 'pPhone'].forEach((id) => {
@@ -4142,7 +4150,7 @@ async function saveProfile() {
           + 'На этот номер уже есть профиль. Чтобы его бонусы и история '
           + `появились на этом устройстве, назовите ${staffWord('dat')} номер и `
           + '«ID устройства» ниже — он объединит профили на кассе за пару '
-          + 'секунд.');
+          + 'секунд.\n\nЕсли вы сохраняли ссылку для входа — просто откройте её.');
         return;
       }
     }
@@ -4181,6 +4189,67 @@ async function saveProfile() {
     const b = $('pSave');
     if (b) { b.disabled = false; b.textContent = 'Сохранить'; }
   }
+}
+
+/// Ссылка входа в этот профиль (тот же ключ, что у иконки «Домой»): по ней
+/// гость вернётся в профиль с бонусами после выхода или на другом телефоне.
+function loginLinkOf(k) {
+  return k && k.ok ? `${location.origin}${location.pathname}#g=${k.uid}.${k.secret}` : '';
+}
+
+/// «Выйти из профиля»: данные не удаляются, на телефоне остаётся пустой
+/// новый профиль. Пароля и SMS у гостя нет — вернуться можно по ссылке входа
+/// (предлагаем сохранить её до выхода) или через персонал по номеру телефона.
+function askLogout() {
+  const link = loginLinkOf(readGuestKey());
+  const el = document.createElement('div');
+  el.className = 'sheet-backdrop';
+  el.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="Выйти из профиля">
+    <div class="sheet-grip"></div>
+    <div role="heading" aria-level="2" style="font:600 21px/1.3 var(--sans);margin:0 0 8px">Выйти из профиля?</div>
+    <p style="margin:0 0 12px;line-height:1.5">Ваши бонусы, визиты и брони сохранятся — на этом телефоне откроется пустой профиль.</p>
+    ${link ? `<p class="small" style="margin:0 0 12px;line-height:1.5"><b>Чтобы вернуться</b>, сохраните ссылку для входа
+      (например, отправьте её себе в мессенджер) и потом просто откройте её. Ссылку никому не пересылайте — по ней открывается ваш профиль.</p>
+      <button class="btn-primary" id="lgCopy" style="margin-bottom:10px">Скопировать ссылку для входа</button>`
+      : `<p class="small muted" style="margin:0 0 12px;line-height:1.5">Вернуть профиль потом поможет персонал: назовите номер телефона и «ID устройства» из профиля.</p>`}
+    <button class="btn-ghost" id="lgGo" style="margin-bottom:8px">Выйти</button>
+    <button class="btn-link" data-close style="width:100%">Отмена</button>
+  </div>`;
+  const close = () => el.remove();
+  el.addEventListener('click', (e) => { if (e.target === el || e.target.closest('[data-close]')) close(); });
+  document.body.appendChild(el);
+  const copyBtn = el.querySelector('#lgCopy');
+  if (copyBtn) {
+    copyBtn.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(link);
+        copyBtn.textContent = 'Ссылка скопирована ✓';
+      } catch (_) {
+        // Буфер обмена недоступен — показываем ссылку, чтобы выделить вручную.
+        copyBtn.insertAdjacentHTML('afterend', `<textarea readonly rows="3" style="width:100%;margin:0 0 10px;font-size:12px">${esc(link)}</textarea>`);
+        copyBtn.remove();
+      }
+    };
+  }
+  el.querySelector('#lgGo').onclick = async () => {
+    const go = el.querySelector('#lgGo');
+    go.disabled = true;
+    try {
+      // Ключ на этом телефоне забываем (на сервере он остаётся — ссылка
+      // входа работает), и не даём автоматике вернуть тот же профиль.
+      try { localStorage.removeItem(GUEST_KEY); } catch (_) {}
+      state.restoreTried = true;
+      state.urlKeyTried = true;
+      try { sessionStorage.removeItem('zalBindAfterPhone'); } catch (_) {}
+      close();
+      location.hash = '#/';
+      await signOut(state.auth);
+      toast('Вы вышли из профиля');
+    } catch (_) {
+      go.disabled = false;
+      toast('Не удалось выйти: проверьте интернет и попробуйте снова');
+    }
+  };
 }
 
 /// Гость удаляет свои данные сам и сразу (152-ФЗ): сначала первичная база
