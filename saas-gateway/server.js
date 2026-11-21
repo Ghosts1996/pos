@@ -61,6 +61,7 @@ const { createPartners } = require("./partners");
 const { createVenueReferral } = require("./venue-referral");
 const { createOpenApi } = require("./open-api");
 const { createWebhooks } = require("./webhooks");
+const { createReviews } = require("./reviews");
 const { createGuestMarketing, rootKeyOf: guestRootKey } = require("./guest-marketing");
 const { createRushHour } = require("./rush-hour");
 const { createShield } = require("./shield");
@@ -10285,6 +10286,9 @@ const webhooks = createWebhooks({
   ownerAlert: (tid, text) => telegram.ownerAlert(tid, text),
 });
 
+// Отзывы гостей: сводка и ссылки на Яндекс Карты/2ГИС для кабинета (reviews.js).
+const reviews = createReviews({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole });
+
 // Гости: сегменты, согласие на рекламные сообщения, «Вернуть гостя»
 // (guest-marketing.js). Рассылка — раз в час проверка, раз в день по поясу заведения.
 const guestMarketing = createGuestMarketing({
@@ -10592,6 +10596,7 @@ const ROUTES = {
   "/sendAuthEmail": handleSendAuthEmail,
   "/apiKeys": (req, res) => openApi.handleKeys(req, res),
   "/webhooks": (req, res) => webhooks.handle(req, res),
+  "/guestReviews": (req, res) => reviews.handle(req, res),
   "/guestAdsConsent": (req, res) => guestMarketing.handleConsent(req, res),
   "/guestSegments": (req, res) => guestMarketing.handleSegments(req, res),
   "/guestCampaign": (req, res) => guestMarketing.handleCampaign(req, res),

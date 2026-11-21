@@ -99,6 +99,7 @@ curl -H "Authorization: Bearer $ZALPOS_KEY" \
 | `delivery.status` | `id, status, courierStage, courierNo, total, paidOnline, createdAt` |
 | `stoplist.changed` | `id, name, available` |
 | `stock.low` | `id, name, unit, quantity, minQuantity` |
+| `review.created` | `id, rating, text` (телефоны и почты скрыты), `createdAt, sessionId, table, waiter` — без имени гостя |
 | `ping` | кнопка «Проверить» в кабинете |
 
 Заголовки: `X-ZalPOS-Event` (тип), `X-ZalPOS-Delivery` (id события — повтор приходит с тем же id, обрабатывайте один раз), `X-ZalPOS-Signature: t=<unix>,v1=<hex>`, где `v1 = HMAC-SHA256(секрет, "<t>.<тело запроса>")`. Секрет (`whsec_…`) показывается один раз при создании. Отбрасывайте запросы, где `t` старше 5 минут.

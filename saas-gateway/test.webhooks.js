@@ -137,6 +137,44 @@ test("сбой приёмника — повтор; проверка кнопк�
   assert.ok(got.some((g) => g.json.type === "ping"));
 });
 
+test("отзывы: сводка, ссылки на карты, событие review.created без имени и телефона", async () => {
+  const rv = require("./reviews");
+  assert.equal(rv.cleanMapLink("https://yandex.ru/maps/org/kafe/1/"), "https://yandex.ru/maps/org/kafe/1/");
+  assert.equal(rv.cleanMapLink("https://2gis.ru/spb/firm/1"), "https://2gis.ru/spb/firm/1");
+  assert.equal(rv.cleanMapLink("https://evil.ru/yandex.ru"), null);
+  assert.equal(rv.cleanMapLink("http://yandex.ru/maps"), null);
+  assert.equal(rv.cleanMapLink(""), "");
+  const low = rv.lowReviewAlert({ rating: 2, table: "5", waiter: "Анна", text: "Холодный суп" }, { venue: "Кафе" });
+  assert.match(low, /Низкая оценка 2 из 5/);
+  assert.match(low, /Стол «5», обслуживал Анна/);
+  assert.equal(rv.lowReviewAlert({ rating: 4 }), null);
+
+  const hookId = (await call("/webhooks", me.idToken, { tenantId: "w1", action: "list" })).json.hooks[0].id;
+  await call("/webhooks", me.idToken, { tenantId: "w1", action: "update", hookId, events: ["order.closed", "review.created"] });
+  await wait(300);
+  await set("tenants/w1/sessions/s9", { status: "closed", closedAt: T(Date.now() - 86400e3), tableName: "9", employeeName: "Олег", orderItems: [] });
+  await set("tenants/w1/reviews/r1", { sessionId: "s9", clientUid: "g1", guestName: "Пётр", rating: 2, text: "Долго ждали, звоните +7 900 123-45-67", createdAt: T(Date.now()) });
+  const ev = await until(() => got.find((g) => g.json.type === "review.created"));
+  assert.ok(ev, "событие отзыва пришло");
+  assert.equal(ev.json.data.rating, 2);
+  assert.equal(ev.json.data.table, "9");
+  assert.ok(!ev.body.includes("Пётр") && !ev.body.includes("123-45-67"), ev.body);
+
+  let r = await call("/guestReviews", me.idToken, { tenantId: "w1", action: "summary" });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.week.count, 1);
+  assert.equal(r.json.week.low, 1);
+  assert.equal(r.json.reviews[0].waiter, "Олег");
+  assert.ok(!JSON.stringify(r.json).includes("Пётр"));
+  r = await call("/guestReviews", me.idToken, { tenantId: "w1", action: "links", yandex: "https://evil.ru/", gis: "" });
+  assert.equal(r.status, 400);
+  r = await call("/guestReviews", me.idToken, { tenantId: "w1", action: "links", yandex: "https://yandex.ru/maps/org/kafe/1/", gis: "", askPublic: true });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.links.yandex, "https://yandex.ru/maps/org/kafe/1/");
+  assert.equal((await doc("tenants/w1/meta/venueProfile").get()).data().reviewLinks.askPublic, true);
+  assert.equal((await call("/guestReviews", other.idToken, { tenantId: "w1", action: "summary" })).status, 403);
+});
+
 test("чужое заведение — 403; не больше 5 вебхуков; удаление", async () => {
   assert.equal((await call("/webhooks", other.idToken, { tenantId: "w1", action: "list" })).status, 403);
   const hookId = (await call("/webhooks", me.idToken, { tenantId: "w1", action: "list" })).json.hooks[0].id;

@@ -22,6 +22,7 @@ const net = require("net");
 const http = require("http");
 const https = require("https");
 const { checkOut, shiftOut } = require("./open-api");
+const { reviewOut } = require("./reviews");
 
 const MAX_HOOKS = 5;
 const RECENT = 20;
@@ -41,6 +42,7 @@ const EVENTS = {
   "delivery.status": "Статус доставки",
   "stoplist.changed": "Стоп-лист: блюдо снято или вернулось",
   "stock.low": "Склад: остаток ниже минимума",
+  "review.created": "Отзыв гостя (оценка и текст, без имени)",
 };
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -285,6 +287,17 @@ function createWebhooks(deps) {
       (id, d, was) => { if (was !== undefined || d.deliveryStatus) emit(tid, "delivery.status", deliveryOut(id, d)); }, "delivery");
     watchChanges(t.collection("menuItems"), (d) => String(d.available !== false),
       (id, d, was) => { if (was !== undefined) emit(tid, "stoplist.changed", { id, name: String(d.name || ""), available: d.available !== false }); }, "menu");
+    // Отзывы: только новые (после подключения), без имени гостя, текст без телефонов.
+    const seenReviews = new Set();
+    unsubs.push(t.collection("reviews").where("createdAt", ">=", Timestamp.fromMillis(now())).onSnapshot(async (snap) => {
+      for (const ch of snap.docChanges()) {
+        if (ch.type !== "added" || seenReviews.has(ch.doc.id)) continue;
+        seenReviews.add(ch.doc.id);
+        const r = ch.doc.data() || {};
+        const ses = r.sessionId ? await t.collection("sessions").doc(String(r.sessionId)).get().catch(() => null) : null;
+        emit(tid, "review.created", reviewOut(ch.doc.id, r, ses && ses.exists ? ses.data() : null));
+      }
+    }, onErr("reviews")));
     watchChanges(t.collection("inventoryItems"), (d) => String(lowStock(d)),
       (id, d, was) => { if (lowStock(d) && was !== undefined) emit(tid, "stock.low", stockOut(id, d)); }, "stock");
   }

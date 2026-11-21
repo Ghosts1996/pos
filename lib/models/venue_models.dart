@@ -95,6 +95,28 @@ class VenueProfile {
   /// кассы не обновились. Ставит сервер при переносе; в toMap() не входит.
   final String piiMode;
 
+  /// Карточка заведения в Яндекс Картах и 2ГИС (кабинет: Гости → «Отзывы»):
+  /// гостю с оценкой 4–5 приложение предложит оставить отзыв там. Только
+  /// для чтения — правит кабинет; в toMap() не входит (касса пишет профиль
+  /// с merge и эти поля не трогает).
+  final String reviewYandexUrl;
+  final String reviewGisUrl;
+
+  /// Ссылки на карты, которые можно показать гостю: https и адреса самих карт.
+  List<(String, String)> get reviewMapLinks {
+    bool ok(String u, RegExp host) {
+      final x = Uri.tryParse(u);
+      return x != null && x.scheme == 'https' && host.hasMatch(x.host);
+    }
+
+    return [
+      if (ok(reviewYandexUrl, RegExp(r'(^|\.)(yandex\.(ru|com|by|kz|uz)|ya\.ru)$', caseSensitive: false)))
+        ('Яндекс Картах', reviewYandexUrl),
+      if (ok(reviewGisUrl, RegExp(r'(^|\.)(2gis\.(ru|com|kz|kg|uz|ae)|go\.2gis\.com)$', caseSensitive: false)))
+        ('2ГИС', reviewGisUrl),
+    ];
+  }
+
   /// Реквизиты продавца заполнены верно: без них заказ и оплата из
   /// приложения недоступны. Те же правила — в saas-gateway (sellerReady).
   bool get sellerReady =>
@@ -141,6 +163,8 @@ class VenueProfile {
     this.sellerInn = '',
     this.sellerOgrn = '',
     this.sellerAddress = '',
+    this.reviewYandexUrl = '',
+    this.reviewGisUrl = '',
   });
 
   factory VenueProfile.fromMap(Map<String, dynamic>? data) {
@@ -177,7 +201,14 @@ class VenueProfile {
       sellerInn: asText(data['sellerInn']),
       sellerOgrn: asText(data['sellerOgrn']),
       sellerAddress: asText(data['sellerAddress']),
+      reviewYandexUrl: _reviewLink(data['reviewLinks'], 'yandex'),
+      reviewGisUrl: _reviewLink(data['reviewLinks'], 'gis'),
     );
+  }
+
+  static String _reviewLink(Object? links, String key) {
+    if (links is! Map || links['askPublic'] == false) return '';
+    return asText(links[key]);
   }
 
   Map<String, dynamic> toMap() => {

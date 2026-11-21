@@ -3061,7 +3061,7 @@ function paintOrders(sessionId) {
     </div>`).join('');
 }
 
-async function unbind() {
+async function unbind({ quiet = false } = {}) {
   const p = state.profile || {};
   const sid = p.activeSessionId;
   // Именно удаление, а не «обнулить uid»: правила разрешают владельцу
@@ -3074,8 +3074,21 @@ async function unbind() {
       ...(state.chainId ? { activeTenantId: '' } : {}),
     }, { merge: true });
   } catch (_) {}
+  if (quiet) return;
   toast('Стол отвязан');
   route();
+}
+
+/// Ссылки на карточку заведения в Яндекс Картах и 2ГИС (кабинет: Гости →
+/// «Отзывы»). Показываем только https-адреса этих карт.
+function reviewMapLinks() {
+  const l = (state.venue && state.venue.reviewLinks) || {};
+  if (l.askPublic === false) return [];
+  const ok = (u, re) => { try { const x = new URL(u); return x.protocol === 'https:' && re.test(x.hostname) ? x.toString() : ''; } catch (_) { return ''; } };
+  return [
+    ['Яндекс Картах', ok(l.yandex, /(^|\.)(yandex\.(ru|com|by|kz|uz)|ya\.ru)$/i)],
+    ['2ГИС', ok(l.gis, /(^|\.)(2gis\.(ru|com|kz|kg|uz|ae)|go\.2gis\.com)$/i)],
+  ].filter(([, u]) => u);
 }
 
 function tableFinished(s) {
@@ -3118,8 +3131,22 @@ function tableFinished(s) {
         aiSummary: '',
         createdAt: Timestamp.fromDate(new Date()),
       });
+      const maps = rating >= 4 ? reviewMapLinks() : [];
+      if (maps.length) {
+        await unbind({ quiet: true });
+        screenEl().innerHTML = `
+          <h1>Спасибо!</h1>
+          <p class="muted">Рады, что вам понравилось. Если не сложно — поделитесь впечатлением на карте:
+            так нас легче найти новым гостям.</p>
+          <div style="display:grid;gap:10px;margin-top:16px">
+            ${maps.map(([name, url]) => `<a class="btn btn-primary" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${ic('star')}Оставить отзыв в ${esc(name)}</a>`).join('')}
+            <button class="btn btn-ghost" id="reviewDone">Не сейчас</button>
+          </div>`;
+        $('reviewDone').onclick = () => route();
+        return;
+      }
       await unbind();
-      toast('Спасибо! Ваш отзыв важен для нас');
+      toast(rating <= 3 ? 'Спасибо! Мы передали отзыв руководителю' : 'Спасибо! Ваш отзыв важен для нас');
     } catch (_) {
       toast('Не удалось отправить отзыв');
       $('sendReview').disabled = false;

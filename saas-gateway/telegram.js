@@ -45,6 +45,7 @@
  * каждый чек читается из Firestore один раз, а не при каждом отчёте.
  */
 const crypto = require("crypto");
+const reviewsLib = require("./reviews");
 const fs = require("fs");
 const path = require("path");
 const { sessionBill } = require("./guest-pay");
@@ -2657,6 +2658,25 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
           botsCol().doc(bot.tenantId).update(patch).catch(() => {});
         }
       }, (e) => { console.error(`telegram audit (${tid}):`, e.message); bot.broken = Date.now(); }));
+
+    // Низкая оценка гостя (1–3) — владельцу сразу, пока гость, может быть,
+    // ещё в зале. Только новые отзывы (после запуска бота), по одному разу.
+    const reviewSeen = new Set();
+    unsubs.push(t.collection("reviews").where("createdAt", ">=", bot.startedAt)
+      .onSnapshot(async (snap) => {
+        if (!on("alerts")) return;
+        for (const ch of snap.docChanges()) {
+          if (ch.type !== "added" || reviewSeen.has(ch.doc.id)) continue;
+          reviewSeen.add(ch.doc.id);
+          const r = ch.doc.data() || {};
+          if (!(Number(r.rating) >= 1 && Number(r.rating) <= reviewsLib.LOW)) continue;
+          const ses = r.sessionId ? (await t.collection("sessions").doc(String(r.sessionId)).get().catch(() => null)) : null;
+          const venue = await venueOf(tid).catch(() => ({}));
+          const text = reviewsLib.lowReviewAlert(reviewsLib.reviewOut(ch.doc.id, r, ses && ses.exists ? ses.data() : null),
+            { venue: venue.name || "Заведение", label: label() });
+          if (text) for (const c of owners()) await say(bot, c.id, text);
+        }
+      }, (e) => { console.error(`telegram reviews (${tid}):`, e.message); bot.broken = Date.now(); }));
 
     // Смена кассы закрыта с расхождением наличных — владельцу сразу. Следит
     // сервер, а не касса: изменённый или старый клиент сигнал не «забудет».

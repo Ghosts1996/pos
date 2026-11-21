@@ -256,6 +256,7 @@ function apiKeysBoxHtml(tenantId) {
 // ---------- Гости: сегменты и «Вернуть гостя» (saas-gateway/guest-marketing.js)
 // Только цифры: имён и телефонов гостей в кабинете нет. Сообщения получают
 // лишь гости, которые сами отметили «Получать подарки и предложения».
+const reviewsCache = new Map(); // tenantId → сводка отзывов | { error } | null
 const guestSegCache = new Map(); // tenantId → данные | { error } | null (загружаю)
 const GUEST_SEGMENTS = [
   { id: 'new', label: 'Новые', hint: 'один визит, были за 30 дней' },
@@ -348,6 +349,50 @@ function guestsTabHtml(tenantId) {
         За ${camp.days} дней: подарков <b>${fmtInt(camp.sent)}</b>, вернулись <b>${fmtInt(camp.returned)}</b>
         (${pct(camp.returned, camp.sent)}%)${camp.returned ? `, принесли <b>${fmtInt(camp.revenue)} ₽</b>` : ''}
       </div>
+    </div>
+    ${reviewsBoxHtml(tenantId, st.canEdit)}`;
+}
+
+/** Гости → «Отзывы»: оценки после закрытого счёта, ссылки на Яндекс Карты и 2ГИС (reviews.js). */
+function reviewsBoxHtml(tenantId, canEdit) {
+  const r = reviewsCache.get(tenantId);
+  const head = '<h2>Отзывы</h2>';
+  if (r === undefined || r === null) return `${head}<div class="card"><p class="small muted" style="margin:0">Загружаю отзывы…</p></div>`;
+  if (r.error) return `${head}<div class="card"><p class="small" style="color:var(--danger);margin-top:0">${esc(r.error)}</p>
+    <button class="btn btn-ghost" id="f-rv-retry" style="width:auto">Повторить</button></div>`;
+  const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
+  const avg = (x) => (x.avg === null ? '—' : String(x.avg).replace('.', ','));
+  const m = r.month;
+  const dis = canEdit ? '' : 'disabled';
+  return `${head}
+    <div class="card">
+      <p class="small" style="margin-top:0;line-height:1.55">После закрытого счёта гость ставит оценку в приложении или веб-версии.
+        Оценку 3 и ниже вы сразу получаете в бот заведения — пока гость, может быть, ещё в зале. Гостю с оценкой 4–5
+        приложение предложит оставить отзыв на Яндекс Картах или в 2ГИС, если вы укажете ссылки ниже.</p>
+      <div class="admin-stat-grid">
+        <div class="card" style="text-align:center;padding:12px 8px"><div style="font-size:22px;font-weight:700">${avg(r.week)}</div><div class="small muted">Средняя за 7 дней · ${fmtInt(r.week.count)}</div></div>
+        <div class="card" style="text-align:center;padding:12px 8px"><div style="font-size:22px;font-weight:700">${avg(m)}</div><div class="small muted">За 30 дней · ${fmtInt(m.count)}</div></div>
+        <div class="card" style="text-align:center;padding:12px 8px"><div style="font-size:22px;font-weight:700">${fmtInt(m.low)}</div><div class="small muted">Оценок 3 и ниже за 30 дней</div></div>
+      </div>
+      ${m.count ? `<div class="small muted" style="margin:6px 0 2px">За 30 дней: ${[5, 4, 3, 2, 1].map((n) => `${n}★ ${fmtInt(m.by[n - 1])}`).join(' · ')}</div>` : ''}
+      ${r.reviews.length ? r.reviews.map((x) => `
+        <div style="padding:9px 0;border-bottom:1px solid var(--border)">
+          <div><span style="color:${x.rating <= 3 ? 'var(--danger)' : 'var(--primary)'};letter-spacing:1px">${stars(x.rating)}</span>
+            <span class="small muted"> · ${esc(isoToText(x.createdAt))}${x.table ? ` · стол «${esc(x.table)}»` : ''}${x.waiter ? ` · ${esc(x.waiter)}` : ''}</span></div>
+          ${x.text ? `<div class="small" style="margin-top:3px;white-space:pre-wrap">${esc(x.text)}</div>` : ''}
+        </div>`).join('') : '<p class="small muted">Отзывов пока нет.</p>'}
+      <h3 style="margin:16px 0 6px;font-size:15px">Отзывы на картах</h3>
+      <label class="field"><span>Ссылка на заведение в Яндекс Картах</span>
+        <input id="f-rv-yandex" inputmode="url" placeholder="https://yandex.ru/maps/org/…" value="${esc(r.links.yandex)}" ${dis}></label>
+      <label class="field"><span>Ссылка на заведение в 2ГИС</span>
+        <input id="f-rv-gis" inputmode="url" placeholder="https://2gis.ru/…" value="${esc(r.links.gis)}" ${dis}></label>
+      <label class="small" style="display:flex;gap:8px;align-items:flex-start;margin:6px 0">
+        <input type="checkbox" id="f-rv-ask" style="width:auto;margin-top:2px" ${r.links.askPublic || !(r.links.yandex || r.links.gis) ? 'checked' : ''} ${dis}>
+        <span>Предлагать гостям с оценкой 4–5 оставить отзыв на картах</span></label>
+      <p class="small muted" style="margin:4px 0 8px">Ссылку возьмите в карточке заведения: «Поделиться» → «Скопировать ссылку».
+        Не обещайте гостям бонусы или скидки за отзыв на картах — карты такие отзывы удаляют.</p>
+      <div id="f-rv-msg" class="small"></div>
+      ${canEdit ? '<button class="btn btn-ghost" id="f-rv-save" style="margin-top:6px">Сохранить ссылки</button>' : ''}
     </div>`;
 }
 
@@ -367,6 +412,36 @@ function bindGuestsTab(tenantId, redraw) {
     return;
   }
   if ($('f-guests-retry')) $('f-guests-retry').onclick = () => { guestSegCache.set(tenantId, null); redraw(); load(); };
+  const loadReviews = async () => {
+    try {
+      reviewsCache.set(tenantId, (await callSaasGateway('guestReviews', { tenantId, action: 'summary' })).data);
+    } catch (e) {
+      reviewsCache.set(tenantId, { error: e.message || 'Не удалось загрузить отзывы' });
+    }
+    redraw();
+  };
+  if (!reviewsCache.has(tenantId)) { reviewsCache.set(tenantId, null); loadReviews(); }
+  if ($('f-rv-retry')) $('f-rv-retry').onclick = () => { reviewsCache.set(tenantId, null); redraw(); loadReviews(); };
+  if ($('f-rv-save')) {
+    $('f-rv-save').onclick = async () => {
+      const b = $('f-rv-save');
+      const msg = $('f-rv-msg');
+      b.disabled = true;
+      msg.textContent = '';
+      try {
+        const r = await callSaasGateway('guestReviews', {
+          tenantId, action: 'links', yandex: $('f-rv-yandex').value.trim(), gis: $('f-rv-gis').value.trim(), askPublic: $('f-rv-ask').checked,
+        });
+        reviewsCache.set(tenantId, r.data);
+        toast('Ссылки сохранены');
+        redraw();
+      } catch (e) {
+        msg.textContent = e.message || 'Не удалось сохранить';
+        msg.style.color = 'var(--danger)';
+        b.disabled = false;
+      }
+    };
+  }
   const form = () => ({
     enabled: !!($('f-wb-on') && $('f-wb-on').checked),
     afterDays: Number($('f-wb-after').value),

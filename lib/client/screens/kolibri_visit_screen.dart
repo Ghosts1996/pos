@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../build_info.dart' show kSaasMode;
 import '../../models/client_models.dart';
 import '../../models/session_model.dart';
 import '../../models/venue_models.dart';
@@ -598,11 +600,18 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
               // висело бы до следующего визита.
               await _link.markVisitRated(_auth.uid, sessionId);
               await _link.unbind(_auth.uid);
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Спасибо! Ваш отзыв важен для нас')),
-                );
+              if (!mounted) return;
+              // SaaS: довольному гостю — предложить отзыв на картах заведения.
+              final maps = kSaasMode && rating >= 4 ? VenueService.instance.cached.reviewMapLinks : const <(String, String)>[];
+              if (maps.isNotEmpty) {
+                _askMapReview(maps);
+                return;
               }
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(kSaasMode && rating <= 3
+                    ? 'Спасибо! Мы передали отзыв руководителю'
+                    : 'Спасибо! Ваш отзыв важен для нас')),
+              );
             },
           ),
           const SizedBox(height: 8),
@@ -617,6 +626,44 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
           ),
         ],
       );
+
+  /// Оценка 4–5: «Поделитесь впечатлением на карте» — Яндекс Карты, 2ГИС.
+  void _askMapReview(List<(String, String)> maps) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: KolibriColors.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 22, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Спасибо!', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Text('Рады, что вам понравилось. Если не сложно — поделитесь впечатлением на карте: '
+                  'так нас легче найти новым гостям.',
+                  style: TextStyle(color: KolibriColors.textMuted)),
+              const SizedBox(height: 16),
+              for (final (name, url) in maps) ...[
+                FilledButton.icon(
+                  icon: const Icon(Icons.star_rounded),
+                  label: Text('Оставить отзыв в $name'),
+                  onPressed: () {
+                    Navigator.of(ctx).pop();
+                    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+                  },
+                ),
+                const SizedBox(height: 8),
+              ],
+              TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Не сейчас')),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   void _openTips(String sessionId) {
     showModalBottomSheet<void>(
