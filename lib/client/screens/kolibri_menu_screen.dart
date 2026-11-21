@@ -93,7 +93,12 @@ class _KolibriMenuScreenState extends State<KolibriMenuScreen> {
         // Нужны и корзине: кальян из неё уходит кальянщику, а не официанту.
         _catNames = catNames;
         _catKinds = {for (final c in allCategories) c.id: c.kind};
-        bool tobacco(MenuItem i) => PromoPolicy.menuTobacco(i, catNames[i.categoryId] ?? '');
+        // Категория кальянного цеха — кальяны, как бы ни называлась
+        // («Миксы», «Авторские»): без фото, только перечнем (ст. 19 15-ФЗ).
+        bool tobacco(MenuItem i) => kSaasMode
+            ? PromoPolicy.guestTobacco(i,
+                categoryName: catNames[i.categoryId] ?? '', categoryKind: _catKinds[i.categoryId] ?? '')
+            : PromoPolicy.menuTobacco(i, catNames[i.categoryId] ?? '');
 
         return StreamBuilder<List<MenuItem>>(
           stream: _menu,

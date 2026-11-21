@@ -1469,7 +1469,10 @@ function screenMenu() {
     }
     const atTable = !!(state.profile && state.profile.activeSessionId);
     const catName = (id) => (cats.find((c) => c.id === id) || {}).name || '';
-    const tobacco = (i) => i.tobacco === true || TOBACCO_RE.test(i.name || '') || TOBACCO_RE.test(catName(i.categoryId));
+    // Категория кальянного цеха — кальяны, как бы ни называлась («Миксы»).
+    const catKind = (id) => (cats.find((c) => c.id === id) || {}).kind || '';
+    const tobacco = (i) => i.tobacco === true || i.kind === 'hookah' || catKind(i.categoryId) === 'hookah'
+      || TOBACCO_RE.test(i.name || '') || TOBACCO_RE.test(catName(i.categoryId));
     const regular = items.filter((i) => !tobacco(i));
     // Табак — только гостю за столом: продавать его дистанционно нельзя.
     // Показываем отдельным строгим перечнем (ст. 19 закона № 15-ФЗ): чёрные

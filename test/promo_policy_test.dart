@@ -47,6 +47,14 @@ void main() {
     expect(item('Микс', tobacco: true).copyWith(price: 1000).tobacco, isTrue);
   });
 
+  test('меню гостя: категория кальянного цеха — табак при любом названии', () {
+    final mix = MenuItem(id: 'x', categoryId: 'c', name: 'Двойное яблоко', price: 900);
+    expect(PromoPolicy.guestTobacco(mix, categoryName: 'Миксы', categoryKind: 'hookah'), isTrue);
+    expect(PromoPolicy.guestTobacco(mix, categoryName: 'Миксы', categoryKind: 'bar'), isFalse);
+    expect(PromoPolicy.guestTobacco(mix, categoryName: 'Кальяны'), isTrue);
+    expect(PromoPolicy.guestTobacco(MenuItem(id: 'y', categoryId: 'c', name: 'Паста', price: 500), categoryKind: 'kitchen'), isFalse);
+  });
+
   test('в ИИ не уходят имена и контакты гостей', () {
     expect(AiContextService.guestAlias('Анна Петрова'), 'гость А.');
     expect(AiContextService.guestAlias('  '), 'гость');

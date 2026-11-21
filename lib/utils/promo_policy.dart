@@ -31,6 +31,12 @@ class PromoPolicy {
   static bool menuTobacco(MenuItem item, [String categoryName = '']) =>
       item.tobacco || looksTobacco(item.name) || looksTobacco(categoryName);
 
+  /// Для меню гостя (SaaS): ещё и категория кальянного цеха («Миксы»,
+  /// «Авторские» — как бы ни называлась) — без фото, только перечнем
+  /// (ст. 19 закона № 15-ФЗ).
+  static bool guestTobacco(MenuItem item, {String categoryName = '', String categoryKind = ''}) =>
+      categoryKind == 'hookah' || menuTobacco(item, categoryName);
+
   /// Позицию нельзя удешевлять скидкой и бонусами.
   static bool restricted(OrderItem item) => excludeTobacco && (item.noPromo || looksTobacco(item.name));
 
