@@ -3298,6 +3298,8 @@ function supportChatForRoute() {
 }
 
 function route() {
+  // Ушли с главной — кнопка поддержки возвращается на своё место (bindLandingSticky).
+  document.body.classList.remove('l-sticky-shown');
   // Ссылка из письма открылась в уже открытой вкладке (сменился только хеш) —
   // разбирается она при запуске страницы.
   if (location.hash.startsWith('#/auth?')) {
@@ -3488,6 +3490,7 @@ const LANDING_ROLES = [
 // Кнопка «Попробовать» внизу экрана на телефоне: видна, когда первый экран
 // с формой ушёл вверх, и прячется у формы, у тарифов и у нижнего призыва.
 function bindLandingSticky(scrollToEmail) {
+  document.body.classList.remove('l-sticky-shown');
   const bar = $('l-sticky');
   if (!bar || typeof IntersectionObserver !== 'function') return;
   $('f-landing-sticky-cta').onclick = scrollToEmail;
@@ -3496,10 +3499,12 @@ function bindLandingSticky(scrollToEmail) {
     .map((q) => document.querySelector(q)).filter(Boolean);
   const seen = new Set();
   const io = new IntersectionObserver((entries) => {
-    if (!bar.isConnected) { io.disconnect(); return; }
+    if (!bar.isConnected) { io.disconnect(); document.body.classList.remove('l-sticky-shown'); return; }
     entries.forEach((e) => (e.isIntersecting ? seen.add(e.target) : seen.delete(e.target)));
     const show = seen.size === 0 && window.scrollY > 200;
     bar.classList.toggle('on', show);
+    // Запасной путь для браузеров без :has — кнопка поддержки встаёт над панелью.
+    document.body.classList.toggle('l-sticky-shown', show);
     bar.setAttribute('aria-hidden', show ? 'false' : 'true');
     bar.querySelectorAll('button').forEach((b) => { b.tabIndex = show ? 0 : -1; });
   }, { threshold: 0 });

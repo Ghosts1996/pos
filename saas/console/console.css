@@ -1792,7 +1792,7 @@ html.zd-open { overflow: hidden; }
 @media (max-width: 719px) {
   .l-sticky { display: flex; gap: 8px; position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); z-index: 40;
     padding: 8px; border-radius: 18px; background: var(--surface); border: 1px solid var(--border-strong);
-    box-shadow: 0 18px 40px -16px rgba(29, 26, 22, .45); transform: translateY(140%); opacity: 0; transition: transform .25s ease, opacity .25s ease; pointer-events: none; }
+    box-shadow: 0 18px 40px -16px rgba(29, 26, 22, .45); transform: translateY(140%); opacity: 0; transition: transform .35s cubic-bezier(.2, .8, .2, 1), opacity .25s ease; pointer-events: none; }
   .l-sticky.on { transform: none; opacity: 1; pointer-events: auto; }
   .l-sticky .btn { margin: 0; padding: 13px 14px; }
   .l-sticky .btn-primary { flex: 1; }
@@ -1841,6 +1841,9 @@ html.zd-open { overflow: hidden; }
 /* Кнопка поддержки (support-chat.js) не накрывает нижнюю панель лендинга: пока
    панель видна, кнопка стоит над ней. */
 @media (max-width: 719px) {
-  .sc-root { transition: bottom .25s ease; }
-  body:has(.l-sticky.on) .sc-root { bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+  /* То же движение и та же скорость, что у панели, — едут вместе. */
+  .sc-root { transition: bottom .35s cubic-bezier(.2, .8, .2, 1); }
+  body:has(.l-sticky.on) .sc-root,
+  body.l-sticky-shown .sc-root { bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
 }
+@media (prefers-reduced-motion: reduce) { .sc-root { transition: none; } }
