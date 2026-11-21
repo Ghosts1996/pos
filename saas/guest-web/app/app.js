@@ -2266,22 +2266,24 @@ function drawTable(s) {
     <p class="small muted" style="margin:8px 0 0">${orderHint()}</p>
 
     <h2>Позвать</h2>
-    ${hookah ? `
-    <div class="btn-row">
-      <button class="btn-ghost" data-call="coal">${ic('flame')}Поменять угли</button>
-      <button class="btn-ghost" data-call="refill">${ic('refresh')}Перезабивка</button>
-    </div>
-    <div style="height:10px"></div>
-    <div class="btn-row">
-      <button class="btn-ghost" data-call="waiter">${ic('hand')}Позвать кальянщика</button>
-      <button class="btn-ghost" data-call="bill">${ic('receipt')}Счёт, пожалуйста</button>
-    </div>
-    <div style="height:10px"></div>
-    <button class="btn-ghost" data-call="callWaiter">${ic('bell')}Позвать официанта</button>` : `
-    <div class="btn-row">
-      <button class="btn-ghost" data-call="callWaiter">${ic('bell')}Позвать официанта</button>
-      <button class="btn-ghost" data-call="bill">${ic('receipt')}Счёт, пожалуйста</button>
-    </div>`}
+    ${(() => {
+      // Плитки: значок сверху, подпись под ним — на две строки переносится
+      // ровно, и все плитки одной высоты.
+      const tile = (call, icon, label, wide = false) =>
+        `<button class="btn-ghost call-tile${wide ? ' wide' : ''}" data-call="${call}"><span class="call-ic">${ic(icon)}</span><span class="call-label">${label}</span></button>`;
+      return hookah ? `
+    <div class="call-grid">
+      ${tile('coal', 'flame', 'Поменять угли')}
+      ${tile('refill', 'refresh', 'Перезабивка')}
+      ${tile('waiter', 'hand', 'Позвать кальянщика')}
+      ${tile('bill', 'receipt', 'Счёт, пожалуйста')}
+      ${tile('callWaiter', 'bell', 'Позвать официанта', true)}
+    </div>` : `
+    <div class="call-grid">
+      ${tile('callWaiter', 'bell', 'Позвать официанта')}
+      ${tile('bill', 'receipt', 'Счёт, пожалуйста')}
+    </div>`;
+    })()}
     <div id="calls"></div>
 
     <h2>Ваш счёт</h2>
