@@ -6,6 +6,7 @@ import '../models/reservation_model.dart';
 import '../models/table_model.dart';
 import '../theme/app_colors.dart';
 import '../utils/bill_split.dart';
+import '../utils/constants.dart';
 import '../utils/hall_layout.dart';
 import '../utils/table_label.dart';
 import 'clock_ticker.dart';
@@ -294,6 +295,7 @@ class TableCard extends StatelessWidget {
   }
 
   Widget _build(DateTime now) {
+    if (kSaasMode) return _buildSaas(now);
     final state = tableStateOf(table, now: now, plannedEnd: plannedEnd, reservation: reservation);
     final color = TableStateColors.of(state);
     final busy = state.isBusy;
@@ -375,6 +377,189 @@ class TableCard extends StatelessWidget {
                 statusLine,
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// SaaS: карточка стола в «Списке». Спокойная для свободных столов (раньше
+/// каждый свободный стол был обведён ярко-зелёным и «кричал» громче
+/// занятого), заметная для занятых и брони: крупно — сумма и время, ниже —
+/// кто сидит или кто придёт, внизу — полоска «сколько времени стола
+/// прошло». Вызов гостя — красная рамка и колокольчик.
+extension _TableCardSaas on TableCard {
+  /// Главная строка карточки: слева крупно (сумма или время брони), справа
+  /// мельче (таймер). При крупном шрифте телефона текст уменьшается, а не
+  /// обрезается многоточием — сумму всегда видно целиком.
+  Widget _pair(Widget left, Widget? right, {int leftFlex = 3, int rightFlex = 2}) => Row(children: [
+        Flexible(
+          flex: leftFlex,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: left),
+          ),
+        ),
+        if (right != null) ...[
+          const SizedBox(width: 8),
+          Flexible(
+            flex: rightFlex,
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerRight, child: right),
+            ),
+          ),
+        ],
+      ]);
+
+  Widget _buildSaas(DateTime now) {
+    final state = tableStateOf(table, now: now, plannedEnd: plannedEnd, reservation: reservation);
+    final color = TableStateColors.of(state);
+    final busy = state.isBusy;
+    final loud = state == TableState.overdue || hasCall;
+    final end = plannedEnd ?? table.busyUntil;
+    final timed = busy && end != null && !AppConstants.isUnlimitedRemaining(end.difference(now));
+    final num = TextStyle(fontFeatures: const [FontFeature.tabularFigures()], color: AppColors.textPrimary);
+
+    // Доля времени стола, которая уже прошла (только у стола со временем).
+    double? progress;
+    if (timed && startTime != null) {
+      final total = end.difference(startTime!).inSeconds;
+      if (total > 0) progress = (now.difference(startTime!).inSeconds / total).clamp(0.0, 1.0);
+    }
+
+    Widget seats = Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(Icons.people_alt_outlined, size: 15, color: AppColors.textMuted),
+      const SizedBox(width: 4),
+      Text('${table.seats}', style: num.copyWith(color: AppColors.textMuted, fontSize: 13, fontWeight: FontWeight.w600)),
+    ]);
+
+    Widget main;
+    Widget? caption;
+    if (busy) {
+      final bill = billTotal != null && billTotal! > 0 ? formatKopecks((billTotal! * 100).round()) : null;
+      main = _pair(
+        Text(bill ?? 'Счёт пуст',
+            maxLines: 1,
+            style: bill != null
+                ? num.copyWith(fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.3)
+                : TextStyle(color: AppColors.textMuted, fontSize: 14)),
+        end == null
+            ? null
+            : DefaultTextStyle.merge(
+                style: TextStyle(color: color),
+                child: TimerDisplay(plannedEnd: end, startTime: startTime, fontSize: 14),
+              ),
+      );
+      final who = guestTag != null && guestTag!.isNotEmpty ? guestTag! : null;
+      final parts = [
+        if (who != null) who,
+        if (checkCount > 1) '$checkCount ${pluralRu(checkCount, 'чек', 'чека', 'чеков')}',
+        if (state != TableState.occupied) state.label,
+        if (who == null && checkCount <= 1 && state == TableState.occupied) timed ? 'осталось времени' : 'Гости за столом',
+      ];
+      caption = Text(parts.join(' · '),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+              color: state == TableState.occupied ? AppColors.textMuted : color,
+              fontSize: 12.5,
+              fontWeight: state == TableState.occupied ? FontWeight.w500 : FontWeight.w700));
+    } else if (state == TableState.reserved) {
+      final r = reservation!;
+      final mins = r.startTime.difference(now).inMinutes;
+      final late = mins <= 0;
+      main = _pair(
+        Text(hhmm(r.startTime),
+            maxLines: 1,
+            style: num.copyWith(color: color, fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.3)),
+        Text(late ? 'опаздывает' : 'через ${mins >= 60 ? '${mins ~/ 60} ч ${mins % 60} м' : '$mins мин'}',
+            maxLines: 1,
+            style: num.copyWith(
+                color: late ? AppColors.danger : AppColors.textMuted, fontSize: 12.5, fontWeight: FontWeight.w600)),
+        leftFlex: 1,
+        rightFlex: 1,
+      );
+      caption = Text('Бронь · ${r.guestName.isEmpty ? 'гость' : r.guestName} · ${r.guestsCount} чел.',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: AppColors.textMuted, fontSize: 12.5));
+    } else {
+      main = Row(children: [
+        Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        const SizedBox(width: 8),
+        Text('Свободен', style: TextStyle(color: AppColors.textPrimary.withValues(alpha: 0.85), fontSize: 15, fontWeight: FontWeight.w600)),
+      ]);
+      caption = table.zone.isEmpty
+          ? null
+          : Text(table.zone, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: AppColors.textMuted, fontSize: 12.5));
+    }
+
+    final borderColor = hasCall
+        ? AppColors.danger
+        : busy || state == TableState.reserved
+            ? color.withValues(alpha: loud ? 1 : 0.5)
+            : AppColors.border;
+    final fill = busy
+        ? Color.alphaBlend(color.withValues(alpha: AppColors.isLight ? 0.07 : 0.10), AppColors.surface)
+        : AppColors.surface;
+
+    return Semantics(
+      button: true,
+      label: '${table.name}, ${state.label}${hasCall ? ', гость зовёт' : ''}',
+      child: Material(
+        color: fill,
+        borderRadius: BorderRadius.circular(20),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: borderColor, width: loud ? 2 : 1),
+            ),
+            child: Stack(children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(children: [
+                      Expanded(
+                        child: Text(table.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.textPrimary, letterSpacing: -0.2)),
+                      ),
+                      if (hasCall)
+                        Container(
+                          margin: const EdgeInsets.only(right: 8),
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(color: AppColors.danger, shape: BoxShape.circle),
+                          child: const Icon(Icons.notifications_active, size: 14, color: Colors.white),
+                        ),
+                      seats,
+                    ]),
+                    main,
+                    caption ?? const SizedBox(height: 16),
+                  ],
+                ),
+              ),
+              if (progress != null)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: 3,
+                  child: FractionallySizedBox(
+                    alignment: Alignment.centerLeft,
+                    widthFactor: progress,
+                    child: ColoredBox(color: color.withValues(alpha: 0.9)),
+                  ),
+                ),
+            ]),
           ),
         ),
       ),

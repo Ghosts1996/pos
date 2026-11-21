@@ -20,6 +20,7 @@ import {
 } from './zal-db.js';
 import { savingsEstimate, planTableRows } from './savings.js';
 import { buildAccountingSheets, buildXlsx } from './accounting-export.js';
+import { menuAbc, abcSummary } from './menu-abc.js';
 import { A4_MM, buildImagePdf, renderTentPage, tableTentUrl, tentTables } from './table-tents.js';
 import { STOCK_ZONES, zoneBalances, hasZones, planTransfer, zoneLabel } from './stock-zones.js';
 
@@ -187,7 +188,7 @@ function telegramBoxHtml(st) {
     ${cb('delivery', 'Заказы с собой и доставки — в группу, с кнопками')}
     ${cb('shifts', 'Начало и конец смен — владельцу')}
     ${cb('alerts', 'Отмены, закрытие без оплаты, возвраты, скидки от 20% — владельцу')}
-    ${cb('summary', chain ? 'Итоги дня в 10:00 — по сети и каждой точке, владельцу' : 'Итоги смены в 10:00 — владельцу')}
+    ${cb('summary', chain ? 'Итоги: точки — сразу после её Z-отчёта, по сети — в 10:00, владельцу' : 'Итоги смены — сразу после Z-отчёта (не закрыли смену — в 10:00), владельцу')}
     ${cb('stations', 'Группа с темами: новые позиции заказов — в «Кухню», «Бар» и «Кальяны»')}
     ${cb('groupCash', 'Группа с темами: итоги дня — и в «Касса и отчёты»')}
     <p class="small muted" style="margin:4px 0 0">Включите в настройках группы Telegram «Темы» — бот сам создаст разделы: кухня, бар, кальяны, доставки, самовывоз, касса — и разложит сообщения по ним.</p>
@@ -7143,6 +7144,7 @@ function watchDashboardData(tenantId) {
         </div>
         <div class="small" id="f-acc-status" aria-live="polite"></div>
       </div>
+      ${menuAbcBoxHtml(tenantId)}
       <h2>Быстрый доступ</h2>
       <div class="quick-actions">
         ${quickAction('devices', 'device', '#0EA5E9', 'Устройства', 'Код приглашения и сборка APK')}
@@ -7558,6 +7560,7 @@ function watchDashboardData(tenantId) {
         <button type="button" class="btn btn-primary" id="f-tents" style="width:auto">Скачать PDF</button>
         <div id="f-tents-status" class="small muted" style="margin-top:8px" role="status" aria-live="polite"></div>
       </div>
+      ${bookingLinkCardHtml(tenant, tenantId, buttonColor)}
     `;
 
     const teamHtml = () => `
@@ -8354,12 +8357,14 @@ function watchDashboardData(tenantId) {
         draw();
       };
     });
+    if (activeTab === 'overview') bindMenuAbc(tenantId, draw);
     if (activeTab === 'overview' && $('f-acc-export')) {
       $('f-acc-export').onclick = () => exportForAccountant(tenantId, tenant.name, generalSettings?.timezone || 'Europe/Moscow');
     }
     if (activeTab === 'branding' && $('f-tents')) {
       $('f-tents').onclick = () => downloadTableTents(tenantId, tenant, branding);
     }
+    if (activeTab === 'branding') bindBookingLinkCard(tenant, tenantId, buttonColor);
     if (activeTab === 'guests') bindGuestsTab(tenantId, draw);
     if (activeTab === 'delivery') bindDeliveryTab(tenantId, draw);
     if (activeTab === 'stock') {
@@ -9974,6 +9979,96 @@ function monthStartIn(ym, tz) {
   return new Date(utc - offsetH * 3600000);
 }
 
+// ---------- ABC-анализ меню (кабинет · «Обзор») ----------
+// Считается по кнопке (чеки за период читаются один раз), результат живёт
+// до перезагрузки страницы. Логика — как в отчётах кассы (menu-abc.js).
+const abcState = new Map();
+const ABC_PERIODS = [[7, '7 дней'], [30, '30 дней'], [90, '90 дней']];
+const ABC_HINT = {
+  A: 'Дают основную выручку: всегда в наличии, на видном месте в меню, официанты предлагают первыми.',
+  B: 'Середина: продвигайте — в сочетаниях, в рекомендациях, на тейбл-тентах.',
+  C: 'Почти не продаются: замените, упростите или уберите — меньше закупок и списаний.',
+};
+
+function menuAbcBoxHtml(tenantId) {
+  const st = abcState.get(tenantId) || { days: 30 };
+  const rub = (v) => `${Math.round(v).toLocaleString('ru-RU')} ₽`;
+  const pct = (v) => `${(v * 100).toLocaleString('ru-RU', { maximumFractionDigits: v < 0.1 ? 1 : 0 })}%`;
+  let body = '';
+  if (st.loading) body = '<div class="small muted" style="margin-top:10px">Считаю продажи…</div>';
+  else if (st.error) body = `<div class="small" style="color:var(--danger);margin-top:10px">${esc(st.error)}</div>`;
+  else if (st.result && !st.result.items.length) body = '<div class="small muted" style="margin-top:10px">За этот период продаж нет.</div>';
+  else if (st.result) {
+    const r = st.result;
+    const sum = abcSummary(r.items);
+    const filter = st.filter || '';
+    const rows = r.items.filter((i) => !filter || i.cls === filter);
+    body = `
+      <div class="abc-sum">${['A', 'B', 'C'].map((c) => `
+        <button type="button" class="abc-chip abc-${c}${filter === c ? ' on' : ''}" data-abc-filter="${c}" aria-pressed="${filter === c}">
+          <span class="abc-badge abc-${c}">${c}</span>
+          <span><b>${sum[c].count}</b> ${plural(sum[c].count, 'позиция', 'позиции', 'позиций')}<small>${r.total > 0 ? pct(sum[c].revenue / r.total) : '0%'} выручки</small></span>
+        </button>`).join('')}
+      </div>
+      <p class="small muted" style="margin:8px 0 10px">${filter ? `<b>${filter}.</b> ${esc(ABC_HINT[filter])} <button type="button" class="btn-link" data-abc-filter="" style="width:auto">Показать все</button>`
+        : `${r.checks.toLocaleString('ru-RU')} ${plural(r.checks, 'чек', 'чека', 'чеков')} · выручка по позициям ${rub(r.total)}. Нажмите на A, B или C — что с ними делать.`}</p>
+      <div class="table-wrap"><table class="abc-table">
+        <thead><tr><th>Позиция</th><th class="num">Продано</th><th class="num">Выручка</th><th class="num">Доля</th></tr></thead>
+        <tbody>${rows.slice(0, 300).map((i) => `<tr>
+          <td><span class="abc-badge abc-${i.cls}">${i.cls}</span> ${esc(i.name)}</td>
+          <td class="num">${Number(i.qty).toLocaleString('ru-RU')}</td>
+          <td class="num">${rub(i.revenue)}</td>
+          <td class="num"><span class="abc-bar"><i style="width:${Math.max(2, Math.round(i.share * 100 / (r.items[0].share || 1)))}%"></i></span>${pct(i.share)}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+      ${rows.length > 300 ? `<p class="small muted">Показаны первые 300 из ${rows.length}.</p>` : ''}
+      ${r.unsold.length ? `<details class="abc-unsold"><summary>Ни разу не продавались за период: ${r.unsold.length}</summary>
+        <p class="small">${r.unsold.slice(0, 200).map((u) => esc(u.name)).join(' · ')}${r.unsold.length > 200 ? ' …' : ''}</p>
+        <p class="small muted">Выключенные в меню позиции здесь не показаны.</p></details>` : ''}`;
+  }
+  return `
+      <div class="card abc-card">
+        <div class="acc-export-head"><b>ABC-анализ меню</b>
+          <span class="small muted">Какие позиции приносят деньги, а какие только занимают место в меню и на складе.
+          A — дают 80% выручки, B — следующие 15%, C — остальные 5%. Возвраты и учебные чеки не считаются.</span></div>
+        <div class="row acc-export-row">
+          <select id="f-abc-days" aria-label="Период анализа">${ABC_PERIODS.map(([d, l]) => `<option value="${d}"${d === st.days ? ' selected' : ''}>${l}</option>`).join('')}</select>
+          <button type="button" class="btn btn-primary" id="f-abc-run" style="width:auto"${st.loading ? ' disabled' : ''}>${st.result ? 'Пересчитать' : 'Посчитать'}</button>
+        </div>
+        ${body}
+      </div>`;
+}
+
+function bindMenuAbc(tenantId, draw) {
+  const btn = $('f-abc-run');
+  if (!btn) return;
+  const st = abcState.get(tenantId) || { days: 30 };
+  abcState.set(tenantId, st);
+  document.querySelectorAll('[data-abc-filter]').forEach((el) => {
+    el.onclick = () => { st.filter = st.filter === el.dataset.abcFilter ? '' : el.dataset.abcFilter; draw(); };
+  });
+  $('f-abc-days').onchange = (e) => { st.days = Number(e.target.value) || 30; };
+  btn.onclick = async () => {
+    st.days = Number($('f-abc-days').value) || 30;
+    st.loading = true;
+    st.error = '';
+    draw();
+    try {
+      const from = Timestamp.fromDate(new Date(Date.now() - st.days * 86400000));
+      const [sSnap, mSnap] = await Promise.all([
+        getDocs(query(collection(state.db, 'tenants', tenantId, 'sessions'), where('status', '==', 'closed'), where('closedAt', '>=', from))),
+        getDocs(collection(state.db, 'tenants', tenantId, 'menuItems')).catch(() => ({ docs: [] })),
+      ]);
+      st.result = menuAbc(sSnap.docs.map((d) => d.data()), mSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      st.filter = '';
+    } catch (e) {
+      st.error = `Не удалось посчитать: ${e && e.message ? e.message : 'нет связи'}. Попробуйте ещё раз.`;
+    }
+    st.loading = false;
+    draw();
+  };
+}
+
 async function exportForAccountant(tenantId, venueName, tz) {
   const status = $('f-acc-status');
   const btn = $('f-acc-export');
@@ -10024,6 +10119,91 @@ async function exportForAccountant(tenantId, venueName, tz) {
 }
 
 /** Тейбл-тенты: столы и их секреты из базы → листы A4 → один PDF. */
+// ---------- Бронь стола с сайта и карт (кабинет · «Брендинг») ----------
+// Ссылка ведёт прямо на экран брони веб-версии гостя: гость выбирает дату,
+// время и число гостей, бронь приходит на кассу, как из приложения.
+
+/** Адрес экрана брони заведения (точка сети — по своему адресу). */
+function bookingLinkOf(tenant, tenantId) {
+  const host = String((tenant && tenant.slug) || tenantId || '').toLowerCase();
+  return `https://${host}.zalpos.ru/app/#/booking`;
+}
+
+/** Готовый код кнопки для сайта: одна ссылка со встроенным стилем, без скриптов. */
+function bookingButtonCode(link, color) {
+  const bg = /^#[0-9a-f]{6}$/i.test(color || '') ? color : '#1f1b16';
+  const fg = contrastRatio(bg, '#ffffff') >= contrastRatio(bg, '#111111') ? '#ffffff' : '#111111';
+  return `<a href="${link}" target="_blank" rel="noopener" style="display:inline-block;padding:14px 28px;border-radius:12px;`
+    + `background:${bg};color:${fg};font:600 16px/1.2 system-ui,-apple-system,'Segoe UI',sans-serif;text-decoration:none">`
+    + 'Забронировать стол</a>';
+}
+
+function bookingLinkCardHtml(tenant, tenantId, color) {
+  const link = bookingLinkOf(tenant, tenantId);
+  const code = bookingButtonCode(link, color);
+  return `
+      <div class="card book-link-card" id="f-book-card">
+        <h3 style="margin-top:0">Бронь стола с сайта и карт</h3>
+        <p class="small muted">Ссылка открывает у гостя сразу экран брони: дата, время, сколько гостей.
+        Заявка приходит на кассу, как из приложения, — подтверждаете там же. Поставьте её на свой сайт,
+        в карточку заведения на картах, в соцсети и в шапку чата в мессенджере.</p>
+        <div class="book-link-row">
+          <input id="f-book-link" readonly value="${esc(link)}" aria-label="Ссылка на бронь стола">
+          <button type="button" class="btn btn-secondary" id="f-book-copy" style="width:auto">Скопировать</button>
+          <a class="btn btn-ghost" href="${esc(link)}" target="_blank" rel="noopener" style="width:auto">Открыть</a>
+        </div>
+        <div class="book-link-grid">
+          <div class="book-qr">
+            <div id="f-book-qr" class="book-qr-img" aria-label="QR-код брони"></div>
+            <button type="button" class="btn btn-ghost small" id="f-book-qr-dl" style="width:auto">Скачать QR</button>
+          </div>
+          <div class="book-code">
+            <div class="small muted" style="margin-bottom:6px">Кнопка для сайта — вставьте код на страницу:</div>
+            <div class="book-preview">${code}</div>
+            <textarea id="f-book-code" readonly rows="4" aria-label="Код кнопки для сайта">${esc(code)}</textarea>
+            <button type="button" class="btn btn-secondary" id="f-book-code-copy" style="width:auto">Скопировать код</button>
+          </div>
+        </div>
+        <details class="book-how">
+          <summary>Как добавить бронь в Яндекс Карты и 2ГИС</summary>
+          <ol class="small">
+            <li><b>Яндекс Карты.</b> Откройте Яндекс Бизнес (business.yandex.ru) → карточку заведения → «Данные об организации».
+            В поле «Сайт» или в кнопке действия на карточке (если она доступна для вашей рубрики) вставьте ссылку выше.
+            После проверки Яндексом гость нажмёт кнопку на карте и сразу попадёт в бронь.</li>
+            <li><b>2ГИС.</b> В личном кабинете 2ГИС для бизнеса, в контактах заведения, — поле «Сайт»: та же ссылка.</li>
+            <li><b>Свой сайт.</b> Скопируйте код кнопки и вставьте его в страницу (в конструкторах сайтов — блок «HTML-код»).</li>
+            <li><b>Печать.</b> QR-код — на афишу, визитку, витрину: гость наводит камеру и бронирует.</li>
+          </ol>
+          <p class="small muted">Ссылка постоянная: меняется, только если поменять адрес заведения.</p>
+        </details>
+      </div>`;
+}
+
+function bindBookingLinkCard(tenant, tenantId, color) {
+  const box = $('f-book-card');
+  if (!box) return;
+  const link = bookingLinkOf(tenant, tenantId);
+  const copy = async (text, field) => {
+    try { await navigator.clipboard.writeText(text); toast('Скопировано'); }
+    catch (_) { if (field) { field.focus(); field.select(); } toast('Выделено — скопируйте вручную'); }
+  };
+  $('f-book-copy').onclick = () => copy(link, $('f-book-link'));
+  $('f-book-code-copy').onclick = () => copy(bookingButtonCode(link, color), $('f-book-code'));
+  import('./vendor/qr.js').then(() => {
+    const svg = window.ZQR.svg(link).replace('QR-код для оплаты', 'QR-код брони стола');
+    const el = $('f-book-qr');
+    if (el) el.innerHTML = svg;
+    $('f-book-qr-dl').onclick = () => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+      a.download = `bron-${String(tenant.slug || tenantId)}.svg`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    };
+  }).catch(() => { const el = $('f-book-qr'); if (el) el.textContent = 'QR не загрузился — обновите страницу.'; });
+}
+
 async function downloadTableTents(tenantId, tenant, branding) {
   const btn = $('f-tents');
   const status = $('f-tents-status');

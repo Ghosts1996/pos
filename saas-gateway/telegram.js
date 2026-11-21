@@ -30,7 +30,7 @@
  *    посадка, смена, доставка, касса; «Ещё»: вчера, неделя, топ продаж,
  *    склад на исходе, брони, отмены и скидки, отзывы), начало и конец
  *    смен, сигналы об отменах, закрытии без оплаты, возвратах и больших
- *    скидках, итоги в 10:00, напоминание о незакрытой смене кассы.
+ *    скидках, итоги смены сразу после Z-отчёта (не закрыли — в 10:00), напоминание о незакрытой смене кассы.
  *
  * Сеть заведений: один бот на всю сеть. Подключают его в любой точке —
  * он видит все точки (tenants.chainId). Владелец кнопкой «📍» выбирает
@@ -324,6 +324,26 @@ function lastBusinessDay(now, tz) {
   const dd = String(sp.d).padStart(2, "0");
   const mm = String(sp.m).padStart(2, "0");
   return { key: `${sp.y}-${mm}-${dd}`, start, end, label: `${dd}.${mm}` };
+}
+
+/** Ключ рабочих суток (дата их начала), в которые попадает момент. */
+function businessDayKeyOf(date, tz) {
+  return lastBusinessDay(new Date(businessDayStart(date, tz).getTime() + 24 * 3600 * 1000), tz).key;
+}
+
+/**
+ * Подпись итогов закрытой смены кассы: «смены №12 · 20.11, 14:02–02:15».
+ * null — смена не закрыта или без времени.
+ */
+function shiftSummaryLabel(sh, tz) {
+  const ms = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : v instanceof Date ? v.getTime() : Number(v) || 0);
+  const opened = ms(sh && sh.openedAt);
+  const closed = ms(sh && sh.closedAt);
+  if (!sh || sh.status !== "closed" || !opened || !closed || closed < opened) return null;
+  const op = localParts(new Date(opened), tz);
+  const day = `${String(op.d).padStart(2, "0")}.${String(op.m).padStart(2, "0")}`;
+  const z = sh.zNumber ? ` №${sh.zNumber}` : "";
+  return { opened, closed, label: `смены${z} · ${day}, ${hhmm(new Date(opened), tz)}–${hhmm(new Date(closed), tz)}` };
 }
 
 const hhmm = (date, tz) => {
@@ -2695,6 +2715,42 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         }
       }, (e) => { console.error(`telegram cash close (${tid}):`, e.message); bot.broken = Date.now(); }));
 
+    // Итоги смены — сразу, как только смену кассы закрыли Z-отчётом: выручка,
+    // чеки, оплаты, топ и предупреждения именно за эту смену. Утренние итоги
+    // за эти рабочие сутки тогда не дублируются (lastSummaryDay); смену
+    // забыли закрыть — итоги придут утром, как раньше. Смены, закрытые до
+    // запуска бота, не повторяем.
+    const summarySeen = new Set();
+    unsubs.push(t.collection("shifts").where("closedAt", ">=", shiftsSince)
+      .onSnapshot(async (snap) => {
+        for (const ch of snap.docChanges()) {
+          if (ch.type === "removed" || summarySeen.has(ch.doc.id)) continue;
+          try {
+            if (!on("summary")) continue;
+            const venue = await venueOf(tid).catch(() => ({}));
+            const sh = shiftSummaryLabel(ch.doc.data(), venue.timezone);
+            if (!sh || sh.closed <= bot.startedAt.toMillis()) continue;
+            summarySeen.add(ch.doc.id);
+            const start = new Date(sh.opened);
+            const end = new Date(sh.closed + 1000);
+            const [sessions, audit] = await Promise.all([closedSince(tid, start, end), auditSince(tid, start, end)]);
+            const name = venue.name || "Заведение";
+            const text = buildSummary({ venueName: label() && label() !== name ? `${name} · ${label()}` : name, label: sh.label, sessions, audit,
+              excludeTobacco: await loyaltyExclude(tid) });
+            if (!multi(bot)) {
+              const key = businessDayKeyOf(new Date(sh.closed), venue.timezone);
+              bot.cfg.lastSummaryDay = key;
+              await botsCol().doc(bot.tenantId).update({ lastSummaryDay: key }).catch(() => {});
+            }
+            for (const c of owners()) await say(bot, c.id, text, { reply_markup: keyboardFor(bot, c.id) });
+            const staff = staffChatOf(bot.cfg, tid, bot.tenantId).chat;
+            if (threadOf(staff, "cash") && on("groupCash")) await say(bot, staff.id, text, inThread(staff, "cash"));
+          } catch (e) {
+            console.error(`telegram shift summary (${tid}):`, e.message || e);
+          }
+        }
+      }, (e) => { console.error(`telegram shift summary (${tid}):`, e.message); bot.broken = Date.now(); }));
+
     // Сторож 24-часовой смены ККТ: открытая смена кассы — за час до суток
     // предупреждение владельцу, после суток — тревога. По одному разу на смену.
     let openShifts = [];
@@ -2911,7 +2967,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
 }
 
 module.exports = {
-  createTelegram, buildSummary, buildChainSummary, alertText, cashCloseAlert, longShiftAlert, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
+  createTelegram, buildSummary, buildChainSummary, alertText, cashCloseAlert, shiftSummaryLabel, businessDayKeyOf, longShiftAlert, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
   deliveryCardText, deliveryKeyboard, salesStats, addressSig, courierSig, whoSig, roleLabel, allowedList, parseAllowed, staleCashText, menuKeyboard,
   secretKey, fmtTg, stripHtml,
 };
