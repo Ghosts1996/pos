@@ -342,8 +342,7 @@ function shiftSummaryLabel(sh, tz) {
   if (!sh || sh.status !== "closed" || !opened || !closed || closed < opened) return null;
   const op = localParts(new Date(opened), tz);
   const day = `${String(op.d).padStart(2, "0")}.${String(op.m).padStart(2, "0")}`;
-  const z = sh.zNumber ? ` №${sh.zNumber}` : "";
-  return { opened, closed, label: `смены${z} · ${day}, ${hhmm(new Date(opened), tz)}–${hhmm(new Date(closed), tz)}` };
+  return { opened, closed, label: `смены · ${day}, ${hhmm(new Date(opened), tz)}–${hhmm(new Date(closed), tz)}` };
 }
 
 const hhmm = (date, tz) => {
@@ -517,6 +516,35 @@ function buildSummary({ venueName, label, sessions, audit, excludeTobacco = true
   const warn = [...summaryWarnings(st, audit), ...notes];
   if (warn.length) lines.push("", "⚠️ Обратите внимание:", ...warn.map((w) => `• ${w}`));
   if (!st.checks && !warn.length) lines.push("", "Продаж не было.");
+  return lines.join("\n");
+}
+
+/**
+ * Итоги смены сразу после Z-отчёта (владельцу и в тему «Касса и отчёты») —
+ * по образцу владельца (22.11.2026): к оплате, оплаты по способам,
+ * инкассация и наличные в кассе из закрытия смены, предупреждения.
+ */
+function buildShiftSummary({ venueName, label, sessions, audit, excludeTobacco = true, shift = {}, notes = [] }) {
+  const st = salesStats(sessions, excludeTobacco);
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+  const collected = num(shift.closingCollected) ?? 0;
+  const left = num(shift.closingLeftCash) ?? num(shift.closingCountedCash) ?? 0;
+  const lines = [
+    `📊 ${venueName} — итоги ${label}`,
+    "",
+    `К оплате: ${rub(st.revenue)}`,
+    `Оплачено картой: ${rub(st.card)}`,
+    `Оплачено наличными: ${rub(st.cash)}`,
+    `Оплачено терминалом: ${rub(st.terminal)}`,
+  ];
+  if (st.aggregator) lines.push(`Через агрегаторы: ${rub(st.aggregator)}`);
+  lines.push(
+    `За счёт заведения: ${rub(st.comp)}`,
+    `Инкассация: ${rub(collected)}`,
+    `Наличные в кассе: ${rub(left)}`,
+  );
+  const warn = [...summaryWarnings(st, audit), ...notes];
+  if (warn.length) lines.push("", "⚠️ Обратите внимание:", ...warn.map((w) => `• ${w}`));
   return lines.join("\n");
 }
 
@@ -2735,8 +2763,8 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
             const end = new Date(sh.closed + 1000);
             const [sessions, audit] = await Promise.all([closedSince(tid, start, end), auditSince(tid, start, end)]);
             const name = venue.name || "Заведение";
-            const text = buildSummary({ venueName: label() && label() !== name ? `${name} · ${label()}` : name, label: sh.label, sessions, audit,
-              excludeTobacco: await loyaltyExclude(tid) });
+            const text = buildShiftSummary({ venueName: label() && label() !== name ? `${name} · ${label()}` : name, label: sh.label, sessions, audit,
+              excludeTobacco: await loyaltyExclude(tid), shift: ch.doc.data() });
             if (!multi(bot)) {
               const key = businessDayKeyOf(new Date(sh.closed), venue.timezone);
               bot.cfg.lastSummaryDay = key;
@@ -2967,7 +2995,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
 }
 
 module.exports = {
-  createTelegram, buildSummary, buildChainSummary, alertText, cashCloseAlert, shiftSummaryLabel, businessDayKeyOf, longShiftAlert, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
+  createTelegram, buildSummary, buildShiftSummary, buildChainSummary, alertText, cashCloseAlert, shiftSummaryLabel, businessDayKeyOf, longShiftAlert, lastBusinessDay, businessDayStart, localParts, encrypt, decrypt,
   deliveryCardText, deliveryKeyboard, salesStats, addressSig, courierSig, whoSig, roleLabel, allowedList, parseAllowed, staleCashText, menuKeyboard,
   secretKey, fmtTg, stripHtml,
 };

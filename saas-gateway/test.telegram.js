@@ -255,11 +255,11 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
       orderItems: [{ name: "Чай", price: 999, qty: 1 }], paymentCash: 999 });
     store.set("tenants/A/shifts/z7", { status: "closed", zNumber: 7, openedAt: new TS(opened), closedAt: new TS(Date.now()) });
     fire(); await tick(); await tick(); await tick();
-    const toOwner = sent.filter((m) => m.method === "sendMessage" && m.body.chat_id === 501 && /итоги смены №7/.test(m.body.text || ""));
+    const toOwner = sent.filter((m) => m.method === "sendMessage" && m.body.chat_id === 501 && /итоги смены · /.test(m.body.text || ""));
     assert.equal(toOwner.length, 1, "итоги смены не пришли владельцу: " + JSON.stringify(sent.map((m) => m.body.text)));
-    assert.match(toOwner[0].body.text, /Выручка: 500 ₽/);
+    assert.match(toOwner[0].body.text, /К оплате: 500 ₽\nОплачено картой: 0 ₽\nОплачено наличными: 500 ₽/);
     assert.ok(!/Чай/.test(toOwner[0].body.text), "чек до открытия смены попал в итоги смены");
-    assert.ok(sent.some((m) => m.body.chat_id === -900 && m.body.message_thread_id === topics.cash && /итоги смены №7/.test(m.body.text || "")), "нет итогов в «Касса и отчёты»");
+    assert.ok(sent.some((m) => m.body.chat_id === -900 && m.body.message_thread_id === topics.cash && /итоги смены · /.test(m.body.text || "")), "нет итогов в «Касса и отчёты»");
     assert.ok(store.get("telegramBots/A").lastSummaryDay, "утренние итоги за эти сутки не отмечены");
     // Повторный снимок той же смены — второй раз не шлём.
     sent.length = 0;
@@ -934,8 +934,31 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
     const ts = (ms) => ({ toMillis: () => ms });
     const o = Date.parse("2026-11-20T11:02:00Z"); // 14:02 МСК
     const c = Date.parse("2026-11-20T23:15:00Z"); // 02:15 МСК 21.11
-    assert.equal(tgmod.shiftSummaryLabel({ status: "closed", zNumber: 12, openedAt: ts(o), closedAt: ts(c) }, "Europe/Moscow").label, "смены №12 · 20.11, 14:02–02:15");
+    assert.equal(tgmod.shiftSummaryLabel({ status: "closed", zNumber: 12, openedAt: ts(o), closedAt: ts(c) }, "Europe/Moscow").label, "смены · 20.11, 14:02–02:15");
     assert.equal(tgmod.shiftSummaryLabel({ status: "open", openedAt: ts(o) }, "Europe/Moscow"), null);
+    // Образец владельца (22.11.2026) — слово в слово.
+    const per = { from: 0, to: Date.now() + 1e6 };
+    const ses = Object.assign([
+      { status: "closed", closedAt: ts(1000), orderItems: [{ name: "Кальян", price: 12473, qty: 1 }], paymentCard: 12473 },
+      { status: "closed", closedAt: ts(2000), orderItems: [{ name: "Чай", price: 2681, qty: 1 }], paymentCash: 2681 },
+      { status: "closed", closedAt: ts(3000), orderItems: [{ name: "Пиво", price: 1210, qty: 1 }], paymentComp: 1210 },
+    ], { period: per });
+    const voids = [1000, 1000, 1000, 700].map((amount) => ({ action: "order_item_voided", amount }));
+    assert.equal(tgmod.buildShiftSummary({ venueName: "Колибри", label: "смены · 21.11, 17:10–02:43", sessions: ses, audit: voids,
+      shift: { closingCollected: 2681, closingLeftCash: 0 } }).replace(/\u00a0/g, " "), [
+      "📊 Колибри — итоги смены · 21.11, 17:10–02:43",
+      "",
+      "К оплате: 16 364 ₽",
+      "Оплачено картой: 12 473 ₽",
+      "Оплачено наличными: 2 681 ₽",
+      "Оплачено терминалом: 0 ₽",
+      "За счёт заведения: 1 210 ₽",
+      "Инкассация: 2 681 ₽",
+      "Наличные в кассе: 0 ₽",
+      "",
+      "⚠️ Обратите внимание:",
+      "• удалено позиций: 4 на 3 700 ₽",
+    ].join("\n"));
     assert.equal(tgmod.businessDayKeyOf(new Date(c), "Europe/Moscow"), "2026-11-20", "закрытие в 02:15 — сутки 20.11");
     assert.equal(tgmod.businessDayKeyOf(new Date(Date.parse("2026-11-21T04:00:00Z")), "Europe/Moscow"), "2026-11-21", "07:00 — уже 21.11");
   }
