@@ -1657,6 +1657,182 @@ function bindFoodcostBox(tenantId, redraw) {
   }
 }
 
+// ---------- Схема зала по фото (saas-gateway/hall-import.js): «Перенос данных».
+// Снимок плана → ИИ заведения → столы, стены и подписи кассы. Предпросмотр
+// рисуется по тем же правилам, что схема в кассе (lib/utils/hall_layout.dart):
+// доли x/y стола — от «базового холста 1000×640 минус плитка», плитка 104.
+const HALL_GEO = { bw: 1000, bh: 640, cw: 2496, ch: 2080, tile: 104 };
+const hallImpState = new Map(); // tenantId → { busy, error, plan, photo, aspect, zi, result, undo, loaded }
+
+function hallTileGeom(t) {
+  const n = t.shape === 'long' || t.shape === 'oval' ? 2 : t.shape === 'bar' ? 3 : 1;
+  const T = HALL_GEO.tile;
+  const s = t.shape === 'corner' ? { w: T * 2, h: T * 2 } : n === 1 ? { w: T, h: T } : (t.rotation % 2 ? { w: T, h: T * n } : { w: T * n, h: T });
+  const left = Math.min(Math.max(0, t.x * (HALL_GEO.bw - s.w)), HALL_GEO.cw - s.w);
+  const top = Math.min(Math.max(0, t.y * (HALL_GEO.bh - s.h)), HALL_GEO.ch - s.h);
+  return { left, top, ...s };
+}
+
+function hallPlanSvg(z) {
+  const rects = z.tables.map((t) => ({ t, g: hallTileGeom(t) }));
+  const xs = [], ys = [];
+  rects.forEach(({ g }) => { xs.push(g.left, g.left + g.w); ys.push(g.top, g.top + g.h); });
+  z.walls.forEach((w) => { for (let i = 0; i + 1 < w.points.length; i += 2) { xs.push(w.points[i]); ys.push(w.points[i + 1]); } });
+  z.labels.forEach((l) => { xs.push(l.x - 60, l.x + 60); ys.push(l.y - 20, l.y + 20); });
+  if (!xs.length) return '';
+  const pad = 40;
+  const x0 = Math.min(...xs) - pad, y0 = Math.min(...ys) - pad;
+  const w = Math.max(...xs) - x0 + pad, h = Math.max(...ys) - y0 + pad;
+  const walls = z.walls.map((wl) => {
+    const pts = [];
+    for (let i = 0; i + 1 < wl.points.length; i += 2) pts.push(`${wl.points[i]},${wl.points[i + 1]}`);
+    return wl.closed
+      ? `<polygon points="${pts.join(' ')}" class="hp-room"/><polygon points="${pts.join(' ')}" class="hp-wall"/>`
+      : `<polyline points="${pts.join(' ')}" class="hp-wall"/>`;
+  }).join('');
+  const tables = rects.map(({ t, g }) => {
+    const cx = g.left + g.w / 2, cy = g.top + g.h / 2, inset = 8;
+    let shape;
+    if (t.shape === 'circle' || t.shape === 'oval') shape = `<ellipse cx="${cx}" cy="${cy}" rx="${g.w / 2 - inset}" ry="${g.h / 2 - inset}" class="hp-table"/>`;
+    else if (t.shape === 'corner') {
+      const T = HALL_GEO.tile, L = g.left + inset, Tp = g.top + inset, R = g.left + g.w - inset, B = g.top + g.h - inset;
+      // Пустая клетка — как hallTileCells: поворот 0 — справа сверху, дальше по часовой стрелке.
+      const empty = [[1, 0], [1, 1], [0, 1], [0, 0]][t.rotation % 4];
+      const ex = g.left + empty[0] * T, ey = g.top + empty[1] * T;
+      shape = `<path class="hp-table" d="M${L} ${Tp}H${R}V${B}H${L}Z"/><rect x="${ex}" y="${ey}" width="${T}" height="${T}" class="hp-cut"/>`;
+    } else shape = `<rect x="${g.left + inset}" y="${g.top + inset}" width="${g.w - inset * 2}" height="${g.h - inset * 2}" rx="14" class="hp-table"/>`;
+    return `${shape}<text x="${cx}" y="${cy - 4}" class="hp-name">${esc(t.name)}</text><text x="${cx}" y="${cy + 24}" class="hp-seats">${t.seats} мест${t.seats % 10 === 1 && t.seats % 100 !== 11 ? 'о' : t.seats % 10 >= 2 && t.seats % 10 <= 4 && (t.seats % 100 < 12 || t.seats % 100 > 14) ? 'а' : ''}</text>`;
+  }).join('');
+  const labels = z.labels.map((l) => `<text x="${l.x}" y="${l.y}" class="hp-label">${esc(l.text.toUpperCase())}</text>`).join('');
+  return `<svg class="hall-preview" viewBox="${Math.round(x0)} ${Math.round(y0)} ${Math.round(w)} ${Math.round(h)}" role="img" aria-label="Схема зоны «${esc(z.name)}»">${walls}${tables}${labels}</svg>`;
+}
+
+function hallImportBoxHtml(tenantId) {
+  const st = hallImpState.get(tenantId) || {};
+  const undo = st.undo ? `<p class="small muted" style="margin:10px 0 0">Последний импорт схемы: ${esc(new Date(st.undo.at).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }))}
+      (${st.undo.mode === 'replace' ? 'замена' : 'добавление'}, ${esc(st.undo.zones.join(', '))}).
+      <button class="btn-link" id="f-hall-undo" style="width:auto">Отменить импорт</button></p>` : '';
+  const head = `
+    <div class="small" style="font-weight:600;margin-bottom:4px">Схема зала по фото — распознает ИИ</div>
+    <p class="small muted" style="margin-top:0">Сфотографируйте план помещения: план БТИ, рисунок от руки, скриншот схемы из прежней
+    кассы или PDF. ИИ найдёт стены, столы с номерами и местами, зоны и подписи («Вход», «Бар»). Это черновик: проверьте его здесь,
+    а точную расстановку доведите в кассе — Админ → «Схема зала». Не фотографируйте людей и документы с личными данными.</p>`;
+  if (!st.plan) {
+    return `<div class="card" style="margin-top:10px">${head}
+      <label class="field"><span>Фото плана (JPEG, PNG, WebP) или PDF — одна страница</span>
+        <input type="file" id="f-hall-file" accept="image/jpeg,image/png,image/webp,image/heic,image/*,application/pdf,.pdf"></label>
+      ${st.busy ? `<p class="small muted">${esc(st.busy)}</p>` : ''}
+      ${st.error ? `<p class="small" style="color:var(--danger)">${esc(st.error)}</p>` : ''}
+      ${st.result ? `<p class="small" style="color:var(--ok, inherit)">${esc(st.result)}</p>` : ''}
+      ${undo}</div>`;
+  }
+  const zi = Math.min(st.zi || 0, st.plan.zones.length - 1);
+  const z = st.plan.zones[zi];
+  const totalT = st.plan.zones.reduce((n, q) => n + q.tables.length, 0);
+  const moved = st.plan.zones.reduce((n, q) => n + (q.moved || 0), 0);
+  return `<div class="card" style="margin-top:10px">${head}
+    <div class="small" style="margin:6px 0 10px">Нашли: зон — <b>${st.plan.zones.length}</b>, столов — <b>${totalT}</b>${moved ? `; ${moved} ${moved === 1 ? 'стол сдвинут' : 'столов сдвинуто'}, чтобы не наезжали друг на друга` : ''}.</div>
+    ${st.plan.zones.length > 1 ? `<div class="hp-zones">${st.plan.zones.map((q, i) => `<button type="button" class="hp-zone-tab${i === zi ? ' on' : ''}" data-zi="${i}">${esc(q.name)} · ${q.tables.length}</button>`).join('')}</div>` : ''}
+    <div class="hp-grid">
+      <figure class="hp-fig"><figcaption class="small muted">Ваше фото</figcaption><img src="${st.photo}" alt="Фото плана зала"></figure>
+      <figure class="hp-fig"><figcaption class="small muted">Так будет в кассе</figcaption>${hallPlanSvg(z)}</figure>
+    </div>
+    <label class="field"><span>Название зоны (как вкладка в кассе)</span><input id="f-hall-zname" maxlength="30" value="${esc(z.name)}"></label>
+    ${z.tables.length ? `<details class="hp-tables" ${st.tablesOpen ? 'open' : ''}><summary class="small">Столы зоны: ${z.tables.length} — поправить названия и места</summary>
+      <div class="hp-trows">${z.tables.map((t, i) => `<div class="hp-trow"><input class="f-hall-tname" data-i="${i}" maxlength="24" value="${esc(t.name)}" aria-label="Название стола">
+        <input class="f-hall-tseats" data-i="${i}" type="number" min="1" max="40" value="${t.seats}" aria-label="Мест"><span class="small muted">мест</span></div>`).join('')}</div></details>` : ''}
+    ${st.error ? `<p class="small" style="color:var(--danger)">${esc(st.error)}</p>` : ''}
+    ${st.busy ? `<p class="small muted">${esc(st.busy)}</p>` : ''}
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+      <button class="btn btn-primary" id="f-hall-add" style="width:auto" ${st.busy ? 'disabled' : ''}>Добавить в кассу</button>
+      <button class="btn btn-ghost" id="f-hall-replace" style="width:auto" ${st.busy ? 'disabled' : ''}>Заменить схему зала</button>
+      <button class="btn-link" id="f-hall-again" style="width:auto">Другое фото</button>
+    </div>
+    <p class="small muted" style="margin:8px 0 0">«Добавить» — новые зоны, столы и стены к тому, что уже есть. «Заменить» — эта схема вместо
+    всей прежней; столы с открытыми чеками и «С собой» остаются. Передумали — «Отменить импорт» вернёт как было.</p>
+    ${undo}</div>`;
+}
+
+async function hallPhotoPage(file) {
+  const [page] = await menuPhotoPages([file], () => {});
+  if (!page) throw new Error('не нашли картинку или страницу PDF');
+  const photo = `data:image/jpeg;base64,${page.data}`;
+  const img = new Image();
+  await new Promise((ok, bad) => { img.onload = ok; img.onerror = () => bad(new Error('браузер не открыл картинку')); img.src = photo; });
+  return { page, photo, aspect: img.naturalWidth / Math.max(1, img.naturalHeight) };
+}
+
+function bindHallImportBox(tenantId, redraw) {
+  const st = hallImpState.get(tenantId) || {};
+  hallImpState.set(tenantId, st);
+  const set = (patch) => { Object.assign(st, patch); redraw(); };
+  if (!st.loaded) {
+    st.loaded = true;
+    callSaasGateway('hallImport', { tenantId, action: 'status' }).then(({ data }) => set({ undo: data.undo })).catch(() => {});
+  }
+  if ($('f-hall-file')) {
+    $('f-hall-file').onchange = async (e) => {
+      const file = (e.target.files || [])[0];
+      if (!file) return;
+      set({ busy: 'Готовлю снимок…', error: '', result: '' });
+      try {
+        const { page, photo, aspect } = await hallPhotoPage(file);
+        set({ busy: 'Распознаю схему… (до минуты)' });
+        const { data } = await callSaasGateway('hallImport', { tenantId, action: 'recognize', page, aspect });
+        set({ busy: '', plan: data, photo, aspect, zi: 0 });
+      } catch (err) {
+        set({ busy: '', error: `Не получилось распознать схему: ${err?.message || err}` });
+      }
+    };
+  }
+  if (!st.plan) {
+    if ($('f-hall-undo')) $('f-hall-undo').onclick = () => hallUndo(tenantId, st, set);
+    return;
+  }
+  const z = () => st.plan.zones[Math.min(st.zi || 0, st.plan.zones.length - 1)];
+  document.querySelectorAll('.hp-zone-tab').forEach((b) => { b.onclick = () => set({ zi: Number(b.dataset.zi) || 0 }); });
+  if ($('f-hall-zname')) $('f-hall-zname').onchange = (e) => { z().name = e.target.value.trim().slice(0, 30) || z().name; redraw(); };
+  // Правка стола — перерисовываем только схему: список не сворачивается, курсор остаётся.
+  const repaint = () => { const svg = document.querySelector('.hall-preview'); if (svg) svg.outerHTML = hallPlanSvg(z()); };
+  const det = document.querySelector('.hp-tables');
+  if (det) det.ontoggle = () => { st.tablesOpen = det.open; };
+  document.querySelectorAll('.f-hall-tname').forEach((el) => { el.onchange = () => { const t = z().tables[Number(el.dataset.i)]; if (t && el.value.trim()) t.name = el.value.trim().slice(0, 24); repaint(); }; });
+  document.querySelectorAll('.f-hall-tseats').forEach((el) => { el.onchange = () => { const t = z().tables[Number(el.dataset.i)]; if (t) { t.seats = Math.min(40, Math.max(1, Math.round(Number(el.value) || t.seats))); el.value = t.seats; } repaint(); }; });
+  if ($('f-hall-again')) $('f-hall-again').onclick = () => set({ plan: null, photo: null, error: '', result: '' });
+  const apply = async (mode) => {
+    if (mode === 'replace') {
+      const ok = await uiConfirm('Вся прежняя схема зала в кассе будет заменена этой. Столы с открытыми чеками и «С собой» останутся. Вернуть прежнюю можно кнопкой «Отменить импорт».',
+        { title: 'Заменить схему зала?', ok: 'Заменить' });
+      if (!ok) return;
+    }
+    set({ busy: 'Записываю в кассу…', error: '' });
+    try {
+      const { data } = await callSaasGateway('hallImport', { tenantId, action: 'apply', mode, plan: { zones: st.plan.zones } });
+      const parts = [`столов — ${data.tables}`, `стен — ${data.walls}`, `подписей — ${data.labels}`];
+      const extra = data.keptBusy ? ` Столы с открытыми чеками (${data.keptBusy}) оставлены как были.` : '';
+      const status = await callSaasGateway('hallImport', { tenantId, action: 'status' }).then((r) => r.data.undo).catch(() => null);
+      set({ busy: '', plan: null, photo: null, undo: status, result: `Готово: ${parts.join(', ')}.${extra} Откройте кассу — Админ → «Схема зала» и поправьте расстановку.` });
+      toast('Схема зала записана в кассу');
+    } catch (err) {
+      set({ busy: '', error: err?.message || 'Не удалось записать схему' });
+    }
+  };
+  if ($('f-hall-add')) $('f-hall-add').onclick = () => apply('add');
+  if ($('f-hall-replace')) $('f-hall-replace').onclick = () => apply('replace');
+  if ($('f-hall-undo')) $('f-hall-undo').onclick = () => hallUndo(tenantId, st, set);
+}
+
+async function hallUndo(tenantId, st, set) {
+  const ok = await uiConfirm('Вернуть схему зала, какой она была до последнего импорта? Столы с открытыми чеками останутся.', { title: 'Отменить импорт схемы?', ok: 'Вернуть' });
+  if (!ok) return;
+  try {
+    const { data } = await callSaasGateway('hallImport', { tenantId, action: 'undo' });
+    set({ undo: null, plan: null, error: '', result: `Схема возвращена.${data.keptBusy ? ` Столы с открытыми чеками (${data.keptBusy}) остались.` : ''}` });
+  } catch (err) {
+    set({ error: err?.message || 'Не удалось отменить' });
+  }
+}
+
 // ---------- Вебхуки (saas-gateway/webhooks.js): события заведения на адрес владельца
 const webhooksCache = new Map(); // tenantId → { hooks, events, max } | { error } | null
 const webhookFresh = new Map(); // tenantId → { id, secret } — секрет показываем один раз
@@ -4321,7 +4497,7 @@ function screenLanding() {
           <li><i>1</i><b>Регистрация по&nbsp;почте</b><span>Две минуты: почта и&nbsp;название заведения. Пробный период
             сразу, карта не&nbsp;нужна.</span></li>
           <li><i>2</i><b>Перенос меню и&nbsp;склада</b><span>Загрузите выгрузку Excel или CSV из&nbsp;прежней кассы, а&nbsp;бумажное
-            меню&nbsp;— фото. Не&nbsp;хотите разбираться&nbsp;— пришлите файл, и&nbsp;мы перенесём меню, склад, техкарты
+            меню и&nbsp;план зала&nbsp;— фото. Не&nbsp;хотите разбираться&nbsp;— пришлите файл, и&nbsp;мы перенесём меню, склад, техкарты
             и&nbsp;сотрудников бесплатно.</span></li>
           <li><i>3</i><b>Касса на&nbsp;своём устройстве</b><span>Скачайте кассу на&nbsp;планшет или компьютер и&nbsp;подключите
             по&nbsp;коду из&nbsp;кабинета. Сотрудники входят по&nbsp;PIN, новичка можно посадить в&nbsp;учебный режим.</span></li>
@@ -7793,7 +7969,8 @@ function watchDashboardData(tenantId) {
               <input type="file" id="f-imp-ai" multiple accept="image/jpeg,image/png,image/webp,image/heic,image/*,application/pdf,.pdf"></label>
             ${imp.aiBusy ? `<p class="small muted">${esc(imp.aiBusy)}</p>` : ''}
             ${imp.aiError ? `<p class="small" style="color:var(--danger)">${esc(imp.aiError)}</p>` : ''}
-          </div>${history}`;
+          </div>
+          ${hallImportBoxHtml(tenantId)}${history}`;
       }
       if (imp.step === 'queue') {
         // Несколько файлов или листов: что где узнали — проверить и начать по очереди.
@@ -8255,6 +8432,7 @@ function watchDashboardData(tenantId) {
           draw();
         };
       }
+      if ($('f-hall-file') || $('f-hall-add')) bindHallImportBox(tenantId, draw);
       if ($('f-imp-ai')) {
         $('f-imp-ai').onchange = async (e) => {
           const files = [...(e.target.files || [])].slice(0, MENU_AI_PAGES);

@@ -1852,3 +1852,26 @@ html.zd-open { overflow: hidden; }
   body.l-sticky-shown .sc-root { bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
 }
 @media (prefers-reduced-motion: reduce) { .sc-root { transition: none; } }
+
+/* ---- «Перенос данных» → схема зала по фото: фото и предпросмотр рядом ---- */
+.hp-zones { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.hp-zone-tab { width: auto; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border-strong); background: transparent; color: var(--muted); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+.hp-zone-tab.on { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+.hp-grid { display: grid; gap: 12px; grid-template-columns: 1fr; margin-bottom: 12px; }
+@media (min-width: 760px) { .hp-grid { grid-template-columns: 1fr 1fr; } }
+.hp-fig { margin: 0; display: grid; gap: 6px; min-width: 0; }
+.hp-fig img, .hall-preview { width: 100%; max-height: 420px; object-fit: contain; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.hall-preview { display: block; height: 420px; }
+.hall-preview .hp-room { fill: var(--surface); stroke: none; }
+.hall-preview .hp-wall { fill: none; stroke: var(--text); stroke-width: 10; stroke-linecap: round; stroke-linejoin: round; opacity: .75; }
+.hall-preview .hp-table { fill: var(--accent-soft); stroke: var(--primary); stroke-width: 4; }
+.hall-preview .hp-cut { fill: var(--surface); stroke: none; }
+.hall-preview .hp-name { fill: var(--text); font: 600 24px var(--sans, sans-serif); text-anchor: middle; dominant-baseline: middle; }
+.hall-preview .hp-seats { fill: var(--muted); font: 18px var(--sans, sans-serif); text-anchor: middle; dominant-baseline: middle; }
+.hall-preview .hp-label { fill: var(--muted); font: 600 20px var(--sans, sans-serif); letter-spacing: 3px; text-anchor: middle; dominant-baseline: middle; }
+.hp-tables summary { cursor: pointer; color: var(--primary); font-weight: 600; margin: 4px 0 8px; }
+.hp-trows { display: grid; gap: 6px; grid-template-columns: 1fr; max-height: 320px; overflow: auto; }
+@media (min-width: 760px) { .hp-trows { grid-template-columns: 1fr 1fr; } }
+.hp-trow { display: flex; gap: 8px; align-items: center; }
+.hp-trow .f-hall-tname { flex: 1; min-width: 0; }
+.hp-trow .f-hall-tseats { width: 72px; flex: none; }

@@ -63,6 +63,7 @@ const { createOpenApi } = require("./open-api");
 const { createWebhooks } = require("./webhooks");
 const { createReviews } = require("./reviews");
 const { createFoodcost } = require("./foodcost");
+const { createHallImport } = require("./hall-import");
 const { createBoard } = require("./board");
 const { createKiosk } = require("./kiosk");
 const { createGuestMarketing, rootKeyOf: guestRootKey } = require("./guest-marketing");
@@ -10299,6 +10300,13 @@ const foodcost = createFoodcost({
   ownerAlert: (tid, text) => telegram.ownerAlert(tid, text),
 });
 
+// Схема зала по фото: ИИ заведения → столы, стены, подписи кассы (hall-import.js).
+// Лимит снимков — общий с распознаванием меню.
+const hallImport = createHallImport({
+  db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole,
+  aiVendor: (tid) => venueAiVendor(tid), aiComplete: (v, o) => venueAiComplete(v, o), extractJson, limiter: menuAiLimiter,
+});
+
 // Киоск самообслуживания: заказ на планшете, оплата на кассе (kiosk.js, kiosk-web/).
 const kiosk = createKiosk({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole });
 
@@ -10614,6 +10622,7 @@ const ROUTES = {
   "/webhooks": (req, res) => webhooks.handle(req, res),
   "/guestReviews": (req, res) => reviews.handle(req, res),
   "/foodcost": (req, res) => foodcost.handle(req, res),
+  "/hallImport": (req, res) => hallImport.handle(req, res),
   "/boardLink": (req, res) => board.handleLink(req, res),
   "/kioskLink": (req, res) => kiosk.handleLink(req, res),
   "/guestAdsConsent": (req, res) => guestMarketing.handleConsent(req, res),

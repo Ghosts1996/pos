@@ -1,0 +1,129 @@
+{
+ "zones": [
+  {
+   "name": "Основной зал",
+   "tables": [
+    {
+     "name": "Стол 1",
+     "seats": 4,
+     "shape": "rect",
+     "rotation": 0,
+     "x": 0.3772,
+     "y": 1.1642
+    },
+    {
+     "name": "Стол 5",
+     "seats": 4,
+     "shape": "circle",
+     "rotation": 0,
+     "x": 0.3772,
+     "y": 1.4067
+    },
+    {
+     "name": "Стол 2",
+     "seats": 4,
+     "shape": "rect",
+     "rotation": 0,
+     "x": 0.6094,
+     "y": 1.1642
+    },
+    {
+     "name": "Стол 6",
+     "seats": 4,
+     "shape": "circle",
+     "rotation": 0,
+     "x": 0.6094,
+     "y": 1.4067
+    },
+    {
+     "name": "Стол 3",
+     "seats": 4,
+     "shape": "rect",
+     "rotation": 0,
+     "x": 0.8705,
+     "y": 1.1642
+    },
+    {
+     "name": "Стол 7",
+     "seats": 4,
+     "shape": "circle",
+     "rotation": 0,
+     "x": 0.8705,
+     "y": 1.4067
+    },
+    {
+     "name": "Стол 4",
+     "seats": 4,
+     "shape": "rect",
+     "rotation": 0,
+     "x": 1.1027,
+     "y": 1.1642
+    },
+    {
+     "name": "Стол 8",
+     "seats": 4,
+     "shape": "circle",
+     "rotation": 0,
+     "x": 1.1027,
+     "y": 1.4067
+    },
+    {
+     "name": "Бар",
+     "seats": 6,
+     "shape": "bar",
+     "rotation": 0,
+     "x": 1.2093,
+     "y": 0.3881
+    },
+    {
+     "name": "VIP",
+     "seats": 6,
+     "shape": "corner",
+     "rotation": 0,
+     "x": 2.4621,
+     "y": 0.5417
+    },
+    {
+     "name": "Стол 9",
+     "seats": 6,
+     "shape": "long",
+     "rotation": 1,
+     "x": 2.3214,
+     "y": 2.4676
+    },
+    {
+     "name": "Стол 10",
+     "seats": 6,
+     "shape": "oval",
+     "rotation": 0,
+     "x": 2.3636,
+     "y": 2.0858
+    }
+   ],
+   "walls": [
+    {
+     "points": [
+      104,
+      104,
+      2392,
+      104,
+      2392,
+      1563,
+      104,
+      1563
+     ],
+     "closed": true
+    }
+   ],
+   "labels": [
+    {
+     "text": "Вход",
+     "x": 1248,
+     "y": 1546.4
+    }
+   ],
+   "moved": 1,
+   "dropped": 0
+  }
+ ]
+}
