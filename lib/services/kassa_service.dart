@@ -310,6 +310,8 @@ class AtolCloudKassaService implements KassaService {
           'inn': companyInn,
           'payment_address': companyPaymentAddress,
         },
+        // Кассир (тег 1021): кто провёл расчёт.
+        if (receipt.cashier.isNotEmpty) 'cashier': receipt.cashier.length > 64 ? receipt.cashier.substring(0, 64) : receipt.cashier,
         'items': receipt.items.map((i) => _v5 ? _itemV5(i, receipt) : _itemV4(i, receipt)).toList(),
         'payments': receipt.payments
             .map((p) => {'type': atolPaymentTypeCode(p.type), 'sum': roundKopecks(p.amount)})

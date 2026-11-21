@@ -869,7 +869,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
           ? line.price
           : double.parse((line.price * discountK).toStringAsFixed(2));
 
-      final items = <FiscalReceiptItem>[];
+      var items = <FiscalReceiptItem>[];
+      // Можно ли дать скидку на строку (не кальяны и не табак — 15-ФЗ):
+      // параллельно [items], для бонусов и «за счёт заведения».
+      final discountable = <bool>[];
       for (final line in widget.session.orderItems) {
         // Коды позиции берутся из общего запаса: у одной позиции может быть
         // несколько строк (разные модификаторы), один код — в один чек.
@@ -890,6 +893,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
             markingCode: codes[i].code.raw,
             markingPermit: codes[i].permit,
           ));
+          discountable.add(!PromoPolicy.restricted(line));
         }
         // Остаток количества этой позиции (не покрытый сканированием —
         // например, официант выбрал позицию из меню тапом, а не сканером)
@@ -907,12 +911,25 @@ class _PaymentScreenState extends State<PaymentScreen> {
             vat: vatOf(line),
             paymentObject: subjectOf(line),
           ));
+          discountable.add(!PromoPolicy.restricted(line));
         }
+      }
+
+      // SaaS: бонусы своей программы и «за счёт заведения» — это скидка в
+      // цене позиций (54-ФЗ), а не оплата «предоплатой» или «встречным
+      // предоставлением». Что не поместилось в разрешённые позиции — как раньше.
+      var compAsPayment = _comp.parse();
+      var bonusAsPayment = _bonusPaid;
+      if (kSaasMode && !_closeWithoutPayment) {
+        final spread = spreadDiscount(items, discountable, _bonusPaid + _comp.parse());
+        items = spread.items;
+        bonusAsPayment = spread.rest > _comp.parse() ? spread.rest - _comp.parse() : 0;
+        compAsPayment = spread.rest > _comp.parse() ? _comp.parse() : spread.rest;
       }
 
       // Итог платежей равен итогу позиций. Бонусы и сертификат — деньги,
       // полученные раньше, по ФФД это «предоплата» (тег 1215).
-      final prepaid = _bonusPaid;
+      final prepaid = bonusAsPayment;
       final billTotal = widget.session.totalWithDiscount;
       final payments = <FiscalPayment>[
         if (_closeWithoutPayment)
@@ -925,7 +942,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
           // Агрегатор, если чек по договору пробивает заведение: гость
           // заплатил безналично в приложении агрегатора.
           if (_aggAmount > 0.004) FiscalPayment('card', _aggAmount),
-          if (_comp.parse() > 0) FiscalPayment('other', _comp.parse()),
+          if (compAsPayment > 0) FiscalPayment('other', compAsPayment),
           if (prepaid > 0) FiscalPayment('prepayment', prepaid),
         ],
       ];
@@ -937,6 +954,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
         items: items,
         payments: balanced.isEmpty ? [FiscalPayment('cash', draft.total)] : balanced,
         buyerContact: _contactCtrl.text.trim(),
+        // Кассир (тег 1021) — сотрудник чека; не «Приложение гостя» и не «Киоск».
+        cashier: kSaasMode && !const {'Приложение гостя', 'Киоск'}.contains(widget.session.employeeName.trim())
+            ? widget.session.employeeName.trim()
+            : '',
       );
       final result = await FiscalQueue.send(receipt);
       if (result.success || result.queued) {

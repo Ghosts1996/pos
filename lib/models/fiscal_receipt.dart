@@ -198,6 +198,9 @@ class FiscalReceipt {
   /// Чек «возврат прихода» (признак расчёта 2) — при возврате оплаченного чека.
   final bool refund;
 
+  /// Кассир (тег 1021) — кто провёл расчёт. Пусто — не передаётся.
+  final String cashier;
+
   /// Способ расчёта (тег 1214) у всех позиций: false — «полный расчёт» (4),
   /// true — «предоплата 100%» (1): гость оплатил заказ заранее (доставка,
   /// оплата онлайн), товар отдадут позже. При вручении пробивается второй
@@ -211,6 +214,7 @@ class FiscalReceipt {
     this.buyerContact = '',
     this.refund = false,
     this.fullPrepayment = false,
+    this.cashier = '',
   });
 
   /// Возврат этого чека: те же позиции и формы оплаты. Свой номер — по
@@ -222,6 +226,7 @@ class FiscalReceipt {
         buyerContact: buyerContact,
         refund: true,
         fullPrepayment: fullPrepayment,
+        cashier: cashier,
       );
 
   double get total => (items.fold<double>(0, (sum, i) => sum + i.sum) * 100).roundToDouble() / 100;
@@ -235,6 +240,7 @@ class FiscalReceipt {
         'buyerContact': buyerContact,
         if (refund) 'refund': true,
         if (fullPrepayment) 'fullPrepayment': true,
+        if (cashier.isNotEmpty) 'cashier': cashier,
       };
 
   factory FiscalReceipt.fromJson(Map<String, dynamic> j) => FiscalReceipt(
@@ -250,7 +256,68 @@ class FiscalReceipt {
         buyerContact: j['buyerContact'] as String? ?? '',
         refund: j['refund'] == true,
         fullPrepayment: j['fullPrepayment'] == true,
+        cashier: j['cashier'] as String? ?? '',
       );
+}
+
+/// Скидка суммой (бонусы своей программы лояльности, «за счёт заведения»)
+/// в ценах позиций чека. По 54-ФЗ бонусы собственной программы и подарок от
+/// заведения — это скидка: в чеке цена уже со скидкой, а не «оплата
+/// предоплатой» (тег 1215 — только деньги, полученные раньше: аванс,
+/// подарочный сертификат) и не «встречное предоставление» (тег 1217).
+///
+/// Скидка делится по позициям, где она разрешена ([eligible]: не кальяны и
+/// не табак — 15-ФЗ), пропорционально их сумме; копейки — в самую большую
+/// строку. Если цена строки на штуку не делится до копейки, строка
+/// делится на две: (n−1) штук по одной цене и 1 штука с остатком — так
+/// цена × количество всегда равна сумме строки. Что не поместилось
+/// (скидка больше суммы разрешённых позиций) — в [rest].
+({List<FiscalReceiptItem> items, double rest}) spreadDiscount(
+    List<FiscalReceiptItem> items, List<bool> eligible, double discount) {
+  int k(double v) => (v * 100).round();
+  var left = k(discount);
+  if (left <= 0) return (items: items, rest: 0);
+  final idx = [for (var i = 0; i < items.length; i++) if (i < eligible.length && eligible[i] && k(items[i].sum) > 0) i];
+  final base = idx.fold<int>(0, (a, i) => a + k(items[i].sum));
+  if (base <= 0) return (items: items, rest: discount);
+  final take = left > base ? base : left;
+  final cut = <int, int>{};
+  var given = 0;
+  for (final i in idx) {
+    final c = (take * k(items[i].sum) / base).floor();
+    cut[i] = c;
+    given += c;
+  }
+  // Копейки от округления — в самую большую строку (её сумма не уйдёт в минус).
+  if (given < take) {
+    final big = idx.reduce((a, b) => k(items[a].sum) - cut[a]! >= k(items[b].sum) - cut[b]! ? a : b);
+    cut[big] = cut[big]! + (take - given);
+  }
+  left -= take;
+  final out = <FiscalReceiptItem>[];
+  for (var i = 0; i < items.length; i++) {
+    final it = items[i];
+    final c = cut[i] ?? 0;
+    if (c == 0) {
+      out.add(it);
+      continue;
+    }
+    final sum = k(it.sum) - c;
+    FiscalReceiptItem copy(double price, double qty) => FiscalReceiptItem(
+        name: it.name, price: price, quantity: qty, vat: it.vat, paymentObject: it.paymentObject,
+        markingCode: it.markingCode, markingPermit: it.markingPermit);
+    final q = it.quantity;
+    final whole = q == q.roundToDouble() && q >= 1;
+    if (!whole || sum % q.round() == 0) {
+      out.add(copy(whole ? sum / q.round() / 100 : sum / 100 / q, q));
+      continue;
+    }
+    final n = q.round();
+    final unit = sum ~/ n; // копеек за штуку у n−1 штук
+    out.add(copy(unit / 100, (n - 1).toDouble()));
+    out.add(copy((sum - unit * (n - 1)) / 100, 1));
+  }
+  return (items: out, rest: left / 100);
 }
 
 /// Подгоняет платежи под итог чека: касса отклоняет чек, если сумма

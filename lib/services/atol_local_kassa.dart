@@ -122,8 +122,9 @@ class AtolLocalKassaService implements KassaService {
     return {
       'type': receipt.refund ? 'sellReturn' : 'sell',
       'taxationType': taxSystem.name,
-      if (cashierName.isNotEmpty)
-        'operator': {'name': cashierName, if (cashierInn.isNotEmpty) 'vatin': cashierInn},
+      // Кассир из настроек кассы, иначе — кто провёл расчёт (тег 1021).
+      if (cashierName.isNotEmpty || receipt.cashier.isNotEmpty)
+        'operator': {'name': cashierName.isNotEmpty ? cashierName : receipt.cashier, if (cashierInn.isNotEmpty && cashierName.isNotEmpty) 'vatin': cashierInn},
       if (emailOrPhone != null) 'clientInfo': {'emailOrPhone': emailOrPhone},
       'items': receipt.items.map((i) => _item(i, receipt.fullPrepayment)).toList(),
       'payments': receipt.payments
