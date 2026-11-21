@@ -840,19 +840,50 @@ function followTablePoint(p) {
   const tid = (p && p.activeTenantId) || '';
   if (!state.chainPicker || !sid || !tid || tid === state.tenantId) return false;
   if (!(state.chainPoints && state.chainPoints.has(tid))) return false;
+  // Гость как раз садится за стол по QR — не уводим его в другую точку.
+  if (location.hash.startsWith('#/t/')) return false;
   try {
     if (sessionStorage.getItem('zalStayPoint') === sid) return false;
     // Один переход на чек: если точка почему-то не откроется, не крутимся.
     if (sessionStorage.getItem('zalFollowedPoint') === sid) return false;
-    sessionStorage.setItem('zalFollowedPoint', sid);
-    const slug = (location.hostname.split('.')[0] || '').trim();
-    localStorage.setItem('chainLocation:' + slug, tid);
   } catch (_) {
     return false;
   }
-  location.hash = '#/table';
+  if (state.followChecking === sid) return false;
+  state.followChecking = sid;
+  // Переходим, только если тот счёт правда ещё открыт: старая отметка в
+  // профиле (счёт давно закрыт) не должна уводить гостя из выбранной точки.
+  getDoc(doc(state.db, 'tenants', tid, 'sessions', sid)).then((d) => {
+    if (!d.exists() || d.data().status !== 'active') return;
+    if (location.hash.startsWith('#/t/')) return;
+    try { sessionStorage.setItem('zalFollowedPoint', sid); } catch (_) {}
+    switchPoint(tid, '#/table');
+  }).catch(() => {});
+  return false;
+}
+
+/// Адрес сети: открыть другую точку (её запоминаем как выбранную) на нужном экране.
+function switchPoint(tid, hash) {
+  try {
+    const slug = (location.hostname.split('.')[0] || '').trim();
+    localStorage.setItem('chainLocation:' + slug, tid);
+  } catch (_) {}
+  location.hash = hash;
   location.reload();
-  return true;
+}
+
+/// Адрес сети: в какой ещё точке есть стол с таким номером ('' — ни в какой).
+/// Нужно, когда код со стола ведёт на адрес сети, а выбрана другая точка.
+async function findTablePoint(tableId) {
+  if (!state.chainPicker || !state.chainPoints) return '';
+  for (const tid of state.chainPoints) {
+    if (tid === state.tenantId) continue;
+    try {
+      const t = await getDoc(doc(state.db, 'tenants', tid, 'tables', tableId));
+      if (t.exists()) return tid;
+    } catch (_) {}
+  }
+  return '';
 }
 
 function watchVenue() {
@@ -1908,7 +1939,18 @@ async function bindToTable(tableId, tableKey = '') {
     try { sessionStorage.removeItem(BIND_AFTER_PHONE); } catch (_) {}
 
     const t = await getDoc(doc(state.root, 'tables', tableId));
-    if (!t.exists()) return failBind('Такого стола нет. Отсканируйте код ещё раз.');
+    if (!t.exists()) {
+      // Адрес сети, а стол — в другой точке (выбрана не та, или код ведёт на
+      // адрес сети): открываем ту точку и садим гостя за стол там.
+      const other = await findTablePoint(tableId);
+      let hopped = '';
+      try { hopped = sessionStorage.getItem('zalTableHop') || ''; } catch (_) {}
+      if (other && hopped !== tableId + '@' + other) {
+        try { sessionStorage.setItem('zalTableHop', tableId + '@' + other); } catch (_) {}
+        return switchPoint(other, '#/t/' + encodeURIComponent(tableId) + (tableKey ? '/' + encodeURIComponent(tableKey) : ''));
+      }
+      return failBind('Такого стола нет. Отсканируйте код ещё раз.');
+    }
     const data = t.data();
     const checks = (data.openChecks || []).filter((c) => c && c.id);
     const ids = data.activeSessionIds || [];
@@ -5103,15 +5145,7 @@ async function startScanner() {
           // Адрес сети, а код со стола другой точки — открываем ту точку:
           // иначе стол искался бы не там («Такого стола нет»).
           const other = pointOfQr(raw);
-          if (other) {
-            try {
-              const slug = (location.hostname.split('.')[0] || '').trim();
-              localStorage.setItem('chainLocation:' + slug, other);
-            } catch (_) {}
-            location.hash = target;
-            location.reload();
-            return;
-          }
+          if (other) return switchPoint(other, target);
           location.hash = target;
           return;
         }
