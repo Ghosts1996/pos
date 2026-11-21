@@ -63,6 +63,7 @@ const { createOpenApi } = require("./open-api");
 const { createWebhooks } = require("./webhooks");
 const { createReviews } = require("./reviews");
 const { createFoodcost } = require("./foodcost");
+const { createStaffSchedule } = require("./staff-schedule");
 const { createHallImport } = require("./hall-import");
 const { createMercury } = require("./mercury");
 const { createBoard } = require("./board");
@@ -136,7 +137,7 @@ const TENANT_SUBCOLLECTIONS = [
   "marking_codes_sold", "menuCategories", "menuItems", "meta", "payrollAdjustments", "phoneIndex",
   "printJobs", "pushQueue", "referralCodes", "reservations", "reservationSlots",
   "reviews", "sessionClaims", "sessions", "settings", "shifts", "staffNotes",
-  "staffShifts", "stories", "tableKeys", "tables", "tips", "usage",
+  "staffSchedule", "staffShifts", "stories", "tableKeys", "tables", "tips", "usage",
   "waiterCalls", "waitlist", "guestPayments", "kassaPayments", "contactReceipts",
 ];
 
@@ -10516,6 +10517,14 @@ const foodcost = createFoodcost({
   db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole,
   ownerAlert: (tid, text) => telegram.ownerAlert(tid, text),
 });
+
+// График смен: сигнал владельцу, если сотрудник не вышел по графику (staff-schedule.js).
+const staffSchedule = createStaffSchedule({ db, telegram: { ownerAlert: (tid, text) => telegram.ownerAlert(tid, text) } });
+if (require.main === module) {
+  const tickSchedule = () => staffSchedule.runAll().catch((e) => console.error("saas-gateway: график смен:", e.message || e));
+  setTimeout(tickSchedule, 3 * 60 * 1000).unref();
+  setInterval(tickSchedule, 5 * 60 * 1000).unref();
+}
 
 // Схема зала по фото: ИИ заведения → столы, стены, подписи кассы (hall-import.js).
 // Лимит снимков — общий с распознаванием меню.

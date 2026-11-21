@@ -1941,3 +1941,22 @@ html.zd-open { overflow: hidden; }
 /* Предоплата брони: три поля в ряд на широком экране, столбиком — на телефоне. */
 .prepay-grid { display: grid; grid-template-columns: 1fr; gap: 0 12px; margin-top: 10px; }
 @media (min-width: 640px) { .prepay-grid { grid-template-columns: repeat(3, 1fr); } }
+
+/* График смен: неделя по сотрудникам, на телефоне — прокрутка вбок внутри карточки. */
+.sched-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.sched-head b { flex: 1 1 auto; text-align: center; }
+.sched-scroll { overflow-x: auto; margin: 0 -4px; padding: 0 4px; }
+.sched-table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 13px; }
+.sched-table th { font-weight: 600; color: var(--text-muted, #8a8a8a); padding: 6px 4px; text-align: center; font-size: 12px; }
+.sched-table th span { font-weight: 400; }
+.sched-table th.today, .sched-table td.today { background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.sched-table td { border-top: 1px solid var(--border); padding: 6px 4px; vertical-align: top; text-align: center; }
+.sched-table td.sched-name { text-align: left; font-weight: 600; white-space: nowrap; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+.sched-cell { width: 100%; min-width: 64px; margin: 0; padding: 6px 4px; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; }
+.sched-cell.bad { border-color: var(--danger); }
+.sched-fact { font-size: 11px; margin-top: 3px; line-height: 1.2; }
+.sched-fact.ok { color: var(--success, #22a06b); }
+.sched-fact.bad { color: var(--danger); font-weight: 600; }
+.sched-fact.warn { color: var(--warning, #c98a1b); }
+.sched-tot { font-weight: 600; white-space: nowrap; }
+.sched-tot span { font-weight: 400; color: var(--text-muted, #8a8a8a); }

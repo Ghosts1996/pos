@@ -1208,6 +1208,15 @@ service cloud.firestore {
       allow update: if isStaff(tenantId) && staffShiftUpdateOk(request.resource.data, resource.data);
       allow delete: if false;
     }
+    // График смен (кабинет · «Команда»): видят все сотрудники, правят
+    // владелец, администратор и управляющий. День — документ ГГГГ-ММ-ДД.
+    match /tenants/{tenantId}/staffSchedule/{day} {
+      allow read: if isStaff(tenantId);
+      allow write: if hasRole(tenantId, ['owner', 'admin', 'manager']) &&
+        day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        request.resource.data.get('shifts', {}) is map &&
+        request.resource.data.get('shifts', {}).size() <= 200;
+    }
     // Зарплата: премии, штрафы, авансы и выплаты (lib/models/payroll_adjustment.dart).
     // Запись не правится и не удаляется — ошибочную отменяют флагом cancelled.
     match /tenants/{tenantId}/payrollAdjustments/{doc} {

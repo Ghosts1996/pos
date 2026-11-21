@@ -21,6 +21,7 @@ import {
 import { savingsEstimate, planTableRows } from './savings.js';
 import { buildAccountingSheets, buildXlsx } from './accounting-export.js';
 import { menuAbc, abcSummary } from './menu-abc.js';
+import { dayKey, weekStart, weekDays, parseShift, planVsFact, weekTotals } from './staff-schedule.js';
 import { A4_MM, buildImagePdf, renderTentPage, tableTentUrl, tentTables } from './table-tents.js';
 import { STOCK_ZONES, zoneBalances, hasZones, planTransfer, zoneLabel } from './stock-zones.js';
 
@@ -7669,6 +7670,9 @@ function watchDashboardData(tenantId) {
         ` : ''}
       </div>
 
+      <h2>График смен</h2>
+      <div class="card sched-card" id="f-sched"><div class="small muted">Загрузка графика…</div></div>
+
       <h2>Сотрудники кассы (вход по PIN)</h2>
       <div class="card">
         <p class="small muted">Отдельно от доступа к ЭТОЙ веб-панели выше:
@@ -8428,6 +8432,7 @@ function watchDashboardData(tenantId) {
     }
     if (activeTab === 'branding') bindBookingLinkCard(tenant, tenantId, buttonColor);
     if (activeTab === 'branding') bindBookingPrepayCard(tenantId);
+    if (activeTab === 'team') bindStaffSchedule(tenantId, employees || [], canManage, (e) => empName(e) || (rfMode() ? '…' : ''));
     if (activeTab === 'guests') bindGuestsTab(tenantId, draw);
     if (activeTab === 'delivery') bindDeliveryTab(tenantId, draw);
     if (activeTab === 'stock') {
@@ -10300,6 +10305,124 @@ function bindBookingPrepayCard(tenantId) {
       toast(`Не сохранилось: ${e?.message || e}`);
     } finally {
       btn.disabled = false;
+    }
+  };
+}
+
+/** График смен: неделя по сотрудникам, ввод «10-22», рядом — факт по
+ *  отметкам на кассе (опоздал, не вышел, ушёл раньше). Неделю помним. */
+const schedState = { week: 0 };
+async function bindStaffSchedule(tenantId, employees, canManage, nameOf) {
+  const box = $('f-sched');
+  if (!box) return;
+  const monday = weekStart(new Date(), schedState.week);
+  const days = weekDays(monday);
+  const keys = days.map(dayKey);
+  const col = (k) => doc(state.db, 'tenants', tenantId, 'staffSchedule', k);
+  let plan = {};
+  let facts = [];
+  try {
+    const snaps = await Promise.all(keys.map((k) => getDoc(col(k))));
+    snaps.forEach((d, i) => { plan[keys[i]] = (d.exists() && d.data().shifts) || {}; });
+    const from = Timestamp.fromDate(new Date(monday.getTime() - 12 * 3600e3));
+    const to = Timestamp.fromDate(new Date(monday.getTime() + 8 * 86400e3));
+    const q = await getDocs(query(collection(state.db, 'tenants', tenantId, 'staffShifts'),
+      where('startedAt', '>=', from), where('startedAt', '<', to)));
+    facts = q.docs.map((d) => d.data()).filter((f) => f.startedAt).map((f) => ({
+      emp: f.employeeId, start: f.startedAt.toDate(), end: f.endedAt ? f.endedAt.toDate() : null,
+    }));
+  } catch (e) {
+    box.innerHTML = `<div class="small" style="color:var(--danger)">Не загрузилось: ${esc(e?.message || e)}</div>`;
+    return;
+  }
+  if ($('f-sched') !== box) return;
+  const staff = employees.filter((e) => e.active !== false).slice().sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+  const today = dayKey(new Date());
+  const WD = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  const dm = (d) => `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const factLine = (emp, d, raw) => {
+    if (!raw) return '';
+    const r = planVsFact(d, raw, facts.filter((f) => f.emp === emp));
+    if (!r || r.status === 'future') return '';
+    const t = {
+      ok: ['ok', `✓ ${r.fact}`], working: ['ok', `на смене с ${r.fact.split('–')[0]}`],
+      late: ['bad', `опоздал на ${r.lateMin} мин`], absent: ['bad', 'не вышел'], early: ['warn', `ушёл раньше на ${r.earlyMin} мин`],
+    }[r.status];
+    return t ? `<div class="sched-fact ${t[0]}" title="${esc(r.fact ? 'Факт: ' + r.fact : '')}">${esc(t[1])}</div>` : '';
+  };
+  const totHtml = (tot) => (tot.shifts ? `${tot.shifts} см.<br><span>${tot.hours} ч</span>` : '—');
+  const range = `${dm(days[0])} — ${dm(days[6])}`;
+  box.innerHTML = `
+    <div class="sched-head">
+      <button class="btn btn-ghost" id="f-sched-prev" style="width:auto" aria-label="Прошлая неделя">←</button>
+      <b>${esc(range)}${schedState.week === 0 ? ' · эта неделя' : ''}</b>
+      <button class="btn btn-ghost" id="f-sched-next" style="width:auto" aria-label="Следующая неделя">→</button>
+      ${canManage ? '<button class="btn btn-secondary" id="f-sched-copy" style="width:auto">Как на прошлой неделе</button>' : ''}
+    </div>
+    <p class="small muted">Впишите время смены: «10-22», «18-02» (через полночь). Пусто — выходной.
+    Под временем — как было на деле по отметкам «Начать смену» на кассе. Не вышел по графику — бот сразу напишет вам.</p>
+    ${staff.length === 0 ? '<div class="small muted">Сначала добавьте сотрудников кассы ниже.</div>' : `
+    <div class="sched-scroll"><table class="sched-table">
+      <thead><tr><th>Сотрудник</th>${days.map((d, i) => `<th class="${keys[i] === today ? 'today' : ''}">${WD[i]}<br><span>${dm(d)}</span></th>`).join('')}<th>Итого</th></tr></thead>
+      <tbody>${staff.map((e) => {
+        const tot = weekTotals(days, plan, e.id);
+        return `<tr><td class="sched-name">${esc(nameOf(e) || '—')}</td>${days.map((d, i) => {
+          const raw = (plan[keys[i]] || {})[e.id] || '';
+          const shown = (parseShift(raw) || {}).text || raw;
+          return `<td class="${keys[i] === today ? 'today' : ''}">
+            <input class="sched-cell" data-emp="${esc(e.id)}" data-day="${keys[i]}" value="${esc(shown)}" placeholder="—"
+              inputmode="text" aria-label="${esc(nameOf(e))}, ${WD[i]} ${dm(d)}" ${canManage ? '' : 'disabled'}>
+            ${factLine(e.id, d, raw)}</td>`;
+        }).join('')}<td class="sched-tot" data-tot="${esc(e.id)}">${totHtml(tot)}</td></tr>`;
+      }).join('')}</tbody>
+    </table></div>`}`;
+  $('f-sched-prev').onclick = () => { schedState.week--; bindStaffSchedule(tenantId, employees, canManage, nameOf); };
+  $('f-sched-next').onclick = () => { schedState.week++; bindStaffSchedule(tenantId, employees, canManage, nameOf); };
+  if (!canManage) return;
+  box.querySelectorAll('.sched-cell').forEach((el) => {
+    el.onchange = async () => {
+      const raw = el.value.trim();
+      const parsed = raw ? parseShift(raw) : null;
+      if (raw && !parsed) {
+        el.classList.add('bad');
+        toast('Не понял время. Пишите так: 10-22 или 9:30-18');
+        return;
+      }
+      el.classList.remove('bad');
+      const text = parsed ? parsed.text : '';
+      el.value = text;
+      try {
+        await setDoc(col(el.dataset.day), { shifts: { [el.dataset.emp]: text || deleteField() } }, { merge: true });
+        plan[el.dataset.day] = { ...(plan[el.dataset.day] || {}), [el.dataset.emp]: text };
+        const td = el.parentElement;
+        const fact = td && td.querySelector('.sched-fact');
+        if (fact) fact.remove();
+        const day = days[keys.indexOf(el.dataset.day)];
+        if (td && day) td.insertAdjacentHTML('beforeend', factLine(el.dataset.emp, day, text));
+        const totEl = [...box.querySelectorAll('.sched-tot')].find((x) => x.dataset.tot === el.dataset.emp);
+        if (totEl) totEl.innerHTML = totHtml(weekTotals(days, plan, el.dataset.emp));
+      } catch (e) {
+        toast(`Не сохранилось: ${e?.message || e}`);
+      }
+    };
+  });
+  const copy = $('f-sched-copy');
+  if (copy) copy.onclick = async () => {
+    const prevDays = weekDays(weekStart(new Date(), schedState.week - 1)).map(dayKey);
+    copy.disabled = true;
+    try {
+      const prev = await Promise.all(prevDays.map((k) => getDoc(col(k))));
+      const hasAny = prev.some((d) => d.exists() && Object.keys(d.data().shifts || {}).length);
+      if (!hasAny) { toast('На прошлой неделе графика нет'); return; }
+      if (keys.some((k) => Object.values(plan[k] || {}).some(Boolean))
+        && !(await uiConfirm('На этой неделе уже есть смены. Заменить их сменами прошлой недели?'))) return;
+      await Promise.all(prev.map((d, i) => setDoc(col(keys[i]), { shifts: (d.exists() && d.data().shifts) || {} })));
+      toast('Скопировано');
+      bindStaffSchedule(tenantId, employees, canManage, nameOf);
+    } catch (e) {
+      toast(`Не получилось: ${e?.message || e}`);
+    } finally {
+      copy.disabled = false;
     }
   };
 }

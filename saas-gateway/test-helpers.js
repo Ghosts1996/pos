@@ -39,13 +39,20 @@ function fakeDb() {
     const q = {
       doc: (id) => ref(`${path}/${id || crypto.randomBytes(6).toString("hex")}`),
       add: async (data) => { const r = ref(`${path}/${crypto.randomBytes(6).toString("hex")}`); await r.set(data); return r; },
-      where: (f, op, v) => { filters.push([f, v]); return q; },
+      where: (f, op, v) => { filters.push([f, op, v]); return q; },
       limit: (n) => { max = n; return q; },
       get: async () => {
         const docs = [...store.keys()]
           .filter((k) => k.startsWith(`${path}/`) && !k.slice(path.length + 1).includes("/"))
           .map(snap)
-          .filter((d) => filters.every(([f, v]) => d.data()[f] === v))
+          .filter((d) => filters.every(([f, op, v]) => {
+            const x = d.data()[f];
+            const num = (y) => (y && typeof y.toMillis === "function" ? y.toMillis() : y instanceof Date ? y.getTime() : y);
+            if (op === "in") return Array.isArray(v) && v.includes(x);
+            if (op === ">=") return x !== undefined && num(x) >= num(v);
+            if (op === "<") return x !== undefined && num(x) < num(v);
+            return x === v;
+          }))
           .slice(0, max);
         return { docs, size: docs.length };
       },
