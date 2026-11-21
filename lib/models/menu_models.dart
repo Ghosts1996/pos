@@ -262,6 +262,10 @@ class MenuItem {
   /// позицию в счёт (OrderItem.by).
   final double staffBonus;
 
+  /// Весовой товар (SaaS): [price] — за 1 кг, при добавлении в счёт касса
+  /// спрашивает вес (весы или вручную). Привязка к складу — на 1 кг.
+  final bool byWeight;
+
   MenuItem({
     required this.id,
     required this.categoryId,
@@ -281,6 +285,7 @@ class MenuItem {
     this.popularRank = 0,
     this.modifierGroups = const [],
     this.staffBonus = 0,
+    this.byWeight = false,
   });
 
   bool get hasModifiers => modifierGroups.any((g) => g.options.isNotEmpty);
@@ -387,6 +392,7 @@ class MenuItem {
       tobacco: data['tobacco'] == true,
       popularRank: (data['popularRank'] as num?)?.toInt() ?? 0,
       staffBonus: (data['staffBonus'] as num?)?.toDouble() ?? 0,
+      byWeight: data['byWeight'] == true,
       modifierGroups: ((data['modifierGroups'] as List?) ?? const [])
           .whereType<Map>()
           .map((e) => ModifierGroup.fromMap(Map<String, dynamic>.from(e)))
@@ -412,6 +418,7 @@ class MenuItem {
         'recipePortions': recipePortions,
         'modifierGroups': modifierGroups.map((g) => g.toMap()).toList(),
         'staffBonus': staffBonus,
+        'byWeight': byWeight,
       };
 
   MenuItem copyWith({
@@ -431,9 +438,11 @@ class MenuItem {
     bool? tobacco,
     List<ModifierGroup>? modifierGroups,
     double? staffBonus,
+    bool? byWeight,
   }) =>
       MenuItem(
         id: id,
+        byWeight: byWeight ?? this.byWeight,
         staffBonus: staffBonus ?? this.staffBonus,
         modifierGroups: modifierGroups ?? this.modifierGroups,
         description: description ?? this.description,

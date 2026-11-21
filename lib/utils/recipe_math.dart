@@ -1,3 +1,4 @@
+import 'weighed.dart';
 import '../models/inventory_models.dart';
 import '../models/menu_models.dart';
 import '../models/session_model.dart';
@@ -70,8 +71,10 @@ Map<String, StockDraw> saleDraws(
     final m = menu[line.menuItemId];
     if (m == null || line.qty <= 0) continue;
     final label = '${line.name.isEmpty ? m.name : line.name} ×${line.qty}';
+    // Весовой товар: рецепт — на 1 кг, списываем по весу строки.
+    final kg = m.byWeight ? weightKgOf(line.mods) : 0.0;
     for (final c in m.perPortion) {
-      add(c.inventoryItemId, c.weight, c.weightUnit, line.qty, label);
+      add(c.inventoryItemId, kg > 0 ? c.weight * kg : c.weight, c.weightUnit, line.qty, label);
     }
     for (final o in m.optionsNamed(line.mods)) {
       if (o.hasInventoryLink) add(o.inventoryItemId, o.weight, o.weightUnit, line.qty, '$label (${o.name})');

@@ -1,4 +1,5 @@
 import '../../theme/app_colors.dart';
+import '../../build_info.dart';
 import 'package:flutter/material.dart';
 import '../../models/fiscal_receipt.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -327,6 +328,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     var vat = item?.vat ?? '';
     var fiscalSubject = item?.fiscalSubject ?? 'commodity';
     var tobacco = item?.tobacco ?? false;
+    var byWeight = item?.byWeight ?? false;
     final groups = List<ModifierGroup>.from(item?.modifierGroups ?? const []);
     final bonusCtrl = TextEditingController(
         text: item != null && item.staffBonus > 0 ? item.staffBonus.toStringAsFixed(0) : '');
@@ -347,9 +349,22 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: priceCtrl,
-                  decoration: const InputDecoration(labelText: 'Цена, ₽'),
+                  decoration: InputDecoration(labelText: byWeight ? 'Цена за 1 кг, ₽' : 'Цена, ₽'),
                   keyboardType: TextInputType.number,
                 ),
+                // Весовой товар (SaaS): цена за кг, вес — при продаже.
+                if (kSaasMode)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: byWeight,
+                    onChanged: (v) => setDialogState(() => byWeight = v),
+                    title: const Text('Продаётся на вес'),
+                    subtitle: const Text(
+                      'Цена — за 1 кг. При добавлении в счёт касса спросит вес (с весов или вручную). '
+                      'Привязка к складу — расход на 1 кг.',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: descCtrl,
@@ -606,6 +621,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                     tobacco: tobacco,
                     modifierGroups: List.from(groups),
                     staffBonus: (double.tryParse(bonusCtrl.text.replaceAll(',', '.')) ?? 0).clamp(0, 100000).toDouble(),
+                    byWeight: byWeight,
                   )),
               child: const Text('Сохранить'),
             ),
@@ -631,6 +647,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         tobacco: result.tobacco,
         modifierGroups: result.modifierGroups,
         staffBonus: result.staffBonus,
+        byWeight: result.byWeight,
       ));
     } else {
       await _fs.updateMenuItem(item.copyWith(
@@ -647,6 +664,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         tobacco: result.tobacco,
         modifierGroups: result.modifierGroups,
         staffBonus: result.staffBonus,
+        byWeight: result.byWeight,
       ));
     }
   }
@@ -924,6 +942,7 @@ class _ItemDialogResult {
   final bool tobacco;
   final List<ModifierGroup> modifierGroups;
   final double staffBonus;
+  final bool byWeight;
 
   _ItemDialogResult({
     required this.name,
@@ -939,6 +958,7 @@ class _ItemDialogResult {
     this.tobacco = false,
     this.modifierGroups = const [],
     this.staffBonus = 0,
+    this.byWeight = false,
   });
 }
 

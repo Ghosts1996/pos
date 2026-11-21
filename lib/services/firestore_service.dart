@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'app_scope.dart';
 import 'people_directory.dart';
 import 'signals/signal_hub.dart';
+import '../utils/weighed.dart';
 import '../utils/time_cafe.dart';
 import '../utils/parse.dart';
 import '../utils/pin_hash.dart';
@@ -807,8 +808,11 @@ class FirestoreService {
   /// [mods] — выбранные модификаторы: строка с другими модификаторами —
   /// отдельная строка, цена — с доплатами (MenuItem.priceWith).
   Future<void> addOrderItem(String sessionId, MenuItem menuItem,
-      {int qty = 1, String employeeId = '', List<String> mods = const []}) async {
+      {int qty = 1, String employeeId = '', List<String> mods = const [], double weightKg = 0}) async {
     final chosen = [for (final o in menuItem.optionsNamed(mods)) o.name];
+    // Весовой товар (SaaS): вес — в строке, цена строки = за кг × вес.
+    final weighed = weightKg > 0;
+    if (weighed) chosen.add(weightLabel(weightKg));
     final lineId = OrderItem.lineIdOf(menuItem.id, chosen);
     // Кальян/табак — по флагу позиции, её названию или категории («Кальяны»):
     // на такие позиции не действуют скидки и бонусы (PromoPolicy).
@@ -835,7 +839,7 @@ class FirestoreService {
         items.add(OrderItem(
           menuItemId: menuItem.id,
           name: menuItem.name,
-          price: menuItem.priceWith(chosen),
+          price: weighed ? weighedPrice(menuItem.priceWith(chosen), weightKg) : menuItem.priceWith(chosen),
           mods: chosen,
           qty: qty,
           noPromo: noPromo,

@@ -10,6 +10,8 @@ import '../../services/printers/lan_scan.dart';
 import '../../services/egais_service.dart';
 import 'egais_waybills_screen.dart';
 import 'second_legal_entity_screen.dart';
+import 'scale_settings_screen.dart';
+import '../../services/scales/scale.dart';
 import '../../services/atol_local_kassa.dart';
 import '../../services/kassa_service.dart';
 import '../../services/chestny_znak_api_service.dart';
@@ -169,6 +171,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       _drawerOnCash = data['printerDrawerOnCash'] as bool? ?? false;
       _printHub = data['printHub'] as bool? ?? false;
       await DevicePrinterPrefs.load();
+      await ScalePrefs.load();
       _devType = DevicePrinterPrefs.type;
       _devNameCtrl.text = DevicePrinterPrefs.name;
       _devHub = DevicePrinterPrefs.hub;
@@ -1218,6 +1221,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
               child: _Hint('Нажмите на раздел, чтобы открыть настройки. Они общие для всех касс заведения.'),
             ),
             _printerSection(),
+            if (kSaasMode) _scaleTile(),
             _kassaSection(),
             _terminalSection(),
             _onlinePaySection(),
@@ -1250,6 +1254,33 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
       ),
     );
   }
+
+  /// Весы этого устройства (SaaS) — для товара на вес.
+  Widget _scaleTile() => Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Material(
+          color: AppColors.surface,
+          clipBehavior: Clip.antiAlias,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(color: AppColors.border),
+          ),
+          child: ListTile(
+            leading: const Icon(Icons.scale_outlined),
+            title: const Text('Весы', style: TextStyle(fontWeight: FontWeight.w700)),
+            subtitle: Text(switch (ScalePrefs.type) {
+              'massak' => '«Масса-К» · ${ScalePrefs.host}',
+              'com' => 'COM-порт · ${ScalePrefs.com}',
+              _ => 'Для товара на вес · на этом устройстве',
+            }),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ScaleSettingsScreen()));
+              if (mounted) setState(() {});
+            },
+          ),
+        ),
+      );
 
   Widget _printerSection() {
     final ip = _networkIpCtrl.text.trim();

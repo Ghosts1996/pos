@@ -18,6 +18,7 @@ import '../../utils/money.dart';
 import '../../utils/adaptive.dart';
 import '../../utils/voice_order.dart';
 import '../../build_info.dart';
+import '../../widgets/weigh_dialog.dart';
 import '../../widgets/ai_voice_input.dart';
 import '../../widgets/voice_order_sheet.dart';
 import '../../widgets/modifier_picker_sheet.dart';
@@ -76,7 +77,7 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
     if (picked == null || picked.isEmpty || !mounted) return;
     var added = 0;
     for (final line in picked) {
-      if (line.item.hasModifiers) {
+      if (line.item.hasModifiers || (kSaasMode && line.item.byWeight)) {
         // Добавки выбираются на каждую порцию отдельно — как при нажатии «+».
         for (var n = 0; n < line.qty; n++) {
           if (await _add(line.item)) added++;
@@ -195,6 +196,13 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
   }
 
   Future<bool> _add(MenuItem item) async {
+    // Весовой товар (SaaS): вес с весов или вручную — своя строка счёта.
+    var weightKg = 0.0;
+    if (kSaasMode && item.byWeight) {
+      final kg = await showWeighDialog(context, name: item.name, perKg: item.price);
+      if (kg == null) return false;
+      weightKg = kg;
+    }
     var mods = const <String>[];
     if (item.hasModifiers) {
       final picked = await showModifierPicker(context, item);
@@ -202,7 +210,7 @@ class _MenuSelectionScreenState extends State<MenuSelectionScreen> {
       mods = picked;
     }
     try {
-      await _fs.addOrderItem(widget.session.id, item, employeeId: widget.employeeId, mods: mods);
+      await _fs.addOrderItem(widget.session.id, item, employeeId: widget.employeeId, mods: mods, weightKg: weightKg);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('Добавлено: ${item.name}'), duration: const Duration(seconds: 1)));
@@ -557,7 +565,7 @@ class _MenuItemCard extends StatelessWidget {
               child: Row(
                 children: [
                   Text(
-                    rub(item.price),
+                    kSaasMode && item.byWeight ? '${rub(item.price)}/кг' : rub(item.price),
                     style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                   ),
                   const Spacer(),
@@ -639,7 +647,7 @@ class _SearchResultsList extends StatelessWidget {
               ),
             ),
             title: Text(item.name),
-            subtitle: Text(rub(item.price)),
+            subtitle: Text(kSaasMode && item.byWeight ? '${rub(item.price)} за кг' : rub(item.price)),
             trailing: const Icon(Icons.add_circle_outline),
             onTap: () => onAdd(item),
           ),

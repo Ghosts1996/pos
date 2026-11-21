@@ -1213,10 +1213,11 @@ class GuestLinkService {
   Stream<List<MenuItem>> publicMenuStream() => _menuS.get(
       _key(),
       () => PublicMenuService.stream(
-          (m) => m.items,
+          // Весовой товар (SaaS) гостю порцией не заказать — только на кассе.
+          (m) => m.items.where((i) => !i.byWeight).toList(),
           () => AppScope.col('menuItems')
               .snapshots()
-              .map((s) => s.docs.map(MenuItem.fromDoc).where((i) => i.available).toList())));
+              .map((s) => s.docs.map(MenuItem.fromDoc).where((i) => i.available && !i.byWeight).toList())));
 
   Stream<List<MenuCategory>> publicCategoriesStream() => _categoriesS.get(
       _key(),

@@ -1666,7 +1666,7 @@ function screenMenu() {
 
   sub(onSnapshot(collection(state.root, 'menuItems'), (s) => {
     items = s.docs.map((d) => ({ id: d.id, ...d.data() }))
-      .filter((i) => i.available !== false)
+      .filter((i) => i.available !== false && i.byWeight !== true)
       .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru'));
     draw();
   }, () => {}));
@@ -2705,7 +2705,7 @@ async function screenCheckout() {
       getDocs(collection(state.root, 'menuItems')),
       getDocs(collection(state.root, 'menuCategories')),
     ]);
-    items = mi.docs.map((d) => ({ id: d.id, ...d.data() })).filter((i) => i.available !== false);
+    items = mi.docs.map((d) => ({ id: d.id, ...d.data() })).filter((i) => i.available !== false && i.byWeight !== true);
     cats = mc.docs.map((d) => ({ id: d.id, ...d.data() }));
   } catch (_) {
     screenEl().innerHTML = `<h1>Оформление заказа</h1>

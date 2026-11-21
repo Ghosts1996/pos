@@ -9,6 +9,7 @@ import '../../services/fiscal_queue.dart';
 import '../../services/firestore_service.dart';
 import '../../models/terminal_bank.dart';
 import '../../services/payment_terminal_service.dart';
+import '../../utils/weighed.dart';
 import '../../utils/sale_kind.dart';
 import '../../services/printer_service.dart';
 import '../../services/kassa_service.dart';
@@ -919,7 +920,21 @@ class _PaymentScreenState extends State<PaymentScreen> {
         // не выведена из оборота — это не может починить код, только
         // организационно (обязательное сканирование каждой единицы).
         final rest = line.qty - markedCount;
-        if (rest > 0) {
+        // Весовой товар (SaaS): количество — вес в кг, цена — за кг.
+        final kg = kSaasMode ? weightKgOf(line.mods) : 0.0;
+        if (rest > 0 && kg > 0) {
+          final perKg = (priceOf(line) / kg * 100).roundToDouble() / 100;
+          items.add(FiscalReceiptItem(
+            name: fiscalName,
+            price: perKg,
+            quantity: double.parse((kg * rest).toStringAsFixed(3)),
+            vat: vatOf(line),
+            paymentObject: subjectOf(line),
+            entity: entityOf(line),
+            unit: 'kg',
+          ));
+          discountable.add(!PromoPolicy.restricted(line));
+        } else if (rest > 0) {
           items.add(FiscalReceiptItem(
             name: fiscalName,
             price: priceOf(line),

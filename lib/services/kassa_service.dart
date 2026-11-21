@@ -333,7 +333,7 @@ class AtolCloudKassaService implements KassaService {
       'price': roundKopecks(i.price),
       'quantity': i.quantity,
       'sum': i.sum,
-      'measure': 0, // штуки
+      'measure': i.byKg ? 11 : 0, // 0 — штуки, 11 — килограммы
       'payment_method': atolPaymentMethod(r),
       'payment_object': i.paymentObject.ffd12Code(marked: marked),
       'vat': {'type': i.vat.providerCode},
@@ -358,7 +358,7 @@ class AtolCloudKassaService implements KassaService {
         'price': roundKopecks(i.price),
         'quantity': i.quantity,
         'sum': i.sum,
-        'measurement_unit': 'шт',
+        'measurement_unit': i.byKg ? 'кг' : 'шт',
         'payment_method': atolPaymentMethod(r),
         'payment_object': atolPaymentObjectCode(i.paymentObject),
         'vat': {'type': i.vat.providerCode},
@@ -557,7 +557,7 @@ class OrangeDataKassaService implements KassaService {
             'text': i.name,
             'paymentMethodType': orangeDataPaymentMethod(receipt),
             'paymentSubjectType': i.paymentObject.ffd12Code(marked: marked),
-            'quantityMeasurementUnit': 0, // штуки
+            'quantityMeasurementUnit': i.byKg ? 11 : 0, // 0 — штуки, 11 — килограммы
             if (marked) ...{
               'itemCode': i.markingCode,
               'plannedStatus': 1, // штучный товар реализован

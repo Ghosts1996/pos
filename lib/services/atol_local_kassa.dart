@@ -97,7 +97,7 @@ class AtolLocalKassaService implements KassaService {
       'paymentMethod': advance ? 'advance' : fullPrepayment ? 'fullPrepayment' : 'fullPayment',
       'paymentObject': _paymentObject(i, fullPrepayment),
       'tax': {'type': i.vat.providerCode},
-      if (ffd12) 'measurementUnit': 'piece',
+      if (ffd12) 'measurementUnit': i.byKg ? 'kilogram' : 'piece',
       if (marked)
         'imcParams': {
           'imcType': 'auto',

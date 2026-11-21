@@ -84,7 +84,7 @@ function createKiosk(deps) {
       .filter((c) => c.hidden !== true && c.kind !== "hookah")
       .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0) || String(a.name || "").localeCompare(String(b.name || ""), "ru"));
     const list = items.docs.map((d) => ({ id: d.id, ...(d.data() || {}) }))
-      .filter((m) => m.available !== false && m.archived !== true && Number(m.price) > 0 && !remoteSaleBanned(m, String((catMap[m.categoryId] || {}).name || "")) && (catMap[m.categoryId] || {}).kind !== "hookah");
+      .filter((m) => m.available !== false && m.byWeight !== true && m.archived !== true && Number(m.price) > 0 && !remoteSaleBanned(m, String((catMap[m.categoryId] || {}).name || "")) && (catMap[m.categoryId] || {}).kind !== "hookah");
     return { catMap, categories, list };
   }
 

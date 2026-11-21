@@ -145,6 +145,9 @@ class FiscalReceiptItem {
   /// на два ([splitReceiptByEntity]); в кассу не передаётся.
   final String entity;
 
+  /// Мера количества: '' — штуки, 'kg' — килограммы (весовой товар, SaaS).
+  final String unit;
+
   const FiscalReceiptItem({
     required this.name,
     required this.price,
@@ -154,7 +157,10 @@ class FiscalReceiptItem {
     this.markingCode,
     this.markingPermit,
     this.entity = '',
+    this.unit = '',
   });
+
+  bool get byKg => unit == 'kg';
 
   Map<String, dynamic> toJson() => {
         'name': name,
@@ -166,6 +172,7 @@ class FiscalReceiptItem {
         if (markingPermit != null) 'permitId': markingPermit!.reqId,
         if (markingPermit != null) 'permitTs': markingPermit!.reqTimestamp,
         if (entity.isNotEmpty) 'entity': entity,
+        if (unit.isNotEmpty) 'unit': unit,
       };
 
   factory FiscalReceiptItem.fromJson(Map<String, dynamic> j) => FiscalReceiptItem(
@@ -179,6 +186,7 @@ class FiscalReceiptItem {
             ? null
             : MarkingPermit(reqId: j['permitId'] as String, reqTimestamp: j['permitTs'] as String? ?? ''),
         entity: j['entity'] as String? ?? '',
+        unit: j['unit'] as String? ?? '',
       );
 
   /// С копейками: price * quantity в double даёт хвосты вроде 999.98999…
@@ -370,7 +378,7 @@ List<FiscalReceipt> splitReceiptByEntity(FiscalReceipt r) {
     final sum = k(it.sum) - c;
     FiscalReceiptItem copy(double price, double qty) => FiscalReceiptItem(
         name: it.name, price: price, quantity: qty, vat: it.vat, paymentObject: it.paymentObject,
-        markingCode: it.markingCode, markingPermit: it.markingPermit, entity: it.entity);
+        markingCode: it.markingCode, markingPermit: it.markingPermit, entity: it.entity, unit: it.unit);
     final q = it.quantity;
     final whole = q == q.roundToDouble() && q >= 1;
     if (!whole || sum % q.round() == 0) {
