@@ -59,6 +59,13 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
       stream: _link.sessionStream(sessionId),
       builder: (context, snap) {
         final s = snap.data;
+        // SaaS: чек не прочитался (сервер ещё не получил привязку к столу,
+        // пропала связь) — пробуем снова, а не показываем «Мой стол» пустым,
+        // пока гость сам не перезапустит приложение.
+        if (kSaasMode && snap.hasError) {
+          _retrySessionSoon();
+          return const Center(child: CircularProgressIndicator());
+        }
         if (s == null) return _notAtTable();
         if (s.status != 'active') {
           // Чек закрыли на кассе — предлагаем оценить визит.
@@ -72,6 +79,25 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
         );
       },
     );
+  }
+
+  Timer? _retryTimer;
+  int _retries = 0;
+
+  void _retrySessionSoon() {
+    if (_retryTimer != null) return;
+    final delay = Duration(seconds: _retries < 5 ? 2 : 10);
+    _retries++;
+    _retryTimer = Timer(delay, () {
+      _retryTimer = null;
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _retryTimer?.cancel();
+    super.dispose();
   }
 
   // ---------- СОСТОЯНИЯ ----------

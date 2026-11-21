@@ -469,6 +469,8 @@ class Sub {
   Set<String>? localPaths;
   bool synced = false;
   FirebaseException? error;
+  /// Когда пришёл отказ: повторяем подписку не чаще раза в пару секунд.
+  DateTime? errorAt;
   Timer? dropTimer;
   bool sentToServer = false;
   Sub(this.id, {this.docPath, this.spec});
@@ -1004,6 +1006,11 @@ class LocalEngine {
           _applyAck(b.writes, j['results'] as List? ?? const []);
           pending.remove(b);
           _savePending();
+          // Своя запись могла дать доступ (гость занял чек и записал его в
+          // профиль — теперь чек ему можно читать): подписки, которым
+          // сервер отказал, спрашиваем снова. Раньше отказ оставался, и
+          // «Мой стол» в приложении гостя был пустым.
+          _retrySubs([for (final s in _subs.values) if (s.error?.code == 'permission-denied' && !s.sentToServer) s]);
           for (final w in b.writes) {
             _changed(w.path);
           }
@@ -1254,6 +1261,11 @@ class LocalEngine {
       _subs[key] = s;
       _subsById[s.id] = s;
       _sendSubs(add: [s]);
+    } else if (s.error != null && !s.sentToServer &&
+        (s.errorAt == null || DateTime.now().difference(s.errorAt!) > const Duration(seconds: 2))) {
+      // Подписка с отказом (нет прав, сбой) и новый слушатель: права могли
+      // появиться — спрашиваем сервер снова, а не отдаём старый отказ.
+      _retrySubs([s]);
     }
     s.dropTimer?.cancel();
     s.dropTimer = null;
@@ -1473,8 +1485,22 @@ class LocalEngine {
       }());
       return;
     }
+    // Сервер подписку с ошибкой не держит — повторять её можно.
+    s.sentToServer = false;
     s.error = dbError(code, message);
+    s.errorAt = DateTime.now();
     _notifySub(s);
+  }
+
+  /// Сбросить отказ и подписаться заново (данные придут, если права есть).
+  void _retrySubs(List<Sub> subs) {
+    if (subs.isEmpty) return;
+    for (final s in subs) {
+      s.error = null;
+      s.errorAt = null;
+      s.synced = false;
+    }
+    _sendSubs(add: subs);
   }
 
   void _onEvent(String raw) {

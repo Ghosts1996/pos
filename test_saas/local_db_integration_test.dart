@@ -236,4 +236,25 @@ void main() {
     expect((await b.doc(ref).get(const GetOptions(source: Source.server))).data()!['n'], 6,
         reason: 'увеличение A пересчитано по свежим данным, а не затёрло 5');
   });
+  test('отказ подписки после своей записи, которая даёт доступ, — не навсегда (гость сел за стол)', () async {
+    // Приложение гостя: профиль с activeSessionId виден на экране сразу
+    // (своя запись), экран подписывается на чек, а сервер ещё не получил
+    // запись профиля — отказ. Раньше отказ «прилипал» к подписке, и «Мой
+    // стол» оставался пустым, хотя касса уже видела гостя за столом.
+    final owner = open('ownerA');
+    final sid = 'sessG${DateTime.now().microsecondsSinceEpoch}';
+    await owner.doc('tenants/tenantA/sessions/$sid').set({'status': 'active', 'tableId': 't2', 'orderItems': []});
+    await owner.doc('tenants/tenantA/clients/guestZ').set({'name': 'Гость', 'phone': '79990001122', 'activeSessionId': ''});
+    final g = open('guestZ');
+    await g.doc('tenants/tenantA/sessionClaims/$sid').set({'uid': 'guestZ', 'tableId': 't2'});
+    final sessionRef = g.doc('tenants/tenantA/sessions/$sid');
+    // Профиль ещё без чека — читать чек нельзя.
+    await expectLater(sessionRef.snapshots().first,
+        throwsA(isA<FirebaseException>().having((e) => e.code, 'code', 'permission-denied')));
+    // Своя запись, которая даёт доступ, и сразу новая подписка (экран
+    // перестроился) — чек приходит.
+    await g.doc('tenants/tenantA/clients/guestZ').set({'activeSessionId': sid, 'activeTableId': 't2'}, SetOptions(merge: true));
+    final snap = await sessionRef.snapshots().firstWhere((d) => d.exists).timeout(const Duration(seconds: 8));
+    expect(snap.data()!['status'], 'active');
+  });
 }
