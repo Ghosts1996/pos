@@ -10,6 +10,9 @@ import '../../services/audit_log_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/printer_service.dart';
 import '../../widgets/delivery_order_card.dart';
+import '../../widgets/move_table_picker.dart';
+import '../../models/reservation_model.dart';
+import '../../services/reservation_service.dart';
 import '../../widgets/void_item_dialog.dart';
 import '../../widgets/order_note_sheet.dart';
 import '../../widgets/table_checks_sheet.dart';
@@ -445,7 +448,9 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
   Future<void> _moveTable(SessionModel session, TableModel currentTable) async {
     final target = await Navigator.of(context).push<TableModel>(
       MaterialPageRoute(
-        builder: (_) => _MoveTableScreen(currentTable: currentTable, fs: _fs),
+        builder: (_) => kSaasMode
+            ? _MoveTableScreenSaas(currentTable: currentTable, fs: _fs, plannedEnd: session.plannedEnd)
+            : _MoveTableScreen(currentTable: currentTable, fs: _fs),
       ),
     );
     if (target == null) return;
@@ -1626,6 +1631,55 @@ class _TotalBar extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// SaaS: пересадка — столы по группам, брони на каждом столе, бронь,
+/// которая начнётся раньше, чем гость уйдёт, — с подтверждением
+/// (lib/widgets/move_table_picker.dart).
+class _MoveTableScreenSaas extends StatefulWidget {
+  final TableModel currentTable;
+  final FirestoreService fs;
+  final DateTime plannedEnd;
+  const _MoveTableScreenSaas({required this.currentTable, required this.fs, required this.plannedEnd});
+
+  @override
+  State<_MoveTableScreenSaas> createState() => _MoveTableScreenSaasState();
+}
+
+class _MoveTableScreenSaasState extends State<_MoveTableScreenSaas> {
+  // Брони на 12 часов вперёд (и опоздавшие на полчаса) — один поток на экран.
+  late final Stream<List<ReservationModel>> _res = ReservationService().upcomingStream(hours: 12);
+  late final Stream<List<TableModel>> _tables = widget.fs.tablesStream();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Пересадить гостя')),
+      body: StreamBuilder<List<TableModel>>(
+        stream: _tables,
+        builder: (context, snap) {
+          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+          return StreamBuilder<List<ReservationModel>>(
+            stream: _res,
+            builder: (context, resSnap) {
+              final now = DateTime.now();
+              final timeKnown = widget.plannedEnd.isAfter(now) &&
+                  !AppConstants.isUnlimitedRemaining(widget.plannedEnd.difference(now));
+              return MoveTablePicker(
+                currentTable: widget.currentTable,
+                tables: snap.data!,
+                reservations: resSnap.data ?? const [],
+                stayUntil: moveStayUntil(widget.plannedEnd, now),
+                timeKnown: timeKnown,
+                now: now,
+                onPick: (t) => Navigator.pop(context, t),
+              );
+            },
+          );
+        },
       ),
     );
   }
