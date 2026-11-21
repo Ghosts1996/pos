@@ -6965,22 +6965,16 @@ function watchDashboardData(tenantId) {
     `;
 
     const settingsHtml = () => `
-      <h2>Пароль</h2>
-      <div class="card">
-        <label class="field"><span>Текущий пароль</span>
-          <input id="f-pass-current" type="password" autocomplete="current-password">
-        </label>
-        <label class="field"><span>Новый пароль</span>
-          <input id="f-pass-new" type="password" autocomplete="new-password" placeholder="Минимум 8 символов">
-        </label>
-        <button class="btn btn-ghost" id="f-pass-change">Сменить пароль</button>
-        <div id="f-pass-change-msg" class="small" style="margin-top:8px"></div>
-        <p class="small muted" style="margin-top:10px">Входили только по ссылке из письма или не помните пароль?
-          Создайте новый — он появится на экране.</p>
-        <button class="btn btn-ghost" id="f-pass-generate">Создать новый пароль</button>
-        <div id="f-pass-generate-msg" class="small" style="margin-top:8px;color:var(--danger)"></div>
-      </div>
+      <nav class="set-toc" aria-label="Разделы настроек">
+        <button type="button" class="set-chip" data-goto="set-venue">Заведение</button>
+        ${canManage ? '<button type="button" class="set-chip" data-goto="set-conn">Подключения</button>' : ''}
+        <button type="button" class="set-chip" data-goto="set-security">Безопасность</button>
+        ${role === 'owner' ? '<button type="button" class="set-chip" data-goto="set-data">Данные</button>' : ''}
+        <button type="button" class="set-chip" data-goto="set-info">Справка</button>
+      </nav>
 
+      <section class="set-group" id="set-venue">
+      <div class="set-group-title">Заведение</div>
       <h2>Настройки заведения</h2>
       <div class="card">
         <label class="field"><span>Часовой пояс</span>
@@ -7017,6 +7011,11 @@ function watchDashboardData(tenantId) {
         </label>
       </div>
 
+      </section>
+
+      ${canManage ? `<section class="set-group" id="set-conn">
+      <div class="set-group-title">Подключения</div>
+      <p class="small muted" style="margin:-4px 0 6px">Бот заведения, свои программы, CRM и 1С.</p>` : ''}
       ${canManage ? `
         <h2>Telegram-бот заведения</h2>
         <div class="card" id="f-tg-box">${telegramBoxHtml(tgStatusCache.get(tenantId))}</div>
@@ -7029,6 +7028,30 @@ function watchDashboardData(tenantId) {
         <div class="card" id="f-wh-box">${webhooksBoxHtml(tenantId)}</div>
       ` : ''}
 
+      ${canManage ? '</section>' : ''}
+
+      <section class="set-group" id="set-security">
+      <div class="set-group-title">Безопасность</div>
+      <h2>Пароль</h2>
+      <div class="card">
+        <label class="field"><span>Текущий пароль</span>
+          <input id="f-pass-current" type="password" autocomplete="current-password">
+        </label>
+        <label class="field"><span>Новый пароль</span>
+          <input id="f-pass-new" type="password" autocomplete="new-password" placeholder="Минимум 8 символов">
+        </label>
+        <button class="btn btn-ghost" id="f-pass-change">Сменить пароль</button>
+        <div id="f-pass-change-msg" class="small" style="margin-top:8px"></div>
+        <p class="small muted" style="margin-top:10px">Входили только по ссылке из письма или не помните пароль?
+          Создайте новый — он появится на экране.</p>
+        <button class="btn btn-ghost" id="f-pass-generate">Создать новый пароль</button>
+        <div id="f-pass-generate-msg" class="small" style="margin-top:8px;color:var(--danger)"></div>
+      </div>
+
+      </section>
+
+      ${role === 'owner' ? `<section class="set-group" id="set-data">
+      <div class="set-group-title">Данные</div>` : ''}
       ${role === 'owner' ? `
         <h2>Резервная копия</h2>
         <div class="card">
@@ -7041,6 +7064,10 @@ function watchDashboardData(tenantId) {
         </div>
       ` : ''}
 
+      ${role === 'owner' ? '</section>' : ''}
+
+      <section class="set-group" id="set-info">
+      <div class="set-group-title">Справка</div>
       <h2>Системные требования</h2>
       <div class="card">
         <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)">📶 Интернет — Wi-Fi или мобильный. Пропадёт связь — касса продолжит принимать заказы и оплаты и досинхронизирует их сама</div>
@@ -7055,6 +7082,7 @@ function watchDashboardData(tenantId) {
         <div class="small" style="padding:7px 0;border-bottom:1px solid var(--border)"><a href="#/legal/privacy">Политика конфиденциальности</a></div>
         <div class="small" style="padding:7px 0"><a href="#/status">Статус системы</a></div>
       </div>
+      </section>
     `;
 
     const faqHtml = () => `
@@ -7925,6 +7953,9 @@ function watchDashboardData(tenantId) {
     // «Брендинга». Правила дают владельцу менять в документе только name.
     if ($('f-copy-slug')) $('f-copy-slug').onclick = () => copyToClipboard(tenant.slug || '');
     if ($('f-tg-box')) bindTelegramBox(tenantId, draw);
+    document.querySelectorAll('.set-chip').forEach((b) => {
+      b.onclick = () => { const g = document.getElementById(b.dataset.goto); if (g) g.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+    });
     if ($('f-api-box')) bindApiKeysBox(tenantId, draw);
     if ($('f-wh-box')) bindWebhooksBox(tenantId, draw);
     if ($('f-backup-tenant')) $('f-backup-tenant').onclick = () => exportVenueBackup({ tenantId, fileKey: tenant.slug, label: tenant.name });

@@ -1697,3 +1697,22 @@ html.zd-open { overflow: hidden; }
 /* Склад: перемещение между складами */
 .move-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 12px; margin-bottom: 10px; }
 .move-grid .field { margin: 0; }
+
+/* «Настройки» кабинета: оглавление и группы (console.js, settingsHtml) */
+.set-toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px; }
+@media (max-width: 560px) {
+  .set-toc { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-left: -4px; margin-right: -4px; padding: 0 4px 2px; }
+  .set-toc::-webkit-scrollbar { display: none; }
+}
+.set-chip {
+  width: auto; flex: 0 0 auto; white-space: nowrap; min-height: 0; line-height: 1.2;
+  font: inherit; font-size: 14px; font-weight: 600; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: 999px; padding: 8px 14px; cursor: pointer;
+}
+.set-chip:hover { border-color: var(--primary); }
+.set-group { scroll-margin-top: 80px; padding-top: 6px; }
+.set-group-title {
+  font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--primary);
+  margin: 22px 0 2px; padding-top: 14px; border-top: 1px solid var(--border);
+}
+.set-group:first-of-type .set-group-title { border-top: 0; padding-top: 0; }
