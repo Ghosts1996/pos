@@ -289,6 +289,14 @@ a:hover { color: var(--primary-2); }
 }
 .nav-item .nav-dot { position: absolute; right: 10px; width: 7px; height: 7px; border-radius: 50%; background: var(--primary); }
 .nav-divider { height: 1px; background: var(--border); margin: 12px 4px; }
+/* Группы меню: подпись группы и короткая подсказка под названием раздела. */
+.nav-group {
+  font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+  opacity: .8; margin: 16px 10px 6px;
+}
+.nav-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.nav-text small { font-size: 11.5px; font-weight: 400; color: var(--muted); opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-item.active .nav-text small { opacity: 1; }
 
 /* Значок раздела — линейная иконка без цветной подложки. */
 .nav-icon {

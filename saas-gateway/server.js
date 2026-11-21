@@ -64,6 +64,7 @@ const { createWebhooks } = require("./webhooks");
 const { createReviews } = require("./reviews");
 const { createFoodcost } = require("./foodcost");
 const { createBoard } = require("./board");
+const { createKiosk } = require("./kiosk");
 const { createGuestMarketing, rootKeyOf: guestRootKey } = require("./guest-marketing");
 const { createRushHour } = require("./rush-hour");
 const { createShield } = require("./shield");
@@ -10298,6 +10299,9 @@ const foodcost = createFoodcost({
   ownerAlert: (tid, text) => telegram.ownerAlert(tid, text),
 });
 
+// Киоск самообслуживания: заказ на планшете, оплата на кассе (kiosk.js, kiosk-web/).
+const kiosk = createKiosk({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole });
+
 // Табло заказов для гостей «Готовится / Готов» (board.js, board-web/).
 const board = createBoard({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole });
 
@@ -10611,6 +10615,7 @@ const ROUTES = {
   "/guestReviews": (req, res) => reviews.handle(req, res),
   "/foodcost": (req, res) => foodcost.handle(req, res),
   "/boardLink": (req, res) => board.handleLink(req, res),
+  "/kioskLink": (req, res) => kiosk.handleLink(req, res),
   "/guestAdsConsent": (req, res) => guestMarketing.handleConsent(req, res),
   "/guestSegments": (req, res) => guestMarketing.handleSegments(req, res),
   "/guestCampaign": (req, res) => guestMarketing.handleCampaign(req, res),
@@ -10828,6 +10833,14 @@ const server = http.createServer((req, res) => {
   if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/board/")) {
     return runHandler((rq, rs) => board.serve(rq, rs, urlPath.slice("/board/".length)), req, res);
   }
+  // Киоск самообслуживания: страница, меню и заказ по ключу (kiosk.js).
+  if (urlPath === "/kiosk" && (req.method === "GET" || req.method === "HEAD")) {
+    res.writeHead(301, { Location: `${(process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, "")}/kiosk/` });
+    return res.end();
+  }
+  if (urlPath.startsWith("/kiosk/")) {
+    return runHandler((rq, rs) => kiosk.serve(rq, rs, urlPath.slice("/kiosk/".length), parseJsonBody), req, res);
+  }
   // Своя карта: тайлы, шрифты, движок карты (map.js).
   if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/map/")) {
     return zalMap.serve(req, res, urlPath.slice("/map/".length), (req.url || "").split("?")[1] || "");
@@ -10952,4 +10965,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, runChargeRecurringSubscriptions, runRenewalReminders, dataWriteGate, localDataStore, applySubscriptionPayment, venueReferral, switchedPeriod, planSwitchQuote, webhooks, foodcost, board });
+Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, runChargeRecurringSubscriptions, runRenewalReminders, dataWriteGate, localDataStore, applySubscriptionPayment, venueReferral, switchedPeriod, planSwitchQuote, webhooks, foodcost, board, kiosk });

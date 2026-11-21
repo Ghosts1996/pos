@@ -1523,6 +1523,49 @@ function bindBoardBox(tenantId, redraw) {
   if ($('f-board-hall')) $('f-board-hall').onchange = (e) => call({ action: 'settings', hall: e.target.checked });
 }
 
+// ---------- Настройки → «Киоск самообслуживания» (saas-gateway/kiosk.js)
+const kioskCache = new Map(); // tenantId → { url, takeawayOn } | { error } | null
+
+function kioskBoxHtml(tenantId) {
+  const st = kioskCache.get(tenantId);
+  const intro = `<p class="small muted" style="margin-top:0">Планшет у стойки: гость сам выбирает блюда и добавки, отмечает
+    «Здесь» или «С собой» и получает номер заказа. Платит на кассе по номеру. Заказ появляется в кассе в «С собой и доставка»
+    с пометкой «Киоск» — кассир нажимает «Подтвердить» и принимает оплату. Имя и телефон гостя киоск не спрашивает.
+    Табак, кальяны и алкоголь в киоске не продаются: возраст гостя не проверить.</p>`;
+  if (st === undefined) return `${intro}<button class="btn btn-ghost" id="f-kiosk-get">Получить ссылку на киоск</button>`;
+  if (st === null) return `${intro}<p class="small muted">Загружаю…</p>`;
+  if (st.error) return `${intro}<p class="small" style="color:var(--danger)">${esc(st.error)}</p><button class="btn btn-ghost" id="f-kiosk-get">Повторить</button>`;
+  return `${intro}
+    ${st.takeawayOn ? '' : '<p class="small" style="color:var(--warning)">Включите выше «Заказы с собой и доставка» — без этого киоск не принимает заказы.</p>'}
+    <div style="font-family:var(--mono, monospace);word-break:break-all;margin:6px 0 10px;user-select:all">${esc(st.url)}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      <button class="btn btn-primary" id="f-kiosk-copy" style="width:auto;padding:0 18px">Скопировать ссылку</button>
+      <a class="btn btn-ghost" href="${esc(st.url)}" target="_blank" rel="noopener" style="width:auto;padding:0 18px">Открыть киоск</a>
+      <button class="btn btn-ghost" id="f-kiosk-rotate" style="width:auto;padding:0 18px">Сменить ссылку</button>
+    </div>
+    <p class="small muted" style="margin:8px 0 0">Откройте ссылку на планшете, нажмите ⛶ и закрепите экран (в Android — «Закрепление
+      приложения»), чтобы гости не выходили из киоска. Номер заказа сразу виден на табло заказов.</p>`;
+}
+
+function bindKioskBox(tenantId, redraw) {
+  const call = async (body) => {
+    try {
+      kioskCache.set(tenantId, (await callSaasGateway('kioskLink', { tenantId, ...body })).data);
+    } catch (e) {
+      kioskCache.set(tenantId, { error: e.message || 'Не удалось получить ссылку' });
+    }
+    redraw();
+  };
+  if ($('f-kiosk-get')) $('f-kiosk-get').onclick = () => { kioskCache.set(tenantId, null); redraw(); call({ action: 'get' }); };
+  if ($('f-kiosk-copy')) $('f-kiosk-copy').onclick = () => copyToClipboard(kioskCache.get(tenantId)?.url || '');
+  if ($('f-kiosk-rotate')) {
+    $('f-kiosk-rotate').onclick = async () => {
+      if (!(await uiConfirm('Сменить ссылку на киоск? Киоск со старой ссылкой перестанет принимать заказы — откройте на нём новую.', { ok: 'Сменить', danger: false }))) return;
+      call({ action: 'rotate' }).then(() => toast('Ссылка сменена'));
+    };
+  }
+}
+
 // ---------- Склад → «Фудкост и закупка» (saas-gateway/foodcost.js)
 const foodcostCache = new Map(); // tenantId → данные | { error } | null
 
@@ -5873,23 +5916,25 @@ const AI_EXTRA_VENDORS = [
 const aiExtraVendor = (id) => AI_EXTRA_VENDORS.find((v) => v.id === id) || AI_EXTRA_VENDORS[AI_EXTRA_VENDORS.length - 1];
 const aiExtraIsAnthropic = (k) => !!aiExtraVendor(k.vendor).anthropic || (k.vendor === 'custom' && k.format === 'anthropic');
 
+// Меню кабинета — по группам: каждый день, заведение, подписка, помощь.
+// Порядок групп и подписи — для владельца, который заходит с телефона.
 const DASHBOARD_NAV = [
-  { id: 'overview', icon: 'home', color: '#2F6FED', label: 'Обзор' },
-  { id: 'guide', icon: 'book', color: '', label: 'Инструкция' },
-  { id: 'devices', icon: 'device', color: '#0EA5E9', label: 'Устройства' },
-  { id: 'stock', icon: 'box', color: '#22C55E', label: 'Склад' },
-  { id: 'guests', icon: 'heart', color: '#E11D48', label: 'Гости' },
-  { id: 'delivery', icon: 'scooter', color: '#16A34A', label: 'Доставка' },
-  { id: 'billing', icon: 'card', color: '#F59E0B', label: 'Оплата' },
-  { id: 'plans', icon: 'gem', color: '#8B5CF6', label: 'Тарифы' },
-  { id: 'branding', icon: 'palette', color: '#EC4899', label: 'Брендинг' },
-  { id: 'team', icon: 'users', color: '#10B981', label: 'Команда' },
-  { id: 'ai', icon: 'spark', color: '#A855F7', label: 'ИИ' },
-  { id: 'profile', icon: 'user', color: '#06B6D4', label: 'Профиль' },
-  { id: 'settings', icon: 'gear', color: '#64748B', label: 'Настройки' },
-  { id: 'import', icon: 'upload', color: '#14B8A6', label: 'Перенос данных' },
-  { id: 'faq', icon: 'question', color: '#EF4444', label: 'FAQ' },
-  { id: 'support', icon: 'chat', color: '#22C55E', label: 'Поддержка' },
+  { id: 'overview', icon: 'home', color: '#2F6FED', label: 'Обзор', group: '' },
+  { id: 'stock', icon: 'box', color: '#22C55E', label: 'Склад', group: 'Каждый день', hint: 'остатки, фудкост, закупка' },
+  { id: 'guests', icon: 'heart', color: '#E11D48', label: 'Гости', group: 'Каждый день', hint: 'отзывы, «Вернуть гостя»' },
+  { id: 'delivery', icon: 'scooter', color: '#16A34A', label: 'Доставка', group: 'Каждый день', hint: 'курьеры, цены, районы' },
+  { id: 'devices', icon: 'device', color: '#0EA5E9', label: 'Устройства', group: 'Заведение', hint: 'кассы и планшеты' },
+  { id: 'team', icon: 'users', color: '#10B981', label: 'Команда', group: 'Заведение', hint: 'сотрудники и PIN' },
+  { id: 'branding', icon: 'palette', color: '#EC4899', label: 'Брендинг', group: 'Заведение', hint: 'приложение гостя, QR' },
+  { id: 'ai', icon: 'spark', color: '#A855F7', label: 'ИИ', group: 'Заведение', hint: 'помощник и разборы' },
+  { id: 'settings', icon: 'gear', color: '#64748B', label: 'Настройки', group: 'Заведение', hint: 'табло, киоск, бот, вебхуки' },
+  { id: 'import', icon: 'upload', color: '#14B8A6', label: 'Перенос данных', group: 'Заведение', hint: 'из другой кассы' },
+  { id: 'plans', icon: 'gem', color: '#8B5CF6', label: 'Тарифы', group: 'Подписка', hint: 'сменить тариф' },
+  { id: 'billing', icon: 'card', color: '#F59E0B', label: 'Оплата', group: 'Подписка', hint: 'счета, «Приведи коллегу»' },
+  { id: 'profile', icon: 'user', color: '#06B6D4', label: 'Профиль', group: 'Подписка', hint: 'реквизиты, документы' },
+  { id: 'guide', icon: 'book', color: '', label: 'Инструкция', group: 'Помощь' },
+  { id: 'faq', icon: 'question', color: '#EF4444', label: 'Частые вопросы', group: 'Помощь' },
+  { id: 'support', icon: 'chat', color: '#22C55E', label: 'Поддержка', group: 'Помощь' },
 ];
 
 // Точки одной сети — под общим <optgroup>, иначе у владельца сети из пяти
@@ -5937,18 +5982,20 @@ function dashboardNavHtml(activeTab, showBillingDot, tenantName, chainId) {
           </select>
         </label>
       ` : `<div class="nav-drawer-tenant">${esc(tenantName || '')}</div>`}
+      ${DASHBOARD_NAV.map((t, i) => `
+        ${t.group && t.group !== (DASHBOARD_NAV[i - 1] || {}).group ? `<div class="nav-group">${esc(t.group)}</div>` : ''}
+        <button class="nav-item${t.id === activeTab ? ' active' : ''} f-dash-tab" data-tab="${t.id}"${t.hint ? ` title="${esc(t.hint)}"` : ''}>
+          ${navIconHtml(t.icon, t.color)}
+          <span class="nav-text"><span>${esc(t.label)}</span>${t.hint ? `<small>${esc(t.hint)}</small>` : ''}</span>
+          ${t.id === 'billing' && showBillingDot ? '<span class="nav-dot"></span>' : ''}
+        </button>
+      `).join('')}
       ${chainId ? `
+        <div class="nav-divider"></div>
         <button class="nav-item" id="f-nav-add-location">
           ${navIconHtml('plus', '#22C55E')}<span>Добавить точку сети</span>
         </button>
       ` : ''}
-      ${DASHBOARD_NAV.map((t) => `
-        <button class="nav-item${t.id === activeTab ? ' active' : ''} f-dash-tab" data-tab="${t.id}">
-          ${navIconHtml(t.icon, t.color)}
-          <span>${esc(t.label)}</span>
-          ${t.id === 'billing' && showBillingDot ? '<span class="nav-dot"></span>' : ''}
-        </button>
-      `).join('')}
       ${state.isSuperAdmin ? `
         <div class="nav-divider"></div>
         <a href="#/admin" class="nav-item" style="text-decoration:none">
@@ -7224,6 +7271,8 @@ function watchDashboardData(tenantId) {
 
       ${canManage ? `<h2>Табло заказов</h2>
         <div class="card" id="f-board-box">${boardBoxHtml(tenantId)}</div>` : ''}
+      ${role === 'owner' || role === 'admin' ? `<h2>Киоск самообслуживания</h2>
+        <div class="card" id="f-kiosk-box">${kioskBoxHtml(tenantId)}</div>` : ''}
       </section>
 
       ${canManage ? `<section class="set-group" id="set-conn">
@@ -8172,6 +8221,7 @@ function watchDashboardData(tenantId) {
       b.onclick = () => { const g = document.getElementById(b.dataset.goto); if (g) g.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
     });
     if ($('f-board-box')) bindBoardBox(tenantId, draw);
+    if ($('f-kiosk-box')) bindKioskBox(tenantId, draw);
     if ($('f-api-box')) bindApiKeysBox(tenantId, draw);
     if ($('f-wh-box')) bindWebhooksBox(tenantId, draw);
     if ($('f-backup-tenant')) $('f-backup-tenant').onclick = () => exportVenueBackup({ tenantId, fileKey: tenant.slug, label: tenant.name });

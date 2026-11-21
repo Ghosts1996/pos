@@ -85,7 +85,9 @@ class _DeliveryOrderCardState extends State<DeliveryOrderCard> {
   Widget build(BuildContext context) {
     final delivery = s.orderType == 'delivery';
     final status = DeliveryFlow.normalize(s.orderType, s.deliveryStatus);
-    final awaitingCall = s.fromApp && status == 'new';
+    // SaaS: заказ с киоска самообслуживания подтверждают так же, как из приложения.
+    final fromKiosk = kSaasMode && s.source == 'kiosk';
+    final awaitingCall = (s.fromApp || fromKiosk) && status == 'new';
     final waited = DateTime.now().difference(s.startTime).inMinutes;
     final name = s.customerName.isNotEmpty ? s.customerName : s.guestTag;
     final muted = TextStyle(color: AppColors.textMuted, fontSize: widget.compact ? 12 : 13);
@@ -130,6 +132,15 @@ class _DeliveryOrderCardState extends State<DeliveryOrderCard> {
                     label: Text('Приложение'),
                   ),
                 ),
+              if (fromKiosk)
+                const Padding(
+                  padding: EdgeInsets.only(left: 6),
+                  child: Chip(
+                    visualDensity: VisualDensity.compact,
+                    avatar: Icon(Icons.touch_app_outlined, size: 16),
+                    label: Text('Киоск'),
+                  ),
+                ),
             ],
           ),
           if (s.customerPhone.isNotEmpty)
@@ -170,12 +181,15 @@ class _DeliveryOrderCardState extends State<DeliveryOrderCard> {
             ),
           ),
           if (awaitingCall && !widget.compact)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
               child: Text(
-                'Позвоните гостю: сверьте состав, адрес и время. После подтверждения позиции встанут в чек, '
-                'гость увидит «Принят». Если гость выбрал оплату онлайн — кнопка оплаты появится у него сразу.',
-                style: TextStyle(fontSize: 13),
+                fromKiosk
+                    ? 'Заказ с киоска: гость подойдёт к кассе и назовёт номер №${s.orderLabel}. Нажмите «Подтвердить» — '
+                        'позиции встанут в чек, затем примите оплату.'
+                    : 'Позвоните гостю: сверьте состав, адрес и время. После подтверждения позиции встанут в чек, '
+                        'гость увидит «Принят». Если гость выбрал оплату онлайн — кнопка оплаты появится у него сразу.',
+                style: const TextStyle(fontSize: 13),
               ),
             ),
           if (s.guestPaidTotal > 0 && s.status == 'active' && !widget.compact)
