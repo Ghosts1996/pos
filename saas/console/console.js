@@ -4170,12 +4170,7 @@ function screenLanding() {
     </section>
 
     <section class="l-proof" aria-label="Коротко о главном">
-      <div class="landing-inner l-proof-grid">
-        <div><b>0&nbsp;%</b><span>с ваших продаж и&nbsp;доставки</span></div>
-        <div><b>Без сети</b><span>касса работает и&nbsp;без интернета</span></div>
-        <div><b>В России</b><span>данные и&nbsp;резервные копии</span></div>
-        <div><b>Своё железо</b><span>Android или Windows: планшет или компьютер, который уже есть</span></div>
-      </div>
+      <p class="landing-inner l-proof-line"><span>0&nbsp;% с&nbsp;продаж и&nbsp;доставки</span><span>Работает без&nbsp;интернета</span><span>Данные в&nbsp;России</span><span>Android и&nbsp;Windows</span></p>
     </section>
 
     <section class="landing-section l-dark landing-showcase" id="landing-showcase">
@@ -4229,9 +4224,9 @@ function screenLanding() {
           деньги у нас нет и не будет.</p>
         </div>
         <div class="feature-grid m-swipe">
-          ${LANDING_FEATURES.map((f) => `
+          ${LANDING_FEATURES.map((f, i) => `
             <div class="feature-card">
-              <div class="feature-ico">${LI[f.icon] || ''}</div>
+              <div class="feature-no" aria-hidden="true">${String(i + 1).padStart(2, '0')}</div>
               <div class="feature-title">${esc(f.title)}</div>
               <div class="feature-desc">${esc(f.short || f.desc)}</div>
               ${f.short ? `<details class="feature-more"><summary>Подробнее</summary><p>${esc(f.desc)}</p></details>` : ''}
@@ -4257,7 +4252,7 @@ function screenLanding() {
           </div>
           ${LANDING_ROLES.map((r, i) => `<div class="roles-panel" role="tabpanel" id="role-panel-${i}" aria-labelledby="role-tab-${i}"${i ? ' hidden' : ''}>
             <div class="roles-lead"><b>${esc(r.title)}</b><span>${esc(r.lead)}</span></div>
-            <ul class="roles-list">${r.points.map(([t, d]) => `<li>${LI.check}<span><b>${esc(t)}</b>${esc(d)}</span></li>`).join('')}</ul>
+            <ul class="roles-list">${r.points.map(([t, d]) => `<li><b>${esc(t.trim().replace(/\.$/, ''))}</b><span>${esc(d)}</span></li>`).join('')}</ul>
           </div>`).join('')}
         </div>
       </div>
@@ -4272,17 +4267,28 @@ function screenLanding() {
           Процент с&nbsp;заказов мы не&nbsp;берём, за&nbsp;онлайн-оплату платите только комиссию своему банку.
           <span id="delivery-plan-note"></span></p>
         </div>
-        <div class="dlv-grid m-swipe">
-          ${[
-            ['bag', 'Гость заказывает', 'Доставка или «заберу сам» из приложения; цена доставки по адресу сразу в счёте.'],
-            ['check', 'Вы подтверждаете', 'Заказ на кассе с номером гостя: «Подтвердить» — и позиции уже на кухне и в чеке.'],
-            ['receipt', 'Гость платит онлайн', 'По СБП или картой через ваш банк, деньги сразу на ваш счёт. Статусы — в приложении.'],
-            ['phone', 'Приложение курьера', 'Android и браузер: «Беру», шаги до «Вручил», оплата у двери, заработок за день.'],
-            ['route', 'Своя карта и маршрут', 'По дорогам для машины, велосипеда и пешком, без рекламы. Курьеры на карте в кабинете.'],
-            ['chart', 'Цена по районам и км', 'Районы города по карте, цена за километр, «бесплатно от», минимальный заказ.'],
-            ['users', 'Курьеры под контролем', 'Добавляете сами, вход по коду из письма; заблокировали — курьер сразу вышел.'],
-            ['send', 'Службы доставки', 'Нет своего курьера — вызовите Яндекс Доставку или Достависта из кабинета.'],
-          ].map(([ic, t, d]) => `<div class="dlv-item"><span class="dlv-ico">${LI[ic]}</span><b>${t}</b><span>${d}</span></div>`).join('')}
+        <div class="dlv">
+          <ol class="dlv-path">
+            <li><b>Гость заказывает</b><span>«Доставка» или «заберу сам» в&nbsp;приложении с&nbsp;вашим логотипом. Цена доставки
+              по&nbsp;адресу сразу в&nbsp;счёте.</span></li>
+            <li><b>Вы подтверждаете</b><span>Заказ приходит на&nbsp;кассу с&nbsp;номером гостя. Одно нажатие&nbsp;— и&nbsp;он
+              уже на&nbsp;кухне и&nbsp;в&nbsp;чеке.</span></li>
+            <li><b>Курьер везёт</b><span>Берёт заказ в&nbsp;своём приложении и&nbsp;едет по&nbsp;маршруту. Вы видите курьеров
+              на&nbsp;карте в&nbsp;кабинете.</span></li>
+            <li><b>Гость получает</b><span>Оплата онлайн заранее или у&nbsp;двери: наличными со&nbsp;сдачей, картой или по&nbsp;QR.
+              Чек пробивается сам.</span></li>
+          </ol>
+          <div class="dlv-setup">
+            <div class="dlv-setup-title">Что настраиваете вы</div>
+            <dl class="menu-lines dlv-lines">
+              <div><dt>Карта и&nbsp;маршруты</dt><dd>свои, без&nbsp;рекламы</dd></div>
+              <div><dt>Цена доставки</dt><dd>районы, км, «бесплатно&nbsp;от»</dd></div>
+              <div><dt>Приложение курьера</dt><dd>Android и&nbsp;браузер</dd></div>
+              <div><dt>Вход курьера</dt><dd>по&nbsp;коду из&nbsp;письма</dd></div>
+              <div><dt>Нет своего курьера</dt><dd>Яндекс Доставка, Достависта</dd></div>
+              <div><dt>Процент с&nbsp;заказов</dt><dd>0&nbsp;%</dd></div>
+            </dl>
+          </div>
         </div>
         <p class="dlv-law">Табак и алкоголь в доставку не попадут: продавать их дистанционно закон запрещает.</p>
         <div class="scale-strip">
