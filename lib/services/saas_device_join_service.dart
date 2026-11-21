@@ -35,8 +35,13 @@ class SaasDeviceJoinService {
   /// без chainId — тогда общая лояльность сети (chains/{chainId}/clients и
   /// соседние коллекции) тихо подменилась бы на пустые tenant-скоуп
   /// документы этой конкретной точки.
-  Future<({String tenantId, String? chainId})> resolveTenantIdBySlug(String slug) async {
-    final json = await _callGateway('resolveTenantBySlug', {'slug': slug.trim()}, requireAuth: false);
+  ///
+  /// [prefer] — заведение, которое устройство уже знает: если у кода
+  /// несколько заведений, сервер отдаст его (не переедем в чужое).
+  Future<({String tenantId, String? chainId})> resolveTenantIdBySlug(String slug, {String? prefer}) async {
+    final json = await _callGateway(
+        'resolveTenantBySlug', {'slug': slug.trim(), if (prefer != null && prefer.isNotEmpty) 'prefer': prefer},
+        requireAuth: false);
     final tenantId = json['tenantId'] as String?;
     if (tenantId == null || tenantId.isEmpty) {
       throw StateError('Сервис не вернул tenantId для этого заведения');

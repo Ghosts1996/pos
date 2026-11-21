@@ -604,16 +604,108 @@ async function writeAuditLog({ tenantId, actorId, action, metadata }) {
  * tenantId по коду заведения. Нужен устройству до вступления в заведение,
  * когда правила ещё не дают читать tenants.
  */
+const TABLE_ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
+
+/** Есть ли у заведения стол tableId и подходит ли секрет с наклейки (у
+ *  стола без выпущенного секрета — старые наклейки — секрет не нужен). */
+async function tenantHasTable(firestore, tenantId, tableId, key = "") {
+  const ref = firestore.collection("tenants").doc(tenantId);
+  const t = await ref.collection("tables").doc(tableId).get();
+  if (!t.exists) return false;
+  const k = await ref.collection("tableKeys").doc(tableId).get();
+  if (!k.exists || !k.data().key) return true;
+  return typeof key === "string" && key === k.data().key;
+}
+
+/**
+ * Какое заведение отдавать по коду, если с этим кодом в базе их несколько
+ * (старая копия, перенос, перевод в сеть и обратно): живое, а не первое
+ * попавшееся. Стол из QR — главный признак; потом статус, устройства и
+ * свежесть.
+ */
+async function pickTenantBySlug(firestore, slug, { tableId = "", key = "", prefer = "" } = {}) {
+  const snap = await firestore.collection("tenants").where("slug", "==", slug).limit(10).get();
+  const alive = snap.docs.filter((d) => d.data().status !== "deleted");
+  if (alive.length <= 1) return alive[0] || null;
+  // Телефон уже сидел за столом в одном из них — туда же.
+  const preferred = prefer && alive.find((d) => d.id === prefer);
+  if (preferred && !tableId) return preferred;
+  console.warn(`saas-gateway: код ${slug} — у ${alive.length} заведений: ${alive.map((d) => d.id).join(", ")}`);
+  if (tableId) {
+    for (const d of alive) if (await tenantHasTable(firestore, d.id, tableId, key)) return d;
+  }
+  const rank = { active: 3, trial: 3, past_due: 2, suspended: 1 };
+  const scored = await Promise.all(alive.map(async (d) => {
+    const x = d.data();
+    const devices = await firestore.collection("tenants").doc(d.id).collection("devices").limit(1).get().catch(() => ({ empty: true }));
+    const tables = await firestore.collection("tenants").doc(d.id).collection("tables").limit(1).get().catch(() => ({ empty: true }));
+    const ms = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : 0);
+    return { d, s: [rank[x.status] || 0, devices.empty ? 0 : 1, tables.empty ? 0 : 1, Math.max(ms(x.updatedAt), ms(x.createdAt))] };
+  }));
+  scored.sort((p, q) => {
+    for (let i = 0; i < p.s.length; i++) if (q.s[i] !== p.s[i]) return q.s[i] - p.s[i];
+    return 0;
+  });
+  return scored[0].d;
+}
+
+/**
+ * tenantId по коду заведения. Нужен устройству до вступления в заведение,
+ * когда правила ещё не дают читать tenants. tableId (+ key) — веб-версия
+ * гостя открыта по QR стола: если с кодом несколько заведений, отдаём то,
+ * где этот стол.
+ */
 async function handleResolveTenantBySlug(req, res) {
   const body = await parseJsonBody(req);
   const slug = normalizeSlug(body.slug);
-  const snap = await db().collection("tenants").where("slug", "==", slug).limit(1).get();
-  if (snap.empty) throw new HttpError(404, "Заведение с таким кодом не найдено");
-  const tenant = snap.docs[0];
-  if (tenant.data().status === "deleted") {
-    throw new HttpError(404, "Заведение с таким кодом не найдено");
-  }
+  const tableId = typeof body.tableId === "string" && TABLE_ID_RE.test(body.tableId) ? body.tableId : "";
+  const key = typeof body.key === "string" ? body.key.slice(0, 200) : "";
+  const prefer = typeof body.prefer === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(body.prefer) ? body.prefer : "";
+  const tenant = await pickTenantBySlug(db(), slug, { tableId, key, prefer });
+  if (!tenant) throw new HttpError(404, "Заведение с таким кодом не найдено");
   sendJson(res, 200, { tenantId: tenant.id, status: tenant.data().status, chainId: tenant.data().chainId || null });
+}
+
+/**
+ * Где стол из QR. Веб-версия гостя не нашла стол в открытом заведении
+ * (открыта сохранённой иконкой другого адреса, у кода несколько заведений,
+ * точка сети): сервер ищет заведение с этим столом и секретом с наклейки и
+ * говорит его код — гость попадает за свой стол. Без верного секрета (если
+ * он выпущен) — не находим: номер стола не раскрывает заведение.
+ */
+async function handleFindTableVenue(req, res) {
+  const body = await parseJsonBody(req);
+  const tableId = typeof body.tableId === "string" && TABLE_ID_RE.test(body.tableId) ? body.tableId : "";
+  const key = typeof body.key === "string" ? body.key.slice(0, 200) : "";
+  if (!tableId) throw new HttpError(400, "Нет номера стола");
+  const firestore = db();
+  const hint = body.slug ? normalizeSlugSafe(body.slug) : "";
+  const tried = new Set();
+  const check = async (doc) => {
+    if (!doc || tried.has(doc.id)) return null;
+    tried.add(doc.id);
+    const x = doc.data() || {};
+    if (x.status === "deleted") return null;
+    return (await tenantHasTable(firestore, doc.id, tableId, key)) ? { tenantId: doc.id, slug: x.slug || doc.id, chainId: x.chainId || null } : null;
+  };
+  // Сначала заведения с тем же кодом, потом — все.
+  if (hint) {
+    const same = await firestore.collection("tenants").where("slug", "==", hint).limit(10).get();
+    for (const d of same.docs) {
+      const hit = await check(d);
+      if (hit) return sendJson(res, 200, hit);
+    }
+  }
+  const all = await firestore.collection("tenants").get();
+  for (const d of all.docs) {
+    const hit = await check(d);
+    if (hit) return sendJson(res, 200, hit);
+  }
+  throw new HttpError(404, "Стол не найден");
+}
+
+function normalizeSlugSafe(v) {
+  try { return normalizeSlug(v); } catch (_) { return ""; }
 }
 
 /** Сеть по коду и список её точек — экран «выберите заведение» у гостя. */
@@ -750,12 +842,8 @@ async function handlePublicGuestApk(req, res) {
   const slug = normalizeSlug(requestUrl.searchParams.get("slug") || "");
 
   const firestore = db();
-  const tenantSnap = await firestore.collection("tenants").where("slug", "==", slug).limit(1).get();
-  if (tenantSnap.empty) throw new HttpError(404, "Заведение с таким кодом не найдено");
-  const tenantDoc = tenantSnap.docs[0];
-  if (tenantDoc.data().status === "deleted") {
-    throw new HttpError(404, "Заведение с таким кодом не найдено");
-  }
+  const tenantDoc = await pickTenantBySlug(firestore, slug);
+  if (!tenantDoc) throw new HttpError(404, "Заведение с таким кодом не найдено");
   if (tenantDoc.data().guestAppOff === true) {
     throw new HttpError(403, "Приложение гостя в этом заведении не подключено");
   }
@@ -10608,6 +10696,7 @@ const ROUTES = {
   "/deliveryExtApprove": deliveryServices.handleApprove,
   "/deliveryExtCancel": deliveryServices.handleCancel,
   "/resolveTenantBySlug": handleResolveTenantBySlug,
+  "/findTableVenue": handleFindTableVenue,
   "/resolveChainBySlug": handleResolveChainBySlug,
   "/createTenant": handleCreateTenant,
   "/createChain": handleCreateChain,

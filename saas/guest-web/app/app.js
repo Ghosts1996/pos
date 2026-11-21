@@ -496,10 +496,20 @@ async function resolveTenant() {
   const slug = (location.hostname.split('.')[0] || '').trim();
   if (!slug) throw new Error('Не удалось определить заведение по адресу');
 
+  // Открыли по QR стола — серверу нужен стол: если с этим кодом несколько
+  // заведений, он отдаст то, где стол. Иначе — заведение, где телефон уже
+  // сидел за столом.
+  const qr = location.hash.match(/^#\/t\/([^/]+)(?:\/([^/]+))?$/);
+  let prefer = '';
+  try { prefer = localStorage.getItem('zalTenantFor:' + slug) || ''; } catch (_) {}
   const tenantResp = await netFetch(`${GATEWAY}/resolveTenantBySlug`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug }),
+    body: JSON.stringify({
+      slug,
+      ...(qr ? { tableId: decodeURIComponent(qr[1]), key: qr[2] ? decodeURIComponent(qr[2]) : '' } : {}),
+      ...(prefer ? { prefer } : {}),
+    }),
   });
   // Защита сервера на время закрыла адрес сети (shield.js) — не «не найдено».
   if (tenantResp.status === 429) {
@@ -1949,6 +1959,27 @@ async function bindToTable(tableId, tableKey = '') {
         try { sessionStorage.setItem('zalTableHop', tableId + '@' + other); } catch (_) {}
         return switchPoint(other, '#/t/' + encodeURIComponent(tableId) + (tableKey ? '/' + encodeURIComponent(tableKey) : ''));
       }
+      // Спросим сервер, в каком заведении этот стол (иконка «Домой» от
+      // другого адреса, у кода несколько заведений): откроем его.
+      const home = await findTableVenue(tableId, tableKey);
+      if (home && home.tenantId !== state.tenantId) {
+        const target = '#/t/' + encodeURIComponent(tableId) + (tableKey ? '/' + encodeURIComponent(tableKey) : '');
+        const mySlug = (location.hostname.split('.')[0] || '').trim();
+        let hop = '';
+        try { hop = sessionStorage.getItem('zalVenueHop') || ''; } catch (_) {}
+        if (hop !== tableId + '@' + home.tenantId) {
+          try { sessionStorage.setItem('zalVenueHop', tableId + '@' + home.tenantId); } catch (_) {}
+          if (home.slug && home.slug !== mySlug) {
+            const host = [home.slug, ...location.hostname.split('.').slice(1)].join('.');
+            location.href = `${location.protocol}//${host}${location.port ? ':' + location.port : ''}/app/${target}`;
+            return;
+          }
+          try { localStorage.setItem('zalTenantFor:' + mySlug, home.tenantId); } catch (_) {}
+          location.hash = target;
+          location.reload();
+          return;
+        }
+      }
       return failBind('Такого стола нет. Отсканируйте код ещё раз.');
     }
     const data = t.data();
@@ -1971,6 +2002,23 @@ async function bindToTable(tableId, tableKey = '') {
     await claimSession(tableId, sessionId, tableKey);
   } catch (e) {
     failBind('Не удалось открыть стол. Проверьте интернет и попробуйте ещё раз.');
+  }
+}
+
+/// Где стол из QR (сервер сверяет секрет с наклейки). null — не нашли.
+async function findTableVenue(tableId, key) {
+  try {
+    const slug = (location.hostname.split('.')[0] || '').trim();
+    const r = await netFetch(`${GATEWAY}/findTableVenue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tableId, key: key || '', slug }),
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j && j.tenantId ? j : null;
+  } catch (_) {
+    return null;
   }
 }
 
@@ -2078,6 +2126,7 @@ async function claimSession(tableId, sessionId, tableKey = '') {
     }
   } catch (_) {}
 
+  try { localStorage.setItem('zalTenantFor:' + (location.hostname.split('.')[0] || '').trim(), state.tenantId); } catch (_) {}
   location.hash = '#/table';
   toast('Готово! Ваш счёт открыт');
 }

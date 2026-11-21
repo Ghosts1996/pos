@@ -179,17 +179,22 @@ Future<({String tenantId, String? chainId})?> _resolveSaasTenantId() async {
     // связи — как запомнили).
     if (kSaasPresetSlug.isNotEmpty) {
       try {
-        final fresh = await SaasDeviceJoinService().resolveTenantIdBySlug(kSaasPresetSlug).timeout(const Duration(seconds: 4));
+        final fresh = await SaasDeviceJoinService()
+            .resolveTenantIdBySlug(kSaasPresetSlug, prefer: cached)
+            .timeout(const Duration(seconds: 4));
         final freshChain = (fresh.chainId ?? '').isEmpty ? null : fresh.chainId;
-        if (fresh.tenantId != cached || freshChain != ((cachedChain ?? '').isEmpty ? null : cachedChain)) {
-          await prefs.setString(tenantCacheKey, fresh.tenantId);
-          if (freshChain == null) {
-            await prefs.remove(chainCacheKey);
-          } else {
-            await prefs.setString(chainCacheKey, freshChain);
+        // По коду ответило другое заведение (у кода несколько заведений) —
+        // не переезжаем молча: бонусы, столы и заказы гостя — в своём.
+        if (fresh.tenantId == cached) {
+          if (freshChain != ((cachedChain ?? '').isEmpty ? null : cachedChain)) {
+            if (freshChain == null) {
+              await prefs.remove(chainCacheKey);
+            } else {
+              await prefs.setString(chainCacheKey, freshChain);
+            }
           }
+          return (tenantId: cached, chainId: freshChain);
         }
-        return (tenantId: fresh.tenantId, chainId: freshChain);
       } catch (_) {
         // Нет связи или сервер не ответил — как запомнили.
       }
