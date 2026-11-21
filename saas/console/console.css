@@ -1741,3 +1741,61 @@ html.zd-open { overflow: hidden; }
 .prof-forgot { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
 .prof-forgot summary { cursor: pointer; color: var(--muted); }
 .prof-exit { margin-top: 18px; }
+
+/* ---- Лендинг: коротко о главном (под первым экраном) ---- */
+.l-proof { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--surface); }
+.l-proof-grid { display: grid; grid-template-columns: 1fr 1fr; }
+.l-proof-grid > div { padding: 22px 16px; display: flex; flex-direction: column; gap: 4px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.l-proof-grid > div:nth-child(2n) { border-right: 0; }
+.l-proof-grid > div:nth-child(n+3) { border-bottom: 0; }
+.l-proof-grid b { font-family: var(--serif); font-size: 26px; font-weight: 600; line-height: 1.1; color: var(--primary); }
+.l-proof-grid span { font-size: 13.5px; line-height: 1.45; color: var(--muted); }
+@media (min-width: 860px) {
+  .l-proof-grid { grid-template-columns: repeat(4, 1fr); }
+  .l-proof-grid > div { padding: 28px 24px; border-bottom: 0; }
+  .l-proof-grid > div:nth-child(2n) { border-right: 1px solid var(--border); }
+  .l-proof-grid > div:last-child { border-right: 0; }
+  .l-proof-grid b { font-size: 28px; white-space: nowrap; }
+  .l-proof-grid > div:first-child { padding-left: 0; }
+}
+
+/* ---- Лендинг: «Каждому в команде — своё» ---- */
+.roles { background: var(--surface); border: 1px solid var(--border); border-radius: calc(var(--radius) + 6px); box-shadow: var(--shadow); overflow: hidden; }
+.roles-tabs { display: flex; gap: 6px; padding: 10px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--border); background: var(--alt-bg); }
+.roles-tabs::-webkit-scrollbar { display: none; }
+.roles-tab { flex: none; width: auto; display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 999px; border: 1px solid transparent;
+  background: transparent; color: var(--muted); font: inherit; font-size: 14.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.roles-tab .li { width: 18px; height: 18px; }
+.roles-tab:hover { color: var(--text); }
+.roles-tab.on { background: var(--surface); color: var(--text); border-color: var(--border-strong); box-shadow: 0 6px 18px -12px rgba(29, 26, 22, .5); }
+.roles-tab.on .li { color: var(--primary); }
+.roles-panel { padding: 24px 20px 26px; display: grid; gap: 20px; }
+.roles-panel[hidden] { display: none !important; }
+.roles-lead { display: flex; flex-direction: column; gap: 8px; }
+.roles-lead b { font-family: var(--serif); font-size: 28px; font-weight: 600; line-height: 1.15; }
+.roles-lead span { color: var(--muted); font-size: 15px; line-height: 1.55; }
+.roles-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+.roles-list li { display: flex; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--border); font-size: 14.5px; line-height: 1.55; color: var(--muted); }
+.roles-list li:last-child { border-bottom: 0; }
+.roles-list li .li { flex: none; color: var(--primary); margin-top: 3px; }
+.roles-list li b { color: var(--text); font-weight: 600; }
+@media (min-width: 900px) {
+  .roles-tabs { padding: 12px 14px; }
+  .roles-panel { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 48px; padding: 36px 36px 34px; }
+  .roles-lead b { font-size: 34px; }
+}
+
+/* ---- Лендинг: как перейти за один вечер ---- */
+.l-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; counter-reset: none; }
+.l-steps li { position: relative; display: grid; gap: 6px; align-content: start; padding: 22px 20px 22px 74px; border: 1px solid rgba(241, 235, 225, .14); border-radius: var(--radius); background: rgba(241, 235, 225, .04); }
+.l-steps li i { position: absolute; left: 20px; top: 20px; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+  font-style: normal; font-family: var(--serif); font-size: 20px; font-weight: 600; background: #F1EBE1; color: #1C1915; }
+.l-steps li b { font-size: 17px; font-weight: 600; }
+.l-steps li span { font-size: 14.5px; line-height: 1.6; opacity: .78; }
+@media (min-width: 900px) {
+  .l-steps { grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .l-steps li { padding: 76px 22px 24px; }
+}
+.l-steps-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 26px; margin-top: 30px; }
+.l-steps-cta .btn-primary { width: auto; padding: 15px 26px; }
+.l-dark .l-steps-cta .l-arrow-link { color: inherit; }
