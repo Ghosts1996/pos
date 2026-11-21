@@ -612,8 +612,10 @@ a:hover { color: var(--primary-2); }
 /* Значок приложения кассы рядом со словом — как иконка на планшете. */
 .landing-logo-icon { width: 30px; height: 30px; border-radius: 8px; margin-right: 8px; vertical-align: -7px; box-shadow: 0 1px 2px rgba(0, 0, 0, .18); }
 .landing-logo:hover { color: var(--text); }
-.landing-nav-links { display: none; gap: 32px; }
-.landing-nav-links button, .landing-nav-links a { background: none; border: none; color: var(--muted); font: inherit; font-weight: 500; font-size: 14px; cursor: pointer; padding: 0; width: auto; text-decoration: none; }
+.landing-nav-links { display: none; align-items: center; gap: 24px; min-width: 0; }
+/* Кнопки и ссылка «Обзор» — одной высоты и в одну строку. */
+.landing-nav-links button, .landing-nav-links a { display: inline-flex; align-items: center; background: none; border: none; color: var(--muted); font: inherit; font-weight: 500; font-size: 14px; line-height: 20px; cursor: pointer; padding: 6px 0; margin: 0; width: auto; text-decoration: none; white-space: nowrap; }
+.landing-nav-links .nav-wide { display: none; }
 .landing-nav-links button:hover, .landing-nav-links a:hover { color: var(--text); }
 .landing-nav-actions { display: flex; align-items: center; gap: 12px; flex: none; }
 @media (min-width: 640px) { .landing-nav-actions { gap: 18px; } }
@@ -626,8 +628,11 @@ a:hover { color: var(--primary-2); }
 @media (min-width: 860px) {
   .landing-nav-inner { padding: 14px 24px; gap: 16px; }
   .landing-logo { font-size: 26px; }
-  .landing-nav-links { display: flex; }
 }
+/* Пункты меню — только когда все помещаются в одну строку: с 1024 —
+   основные, с 1200 — и «Демо», «Обзор». Уже — логотип и кнопки. */
+@media (min-width: 1024px) { .landing-nav-links { display: flex; } }
+@media (min-width: 1200px) { .landing-nav-links { gap: 28px; } .landing-nav-links .nav-wide { display: inline-flex; } }
 
 /* ---- Первый экран ---- */
 .landing-hero-section { padding-top: 48px; padding-bottom: 72px; }

@@ -4100,8 +4100,8 @@ function screenLanding() {
           <button type="button" data-scroll="landing-roles">Для кого</button>
           <button type="button" data-scroll="landing-delivery">Доставка</button>
           <button type="button" data-scroll="landing-pricing">Тарифы</button>
-          <button type="button" data-scroll="landing-demo">Демо</button>
-          <a href="#/guide">Обзор</a>
+          <button type="button" data-scroll="landing-demo" class="nav-wide">Демо</button>
+          <a href="#/guide" class="nav-wide">Обзор</a>
           <button type="button" data-scroll="landing-faq">Вопросы</button>
         </div>
         <div class="landing-nav-actions">

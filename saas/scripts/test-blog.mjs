@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { landingHtml } from './prerender-landing.mjs';
 import { build, readPosts, markdown, readGuide, readFaq, guideArticles, changedUrls, readGuideMore, readLandings } from './build-blog.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -211,6 +212,16 @@ check('robots.txt и ключ IndexNow', () => {
   const key = fs.readdirSync(path.join(SAAS, 'console')).find((f) => /^[0-9a-f]{32}\.txt$/.test(f));
   assert.ok(key, 'нет файла ключа IndexNow');
   assert.equal(fs.readFileSync(path.join(SAAS, 'console', key), 'utf8').trim(), key.replace('.txt', ''));
+});
+
+check('пререндер главной: первый экран — та же разметка, что у живой страницы', () => {
+  // Иначе при загрузке «прыгает» кадр: копия для поисковиков сменяется живой
+  // страницей другого вида (видео владельца 21.11.2026).
+  const html = landingHtml();
+  for (const part of ['class="landing-nav"', 'class="landing-hero-lede"', 'class="landing-hero-points"', 'id="f-landing-hero-cta"', 'class="card landing-hero-card"', 'class="theme-toggle"', '<svg class="li"'])
+    assert.ok(html.includes(part), `в пререндере нет ${part} — разметка первого экрана в console.js разошлась с prerender-landing.mjs`);
+  assert.ok(!html.includes('${'), 'в пререндере остались невычисленные ${…}');
+  assert.ok(/Что умеет ZalPOS[\s\S]*feature-card/.test(html) && html.includes('Частые вопросы'), 'нет текста для поисковиков');
 });
 
 console.log(`blog: ${n} проверок, постов ${posts.length}`);

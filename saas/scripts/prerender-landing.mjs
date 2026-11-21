@@ -35,40 +35,66 @@ export function readArray(name, file = path.join(CONSOLE, 'console.js')) {
 
 const plain = (s) => esc(String(s || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' '));
 
-export function landingHtml({ features = readArray('LANDING_FEATURES'), faq = readFaq() } = {}) {
+/** Значение const-выражения из console.js (const NAME = …;) — без браузера. */
+function readExpr(src, head, endMark, ctx = {}, keep = endMark.length) {
+  const at = src.indexOf(head);
+  if (at < 0) return null;
+  const from = at + head.length;
+  const end = src.indexOf(endMark, from);
+  if (end < 0) return null;
+  try { return vm.runInNewContext(`(${src.slice(from, end + keep)})`, ctx, { timeout: 500 }); } catch (_) { return null; }
+}
+
+/** Кусок шаблона лендинга из console.js между метками — тем же HTML, что
+ *  рисует кабинет, с подставленными значками. null — разметка разошлась. */
+function heroFromConsole(file = path.join(CONSOLE, 'console.js')) {
+  const src = fs.readFileSync(file, 'utf8');
+  const LI = readExpr(src, 'const LI = ', '\n})();', {}, 5);
+  const THEME_ICONS = readExpr(src, 'const THEME_ICONS = ', '`;\n', {}, 1);
+  if (!LI || !THEME_ICONS) return null;
+  const a = src.indexOf('    <nav class="landing-nav">');
+  const b = src.indexOf('    <section class="l-proof"');
+  if (a < 0 || b < a) return null;
+  const tpl = src.slice(a, b);
+  const ctx = {
+    LI,
+    themeToggleHtml: () => `<button type="button" class="theme-toggle" aria-label="Сменить тему">${THEME_ICONS}</button>`,
+    xborderConsentHtml: () => '',
+  };
+  try { return vm.runInNewContext('`' + tpl + '`', ctx, { timeout: 500 }); } catch (_) { return null; }
+}
+
+// Первый экран — точная копия живой страницы (те же классы и стили
+// console.css), поэтому, когда кабинет загрузится и заменит её, на экране
+// ничего не дёрнется. Ниже — возможности и вопросы для поисковиков.
+export function landingHtml({ features = readArray('LANDING_FEATURES'), faq = readFaq(), hero = heroFromConsole() } = {}) {
+  const top = hero || `<h1>Касса, в которой персонал разберётся за вечер</h1>`;
   return `<div id="prerender" class="pre">
-  <header class="pre-nav"><b class="pre-logo">ZalPOS</b>
-    <nav><a href="/blog/">Статьи</a> <a href="/guide/">Инструкция</a> <a href="/faq/">Вопросы</a> <a href="/#/login">Войти</a></nav></header>
-  <h1>Касса, в которой персонал разберётся за вечер</h1>
-  <p class="pre-lede">Касса и управление заведением для кафе, ресторанов, баров, кофеен, кальянных и тайм-кафе:
-  зал, заказы, оплата и фискальные чеки, склад с техкартами, ЕГАИС, смены и зарплата — на планшете или компьютере,
-  который у вас уже есть. Приложение гостя с вашим логотипом, заказ со стола, бонусы и брони. Выручку и смену
-  владелец смотрит с телефона. 7 дней бесплатно, без процента с продаж.</p>
-  <p><a class="pre-cta" href="/#/">Попробовать бесплатно</a></p>
-  <h2>Что умеет ZalPOS</h2>
-  <div class="pre-grid">
-${features.filter((f) => f && f.title).map((f) => `    <section><h3>${plain(f.title)}</h3><p>${plain(f.desc)}</p></section>`).join('\n')}
-  </div>
-  <h2>Частые вопросы</h2>
-${faq.slice(0, 10).map((i) => `  <h3>${plain(i.q)}</h3>\n  <p>${plain(i.a)}</p>`).join('\n')}
-  <p class="pre-links"><a href="/blog/">Статьи для владельцев заведений</a> · <a href="/guide/">Инструкция по кассе</a> · <a href="/faq/">Все вопросы</a></p>
+${top}
+  <section class="landing-section pre-seo" id="pre-features">
+    <div class="landing-inner">
+      <h2 class="landing-h2">Что умеет ZalPOS</h2>
+      <div class="feature-grid">
+${features.filter((f) => f && f.title).map((f, i) => `        <div class="feature-card"><div class="feature-no">${String(i + 1).padStart(2, '0')}</div><h3 class="feature-title">${plain(f.title)}</h3><p class="feature-desc">${plain(f.desc)}</p></div>`).join('\n')}
+      </div>
+    </div>
+  </section>
+  <section class="landing-section pre-seo">
+    <div class="landing-inner">
+      <h2 class="landing-h2">Частые вопросы</h2>
+${faq.slice(0, 10).map((i) => `      <h3>${plain(i.q)}</h3>\n      <p>${plain(i.a)}</p>`).join('\n')}
+      <p class="pre-links"><a href="/blog/">Статьи для владельцев заведений</a> · <a href="/guide/">Инструкция по кассе</a> · <a href="/faq/">Все вопросы</a></p>
+    </div>
+  </section>
 </div>`;
 }
 
 // Пока кабинет грузится — показываем текст только там, где он к месту:
 // главная без входа. Вошедшему (или на других адресах) — привычная крутилка.
+// Пока текст на экране, #screen получает класс landing — как у живой страницы.
 const HEAD = `<style id="prerender-css">
-.pre{max-width:1080px;margin:0 auto;padding:20px 16px 48px;line-height:1.55}
-.pre-nav{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:28px}
-.pre-nav nav a{margin-right:14px;color:inherit;opacity:.75;text-decoration:none}
-.pre-logo{font-size:22px}
-.pre h1{font-size:clamp(30px,5vw,52px);line-height:1.1;margin:0 0 16px}
-.pre-lede{font-size:18px;max-width:760px;opacity:.85}
-.pre-cta{display:inline-block;padding:12px 22px;border-radius:999px;background:#9A4A2A;color:#fff;text-decoration:none;font-weight:600}
-.pre-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px 24px}
-.pre h2{margin:40px 0 12px;font-size:26px}
-.pre h3{margin:16px 0 4px;font-size:17px}
-.pre p{margin:0 0 8px}
+.pre-seo h3{margin:18px 0 4px;font-size:17px}
+.pre-seo p{margin:0 0 8px}
 .pre-links{margin-top:28px}
 html.no-pre .pre{display:none}
 html:not(.no-pre) .pre-spin{display:none}
@@ -82,14 +108,17 @@ html:not(.no-pre) .pre-spin{display:none}
 })();
 </script>`;
 
+const SCREEN_MARK = `<script>if(!document.documentElement.classList.contains('no-pre'))document.getElementById('screen').classList.add('landing')</script>`;
+
 /** Вписать текст лендинга в index.html (между метками; повторно — заменить). */
 export function prerender(file) {
   let html = fs.readFileSync(file, 'utf8');
   html = html.replace(/<style id="prerender-css">[\s\S]*?<\/script>\n?/, '');
+  html = html.replace(/<script>if\(!document\.documentElement[^\n]*<\/script>\n/, '');
   html = html.replace(/<div id="prerender"[\s\S]*?<\/div>\n<!--\/prerender-->\n?/, '');
   html = html.replace('</head>', `${HEAD}\n</head>`);
   html = html.replace(/<div class="wrap" id="screen">\s*<div class="spinner(?: pre-spin)?"><\/div>/,
-    `<div class="wrap" id="screen">\n${landingHtml()}\n<!--/prerender-->\n  <div class="spinner pre-spin"></div>`);
+    `<div class="wrap" id="screen">\n${SCREEN_MARK}\n${landingHtml()}\n<!--/prerender-->\n  <div class="spinner pre-spin"></div>`);
   if (!html.includes('id="prerender"')) throw new Error('в index.html нет <div class="wrap" id="screen"> со спиннером — текст лендинга не вписан');
   fs.writeFileSync(file, html);
 }
