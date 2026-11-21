@@ -455,11 +455,14 @@ class ReservationService {
     if (reservation.startTime.isBefore(DateTime.now().add(const Duration(minutes: 5)))) {
       throw ReservationTimeException('Это время уже прошло — выберите другое.');
     }
-    if (!await isOpenAt(reservation.startTime)) {
+    // Банкет может идти и вне обычных часов (закрытое мероприятие), и
+    // гостей у него больше, чем мест за одним столом: стол — «главный».
+    final banquet = reservation.isBanquet;
+    if (!banquet && !await isOpenAt(reservation.startTime)) {
       throw ReservationTimeException('В это время заведение закрыто.');
     }
 
-    if (autoAssignTable && reservation.tableId.isEmpty) {
+    if (autoAssignTable && reservation.tableId.isEmpty && !banquet) {
       final free = await availableTables(
         start: reservation.startTime,
         durationMinutes: reservation.durationMinutes,
@@ -477,7 +480,7 @@ class ReservationService {
       final free = await availableTables(
         start: reservation.startTime,
         durationMinutes: reservation.durationMinutes,
-        guestsCount: reservation.guestsCount,
+        guestsCount: banquet ? 1 : reservation.guestsCount,
       );
       if (!free.any((t) => t.id == reservation.tableId)) {
         throw NoTablesAvailableException(reservation.startTime);
@@ -500,6 +503,57 @@ class ReservationService {
       clientUid: reservation.clientUid,
     );
     return ref.id;
+  }
+
+  /// Изменить банкет (SaaS): гости, время, длительность, стол, меню,
+  /// сумма предоплаты, пожелания. Стол перепроверяем, если сменилось время
+  /// или стол. Имя и телефон — как при создании (справочник ПДн).
+  Future<void> updateBanquet(ReservationModel r) async {
+    if (r.tableId.isNotEmpty) {
+      final free = await availableTables(start: r.startTime, durationMinutes: r.durationMinutes, guestsCount: 1);
+      final slot = await _slots.doc(r.id).get();
+      final sameTable = (slot.data()?['tableId'] ?? '') == r.tableId;
+      final sameStart = (slot.data()?['startTime'] as Timestamp?)?.toDate() == r.startTime;
+      final sameEnd = (slot.data()?['endTime'] as Timestamp?)?.toDate() ==
+          r.startTime.add(Duration(minutes: r.durationMinutes));
+      // Свою же бронь availableTables считает занятой — пропускаем, если
+      // ни стол, ни время не менялись.
+      if (!(sameTable && sameStart && sameEnd) && !free.any((t) => t.id == r.tableId)) {
+        final others = await _col
+            .where('tableId', isEqualTo: r.tableId)
+            .where('status', whereIn: const ['new', 'confirmed'])
+            .get();
+        final end = r.startTime.add(Duration(minutes: r.durationMinutes));
+        final clash = others.docs
+            .where((d) => d.id != r.id)
+            .map(ReservationModel.fromDoc)
+            .any((o) => o.overlaps(r.startTime, end));
+        if (clash) throw NoTablesAvailableException(r.startTime);
+      }
+    }
+    await PiiGatewayService().recordContact(kind: 'reservation', id: r.id, name: r.guestName, phone: r.phone);
+    People.instance.remember('reservation', r.id, name: r.guestName, phone: r.phone);
+    await _col.doc(r.id).update({
+      if (Pd.mirror) 'guestName': r.guestName,
+      if (Pd.mirror) 'phone': r.phone,
+      'guestsCount': r.guestsCount,
+      'tableId': r.tableId,
+      'tableName': r.tableName,
+      'startTime': Timestamp.fromDate(r.startTime),
+      'durationMinutes': r.durationMinutes,
+      'comment': r.comment,
+      'preOrder': r.preOrder.map((e) => e.toMap()).toList(),
+      'kind': 'banquet',
+      'banquetPrepay': r.banquetPrepay,
+    });
+    await _writeSlot(
+      reservationId: r.id,
+      tableId: r.tableId,
+      startTime: r.startTime,
+      durationMinutes: r.durationMinutes,
+      active: r.status.blocksTable,
+      clientUid: r.clientUid,
+    );
   }
 
   Future<void> confirm(String id, String employeeName) => _col.doc(id).update({

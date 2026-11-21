@@ -119,6 +119,14 @@ class ReservationModel {
   /// '' — обычная бронь, 'banquet' — банкет.
   final String kind;
 
+  /// Банкет: сколько предоплаты нужно (гость вносит онлайн или на кассе).
+  final double banquetPrepay;
+
+  /// Банкет: из [prepaidTotal] принято на кассе (наличными или картой).
+  final double depositKassa;
+
+  bool get isBanquet => kind == 'banquet';
+
   final DateTime createdAt;
   final DateTime? confirmedAt;
   final String _handledBy;
@@ -144,6 +152,8 @@ class ReservationModel {
     this.prepaidTotal = 0,
     this.advanceFiscalized = 0,
     this.kind = '',
+    this.banquetPrepay = 0,
+    this.depositKassa = 0,
     required this.createdAt,
     this.confirmedAt,
     String handledBy = '',
@@ -184,6 +194,8 @@ class ReservationModel {
       prepaidTotal: asNum(data['prepaidTotal'])?.toDouble() ?? 0,
       advanceFiscalized: asNum(((data['fiscalAuto'] as Map?)?['advance'] as Map?)?['amount'])?.toDouble() ?? 0,
       kind: asText(data['kind']),
+      banquetPrepay: asNum(data['banquetPrepay'])?.toDouble() ?? 0,
+      depositKassa: asNum(data['depositKassa'])?.toDouble() ?? 0,
       createdAt: created is Timestamp ? created.toDate() : DateTime.now(),
       confirmedAt: confirmed is Timestamp ? confirmed.toDate() : null,
       handledBy: asText(data['handledBy']),
@@ -209,6 +221,8 @@ class ReservationModel {
         'createdAt': Timestamp.fromDate(createdAt),
         'confirmedAt': confirmedAt != null ? Timestamp.fromDate(confirmedAt!) : null,
         'handledBy': Pd.who(_handledBy),
+        if (kind.isNotEmpty) 'kind': kind,
+        if (kind == 'banquet') 'banquetPrepay': banquetPrepay,
       };
 
   ReservationModel copyWith({
@@ -227,6 +241,8 @@ class ReservationModel {
     bool? guestConfirmed,
     DateTime? confirmedAt,
     String? handledBy,
+    String? kind,
+    double? banquetPrepay,
   }) =>
       ReservationModel(
         id: id,
@@ -247,6 +263,11 @@ class ReservationModel {
         aiNote: aiNote ?? this.aiNote,
         sessionId: sessionId ?? this.sessionId,
         guestConfirmed: guestConfirmed ?? this.guestConfirmed,
+        prepaidTotal: prepaidTotal,
+        advanceFiscalized: advanceFiscalized,
+        kind: kind ?? this.kind,
+        banquetPrepay: banquetPrepay ?? this.banquetPrepay,
+        depositKassa: depositKassa,
         createdAt: createdAt,
         confirmedAt: confirmedAt ?? this.confirmedAt,
         handledBy: handledBy ?? _handledBy,

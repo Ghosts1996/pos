@@ -3,6 +3,7 @@ import '../../build_info.dart';
 import '../../models/employee.dart';
 import '../../models/reservation_model.dart';
 import '../../models/table_model.dart';
+import '../../services/banquet_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/guest_link_service.dart';
 import '../../services/notification_service.dart';
@@ -15,6 +16,7 @@ import '../../utils/phone_utils.dart';
 import '../../widgets/ai_assistant_sheet.dart';
 import '../../widgets/plan_upsell.dart';
 import '../../widgets/table_picker_map.dart';
+import 'banquet_screen.dart';
 import 'table_detail_screen.dart';
 import '../../utils/human_error.dart';
 import '../../utils/money.dart';
@@ -173,11 +175,33 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _createManual,
-        icon: const Icon(Icons.add),
-        label: const Text('Бронь по телефону'),
-      ),
+      floatingActionButton: kSaasMode
+          ? Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                FloatingActionButton.extended(
+                  heroTag: 'banquet',
+                  onPressed: () => _openBanquet(),
+                  backgroundColor: AppColors.surface,
+                  foregroundColor: AppColors.primary,
+                  icon: const Icon(Icons.celebration_outlined),
+                  label: const Text('Банкет'),
+                ),
+                const SizedBox(height: 10),
+                FloatingActionButton.extended(
+                  heroTag: 'phone',
+                  onPressed: _createManual,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Бронь по телефону'),
+                ),
+              ],
+            )
+          : FloatingActionButton.extended(
+              onPressed: _createManual,
+              icon: const Icon(Icons.add),
+              label: const Text('Бронь по телефону'),
+            ),
       body: CenteredBody(
         maxWidth: 760,
         child: Column(
@@ -276,7 +300,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
           }
           return ListView.separated(
             // Снизу — место под кнопку «Бронь по телефону».
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
+            padding: EdgeInsets.fromLTRB(12, 12, 12, kSaasMode ? 160 : 96),
             itemCount: list.length,
             separatorBuilder: (_, __) => const SizedBox(height: 10),
             itemBuilder: (_, i) => _tile(list[i]),
@@ -331,8 +355,9 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                       '${r.guestConfirmed ? ' · гость подтвердил' : ''}',
                       style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                     ),
+                    if (kSaasMode && r.isBanquet) _banquetInfo(r),
                     // Предоплата онлайн (SaaS): гость внёс — при посадке она в счёте.
-                    if (kSaasMode && r.prepaidTotal > 0)
+                    if (kSaasMode && r.prepaidTotal > 0 && !r.isBanquet)
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: Text(
@@ -355,7 +380,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
             Text('«${r.comment}»',
                 style: TextStyle(color: AppColors.textMuted, fontStyle: FontStyle.italic)),
           ],
-          if (r.preOrder.isNotEmpty) ...[
+          if (r.preOrder.isNotEmpty && !(kSaasMode && r.isBanquet)) ...[
             const SizedBox(height: 8),
             Text(
               'Предзаказ: ${r.preOrder.map((i) => '${i.name} ×${i.qty}').join(', ')} '
@@ -397,6 +422,17 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                   onPressed: () => _seat(r),
                   child: const Text('Посадить'),
                 ),
+              if (kSaasMode && r.isBanquet && r.status.blocksTable) ...[
+                OutlinedButton(
+                  onPressed: () => _openBanquet(existing: r),
+                  child: const Text('Изменить банкет'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _acceptDeposit(r),
+                  icon: const Icon(Icons.payments_outlined, size: 18),
+                  label: const Text('Принять предоплату'),
+                ),
+              ],
               if (r.status == ReservationStatus.seated && r.sessionId.isNotEmpty)
                 TextButton(
                   onPressed: () => _openSession(r),
@@ -408,7 +444,7 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
                   child: const Text('Не пришёл'),
                 ),
                 TextButton(
-                  onPressed: () => _guard(() => _service.cancel(r.id, by: widget.employee.name)),
+                  onPressed: () => _cancel(r),
                   child: Text('Отменить',
                       style: TextStyle(color: AppColors.danger)),
                 ),
@@ -418,6 +454,155 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
         ],
       ),
     );
+  }
+
+  /// Банкет: меню, на гостя, предоплата и остаток.
+  Widget _banquetInfo(ReservationModel r) {
+    final b = banquetSummary(r);
+    final lines = <String>[
+      if (b.menuTotal > 0) 'Меню ${rub(b.menuTotal)} · ${rub(b.perGuest)} на гостя',
+      if (b.prepayRequired > 0)
+        'Предоплата ${rub(b.prepaid)} из ${rub(b.prepayRequired)}${b.prepayLeft > 0 ? ' · ждём ${rub(b.prepayLeft)}' : ' · внесена'}'
+      else if (b.prepaid > 0)
+        'Предоплата внесена: ${rub(b.prepaid)}',
+      if (b.menuTotal > 0 && b.prepaid > 0) 'Доплата в день банкета: ${rub(b.balance)}',
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text('Банкет', style: TextStyle(color: AppColors.primary, fontSize: 12, fontWeight: FontWeight.w700)),
+          ),
+          for (final l in lines)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(l,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: l.contains('ждём') ? AppColors.warning : AppColors.textPrimary,
+                    fontWeight: l.startsWith('Предоплата') ? FontWeight.w600 : FontWeight.w400,
+                  )),
+            ),
+          if (r.preOrder.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(r.preOrder.map((i) => '${i.name} ×${i.qty}').join(', '),
+                  maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openBanquet({ReservationModel? existing}) async {
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BanquetScreen(
+          existing: existing,
+          day: _day,
+          employeeName: widget.employee.name,
+          pickTable: (start, minutes) => _pickTableOnMap(start: start, durationMinutes: minutes, guestsCount: 1),
+        ),
+      ),
+    );
+    if (saved == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(existing == null ? 'Банкет создан' : 'Банкет сохранён')));
+    }
+  }
+
+  Future<void> _acceptDeposit(ReservationModel r) async {
+    final b = banquetSummary(r);
+    final ctrl = TextEditingController(text: b.prepayLeft > 0 ? b.prepayLeft.toStringAsFixed(b.prepayLeft % 1 == 0 ? 0 : 2) : '');
+    var method = 'cash';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('Предоплата банкета'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Сумма, ₽'),
+              ),
+              const SizedBox(height: 12),
+              Wrap(spacing: 8, children: [
+                ChoiceChip(label: const Text('Наличные'), selected: method == 'cash', onSelected: (_) => setLocal(() => method = 'cash')),
+                ChoiceChip(label: const Text('Карта'), selected: method == 'card', onSelected: (_) => setLocal(() => method = 'card')),
+              ]),
+              const SizedBox(height: 10),
+              Text(
+                method == 'cash'
+                    ? 'Наличные запишутся «Внесением» в кассу смены. Пробьётся чек «аванс».'
+                    : 'Проведите оплату на терминале. Пробьётся чек «аванс».',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Принять')),
+          ],
+        ),
+      ),
+    );
+    final amount = double.tryParse(ctrl.text.trim().replaceAll(',', '.').replaceAll(' ', '')) ?? 0;
+    ctrl.dispose();
+    if (ok != true) return;
+    await _guard(() async {
+      final note = await BanquetService.instance.acceptDeposit(
+        reservation: r,
+        amount: amount,
+        method: method,
+        employeeName: widget.employee.name,
+        employeeId: widget.employee.id,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Предоплата ${rub(amount)} принята, $note')));
+      }
+    });
+  }
+
+  /// Отмена: у банкета с предоплатой — сначала предупреждаем о возврате.
+  Future<void> _cancel(ReservationModel r) async {
+    if (kSaasMode && r.prepaidTotal > 0) {
+      final kassa = r.depositKassa;
+      final online = r.prepaidTotal - kassa;
+      final yes = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Отменить бронь с предоплатой?'),
+          content: Text([
+            'Гость внёс ${rub(r.prepaidTotal)}.',
+            if (kassa > 0) 'На кассе — ${rub(kassa)}: верните гостю и пробейте чек возврата аванса.',
+            if (online > 0.004) 'Онлайн — ${rub(online)}: вернуть можно в кабинете банка заведения.',
+            'Удержать часть можно, только если гость заранее согласился с такими условиями.',
+          ].join('\n\n')),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Не отменять')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Отменить бронь'),
+            ),
+          ],
+        ),
+      );
+      if (yes != true) return;
+    }
+    await _guard(() => _service.cancel(r.id, by: widget.employee.name));
   }
 
   // ---------- ДЕЙСТВИЯ ----------

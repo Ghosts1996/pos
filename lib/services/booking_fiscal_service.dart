@@ -131,15 +131,15 @@ double advanceToFiscalize(double prepaid, double fiscalized) {
 }
 
 /// Чек «аванс»: одна строка «Предоплата за бронь стола» (предмет — платёж),
-/// оплата безналичная (гость платил онлайн). Номер постоянный для суммы —
-/// касса отсечёт повтор.
-@visibleForTesting
+/// оплата безналичная (гость платил онлайн) или наличными (на кассе).
+/// Номер постоянный для суммы — касса отсечёт повтор.
 FiscalReceipt bookingAdvanceReceipt({
   required String reservationId,
   required double amount,
   double alreadyFiscalized = 0,
   bool banquet = false,
   String contact = '',
+  String pay = 'card',
 }) =>
     FiscalReceipt(
       receiptId: 'res-$reservationId-adv${(alreadyFiscalized * 100).round()}',
@@ -152,7 +152,7 @@ FiscalReceipt bookingAdvanceReceipt({
           paymentObject: FiscalPaymentObject.payment,
         ),
       ],
-      payments: [FiscalPayment('card', amount)],
+      payments: [FiscalPayment(pay == 'cash' ? 'cash' : 'card', amount)],
       buyerContact: contact,
       advance: true,
     );

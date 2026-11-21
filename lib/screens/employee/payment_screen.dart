@@ -1096,9 +1096,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Text(
-                    widget.session.advancePaid > 0.004
-                        ? 'Предоплата брони онлайн: ${_fmt(_guestPaid)} ${AppConstants.currencySymbol} — '
-                            'сумма уже в «Оплате с терминала», чек «аванс» пробит'
+                    widget.session.advancePaid > 0.004 || (kSaasMode && widget.session.reservationId.isNotEmpty)
+                        ? 'Предоплата брони: ${_fmt(_guestPaid)} ${AppConstants.currencySymbol} — '
+                            'сумма уже в «Оплате с терминала»${widget.session.advancePaid > 0.004 ? ', чек «аванс» пробит' : ''}'
                         : 'Гость оплатил по СБП со стола: ${_fmt(_guestPaid)} ${AppConstants.currencySymbol} — '
                             'сумма уже в «Оплате с терминала»',
                     style: TextStyle(color: AppColors.success, fontWeight: FontWeight.w600),

@@ -424,6 +424,9 @@ class SessionModel {
 
   /// Часть [guestPaidTotal] — предоплата брони/банкета, по которой касса уже
   /// пробила чек «аванс» (SaaS). При закрытии она идёт зачётом аванса.
+  /// Чек открыт по брони (SaaS) — предоплата в [guestPaidTotal] от брони.
+  final String reservationId;
+
   final double advancePaid;
 
   /// '' — заказ за столом, 'takeaway' — с собой, 'delivery' — доставка.
@@ -550,6 +553,7 @@ class SessionModel {
     this.aggregatorCommission = 0,
     this.guestPaidTotal = 0,
     this.advancePaid = 0,
+    this.reservationId = '',
     this.orderType = '',
     String customerPhone = '',
     String deliveryAddress = '',
@@ -618,6 +622,7 @@ class SessionModel {
       aggregatorCommission: (data['aggregatorCommission'] as num?)?.toDouble() ?? 0,
       guestPaidTotal: (data['guestPaidTotal'] as num?)?.toDouble() ?? 0,
       advancePaid: (data['advancePaid'] as num?)?.toDouble() ?? 0,
+      reservationId: (data['reservationId'] ?? '').toString(),
       orderType: asText(data['orderType']),
       customerPhone: asText(data['customerPhone']),
       deliveryAddress: asText(data['deliveryAddress']),
