@@ -668,6 +668,11 @@ async function boot() {
   state.chainId = chainId;
   // Выбор точки — только на адресе сети; у точки свой адрес, менять нечего.
   state.chainPicker = resolved.type === 'chain';
+  state.chainPoints = resolved.type === 'chain' ? new Set(openLocations(resolved).map((l) => l.tenantId)) : new Set();
+  // Код точки (поддомен) → её id: сканер приложения на адресе сети узнаёт
+  // по QR, в какой точке стол.
+  state.chainSlugs = new Map(resolved.type === 'chain'
+    ? openLocations(resolved).filter((l) => l.slug).map((l) => [String(l.slug).toLowerCase(), l.tenantId]) : []);
 
   // Приложение Firebase — только если вход или данные ещё у Firebase.
   // Не zalpos.ru/__/firebase/init.json: для поддомена это чужой origin, и
@@ -815,6 +820,7 @@ function watchProfile() {
   state.accountSubs.push(onSnapshot(doc(state.loyaltyRoot, 'clients', state.uid), (d) => {
     state.profile = d.exists() ? withOwnPd({ id: d.id, ...d.data() }) : null;
     if (needOwnPd(d.exists() ? d.data() : null)) loadOwnPd();
+    if (followTablePoint(state.profile)) return;
     // Пока гость печатает имя или телефон, профиль не перерисовываем:
     // любое обновление профиля (запись ID устройства при первом запуске,
     // начисление бонусов кассой) иначе стирало введённое, и «Сохранить»
@@ -823,6 +829,30 @@ function watchProfile() {
     // Экран «Мой стол» и «Главная» зависят от профиля — перерисуем.
     if (['#/', '#/table', '#/profile', ''].includes(location.hash)) route();
   }, () => {}));
+}
+
+/// Адрес сети: гость сидит за столом в одной точке, а в приложении выбрана
+/// другая — «Мой стол» искал бы счёт не там и показывал пусто (касса при
+/// этом видит гостя за столом). Переключаемся на точку стола сами. Гость сам
+/// сменил точку при открытом столе — не возвращаем (zalStayPoint).
+function followTablePoint(p) {
+  const sid = (p && p.activeSessionId) || '';
+  const tid = (p && p.activeTenantId) || '';
+  if (!state.chainPicker || !sid || !tid || tid === state.tenantId) return false;
+  if (!(state.chainPoints && state.chainPoints.has(tid))) return false;
+  try {
+    if (sessionStorage.getItem('zalStayPoint') === sid) return false;
+    // Один переход на чек: если точка почему-то не откроется, не крутимся.
+    if (sessionStorage.getItem('zalFollowedPoint') === sid) return false;
+    sessionStorage.setItem('zalFollowedPoint', sid);
+    const slug = (location.hostname.split('.')[0] || '').trim();
+    localStorage.setItem('chainLocation:' + slug, tid);
+  } catch (_) {
+    return false;
+  }
+  location.hash = '#/table';
+  location.reload();
+  return true;
 }
 
 function watchVenue() {
@@ -4021,6 +4051,7 @@ function screenProfile() {
           + 'смены заведения приложение перестанет его показывать (сам счёт '
           + `останется открытым, закрыть его сможет ${staffWord('nom')}). Сменить всё равно?`);
         if (!ok) return;
+        try { sessionStorage.setItem('zalStayPoint', state.profile.activeSessionId); } catch (_) {}
       }
       try {
         const slug = (location.hostname.split('.')[0] || '').trim();
@@ -4208,6 +4239,9 @@ function askLogout() {
     <div class="sheet-grip"></div>
     <div role="heading" aria-level="2" style="font:600 21px/1.3 var(--sans);margin:0 0 8px">Выйти из профиля?</div>
     <p style="margin:0 0 12px;line-height:1.5">Ваши бонусы, визиты и брони сохранятся — на этом телефоне откроется пустой профиль.</p>
+    ${(state.profile || {}).activeSessionId ? `<div class="card warn" style="margin:0 0 12px"><p class="small" style="margin:0">Сейчас за вами открыт стол. После выхода
+      счёт на этом телефоне будет не виден, а повторно отсканировать стол новый профиль не сможет — номер уже занят вашим профилем.
+      Выходите после оплаты или сохраните ссылку для входа.</p></div>` : ''}
     ${link ? `<p class="small" style="margin:0 0 12px;line-height:1.5"><b>Чтобы вернуться</b>, сохраните ссылку для входа
       (например, отправьте её себе в мессенджер) и потом просто откройте её. Ссылку никому не пересылайте — по ней открывается ваш профиль.</p>
       <button class="btn-primary" id="lgCopy" style="margin-bottom:10px">Скопировать ссылку для входа</button>`
@@ -5065,7 +5099,20 @@ async function startScanner() {
           done = true;
           stopScanner();
           const key = tableKeyFrom(raw);
-          location.hash = '#/t/' + encodeURIComponent(tableId) + (key ? '/' + encodeURIComponent(key) : '');
+          const target = '#/t/' + encodeURIComponent(tableId) + (key ? '/' + encodeURIComponent(key) : '');
+          // Адрес сети, а код со стола другой точки — открываем ту точку:
+          // иначе стол искался бы не там («Такого стола нет»).
+          const other = pointOfQr(raw);
+          if (other) {
+            try {
+              const slug = (location.hostname.split('.')[0] || '').trim();
+              localStorage.setItem('chainLocation:' + slug, other);
+            } catch (_) {}
+            location.hash = target;
+            location.reload();
+            return;
+          }
+          location.hash = target;
           return;
         }
         if (hint) hint.textContent = 'Это не код стола — наведите на код на столе.';
@@ -5074,6 +5121,16 @@ async function startScanner() {
     scanRaf = requestAnimationFrame(tick);
   };
   scanRaf = requestAnimationFrame(tick);
+}
+
+/// Точка сети из адреса в QR (https://<код точки>.zalpos.ru/table/…), если
+/// это не та точка, что открыта сейчас; иначе ''.
+function pointOfQr(raw) {
+  if (!state.chainPicker || !state.chainSlugs || !state.chainSlugs.size) return '';
+  let host = '';
+  try { host = new URL(String(raw)).hostname.toLowerCase(); } catch (_) { return ''; }
+  const tid = state.chainSlugs.get(host.split('.')[0]) || '';
+  return tid && tid !== state.tenantId ? tid : '';
 }
 
 function stopScanner() {
