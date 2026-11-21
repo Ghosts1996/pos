@@ -107,4 +107,29 @@ void main() {
     final session = await link.sessionStream(profile!.activeSessionId).firstWhere((s) => s != null).timeout(const Duration(seconds: 8));
     expect(session!.orderItems.single.name, 'Кофе');
   });
+  test('сеть, а приложение не знает про сеть (поставили до перевода) — счёт всё равно открывается', () async {
+    final owner = open('ownerA');
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final tableId = 'st$stamp';
+    final sid = 'ss$stamp';
+    const uid = 'guestS';
+    await owner.doc('tenants/tenantC/sessions/$sid').set({
+      'status': 'active', 'tableId': tableId, 'tableName': 'Стол S',
+      'orderItems': [{'name': 'Сок', 'price': 150, 'qty': 1}],
+    });
+    await owner.doc('tenants/tenantC/tables/$tableId').set({
+      'name': 'Стол S', 'x': 0.5, 'y': 0.5, 'status': 'occupied',
+      'activeSessionIds': [sid], 'openChecks': [{'id': sid, 'label': 'Счёт 1'}],
+    });
+    await owner.doc('tenants/tenantC/clients/$uid').set({'name': 'Гость', 'phone': '79990004455', 'activeSessionId': ''});
+    final guest = open(uid);
+    AppDb.debugUse(guest, engine: engines.last);
+    AppScope.enterTenant('tenantC'); // без chainId — как старое приложение
+    final link = GuestLinkService();
+    final result = await link.bindToTable(uid, tableId);
+    expect(result.sessionId, sid);
+    final profile = await link.profileStream(uid).firstWhere((p) => (p?.activeSessionId ?? '') == sid).timeout(const Duration(seconds: 8));
+    final session = await link.sessionStream(profile!.activeSessionId).firstWhere((s) => s != null).timeout(const Duration(seconds: 8));
+    expect(session!.orderItems.single.name, 'Сок');
+  });
 }

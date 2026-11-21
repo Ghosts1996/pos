@@ -664,8 +664,12 @@ service cloud.firestore {
     match /tenants/{tenantId}/sessions/{doc} {
       // Гость видит свой чек за столом и свои заказы доставки/с собой из
       // приложения (их создаёт шлюз, clientUid — гость): статус и сумму.
+      // Чек, который гость сам занял по QR со стола (sessionClaims), — тоже
+      // его: так счёт открывается и у приложения, которое ещё не знает, что
+      // заведение перевели в сеть (или обратно), и записало профиль «по-старому».
       allow read: if isStaff(tenantId) ||
         (isTenantGuest(tenantId) && myActiveSession(tenantId) == doc) ||
+        (isTenantGuest(tenantId) && ownsSession(tenantId, doc)) ||
         (isTenantGuest(tenantId) &&
          resource.data.get('clientUid', '') == request.auth.uid &&
          resource.data.get('source', '') == 'app');

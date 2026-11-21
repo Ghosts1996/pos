@@ -44,6 +44,11 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
   @override
   Widget build(BuildContext context) {
     final sessionId = widget.profile?.activeSessionId ?? '';
+    // Новый стол (отсканировали ещё раз) — попытки считаются заново.
+    if (sessionId != _retrySid) {
+      _retrySid = sessionId;
+      _retries = 0;
+    }
 
     // Гость уже не за столом, но последний визит закрыт только что и не
     // оценён — показываем «Спасибо за визит». Держится на записи визита, а
@@ -89,6 +94,7 @@ class _KolibriVisitScreenState extends State<KolibriVisitScreen> {
 
   Timer? _retryTimer;
   int _retries = 0;
+  String _retrySid = '';
 
   void _retrySessionSoon() {
     if (_retryTimer != null) return;

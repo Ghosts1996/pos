@@ -246,14 +246,13 @@ void main() {
     await owner.doc('tenants/tenantA/sessions/$sid').set({'status': 'active', 'tableId': 't2', 'orderItems': []});
     await owner.doc('tenants/tenantA/clients/guestZ').set({'name': 'Гость', 'phone': '79990001122', 'activeSessionId': ''});
     final g = open('guestZ');
-    await g.doc('tenants/tenantA/sessionClaims/$sid').set({'uid': 'guestZ', 'tableId': 't2'});
     final sessionRef = g.doc('tenants/tenantA/sessions/$sid');
-    // Профиль ещё без чека — читать чек нельзя.
+    // Чек ещё не занят — читать нельзя.
     await expectLater(sessionRef.snapshots().first,
         throwsA(isA<FirebaseException>().having((e) => e.code, 'code', 'permission-denied')));
-    // Своя запись, которая даёт доступ, и сразу новая подписка (экран
-    // перестроился) — чек приходит.
-    await g.doc('tenants/tenantA/clients/guestZ').set({'activeSessionId': sid, 'activeTableId': 't2'}, SetOptions(merge: true));
+    // Своя запись, которая даёт доступ (гость занял чек по QR), и сразу
+    // новая подписка (экран перестроился) — чек приходит.
+    await g.doc('tenants/tenantA/sessionClaims/$sid').set({'uid': 'guestZ', 'tableId': 't2'});
     final snap = await sessionRef.snapshots().firstWhere((d) => d.exists).timeout(const Duration(seconds: 8));
     expect(snap.data()!['status'], 'active');
   });

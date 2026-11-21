@@ -1255,6 +1255,22 @@ describe("Сеть заведений (chains) — общая лояльност
     await assertFails(getDoc(doc(db, "tenants/tenantX2/sessions/sessReal")));
   });
 
+  it("гость, занявший чек по QR (sessionClaims), читает его, даже если профиль записан не там (приложение не знает про сеть)", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const adminDb = ctx.firestore();
+      await setDoc(doc(adminDb, "tenants/tenantX1/sessions/sessStale"), { status: "active" });
+      await setDoc(doc(adminDb, "tenants/tenantX1/sessionClaims/sessStale"), { uid: "chainGuest", tableId: "t1" });
+      // Профиль сети без чека: старое приложение записало чек в профиль точки.
+      await setDoc(doc(adminDb, "chains/chainX/clients/chainGuest"), { name: "Гость сети", activeSessionId: "", bonusBalance: 0 });
+      await setDoc(doc(adminDb, "tenants/tenantX1/sessions/sessOther"), { status: "active" });
+      await setDoc(doc(adminDb, "tenants/tenantX1/sessionClaims/sessOther"), { uid: "someoneElse", tableId: "t2" });
+    });
+    const db = ctxFor("chainGuest");
+    await assertSucceeds(getDoc(doc(db, "tenants/tenantX1/sessions/sessStale")));
+    // Чужой занятый чек — по-прежнему нельзя.
+    await assertFails(getDoc(doc(db, "tenants/tenantX1/sessions/sessOther")));
+  });
+
   it("супер-админ читает сеть, подписку сети и общую лояльность", async () => {
     const db = ctxFor("root");
     await assertSucceeds(getDoc(doc(db, "chains/chainX")));
