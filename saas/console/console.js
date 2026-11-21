@@ -5929,9 +5929,9 @@ const DASHBOARD_NAV = [
   { id: 'ai', icon: 'spark', color: '#A855F7', label: 'ИИ', group: 'Заведение', hint: 'помощник и разборы' },
   { id: 'settings', icon: 'gear', color: '#64748B', label: 'Настройки', group: 'Заведение', hint: 'табло, киоск, бот, вебхуки' },
   { id: 'import', icon: 'upload', color: '#14B8A6', label: 'Перенос данных', group: 'Заведение', hint: 'из другой кассы' },
-  { id: 'plans', icon: 'gem', color: '#8B5CF6', label: 'Тарифы', group: 'Подписка', hint: 'сменить тариф' },
+  { id: 'plans', icon: 'gem', color: '#8B5CF6', label: 'Тарифы', group: 'Подписка', hint: 'выбрать или сменить тариф' },
   { id: 'billing', icon: 'card', color: '#F59E0B', label: 'Оплата', group: 'Подписка', hint: 'счета, «Приведи коллегу»' },
-  { id: 'profile', icon: 'user', color: '#06B6D4', label: 'Профиль', group: 'Подписка', hint: 'реквизиты, документы' },
+  { id: 'profile', icon: 'user', color: '#06B6D4', label: 'Профиль', group: 'Аккаунт', hint: 'почта, пароль, выход' },
   { id: 'guide', icon: 'book', color: '', label: 'Инструкция', group: 'Помощь' },
   { id: 'faq', icon: 'question', color: '#EF4444', label: 'Частые вопросы', group: 'Помощь' },
   { id: 'support', icon: 'chat', color: '#22C55E', label: 'Поддержка', group: 'Помощь' },
@@ -7204,30 +7204,56 @@ function watchDashboardData(tenantId) {
       return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
     })();
 
-    const profileHtml = () => `
+    const profileHtml = () => {
+      const email = state.auth.currentUser?.email || '';
+      const letter = (email.trim()[0] || '?').toUpperCase();
+      return `
       <h2>Профиль</h2>
-      <div class="card">
-        <div class="small muted">Email</div>
-        <div style="font-weight:700;margin:4px 0 14px">${esc(state.auth.currentUser?.email || '—')}</div>
-        <div class="small muted">Роль в заведении «${esc(tenant.name || '')}»</div>
-        <div style="font-weight:700;margin:4px 0 14px">${esc(ROLE_LABELS[role] || role)}</div>
-        <div class="small muted">Аккаунт создан</div>
-        <div style="font-weight:700;margin:4px 0 14px">${esc(memberSince)}</div>
-        <div class="small muted">ID заведения (для обращений в поддержку)</div>
-        <div style="margin:4px 0"><code>${esc(tenantId)}</code></div>
+      <div class="card prof-head">
+        <div class="prof-ava" aria-hidden="true">${esc(letter)}</div>
+        <div class="prof-who">
+          <div class="prof-mail">${esc(email || '—')}</div>
+          <div class="prof-meta"><span class="prof-chip">${esc(ROLE_LABELS[role] || role)}</span>
+            <span class="small muted">в ZalPOS с ${esc(memberSince)}</span></div>
+        </div>
       </div>
-      <div class="card">
-        <div class="small muted">Всего в команде: ${sortedMembers.length} ${pluralPeople(sortedMembers.length)}</div>
+
+      <h2>Заведение</h2>
+      <div class="card prof-rows">
+        <div class="prof-row"><span class="small muted">Название</span><b>${esc(tenant.name || '—')}</b></div>
+        <div class="prof-row"><span class="small muted">Команда</span>
+          <a href="#" class="f-dash-tab" data-tab="team">${sortedMembers.length} ${pluralPeople(sortedMembers.length)} →</a></div>
+        <div class="prof-row"><span class="small muted">ID для поддержки</span>
+          <span class="prof-id"><code>${esc(tenantId)}</code>
+          <button type="button" class="btn-link" id="f-profile-copy-id" style="width:auto">Скопировать</button></span></div>
       </div>
-      <p class="small center muted">Сменить пароль можно на вкладке <a href="#" class="f-dash-tab" data-tab="settings">«Настройки»</a>.</p>
-      <button class="btn btn-ghost" id="f-profile-signout">Выйти из аккаунта</button>
+
+      <h2>Пароль</h2>
+      <div class="card">
+        <label class="field"><span>Текущий пароль</span>
+          <input id="f-pass-current" type="password" autocomplete="current-password">
+        </label>
+        <label class="field"><span>Новый пароль</span>
+          <input id="f-pass-new" type="password" autocomplete="new-password" placeholder="Минимум 8 символов">
+        </label>
+        <button class="btn btn-primary" id="f-pass-change">Сменить пароль</button>
+        <div id="f-pass-change-msg" class="small" style="margin-top:8px"></div>
+        <details class="prof-forgot">
+          <summary class="small">Не помню пароль или входил по ссылке из письма</summary>
+          <p class="small muted" style="margin:8px 0">Создайте новый пароль — он появится на экране, сохраните его.</p>
+          <button class="btn btn-ghost" id="f-pass-generate">Создать новый пароль</button>
+          <div id="f-pass-generate-msg" class="small" style="margin-top:8px;color:var(--danger)"></div>
+        </details>
+      </div>
+
+      <button class="btn btn-ghost prof-exit" id="f-profile-signout">Выйти из аккаунта</button>
     `;
+    };
 
     const settingsHtml = () => `
       <nav class="set-toc" aria-label="Разделы настроек">
         <button type="button" class="set-chip" data-goto="set-venue">Заведение</button>
         ${canManage ? '<button type="button" class="set-chip" data-goto="set-conn">Подключения</button>' : ''}
-        <button type="button" class="set-chip" data-goto="set-security">Безопасность</button>
         ${role === 'owner' ? '<button type="button" class="set-chip" data-goto="set-data">Данные</button>' : ''}
         <button type="button" class="set-chip" data-goto="set-info">Справка</button>
       </nav>
@@ -7292,26 +7318,6 @@ function watchDashboardData(tenantId) {
       ` : ''}
 
       ${canManage ? '</section>' : ''}
-
-      <section class="set-group" id="set-security">
-      <div class="set-group-title">Безопасность</div>
-      <h2>Пароль</h2>
-      <div class="card">
-        <label class="field"><span>Текущий пароль</span>
-          <input id="f-pass-current" type="password" autocomplete="current-password">
-        </label>
-        <label class="field"><span>Новый пароль</span>
-          <input id="f-pass-new" type="password" autocomplete="new-password" placeholder="Минимум 8 символов">
-        </label>
-        <button class="btn btn-ghost" id="f-pass-change">Сменить пароль</button>
-        <div id="f-pass-change-msg" class="small" style="margin-top:8px"></div>
-        <p class="small muted" style="margin-top:10px">Входили только по ссылке из письма или не помните пароль?
-          Создайте новый — он появится на экране.</p>
-        <button class="btn btn-ghost" id="f-pass-generate">Создать новый пароль</button>
-        <div id="f-pass-generate-msg" class="small" style="margin-top:8px;color:var(--danger)"></div>
-      </div>
-
-      </section>
 
       ${role === 'owner' ? `<section class="set-group" id="set-data">
       <div class="set-group-title">Данные</div>` : ''}
@@ -8587,6 +8593,7 @@ function watchDashboardData(tenantId) {
       };
     }
     if ($('f-profile-signout')) $('f-profile-signout').onclick = () => signOut(state.auth);
+    if ($('f-profile-copy-id')) $('f-profile-copy-id').onclick = () => copyToClipboard(tenantId);
     if ($('f-pass-change')) {
       $('f-pass-generate').onclick = async () => {
         const btn = $('f-pass-generate');

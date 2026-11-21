@@ -1724,3 +1724,20 @@ html.zd-open { overflow: hidden; }
   margin: 22px 0 2px; padding-top: 14px; border-top: 1px solid var(--border);
 }
 .set-group:first-of-type .set-group-title { border-top: 0; padding-top: 0; }
+
+/* «Профиль» кабинета (profileHtml) */
+.prof-head { display: flex; align-items: center; gap: 14px; }
+.prof-ava { flex: none; width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--primary); font-size: 22px; font-weight: 700; }
+.prof-who { min-width: 0; }
+.prof-mail { font-weight: 700; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prof-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: 4px; }
+.prof-chip { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); }
+.prof-rows { padding-top: 4px; padding-bottom: 4px; }
+.prof-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.prof-row:last-child { border-bottom: 0; }
+.prof-id { display: inline-flex; gap: 10px; align-items: center; min-width: 0; }
+.prof-id code { word-break: break-all; }
+.prof-forgot { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.prof-forgot summary { cursor: pointer; color: var(--muted); }
+.prof-exit { margin-top: 18px; }
