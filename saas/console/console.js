@@ -2395,6 +2395,67 @@ function uploadBrandingLogoToGateway(tenantId, file, onProgress) {
   return { xhr, promise };
 }
 
+/** Иконка веб-версии гостя для главного экрана телефона: квадрат 512 и 192
+ *  из логотипа — прозрачный логотип на фоне бренда с полями (подходит и для
+ *  круглой «маски» Android), квадратный непрозрачный — во весь размер.
+ *  Сервер кладёт рядом с логотипом и вписывает в манифест (/guestManifest). */
+const guestIconSig = (b) => `${b.logoUrl}|${b.backgroundColor || ''}`;
+const guestIconTried = new Set();
+function drawGuestIcon(img, size, bg) {
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const g = c.getContext('2d');
+  const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+  // Квадратный логотип без прозрачных углов — сам по себе иконка.
+  let full = false;
+  if (w && h && Math.abs(w / h - 1) < 0.08) {
+    const t = document.createElement('canvas');
+    t.width = 8; t.height = 8;
+    const tg = t.getContext('2d');
+    tg.drawImage(img, 0, 0, 8, 8);
+    const px = tg.getImageData(0, 0, 8, 8).data;
+    full = [0, 7, 56, 63].every((i) => px[i * 4 + 3] > 245);
+  }
+  g.fillStyle = /^#[0-9A-Fa-f]{6}$/.test(bg || '') ? bg : '#141414';
+  g.fillRect(0, 0, size, size);
+  g.imageSmoothingQuality = 'high';
+  if (full) {
+    g.drawImage(img, 0, 0, size, size);
+  } else {
+    const box = size * 0.64;
+    const k = Math.min(box / w, box / h);
+    g.drawImage(img, (size - w * k) / 2, (size - h * k) / 2, w * k, h * k);
+  }
+  return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error('не нарисовалась'))), 'image/png'));
+}
+async function ensureGuestIcons(tenantId, chainId, b) {
+  if (!b || !b.logoUrl || b.guestIconOf === guestIconSig(b)) return;
+  const sig = guestIconSig(b);
+  const owner = (/\/branding\/([A-Za-z0-9_-]{1,64})\/logo\./.exec(b.logoUrl) || [])[1];
+  if (!owner || guestIconTried.has(sig) || !state.auth?.currentUser) return;
+  guestIconTried.add(sig);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.crossOrigin = 'anonymous';
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('логотип не загрузился'));
+      i.src = `${SAAS_GATEWAY_URL}/brandingLogoFile?tenantId=${encodeURIComponent(owner)}&v=${Date.now()}`;
+    });
+    const token = await state.auth.currentUser.getIdToken();
+    for (const size of [512, 192]) {
+      const blob = await drawGuestIcon(img, size, b.backgroundColor);
+      const r = await netFetch(`${SAAS_GATEWAY_URL}/uploadBrandingIcon?tenantId=${encodeURIComponent(owner)}&size=${size}`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/png' }, body: blob,
+      });
+      if (!r.ok) throw new Error(`сервер ответил ${r.status}`);
+    }
+    await writeBrandingConfig(tenantId, { guestIconOf: sig, guestIconAt: Date.now() }, chainId);
+  } catch (e) {
+    console.warn('Иконка веб-версии гостя не обновилась:', e?.message || e);
+  }
+}
+
 const state = {
   auth: null,
   db: null,
@@ -9647,6 +9708,10 @@ function watchDashboardData(tenantId) {
     unsubBranding = onSnapshot(ref, (d) => {
       branding = d.exists() ? d.data() : null;
       draw();
+      // Новый логотип или фон — перерисовать иконку веб-версии гостя
+      // (только владелец и админ: им можно писать брендинг).
+      const role = (state.tenants.find((t) => t.id === tenantId) || {}).role || '';
+      if (branding && (role === 'owner' || role === 'admin')) ensureGuestIcons(tenantId, chainId, branding);
     }, () => {});
   };
   sub(() => { if (unsubBranding) unsubBranding(); });

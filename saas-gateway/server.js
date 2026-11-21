@@ -105,7 +105,7 @@ const TENANT_BUILDS_DIR = path.join(__dirname, "tenant-builds");
 
 // Логотипы заведений. Читаются публично (nginx, location /branding/),
 // запись — только через handleUploadBrandingLogo.
-const BRANDING_UPLOADS_DIR = path.join(__dirname, "branding-uploads");
+const BRANDING_UPLOADS_DIR = process.env.BRANDING_UPLOADS_DIR || path.join(__dirname, "branding-uploads");
 const BRANDING_MAX_BYTES = 5 * 1024 * 1024;
 const BRANDING_CONTENT_TYPES = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
 
@@ -4035,6 +4035,121 @@ async function handleBrandingLogoFile(req, res) {
     return;
   }
   throw new HttpError(404, "Логотип не загружен");
+}
+
+/**
+ * Иконка веб-версии гостя на главном экране телефона. Кабинет рисует из
+ * логотипа квадратную картинку (фон бренда, логотип с полями — подходит и
+ * для «маски» Android) и кладёт её рядом с логотипом: icon-192.png,
+ * icon-512.png. Только PNG.
+ */
+const GUEST_ICON_SIZES = new Set(["192", "512"]);
+async function handleUploadBrandingIcon(req, res) {
+  const decoded = await verifyAuth(req);
+  const q = new URL(req.url, "http://localhost").searchParams;
+  const tenantId = q.get("tenantId") || "";
+  const size = q.get("size") || "";
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "не указан tenantId");
+  if (!GUEST_ICON_SIZES.has(size)) throw new HttpError(400, "размер иконки — 192 или 512");
+  await requireTenantRole(tenantId, decoded.uid, ["owner", "admin"]);
+  const contentType = (req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+  if (contentType !== "image/png") throw new HttpError(400, "иконка — только PNG");
+  const buffer = await readRawBody(req, BRANDING_MAX_BYTES);
+  if (!imageMatchesType(buffer, "png")) throw new HttpError(400, "файл не похож на PNG");
+  const dir = path.join(BRANDING_UPLOADS_DIR, tenantId);
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(path.join(dir, `icon-${size}.png`), buffer);
+  sendJson(res, 200, { path: `/branding/${tenantId}/icon-${size}.png` });
+}
+
+const OLD_APP_NAMES = ["Hookah POS", "Hoocah POS", "HookahPOS", "ZalPOS"];
+const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
+// Адрес веб-версии заведения: https://<код>.zalpos.ru (и *.localhost для стенда).
+const GUEST_ORIGIN_RE = /^(https:\/\/[a-z0-9-]{1,63}\.zalpos\.ru|https?:\/\/[a-z0-9-]{1,63}\.localhost(:\d{2,5})?)$/;
+
+/** Название, цвета и иконки веб-версии гостя: у точки сети — брендинг сети. */
+async function guestBrand(tenantId) {
+  const firestore = db();
+  const t = await firestore.collection("tenants").doc(tenantId).get();
+  if (!t.exists || t.data().status === "deleted") return null;
+  const td = t.data();
+  let b = {};
+  let name = String(td.name || "").trim();
+  if (td.chainId) {
+    const [c, cb] = await Promise.all([
+      firestore.collection("chains").doc(td.chainId).get(),
+      firestore.collection("chains").doc(td.chainId).collection("branding").doc("config").get(),
+    ]);
+    b = cb.exists ? cb.data() : {};
+    name = String((c.exists && c.data().name) || name).trim();
+  } else {
+    const tb = await firestore.collection("tenants").doc(tenantId).collection("branding").doc("config").get();
+    b = tb.exists ? tb.data() : {};
+  }
+  const appName = String(b.appName || "").trim();
+  if (appName && !OLD_APP_NAMES.includes(appName)) name = appName;
+  const icons = [];
+  const logoUrl = String(b.logoUrl || "");
+  const m = /^(https:\/\/[^/?#]+)?(\/branding\/([A-Za-z0-9_-]{1,64})\/)logo\.(png|jpg|webp)(\?|$)/.exec(logoUrl);
+  if (m) {
+    const base = `${m[1] || ""}${m[2]}`;
+    for (const size of ["192", "512"]) {
+      try {
+        const st = await fs.promises.stat(path.join(BRANDING_UPLOADS_DIR, m[3], `icon-${size}.png`));
+        icons.push({ src: `${base}icon-${size}.png?v=${Math.round(st.mtimeMs)}`, sizes: `${size}x${size}`, type: "image/png", purpose: "any" });
+        if (size === "512") icons.push({ src: `${base}icon-512.png?v=${Math.round(st.mtimeMs)}`, sizes: "512x512", type: "image/png", purpose: "maskable" });
+      } catch (_) {
+        // Кабинет ещё не нарисовал иконку — ниже логотип как есть.
+      }
+    }
+    if (!icons.length && m[1]) {
+      const type = { png: "image/png", jpg: "image/jpeg", webp: "image/webp" }[m[4]];
+      icons.push({ src: logoUrl, sizes: "512x512", type, purpose: "any" });
+    }
+  }
+  return {
+    name: (name || "Меню заведения").slice(0, 45),
+    background: HEX_COLOR.test(b.backgroundColor || "") ? b.backgroundColor : "#141414",
+    theme: HEX_COLOR.test(b.primaryColor || "") ? b.primaryColor : "#141414",
+    icons,
+  };
+}
+
+/**
+ * Манифест веб-версии гостя (что ставится на главный экран): название,
+ * цвета и иконка заведения, а не общие ZalPOS. Файл index.html один на все
+ * заведения, поэтому манифест отдаёт сервер — по заведению и адресу.
+ */
+async function handleGuestManifest(req, res) {
+  const q = new URL(req.url, "http://localhost").searchParams;
+  const tenantId = q.get("tenantId") || "";
+  const origin = q.get("origin") || "";
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new HttpError(400, "не указан tenantId");
+  if (!GUEST_ORIGIN_RE.test(origin)) throw new HttpError(400, "неверный адрес");
+  const brand = await guestBrand(tenantId);
+  if (!brand) throw new HttpError(404, "Заведение не найдено");
+  const app = `${origin}/app/`;
+  const icons = brand.icons.length ? brand.icons : [
+    { src: `${app}icon-192.png`, sizes: "192x192", type: "image/png", purpose: "any" },
+    { src: `${app}icon.png`, sizes: "512x512", type: "image/png", purpose: "any" },
+  ];
+  const short = brand.name.length <= 12 ? brand.name : brand.name.split(/\s+/)[0].slice(0, 12);
+  const body = Buffer.from(JSON.stringify({
+    // id и адрес — как у прежнего общего манифеста (/app/): уже установленные
+    // ярлыки остаются тем же приложением.
+    id: app, name: brand.name, short_name: short, lang: "ru",
+    start_url: app, scope: app, display: "standalone",
+    background_color: brand.background, theme_color: brand.theme,
+    icons,
+  }), "utf8");
+  res.writeHead(200, {
+    "Content-Type": "application/manifest+json; charset=utf-8",
+    "Content-Length": body.length,
+    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "no-cache",
+    "X-Content-Type-Options": "nosniff",
+  });
+  res.end(body);
 }
 
 // ------------------------------------------------------- вложения поддержки
@@ -10772,6 +10887,7 @@ const ROUTES = {
   "/markBankInvoiceReceipt": handleMarkBankInvoiceReceipt,
   "/cancelBankInvoice": handleCancelBankInvoice,
   "/uploadBrandingLogo": handleUploadBrandingLogo,
+  "/uploadBrandingIcon": handleUploadBrandingIcon,
   "/uploadMenuImage": handleUploadMenuImage,
   "/savePlatformLegal": handleSavePlatformLegal,
   "/recalculateUsage": handleRecalculateUsage,
@@ -10895,6 +11011,7 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && (urlPath === "/courierApk" || urlPath === "/zcApk")) return runHandler(handleCourierApk, req, res);
   if (req.method === "GET" && urlPath === "/windowsDemo") return runHandler(handleWindowsDemo, req, res);
   if (req.method === "GET" && urlPath === "/brandingLogoFile") return runHandler(handleBrandingLogoFile, req, res);
+  if (req.method === "GET" && urlPath === "/guestManifest") return runHandler(handleGuestManifest, req, res);
   // Адрес доставки для курьера — по подписанной ссылке из карточки в Telegram.
   if (req.method === "GET" && urlPath === "/deliveryAddress") return runHandler(telegram.handleAddress, req, res);
   // Геолокация курьера по подписанной ссылке из карточки: страница и приём координат.

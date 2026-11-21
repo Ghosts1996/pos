@@ -146,15 +146,53 @@ function homeScreenManifest(k) {
   // подменённый на data:-ссылку, Chrome не даёт «Установить приложение».
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   if (!ios) return;
-  const base = `${location.origin}/`;
-  const name = document.title || 'Личный кабинет гостя';
+  const base = `${location.origin}/app/`;
+  const hb = state.homeBrand;
+  const name = (hb && hb.name) || document.title || 'Личный кабинет гостя';
   const m = {
-    name, short_name: name.slice(0, 12), lang: 'ru', display: 'standalone',
-    start_url: `${base}#g=${k.uid}.${k.secret}`, scope: base, id: '/',
-    background_color: '#0E1512', theme_color: document.querySelector('meta[name="theme-color"]')?.content || '#0E1512',
-    icons: [{ src: new URL('icon.png', location.href).href, sizes: '512x512', type: 'image/png', purpose: 'any maskable' }],
+    name, short_name: (hb && hb.short_name) || name.slice(0, 12), lang: 'ru', display: 'standalone',
+    start_url: `${base}#g=${k.uid}.${k.secret}`, scope: base, id: base,
+    background_color: (hb && hb.background_color) || '#0E1512',
+    theme_color: (hb && hb.theme_color) || document.querySelector('meta[name="theme-color"]')?.content || '#0E1512',
+    icons: (hb && hb.icons && hb.icons.length) ? hb.icons
+      : [{ src: new URL('icon.png', location.href).href, sizes: '512x512', type: 'image/png', purpose: 'any maskable' }],
   };
   link.href = `data:application/manifest+json;charset=utf-8,${encodeURIComponent(JSON.stringify(m))}`;
+}
+
+const IS_IOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+/// Иконка и название на главном экране — заведения, а не общие ZalPOS:
+/// манифест отдаёт сервер (index.html один на все заведения). Android берёт
+/// манифест по ссылке, iPhone — картинку apple-touch-icon и подпись.
+async function applyHomeIcon() {
+  if (!state.tenantId) return;
+  const url = `${GATEWAY}/guestManifest?tenantId=${encodeURIComponent(state.tenantId)}&origin=${encodeURIComponent(location.origin)}`;
+  try {
+    const r = await netFetch(url, {}, 15000);
+    if (!r.ok) return;
+    const m = await r.json();
+    state.homeBrand = m;
+    const big = (m.icons || []).filter((i) => i.purpose !== 'maskable').pop();
+    if (big) {
+      for (const rel of ['apple-touch-icon', 'icon']) {
+        const l = document.querySelector(`link[rel="${rel}"]`);
+        if (l) l.href = big.src;
+      }
+    }
+    const t = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+    if (t && m.short_name) t.content = m.name.length <= 16 ? m.name : m.short_name;
+    if (m.name) document.title = m.name;
+    if (IS_IOS()) {
+      const k = readGuestKey();
+      if (k && k.ok) homeScreenManifest(k);
+    } else {
+      const link = document.querySelector('link[rel="manifest"]');
+      if (link) link.href = url;
+    }
+  } catch (_) {
+    // Нет связи — останется общая иконка, веб-версия работает и так.
+  }
 }
 
 // ---------- СПРАВОЧНИК В РФ ----------
@@ -775,6 +813,7 @@ async function boot() {
     // Профиль — первым: без него правила не пускают гостя к данным заведения.
     await ensureProfile();
     await applyBranding();
+    applyHomeIcon();
     // Уровни лояльности не ждём: до их прихода действуют пороги по умолчанию.
     applyLoyaltyTiers();
     loadTimeCafe();
