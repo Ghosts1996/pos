@@ -1966,3 +1966,24 @@ html.zd-open { overflow: hidden; }
 .tel-pbx details { border-bottom: 1px solid var(--border); padding: 8px 0; }
 .tel-pbx summary { cursor: pointer; font-weight: 600; font-size: 14px; }
 .tel-pbx details p { margin: 6px 0 2px; line-height: 1.45; }
+
+/* Склад → «Приход по накладной» → «Из ЭДО» */
+.edo-box { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.edo-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.edo-actions { margin-left: auto; display: flex; gap: 12px; }
+.edo-prov { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 4px 0 10px; }
+.edo-prov label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.edo-prov input { width: auto; }
+.edo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.edo-grid label { display: flex; flex-direction: column; gap: 4px; }
+.edo-grid .edo-wide { grid-column: 1 / -1; }
+@media (max-width: 560px) { .edo-grid { grid-template-columns: 1fr; } }
+.edo-list { margin-top: 10px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.edo-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-top: 1px solid var(--border); cursor: pointer; }
+.edo-row:first-child { border-top: 0; }
+.edo-row input { width: auto; flex: none; }
+.edo-row.done { opacity: .6; }
+.edo-main { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
+.edo-sup { flex-basis: 100%; font-size: 13px; color: var(--text-muted, #8a8a8a); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.edo-sum { flex: none; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.edo-tag { font-size: 11px; font-weight: 600; color: var(--success, #22a06b); }

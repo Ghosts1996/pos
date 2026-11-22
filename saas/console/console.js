@@ -1643,6 +1643,136 @@ function bindTelBox(tenantId, redraw) {
   }
 }
 
+// ---------- Склад → «Приход по накладной» → «Из ЭДО» (saas-gateway/edo.js)
+const edoCache = new Map(); // tenantId → { cfg, docs, picked:Set, form, busy, error } | null
+const EDO_NAME = { diadoc: 'Диадок', sbis: 'СБИС' };
+
+function edoBoxHtml(tenantId) {
+  const st = edoCache.get(tenantId);
+  if (!st || !st.cfg) return `<div class="edo-box"><div class="small muted">Проверяю подключение к ЭДО…</div></div>`;
+  const err = st.error ? `<p class="small" style="color:var(--danger);margin:8px 0 0">${esc(st.error)}</p>` : '';
+  if (!st.cfg.configured || st.form) {
+    const prov = (st.form && st.form.provider) || st.cfg.provider || 'diadoc';
+    return `<div class="edo-box">
+      <div class="edo-head"><b>Накладные из ЭДО сами</b>
+        ${st.cfg.configured ? '<button class="btn-link" id="f-edo-cancel" style="width:auto">Отмена</button>' : ''}</div>
+      <p class="small muted" style="margin:4px 0 10px">Подключите свой Диадок или СБИС один раз — входящие УПД появятся здесь списком,
+        а о новой накладной бот сразу напишет вам. Проведение — как обычно: проверили сопоставление, нажали «Провести приход».</p>
+      <div class="edo-prov">
+        <label><input type="radio" name="f-edo-prov" value="diadoc" ${prov === 'diadoc' ? 'checked' : ''}> Диадок (Контур)</label>
+        <label><input type="radio" name="f-edo-prov" value="sbis" ${prov === 'sbis' ? 'checked' : ''}> СБИС (Тензор)</label>
+      </div>
+      <div class="edo-grid">
+        <label><span class="small muted">Логин</span><input id="f-edo-login" autocomplete="off" placeholder="${st.cfg.configured ? 'не менять — пусто' : ''}"></label>
+        <label><span class="small muted">Пароль</span><input id="f-edo-pass" type="password" autocomplete="new-password" placeholder="${st.cfg.configured ? 'не менять — пусто' : ''}"></label>
+        ${prov === 'diadoc' ? `<label class="edo-wide"><span class="small muted">Ключ API Диадока (ddauth_api_client_id) — выдаёт Контур по заявке в поддержку Диадока</span>
+          <input id="f-edo-key" autocomplete="off" placeholder="${st.cfg.configured ? 'не менять — пусто' : ''}"></label>` : ''}
+      </div>
+      <p class="small muted" style="margin:8px 0">Лучше завести в ЭДО отдельного пользователя только для просмотра входящих — пароль хранится зашифрованным.</p>
+      <button class="btn btn-primary" id="f-edo-save" style="width:auto" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Проверяю доступ…' : 'Подключить'}</button>
+      ${err}
+    </div>`;
+  }
+  const rub = (v) => { const n = Math.round((Number(v) || 0) * 100) / 100; return `${n.toLocaleString('ru-RU', { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 })} ₽`; };
+  const docs = st.docs;
+  const list = !docs ? '' : docs.length === 0
+    ? '<p class="small muted" style="margin:8px 0 0">За 30 дней входящих УПД нет.</p>'
+    : `<div class="edo-list">${docs.map((d) => `
+        <label class="edo-row ${d.posted ? 'done' : ''}">
+          <input type="checkbox" class="f-edo-pick" value="${esc(d.id)}" ${st.picked.has(d.id) ? 'checked' : ''}>
+          <span class="edo-main"><b>№ ${esc(d.number || '—')}</b> <span class="muted">от ${esc(d.date || '—')}</span>
+            <span class="edo-sup">${esc(d.supplier || 'Поставщик — в накладной')}</span></span>
+          <span class="edo-sum">${d.total ? rub(d.total) : ''}${d.posted ? '<span class="edo-tag">проведена</span>' : ''}</span>
+        </label>`).join('')}</div>
+      <button class="btn btn-primary" id="f-edo-open" style="width:auto;margin-top:10px" ${st.picked.size && !st.busy ? '' : 'disabled'}>
+        ${st.busy ? 'Загружаю…' : `Открыть выбранные${st.picked.size ? ` (${st.picked.size})` : ''}`}</button>`;
+  return `<div class="edo-box">
+    <div class="edo-head"><b>Из ЭДО · ${esc(EDO_NAME[st.cfg.provider] || 'ЭДО')}</b>${st.cfg.orgName ? ` <span class="small muted">${esc(st.cfg.orgName)}</span>` : ''}
+      <span class="edo-actions"><button class="btn-link" id="f-edo-edit" style="width:auto">Настроить</button>
+      <button class="btn-link" id="f-edo-off" style="width:auto;color:var(--danger)">Отключить</button></span></div>
+    ${docs ? '' : `<button class="btn btn-ghost" id="f-edo-load" style="width:auto;margin-top:6px" ${st.busy ? 'disabled' : ''}>${st.busy ? 'Загружаю список…' : 'Показать входящие накладные'}</button>`}
+    ${list}${err}
+    <label class="small muted" style="display:flex;gap:8px;align-items:center;margin-top:10px">
+      <input type="checkbox" id="f-edo-alerts" style="width:auto" ${st.cfg.alerts ? 'checked' : ''}> Писать в бот о новых накладных (проверка раз в час)</label>
+  </div>`;
+}
+
+/** openDocs([{ name, buf, edoId }]) — та же загрузка, что у файла с диска. */
+function bindEdoBox(tenantId, redraw, openDocs) {
+  const st0 = edoCache.get(tenantId);
+  const set = (patch) => { edoCache.set(tenantId, { ...(edoCache.get(tenantId) || {}), ...patch }); redraw(); };
+  const call = (body) => callSaasGateway('edo', { tenantId, ...body }).then((r) => r.data);
+  if (st0 === undefined) {
+    edoCache.set(tenantId, { cfg: null, docs: null, picked: new Set() });
+    call({ action: 'status' }).then((cfg) => set({ cfg })).catch((e) => set({ cfg: { configured: false }, error: e.message }));
+    return;
+  }
+  const st = st0 || {};
+  document.querySelectorAll('input[name=f-edo-prov]').forEach((el) => { el.onchange = () => set({ form: { provider: el.value } }); });
+  if ($('f-edo-edit')) $('f-edo-edit').onclick = () => set({ form: { provider: st.cfg.provider }, error: '' });
+  if ($('f-edo-cancel')) $('f-edo-cancel').onclick = () => set({ form: null, error: '' });
+  if ($('f-edo-save')) {
+    $('f-edo-save').onclick = async () => {
+      const provider = (document.querySelector('input[name=f-edo-prov]:checked') || {}).value || 'diadoc';
+      set({ busy: true, error: '' });
+      try {
+        const cfg = await call({ action: 'settings', settings: { provider, login: $('f-edo-login').value, password: $('f-edo-pass').value,
+          apiKey: $('f-edo-key') ? $('f-edo-key').value : '', alerts: st.cfg ? st.cfg.alerts !== false : true } });
+        set({ cfg, form: null, busy: false, docs: null, picked: new Set() });
+        toast(`${EDO_NAME[cfg.provider]} подключён`);
+      } catch (e) {
+        // Ошибка проверки после сохранения — настройки уже записаны.
+        const cfg = await call({ action: 'status' }).catch(() => st.cfg);
+        set({ busy: false, error: e.message || String(e), cfg });
+      }
+    };
+  }
+  if ($('f-edo-off')) {
+    $('f-edo-off').onclick = async () => {
+      if (!(await uiConfirm('Отключить ЭДО? Доступ удалится, накладные можно будет загружать только файлом.', { ok: 'Отключить' }))) return;
+      try { set({ cfg: await call({ action: 'disconnect' }), docs: null, picked: new Set(), form: null }); } catch (e) { set({ error: e.message }); }
+    };
+  }
+  if ($('f-edo-alerts')) {
+    $('f-edo-alerts').onchange = async (e) => {
+      try {
+        // Те же настройки, только переключатель (логин/пароль не меняются — пустые).
+        set({ cfg: await call({ action: 'settings', settings: { provider: st.cfg.provider, alerts: e.target.checked } }) });
+      } catch (err) { set({ error: err.message }); }
+    };
+  }
+  if ($('f-edo-load')) {
+    $('f-edo-load').onclick = async () => {
+      set({ busy: true, error: '' });
+      try {
+        const r = await call({ action: 'list', days: 30 });
+        set({ busy: false, docs: r.docs || [], picked: new Set() });
+      } catch (e) { set({ busy: false, error: e.message || String(e) }); }
+    };
+  }
+  document.querySelectorAll('.f-edo-pick').forEach((el) => {
+    el.onchange = () => { const p = new Set(st.picked); el.checked ? p.add(el.value) : p.delete(el.value); set({ picked: p }); };
+  });
+  if ($('f-edo-open')) {
+    $('f-edo-open').onclick = async () => {
+      set({ busy: true, error: '' });
+      try {
+        const out = [];
+        for (const id of st.picked) {
+          const r = await call({ action: 'file', id });
+          const bin = atob(r.xml);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const d = (st.docs || []).find((x) => x.id === id) || {};
+          out.push({ name: `№ ${d.number || id}`, buf: bytes.buffer, edoId: id });
+        }
+        set({ busy: false });
+        await openDocs(out);
+      } catch (e) { set({ busy: false, error: e.message || String(e) }); }
+    };
+  }
+}
+
 // ---------- Склад → «Фудкост и закупка» (saas-gateway/foodcost.js)
 const foodcostCache = new Map(); // tenantId → данные | { error } | null
 
@@ -8421,6 +8551,7 @@ function watchDashboardData(tenantId) {
             Строки сами сопоставятся с позициями склада, остатки и цены закупки пересчитаются. Можно выбрать несколько файлов сразу.</p>
           ${canPost ? '<input type="file" id="f-upd-file" accept=".xml,text/xml,application/xml" multiple>' : '<p class="small muted">Проводить приход может владелец или администратор.</p>'}
           ${upd.error ? `<p class="small" style="color:var(--danger);margin-top:8px">${esc(upd.error)}</p>` : ''}
+          ${canPost ? `<div id="f-edo-box">${edoBoxHtml(tenantId)}</div>` : ''}
         </div>`;
       };
       const zoned = items.some(hasZones);
@@ -8560,20 +8691,20 @@ function watchDashboardData(tenantId) {
         }
         draw();
       };
-      if ($('f-upd-file')) $('f-upd-file').onchange = async (e) => {
-        const files = [...(e.target.files || [])];
-        if (!files.length) return;
+      // Накладные с диска или из ЭДО: [{ name, buf, edoId? }] → предпросмотр.
+      const openUpdSources = async (sources) => {
         try {
           const U = await loadUpdCore();
           const items = (stockItems || []).filter((x) => x.active !== false);
           const docs = [];
-          for (const f of files) {
+          for (const f of sources) {
             let d;
             try {
-              d = U.parseUpd(U.decodeXml(await f.arrayBuffer()));
+              d = U.parseUpd(U.decodeXml(f.buf));
             } catch (err) {
               throw new Error(`${f.name}: ${err?.message || err}`);
             }
+            if (f.edoId) d.edoId = f.edoId;
             d.key = [d.supplier.inn || d.supplier.name, d.number, d.date].join('|');
             // Та же накладная уже проведена — предупреждаем (приход не задвоится).
             const seen = await getDocs(query(tcol('inventoryMovements'), where('invoiceKey', '==', d.key), limit(1))).catch(() => null);
@@ -8587,6 +8718,14 @@ function watchDashboardData(tenantId) {
         }
         draw();
       };
+      if ($('f-upd-file')) $('f-upd-file').onchange = async (e) => {
+        const files = [...(e.target.files || [])];
+        if (!files.length) return;
+        const sources = [];
+        for (const f of files) sources.push({ name: f.name, buf: await f.arrayBuffer() });
+        await openUpdSources(sources);
+      };
+      if ($('f-edo-box')) bindEdoBox(tenantId, draw, openUpdSources);
       document.querySelectorAll('.f-upd-choice').forEach((el) => {
         el.onchange = () => { upd.docs[Number(el.dataset.d)].choices[Number(el.dataset.l)] = el.value; draw(); };
       });
@@ -8643,6 +8782,12 @@ function watchDashboardData(tenantId) {
             const batch = writeBatch(state.db);
             ops.slice(i, i + 400).forEach((o) => (o.type === 'set' ? batch.set(o.ref, o.data) : batch.update(o.ref, o.data)));
             await batch.commit();
+          }
+          const edoIds = upd.docs.map((d) => d.edoId).filter(Boolean);
+          if (edoIds.length) {
+            callSaasGateway('edo', { tenantId, action: 'posted', ids: edoIds }).catch(() => {});
+            const es = edoCache.get(tenantId);
+            if (es && es.docs) edoCache.set(tenantId, { ...es, picked: new Set(), docs: es.docs.map((x) => (edoIds.includes(x.id) ? { ...x, posted: true } : x)) });
           }
           upd = { step: 'done', summary: `Оприходовано строк: ${added + created}${created ? `, из них новых позиций склада: ${created}` : ''}. Остатки и цены закупки обновлены — касса увидит их сразу.` };
         } catch (err) {
