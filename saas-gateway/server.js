@@ -71,6 +71,7 @@ const { createKiosk } = require("./kiosk");
 const { createTelephony } = require("./telephony");
 const { createEdo } = require("./edo");
 const { createAccountingMail } = require("./accounting-mail");
+const { createAggregators } = require("./aggregators");
 const { createGuestMarketing, rootKeyOf: guestRootKey } = require("./guest-marketing");
 const { createRushHour } = require("./rush-hour");
 const { createShield } = require("./shield");
@@ -135,7 +136,7 @@ const RESERVED_SLUGS = new Set([
 const TENANT_SUBCOLLECTIONS = [
   "aiActions", "aiJobs", "aiLogs", "aiUsage", "auditLog", "bonusOperations",
   "branding", "cashOps", "clients", "devices", "discountCards", "employees",
-  "giftCardClaims", "giftCards", "guestOrders", "hallLabels", "incomingCalls", "kegs", "hallWalls", "happyHours", "inventory",
+  "giftCardClaims", "giftCards", "guestOrders", "hallLabels", "incomingCalls", "kegs", "aggregatorOrders", "hallWalls", "happyHours", "inventory",
   "inventoryCounts", "inventoryItems", "inventoryMovements", "jobRuns",
   "marking_codes_sold", "menuCategories", "menuItems", "meta", "payrollAdjustments", "phoneIndex",
   "printJobs", "pushQueue", "referralCodes", "reservations", "reservationSlots",
@@ -10557,6 +10558,9 @@ const accountingMail = createAccountingMail({
   db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole, getMailer: () => getAuthMailer(),
 });
 
+// Заказы Яндекс Еды и Купера — сразу в кассу (aggregators.js).
+const aggregators = createAggregators({ db, admin, verifyAuth, parseJsonBody, readBody, sendJson, HttpError, requireTenantRole });
+
 // Киоск самообслуживания: заказ на планшете, оплата на кассе (kiosk.js, kiosk-web/).
 const kiosk = createKiosk({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole });
 
@@ -10882,6 +10886,7 @@ const ROUTES = {
   "/mercury": (req, res) => mercury.handle(req, res),
   "/edo": (req, res) => edo.handle(req, res),
   "/accountingMail": (req, res) => accountingMail.handle(req, res),
+  "/aggregatorLink": (req, res) => aggregators.handleLink(req, res),
   "/boardLink": (req, res) => board.handleLink(req, res),
   "/kioskLink": (req, res) => kiosk.handleLink(req, res),
   "/telephonyLink": (req, res) => telephony.handleLink(req, res),
@@ -11108,6 +11113,10 @@ const server = http.createServer((req, res) => {
   if (urlPath === "/kiosk" && (req.method === "GET" || req.method === "HEAD")) {
     res.writeHead(301, { Location: `${(process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, "")}/kiosk/` });
     return res.end();
+  }
+  // Яндекс Еда и Купер: меню, заказы, статусы (aggregators.js).
+  if (urlPath.startsWith("/agg/")) {
+    return runHandler((rq, rs) => aggregators.serve(rq, rs, urlPath.slice("/agg/".length)), req, res);
   }
   // Телефония: события АТС о входящих звонках (telephony.js).
   if (urlPath.startsWith("/tel/") && (req.method === "GET" || req.method === "POST")) {

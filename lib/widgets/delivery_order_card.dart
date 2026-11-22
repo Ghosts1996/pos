@@ -87,7 +87,15 @@ class _DeliveryOrderCardState extends State<DeliveryOrderCard> {
     final status = DeliveryFlow.normalize(s.orderType, s.deliveryStatus);
     // SaaS: заказ с киоска самообслуживания подтверждают так же, как из приложения.
     final fromKiosk = kSaasMode && s.source == 'kiosk';
-    final awaitingCall = (s.fromApp || fromKiosk) && status == 'new';
+    // SaaS: заказ из Яндекс Еды или Купера (saas-gateway/aggregators.js).
+    final aggName = !kSaasMode
+        ? ''
+        : s.source == 'yandex_eda'
+            ? 'Яндекс Еда'
+            : s.source == 'kuper'
+                ? 'Купер'
+                : '';
+    final awaitingCall = (s.fromApp || fromKiosk || aggName.isNotEmpty) && status == 'new';
     final waited = DateTime.now().difference(s.startTime).inMinutes;
     final name = s.customerName.isNotEmpty ? s.customerName : s.guestTag;
     final muted = TextStyle(color: AppColors.textMuted, fontSize: widget.compact ? 12 : 13);
@@ -96,6 +104,8 @@ class _DeliveryOrderCardState extends State<DeliveryOrderCard> {
         ? ('Оплачено онлайн: ${rub(s.guestPaidTotal)}', Colors.green)
         : s.payMethod == 'online'
             ? ('Оплатит онлайн после подтверждения', AppColors.textMuted)
+            : s.payMethod == 'aggregator'
+                ? ('Оплачено в агрегаторе', Colors.green)
             : s.payMethod == 'on_receipt'
                 ? ('Оплата при получении', AppColors.textMuted)
                 : null;
@@ -141,6 +151,15 @@ class _DeliveryOrderCardState extends State<DeliveryOrderCard> {
                     label: Text('Киоск'),
                   ),
                 ),
+              if (aggName.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Chip(
+                    visualDensity: VisualDensity.compact,
+                    avatar: const Icon(Icons.storefront_outlined, size: 16),
+                    label: Text(aggName),
+                  ),
+                ),
             ],
           ),
           if (s.customerPhone.isNotEmpty)
@@ -184,7 +203,10 @@ class _DeliveryOrderCardState extends State<DeliveryOrderCard> {
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
-                fromKiosk
+                aggName.isNotEmpty
+                    ? 'Заказ из $aggName: гость уже оплатил его агрегатору. Нажмите «Подтвердить» — позиции встанут в чек и уйдут '
+                        'на кухню, $aggName увидит «Принят». Когда соберёте — «Готов», курьер агрегатора заберёт заказ.'
+                    : fromKiosk
                     ? 'Заказ с киоска: гость подойдёт к кассе и назовёт номер №${s.orderLabel}. Нажмите «Подтвердить» — '
                         'позиции встанут в чек, затем примите оплату.'
                     : 'Позвоните гостю: сверьте состав, адрес и время. После подтверждения позиции встанут в чек, '

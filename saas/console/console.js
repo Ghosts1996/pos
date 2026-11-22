@@ -1643,6 +1643,82 @@ function bindTelBox(tenantId, redraw) {
   }
 }
 
+// ---------- Настройки → «Яндекс Еда и Купер» (saas-gateway/aggregators.js)
+const aggCache = new Map(); // tenantId → { yandex, kuper } (ответы /aggregatorLink) | null
+const AGG_INFO = {
+  yandex: { name: 'Яндекс Еда', how: 'Напишите своему менеджеру Яндекс Еды: «подключаем кассу ZalPOS по API — интеграция, где касса сервер». Передайте ему адрес, client_id и client_secret. Яндекс сам заберёт меню и стоп-лист, заказы придут на кассу.' },
+  kuper: { name: 'Купер', how: 'Передайте менеджеру Купера адрес для уведомлений о заказах и токен (заголовок Authorization: Bearer <токен>). Меню Купер может забрать по адресу …/menu с тем же токеном.' },
+};
+
+function aggBoxHtml(tenantId) {
+  const st = aggCache.get(tenantId);
+  if (!st) return '<p class="small muted" style="margin:0">Загружаю…</p>';
+  const intro = `<p class="small muted" style="margin-top:0">Заказы агрегаторов приходят прямо на кассу в «С собой и доставка» с пометкой
+    «Яндекс Еда» или «Купер» — без отдельного планшета. Кассир жмёт «Подтвердить», заказ уходит на кухню, статус «Принят → Готовится →
+    Готов» агрегатор видит сам. Оплата — «через агрегатор», цены — из вашего меню. Табак, кальяны, алкоголь и весовой товар агрегаторам не отдаются.</p>`;
+  const block = (kind) => {
+    const x = st[kind] || {};
+    const info = AGG_INFO[kind];
+    if (x.error) return `<div class="agg-item"><b>${info.name}</b><p class="small" style="color:var(--danger)">${esc(x.error)}</p></div>`;
+    if (!x.connected) {
+      return `<div class="agg-item"><div class="agg-head"><b>${info.name}</b><button class="btn btn-ghost f-agg" data-kind="${kind}" data-action="create" style="width:auto">Подключить</button></div></div>`;
+    }
+    const last = x.lastOrderAt ? new Date(x.lastOrderAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+    return `<div class="agg-item">
+      <div class="agg-head"><b>${info.name}</b><span class="agg-on">подключено${last ? ` · последний заказ ${esc(last)}` : ' · заказов ещё не было'}</span></div>
+      <div class="agg-kv"><span class="small muted">Адрес</span><code>${esc(x.url)}</code></div>
+      ${kind === 'yandex' ? `<div class="agg-kv"><span class="small muted">client_id</span><code>${esc(x.clientId)}</code></div>` : ''}
+      ${x.secret ? `<div class="agg-kv agg-secret"><span class="small muted">${kind === 'yandex' ? 'client_secret' : 'Токен'} — показывается один раз, сохраните</span><code>${esc(x.secret)}</code></div>`
+        : `<p class="small muted" style="margin:6px 0 0">${kind === 'yandex' ? 'client_secret' : 'Токен'} показывали при подключении. Потеряли — «Новые ключи».</p>`}
+      <p class="small" style="margin:8px 0">${esc(info.how)}</p>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost f-agg-copy" data-kind="${kind}" style="width:auto">Скопировать для менеджера</button>
+        <button class="btn btn-ghost f-agg" data-kind="${kind}" data-action="rotate" style="width:auto">Новые ключи</button>
+        <button class="btn-link f-agg" data-kind="${kind}" data-action="disable" style="width:auto;color:var(--danger)">Отключить</button>
+      </div>
+    </div>`;
+  };
+  const off = (st.yandex && st.yandex.takeawayOn === false) || (st.kuper && st.kuper.takeawayOn === false);
+  return `${intro}${off ? '<p class="small" style="color:var(--warning)">Включите выше «Заказы с собой и доставка» — без этого касса не примет заказы агрегаторов.</p>' : ''}
+    ${block('yandex')}${block('kuper')}
+    <p class="small muted" style="margin:10px 0 0">Первое подключение — с менеджером агрегатора на тестовом заказе. В Купере формат согласуется при подключении.</p>`;
+}
+
+function bindAggBox(tenantId, redraw) {
+  const call = (body) => callSaasGateway('aggregatorLink', { tenantId, ...body }).then((r) => r.data);
+  const st = aggCache.get(tenantId);
+  if (st === undefined) {
+    aggCache.set(tenantId, null);
+    Promise.all(['yandex', 'kuper'].map((kind) => call({ kind, action: 'get' }).catch((e) => ({ error: e.message }))))
+      .then(([yandex, kuper]) => { aggCache.set(tenantId, { yandex, kuper }); redraw(); });
+    return;
+  }
+  if (!st) return;
+  document.querySelectorAll('.f-agg').forEach((el) => {
+    el.onclick = async () => {
+      const { kind, action } = el.dataset;
+      const name = AGG_INFO[kind].name;
+      if (action === 'rotate' && !(await uiConfirm(`Выдать новые ключи для ${name}? Старые перестанут работать — передайте новые менеджеру.`, { ok: 'Выдать', danger: false }))) return;
+      if (action === 'disable' && !(await uiConfirm(`Отключить ${name}? Заказы перестанут приходить на кассу.`, { ok: 'Отключить' }))) return;
+      el.disabled = true;
+      try {
+        const r = await call({ kind, action });
+        aggCache.set(tenantId, { ...aggCache.get(tenantId), [kind]: r });
+      } catch (e) { aggCache.set(tenantId, { ...aggCache.get(tenantId), [kind]: { error: e.message } }); }
+      redraw();
+    };
+  });
+  document.querySelectorAll('.f-agg-copy').forEach((el) => {
+    el.onclick = () => {
+      const x = (aggCache.get(tenantId) || {})[el.dataset.kind] || {};
+      const lines = el.dataset.kind === 'yandex'
+        ? [`Адрес (base URL): ${x.url}`, `client_id: ${x.clientId}`, x.secret ? `client_secret: ${x.secret}` : 'client_secret: (сообщу отдельно)']
+        : [`Адрес для заказов: ${x.url}`, x.secret ? `Токен (Authorization: Bearer): ${x.secret}` : 'Токен: (сообщу отдельно)'];
+      copyToClipboard(lines.join('\n'));
+    };
+  });
+}
+
 // ---------- Склад → «Приход по накладной» → «Из ЭДО» (saas-gateway/edo.js)
 const edoCache = new Map(); // tenantId → { cfg, docs, picked:Set, form, busy, error } | null
 const EDO_NAME = { diadoc: 'Диадок', sbis: 'СБИС' };
@@ -8047,6 +8123,8 @@ function watchDashboardData(tenantId) {
         <div class="card" id="f-board-box">${boardBoxHtml(tenantId)}</div>` : ''}
       ${role === 'owner' || role === 'admin' ? `<h2>Киоск самообслуживания</h2>
         <div class="card" id="f-kiosk-box">${kioskBoxHtml(tenantId)}</div>` : ''}
+      ${role === 'owner' || role === 'admin' ? `<h2>Яндекс Еда и Купер</h2>
+        <div class="card" id="f-agg-box">${aggBoxHtml(tenantId)}</div>` : ''}
       ${role === 'owner' || role === 'admin' ? `<h2>Телефония: звонки на кассу</h2>
         <div class="card" id="f-tel-box">${telBoxHtml(tenantId)}</div>` : ''}
       </section>
@@ -9003,6 +9081,7 @@ function watchDashboardData(tenantId) {
     if ($('f-board-box')) bindBoardBox(tenantId, draw);
     if ($('f-kiosk-box')) bindKioskBox(tenantId, draw);
     if ($('f-tel-box')) bindTelBox(tenantId, draw);
+    if ($('f-agg-box')) bindAggBox(tenantId, draw);
     if ($('f-api-box')) bindApiKeysBox(tenantId, draw);
     if ($('f-wh-box')) bindWebhooksBox(tenantId, draw);
     if ($('f-backup-tenant')) $('f-backup-tenant').onclick = () => exportVenueBackup({ tenantId, fileKey: tenant.slug, label: tenant.name });

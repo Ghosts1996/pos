@@ -1997,3 +1997,11 @@ html.zd-open { overflow: hidden; }
 .accmail-1c { margin-top: 12px; }
 .accmail-1c summary { cursor: pointer; font-weight: 600; font-size: 14px; }
 .accmail-1c code { word-break: break-all; font-size: 12.5px; }
+
+/* Настройки → «Яндекс Еда и Купер» */
+.agg-item { border-top: 1px solid var(--border); padding: 12px 0; }
+.agg-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.agg-on { font-size: 13px; color: var(--success, #22a06b); font-weight: 600; }
+.agg-kv { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.agg-kv code { word-break: break-all; font-size: 13px; user-select: all; }
+.agg-secret code { background: color-mix(in srgb, var(--warning, #c98a1b) 14%, transparent); padding: 4px 6px; border-radius: 6px; }

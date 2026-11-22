@@ -306,6 +306,14 @@ class _PaymentScreenState extends State<PaymentScreen> {
     _card.controller.text = '0';
     _comp.controller.text = '0';
     _agg.controller.text = '0';
+    // SaaS: заказ пришёл из Яндекс Еды / Купера — гость уже заплатил
+    // агрегатору: вся сумма сразу «через агрегатор».
+    final src = widget.session.source;
+    if (kSaasMode && _aggregators.any((a) => a.id == src)) {
+      _aggId = src;
+      _cash.controller.text = '0';
+      _agg.controller.text = _fmt(due > got ? due - got : 0);
+    }
   }
 
   @override
