@@ -1295,6 +1295,163 @@ X.watchApp = () => X.scr('Уведомления', `<div class="gx-mu" style="fo
 
 X.hallOffline = () => hall().replace('<div class="gx-banner">', `<div style="margin:0 12px 8px;padding:8px 10px;border-radius:10px;background:rgba(217,168,78,.16);color:var(--warn);font-size:12px;display:flex;gap:8px;align-items:center">${ic('wifi', 16)}<span>Нет интернета — касса работает. Заказы и оплаты сохранены на устройстве и отправятся сами, когда связь вернётся.</span></div><div class="gx-banner">`);
 
+/* ---- Новое 22.11.2026: график смен, банкеты, предоплата брони, второе
+   юрлицо, весы, кеги, телефония, ЭДО, 1С, Яндекс Еда и Купер, бот в MAX ---- */
+const N = {};
+N.card = (title, body, style = '') => `<div class="gx-web-card"${style ? ` style="${style}"` : ''}><h5>${title}</h5>${body}</div>`;
+N.mu = (t, style = '') => `<div class="gx-mu" style="font-size:12.5px;line-height:1.5;${style}">${t}</div>`;
+N.ok = (t) => `<span style="color:var(--ok);font-weight:600">${t}</span>`;
+
+// График смен: неделя таблицей, клетка «10-22» → «10–22», под ней — факт.
+N.schedule = () => {
+  const days = ['Пн 23', 'Вт 24', 'Ср 25', 'Чт 26', 'Пт 27'];
+  const cell = (v, fact = '', k = '') => `<td style="padding:6px 4px;border-top:1px solid var(--bd);vertical-align:top">${k
+    ? `<div class="gx-wf" data-tap="${k}" data-type="${k}" style="margin:0"><span class="gx-wf-box" style="height:30px;padding:0 6px;font-size:12px"><span class="gx-val"></span><span class="gx-ph"></span></span></div>`
+    : `<div style="font-size:12.5px;font-weight:600">${v || '<span class="gx-mu">—</span>'}</div>`}${fact ? `<div style="font-size:10.5px;margin-top:2px">${fact}</div>` : ''}</td>`;
+  const row = (name, cells) => { const [n, r] = name.split(' · ');
+    return `<tr><td style="padding:6px 4px;border-top:1px solid var(--bd);vertical-align:top;font-size:12.5px;line-height:1.2"><b>${n}</b><div class="gx-mu" style="font-size:10.5px">${r}</div></td>${cells.join('')}</tr>`; };
+  const late = `<span class="gx-hide" data-mark="fact" style="color:#D98A5C">опоздал на 25 мин</span>`;
+  const okf = (t) => `<span class="gx-hide" data-mark="fact" style="color:var(--ok)">✓ ${t}</span>`;
+  return web('Команда', `<h3>Команда</h3>${N.card('График смен', `
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-bottom:8px;font-size:13px"><span class="gx-web-btn ghost" style="padding:0 10px">←</span><b style="white-space:nowrap">23–29 ноября</b><span class="gx-web-btn ghost" style="padding:0 10px">→</span><span class="gx-web-btn ghost" data-tap="copy" style="margin-left:auto;white-space:nowrap">Как на прошлой неделе</span></div>
+    <div style="overflow:hidden"><table style="width:100%;border-collapse:collapse;table-layout:fixed">
+      <tr><th style="text-align:left;font-size:11px;color:var(--mu);font-weight:500;width:22%"></th>${days.map((d) => `<th style="text-align:left;font-size:11px;color:var(--mu);font-weight:500">${d}</th>`).join('')}</tr>
+      ${row('Алина · официант', [cell('', '', 'cell'), cell('10–22', okf('9:58–22:04')), cell(''), cell('<span class="gx-hide" data-mark="copied">10–22</span>'), cell('<span class="gx-hide" data-mark="copied">18–02</span>')])}
+      ${row('Максим · кальянщик', [cell('14–02', okf('14:01–02:10')), cell('14–02', late), cell('14–02'), cell(''), cell('<span class="gx-hide" data-mark="copied">14–02</span>')])}
+      ${row('Ольга · бармен', [cell('18–02', okf('17:55–02:05')), cell(''), cell('18–02'), cell('<span class="gx-hide" data-mark="copied">18–02</span>'), cell('<span class="gx-hide" data-mark="copied">18–02</span>')])}
+    </table></div>
+    <div class="gx-unfold" data-mark="fact" style="--max:60px">${N.mu('Итого: Алина — 2 смены, 24 ч · Максим — 3 смены, 36 ч · Ольга — 2 смены, 16 ч', 'margin-top:8px')}</div>`)}`, {});
+};
+
+// Касса: брони с кнопкой «Банкет».
+N.bookingsBanquet = ({ card = false } = {}) => bookingsScreen()
+  .replace(btn('Бронь по телефону', { icon: 'plus', style: 'border-radius:24px;padding:0 18px;box-shadow:0 8px 20px rgba(0,0,0,.4)' }),
+    `<span style="display:flex;gap:8px">${btn('Банкет', { kind: 'ghost', icon: 'star', tap: 'banq', style: 'border-radius:24px;padding:0 16px;background:var(--el)' })}${btn('Бронь', { icon: 'plus', style: 'border-radius:24px;padding:0 16px;box-shadow:0 8px 20px rgba(0,0,0,.4)' })}</span>`)
+  .replace('<div style="padding:4px 12px">', `<div style="padding:4px 12px">${card ? N.banquetCard() : ''}`);
+N.banquetCard = () => `<div class="gx-card" style="padding:12px;margin-bottom:10px;border-color:var(--pr)">
+  <div style="display:flex;gap:10px;align-items:flex-start"><span style="padding:5px 8px;border-radius:8px;background:var(--sel2);color:var(--br);font-weight:700;font-size:13px">сб 19:00</span>
+  <div style="flex:1"><b style="font-size:15px">🎉 Юбилей Анны · 12 чел.</b><div class="gx-mu" style="font-size:11.5px">Банкет · Стол 6 · 5 ч</div></div></div>
+  <div style="font-size:12px;margin:8px 0 4px">Меню: Сет «Ассорти» ×12 · Лимонад 1 л ×4 · Торт ×1 · <b>1 050 ₽ на гостя</b></div>
+  <div style="font-size:12.5px;margin-bottom:8px"><span class="gx-show" data-mark="dep">Предоплата <b>0 из 6 300 ₽</b> · ждём 6 300 ₽</span><span class="gx-alt" data-mark="dep">${N.ok('Предоплата 6 300 из 6 300 ₽ ✓')} · чек «аванс» пробит</span></div>
+  <div style="display:flex;gap:8px">${btn('Принять предоплату', { kind: 'sm', tap: 'dep', style: 'flex:1' })}${btn('Изменить банкет', { kind: 'ghost sm', style: 'flex:1' })}</div></div>`;
+N.banquetForm = () => X.scr('Новый банкет', `
+  ${X.h('Гость')}${field('Имя или повод', { type: 'bname', style: 'height:46px;margin-bottom:8px' })}${field('Телефон (обязательно)', { val: '+7 900 ···-··-12', style: 'height:46px' })}
+  ${X.h('Когда и где')}<div style="display:flex;gap:8px">${field('', { val: 'сб, 29 ноября · 19:00', style: 'flex:1;height:44px' })}${field('', { val: '5 ч', style: 'width:70px;height:44px' })}</div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;font-size:13.5px">Гостей<span style="display:flex;align-items:center;gap:12px">${ic('minus', 18)}<b style="font-size:17px">12</b>${ic('plus', 18)}</span></div>
+  ${X.h('Меню банкета')}
+  ${X.line('Сет «Ассорти» · на каждого', '×12 · 8 400 ₽')}${X.line('Лимонад 1 л', '×4 · 1 600 ₽')}${X.line('Торт «Медовик»', '×1 · 2 600 ₽')}
+  ${X.line('Итого меню', '12 600 ₽', { b: true })}
+  ${X.h('Предоплата')}${X.chips(['30%', '50%', '100%'], -1, 1, 'half')}<div class="gx-unfold" data-mark="half" style="--max:40px">${X.line('Сколько внести заранее', '6 300 ₽', { b: true })}</div>`,
+  { bottom: btn('Создать банкет', { tap: 'create', style: 'width:100%' }) });
+
+// Кабинет: предоплата брони.
+N.prepayWeb = () => web('Брендинг', `<h3>Брендинг</h3>${N.card('Предоплата брони', `
+  ${N.mu('Гость вносит предоплату картой или по СБП прямо в «Моих бронях». Деньги — на счёт заведения, при посадке они встают в счёт.')}
+  ${wCheck('Брать предоплату за бронь', 'on')}
+  <div class="gx-unfold" data-mark="on" style="--max:200px"><div class="gx-cols wide2" style="margin-top:6px">${wField('За гостя, ₽', { type: 'per', ph: '500' })}${wField('или за всю бронь, ₽', { ph: '—' })}${wField('Начиная от гостей', { val: '4' })}</div>
+  ${wBtn('Сохранить', { tap: 'save' })}<span class="gx-hide" data-mark="save" style="margin-left:10px;font-size:13px">${N.ok('Сохранено')}</span></div>`)}`, {});
+N.prepayGuest = () => webPage(`<div class="gx-web-card gx-web-narrow" style="padding:14px 16px">
+  <b style="font-size:16px">Мои брони</b>
+  <div class="gx-card" style="padding:12px;margin-top:10px"><b>Сб, 29 ноября · 20:00</b><div class="gx-mu" style="font-size:12.5px">4 гостя · Стол 6 · Подтверждена</div>
+  <div style="margin-top:10px"><span class="gx-show" data-mark="paid">${wBtn('Внести предоплату 2 000 ₽', { tap: 'pay', style: 'width:100%;justify-content:center' })}</span><span class="gx-alt" data-mark="paid">${N.ok('✓ Предоплата внесена · 2 000 ₽')}</span></div></div></div>`, { url: 'kafe-leto.zalpos.ru' });
+
+// Касса: второе юрлицо.
+N.entity = () => X.integ('receipt', 'Второе юрлицо', 'Один счёт гостя — два фискальных чека: позиции выбранных цехов уходят на кассу второго ИП или ООО.',
+  `${switchRow('Второе юрлицо включено', '', { tap: 'on', mark: 'on' })}
+  <div class="gx-unfold" data-mark="on" style="--max:380px"><div style="height:10px"></div>${field('Название для себя', { type: 'ename', style: 'height:46px;margin-bottom:8px' })}${field('ИНН второго юрлица', { val: '7701 ··· ·· 34', style: 'height:46px' })}
+  <div style="font-size:13px;font-weight:600;margin:12px 0 6px">Его цеха</div>${X.chips(['Кухня', 'Бар', 'Кальяны'], -1, 2, 'hk')}
+  <div style="font-size:13px;font-weight:600;margin:4px 0 6px">Касса второго юрлица</div>${X.chips(['Регистратор АТОЛ в заведении', 'АТОЛ Онлайн'], 1)}
+  ${btn('Тестовый чек на 1 ₽', { kind: 'ghost sm', tap: 'test', style: 'width:100%' })}<div class="gx-hide" data-mark="test" style="font-size:12.5px;margin-top:6px;color:var(--ok);font-weight:600">✓ Чек пробит на кассе второго юрлица</div></div>`);
+N.twoSlips = () => `<div class="gx-scrim"></div><div class="gx-panel gx-slips" style="display:flex;gap:10px;justify-content:center">
+  ${slip('ООО «ЛЕТО»', [['Чизкейк x1', '390'], ['Сок яблочный x2', '440']], '830', 'Кухня и бар', 0)}
+  ${slip('ИП ПЕТРОВ', [['Классический кальян x1', '1200']], '1200', 'Чек №1042-2 · кальяны', 400)}</div>`;
+
+// Касса: весы.
+N.weighItem = () => X.scr('Позиция', `${field('Название', { val: 'Сыр «Маасдам»', style: 'height:46px;margin-bottom:8px' })}${field('Цена', { val: '<span class="gx-show" data-mark="kg">420 ₽</span><span class="gx-alt" data-mark="kg">1 200 ₽ / кг</span>', style: 'height:46px' })}
+  ${switchRow('Продаётся на вес', 'Цена — за 1 кг. Вес берётся с весов или вписывается вручную', { tap: 'kg', mark: 'kg' })}`, { bottom: btn('Сохранить', { style: 'width:100%' }) });
+N.weighDialog = () => dialog('Сыр «Маасдам» · 1 200 ₽/кг', `<div style="text-align:center;padding:6px 0 4px">
+  <div style="font-size:34px;font-weight:700;font-variant-numeric:tabular-nums"><span class="gx-show" data-mark="st">0,34<span class="gx-mu">…</span></span><span class="gx-alt" data-mark="st">0,350 кг</span></div>
+  <div style="font-size:12.5px;margin-top:4px"><span class="gx-show" data-mark="st" style="color:#D98A5C">Груз качается — подождите</span><span class="gx-alt" data-mark="st" style="color:var(--ok)">Вес стабильный · 420 ₽</span></div></div>
+  ${field('Вес', { ph: 'или впишите: 350 = граммы', style: 'height:44px;margin-top:8px' })}`, `${btn('Отмена', { kind: 'text' })}${btn('Добавить', { kind: 'sm', tap: 'add' })}`);
+N.weighCheck = () => tableCheck({ name: 'Стол 3', items: [{ n: 'Сыр «Маасдам» · 0,350 кг', p: '1 200 ₽/кг', q: 1, sum: '420 ₽' }, { n: 'Вино белое 150 мл', p: '390 ₽', q: 2, sum: '780 ₽' }], total: '1 200 ₽' });
+
+// Касса: кеги.
+N.kegsList = ({ added = false } = {}) => X.scr('Кеги на кране', added ? `
+  <div class="gx-card" style="padding:12px 14px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-size:15px">Светлое нефильтрованное</b><span class="gx-mu" style="font-size:12px">30 л</span></div>
+    <div style="font-size:13px;margin:6px 0">Осталось <b><span class="gx-show" data-mark="pour">30,0 л</span><span class="gx-alt" data-mark="pour">29,5 л</span></b> · Пиво светлое 0,5 → 0,5 л</div>
+    <div style="height:8px;border-radius:4px;background:var(--bd);overflow:hidden"><div style="height:100%;width:98%;background:var(--ok);border-radius:4px"></div></div>
+    <div style="display:flex;gap:8px;margin-top:10px">${btn('Код для ЛК', { kind: 'ghost sm', style: 'flex:0 0 auto;padding:0 14px' })}${btn('Кега закончилась', { kind: 'ghost sm', style: 'flex:1;white-space:nowrap;color:#E07A5F' })}</div>
+    <div style="font-size:12px;margin-top:8px" class="gx-mu">☐ Подключение отмечено в ЧЗ — в течение 3 рабочих дней.</div></div>`
+  : `<div class="gx-mu" style="text-align:center;padding:60px 20px;font-size:14px">На кранах пока нет кег</div>`, { bottom: added ? '' : btn('Поставить кегу', { icon: 'plus', tap: 'new', style: 'width:100%' }) });
+N.kegForm = () => X.scr('Поставить кегу на кран', `
+  ${field('Код маркировки на кеге', { type: 'code', style: 'height:46px' })}<div class="gx-hide" data-mark="chk" style="font-size:12px;color:var(--ok);font-weight:600;margin:4px 2px 8px">✓ Код проверен в «Честном знаке»</div>
+  ${field('Название', { val: 'Светлое нефильтрованное', style: 'height:46px;margin-bottom:8px' })}
+  <div style="font-size:13px;font-weight:600;margin:4px 0 6px">Объём кеги</div>${X.chips(['10 л', '20 л', '30 л', '50 л'], -1, 2, 'vol')}
+  <div style="font-size:13px;font-weight:600;margin:4px 0 6px">Что наливаем из этой кеги</div>
+  <div class="gx-card" style="padding:4px 12px">${X.line('☑ Пиво светлое 0,5', '0,5 л')}${X.line('☑ Пиво светлое 0,3', '0,3 л')}</div>`,
+  { bottom: btn('Поставить на кран', { tap: 'save', style: 'width:100%' }) });
+
+// Касса: входящий звонок.
+N.callBanner = () => hall().replace('<div class="gx-banner">', `<div class="gx-panel" style="position:absolute;left:10px;right:10px;top:64px;z-index:5;background:var(--el);border:1px solid var(--pr);border-radius:16px;padding:12px 14px;box-shadow:0 14px 30px rgba(0,0,0,.45)">
+  <div style="display:flex;align-items:center;gap:10px"><span style="width:38px;height:38px;border-radius:50%;background:var(--pr);color:#FFF7F0;display:flex;align-items:center;justify-content:center">${ic('call', 18)}</span>
+  <div style="flex:1"><b style="font-size:15px">+7 900 ···-·5-12</b><div style="font-size:12px;color:var(--ok);font-weight:600">Постоянный гость · Золото</div></div><span class="gx-mu">×</span></div>
+  <div style="font-size:12.5px;margin:8px 0 10px" class="gx-mu">12 визитов · 340 бонусов · был 18.11</div>
+  <div style="display:flex;gap:8px">${btn('Доставка', { kind: 'sm', icon: 'truck', tap: 'dlv', style: 'flex:1' })}${btn('С собой', { kind: 'ghost sm', icon: 'bag', style: 'flex:1' })}</div></div><div class="gx-banner">`);
+N.callOrder = () => X.scr('Новая доставка', `${field('Телефон', { val: '+7 900 ···-·5-12', style: 'height:46px;margin-bottom:8px' })}${field('Имя', { val: 'Гость', style: 'height:46px;margin-bottom:8px' })}${field('Адрес', { type: 'addr', style: 'height:46px' })}
+  ${N.mu('Номер уже вписан из звонка. Дальше — меню и заказ, как обычно.', 'margin-top:10px')}`, { bottom: btn('К меню', { style: 'width:100%' }) });
+
+// Кабинет: накладные из ЭДО.
+N.edo = () => web('Склад', `<h3>Склад · Приход по накладной</h3>${N.card('Накладные из ЭДО сами', `
+  <div class="gx-fold" data-mark="conn" style="--max:220px">${N.mu('Входящие УПД от поставщиков сами появятся здесь — без скачивания файлов.')}
+    <div style="display:flex;gap:14px;font-size:13px;margin:8px 0">${'<span><b>◉</b> Диадок (Контур)</span><span class="gx-mu">○ СБИС (Тензор)</span>'}</div>
+    <div class="gx-cols wide2">${wField('Логин', { type: 'login', ph: 'buh@kafe-leto.ru' })}${wField('Пароль', { val: '••••••••' })}${wField('Ключ API', { val: 'API-••••' })}</div>${wBtn('Подключить', { tap: 'conn' })}</div>
+  <div class="gx-unfold" data-mark="conn" style="--max:320px"><div style="font-size:13px;margin-bottom:6px">${N.ok('✓ Диадок · ООО «Лето»')} · входящие УПД за 30 дней</div>
+    ${[['ООО «Свежие овощи»', 'УПД №418 · 21.11', '12 480 ₽', 'a'], ['ИП Сафонов (молочка)', 'УПД №77 · 20.11', '6 230 ₽', 'b'], ['ООО «Напитки Юга»', 'УПД №1105 · 18.11', '<span class="gx-mu">проведена</span>', '']].map(([n, d, v, k]) =>
+      `<div class="gx-web-row" style="gap:10px">${k ? `<span class="gx-wc" data-mark="${k}" style="margin:0"><span class="gx-wc-box" data-tap="${k}">${ic('check', 13, 3)}</span></span>` : '<span style="width:20px"></span>'}<span style="flex:1"><b>${n}</b><br><span class="gx-mu" style="font-size:12px">${d}</span></span><span>${v}</span></div>`).join('')}
+    <div style="margin-top:10px">${wBtn('Открыть выбранные', { tap: 'open' })}</div></div>`)}`, {});
+N.edoPreview = () => web('Склад', `<h3>Приход по накладной</h3>${N.card('ООО «Свежие овощи» · УПД №418', `
+  ${[['Томаты черри', '5 кг', 'Томаты черри', '✓'], ['Огурцы', '4 кг', 'Огурцы', '✓'], ['Лимоны', '3 кг', 'Лимоны', '✓'], ['Мята свежая', '0,5 кг', 'Мята', '✓']].map(([a, q, b, ok]) =>
+    `<div class="gx-web-row"><span style="flex:1">${a}<br><span class="gx-mu" style="font-size:12px">→ склад: ${b}</span></span><span style="margin-right:10px">${q}</span><span style="color:var(--ok)">${ok}</span></div>`).join('')}
+  <div style="display:flex;justify-content:space-between;font-weight:600;margin:10px 0">Итого<span>12 480 ₽</span></div>
+  ${wBtn('Провести', { tap: 'post' })}<span class="gx-hide" data-mark="post" style="margin-left:10px;font-size:13px">${N.ok('Проведено: 4 позиции на склад')}</span>`)}`, {});
+
+// Кабинет: бухгалтеру автоматически.
+N.accMail = () => web('Обзор', `<h3>Обзор</h3>${N.card('Для бухгалтера', `
+  ${N.mu('Excel за период: чеки, позиции, возвраты, склад, смены и листы «1С» — розничные продажи по дням со ставкой НДС, оплаты, номенклатура.')}
+  <div style="margin:8px 0">${wBtn('Скачать Excel', { ghost: true })}</div>
+  ${wCheck('Отправлять бухгалтеру автоматически', 'auto')}
+  <div class="gx-unfold" data-mark="auto" style="--max:220px"><div class="gx-cols wide2" style="margin-top:6px">${wField('Почта бухгалтера', { type: 'mail', ph: 'buh@example.ru' })}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0;font-size:12.5px">${['Каждый день', 'Каждую неделю', 'Каждый месяц'].map((t, i) => `<span class="gx-web-btn ghost${i === 1 ? '' : ''}" ${i === 1 ? 'data-tap="wk"' : ''} style="height:32px;padding:0 12px">${t}</span>`).join('')}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">${wBtn('Сохранить', { tap: 'save' })}${wBtn('Отправить сейчас', { tap: 'send', ghost: true })}</div>
+    <div class="gx-hide" data-mark="send" style="font-size:13px;margin-top:8px">${N.ok('✓ Отправлено: книга за 16–22 ноября')} · следующее письмо — пн после 7:00</div></div>`)}`, {});
+
+// Кабинет: Яндекс Еда и Купер.
+N.agg = () => web('Настройки', `<h3>Настройки</h3>${N.card('Яндекс Еда и Купер', `
+  ${N.mu('Заказы агрегаторов — сразу на кассу. Меню и стоп-лист агрегатор берёт из кассы, статусы видит сам.')}
+  <div class="gx-web-row"><span style="flex:1"><b>Яндекс Еда</b><br><span class="gx-mu" style="font-size:12px"><span class="gx-show" data-mark="ya">не подключено</span><span class="gx-alt" data-mark="ya" style="color:var(--ok)">подключено · ждём первый заказ</span></span></span><span class="gx-fold" data-mark="ya">${wBtn('Подключить', { tap: 'ya', ghost: true })}</span></div>
+  <div class="gx-unfold" data-mark="ya" style="--max:220px"><div style="font-size:12.5px;line-height:1.9;padding:8px 10px;border-radius:8px;background:rgba(127,127,127,.12);color:inherit;font-family:monospace">Адрес: https://pii.zalpos.ru/saas/agg/yandex/Qm4…<br>client_id: Qm4…T2<br>client_secret: <b>ys_9d…41</b> <span class="gx-mu">(виден один раз)</span></div>
+    <div style="margin-top:8px">${wBtn('Скопировать для менеджера', { tap: 'copy' })}<span class="gx-hide" data-mark="copy" style="margin-left:10px;font-size:13px">${N.ok('Скопировано')}</span></div></div>
+  <div class="gx-web-row"><span style="flex:1"><b>Купер</b><br><span class="gx-mu" style="font-size:12px">не подключено</span></span>${wBtn('Подключить', { ghost: true })}</div>`)}`, {});
+
+// Кабинет и MAX: бот в MAX.
+N.maxWeb = () => web('Настройки', `<h3>Настройки · Подключения</h3>${N.card('Бот в MAX', `
+  <div class="gx-fold" data-mark="bot" style="--max:200px">${N.mu('Тот же бот, что в Telegram: отчёты, итоги смены после Z-отчёта, сигналы, заказы в группу сотрудников.')}
+    ${wField('Токен бота MAX', { type: 'token', ph: 'Вставьте токен целиком' })}${wBtn('Подключить бота', { tap: 'connect' })}</div>
+  <div class="gx-unfold" data-mark="bot" style="--max:420px"><div style="font-size:13.5px">Бот: <b>kafe_leto_bot</b> · токен хранится зашифрованным</div>
+    <div style="display:flex;gap:10px;margin-top:10px"><span style="width:24px;height:24px;border-radius:50%;border:1.5px solid var(--pr);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">1</span><div style="flex:1"><b style="font-size:13.5px">Впишите свой MAX ID</b>
+      <div class="gx-unfold" data-mark="acc"><div class="gx-web-row" style="border-top:none">Ольга · ID 158 334 207 <span class="gx-mu" style="font-size:12px;margin-left:6px">владелец</span></div></div>
+      <div class="gx-cols wide2">${wField('MAX ID', { type: 'maxid', ph: '123456789' })}<div style="display:flex;align-items:flex-end">${wBtn('Добавить', { tap: 'addid', ghost: true })}</div></div></div></div>
+    <div style="display:flex;gap:10px;margin-top:10px"><span style="width:24px;height:24px;border-radius:50%;border:1.5px solid var(--pr);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">2</span><div style="flex:1;font-size:13px"><b>Откройте бота и нажмите «Начать»</b><br><span class="gx-mu">Придёт меню отчётов.</span></div></div>
+    <div style="display:flex;gap:10px;margin-top:10px"><span style="width:24px;height:24px;border-radius:50%;border:1.5px solid var(--pr);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">3</span><div style="flex:1;font-size:13px"><b>Группа сотрудников</b><br>
+      <span class="gx-fold" data-mark="code">${wBtn('Получить код для группы', { tap: 'code', ghost: true })}</span>
+      <div class="gx-unfold" data-mark="code" style="--max:60px"><span style="font-family:monospace;padding:6px 10px;border-radius:8px;background:rgba(127,127,127,.12);color:inherit">/start 6e2af648ee4a53784c</span> ${wBtn('Скопировать', { ghost: true, style: 'display:inline-flex' })}</div></div></div></div>`)}`, {});
+N.maxChat = () => webPage(`<div class="gx-web-card gx-web-narrow" style="padding:14px 16px">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><span style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#4C6FFF,#9B5CFF);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800">M</span><b>Кафе «Лето» · бот</b></div>
+  <div style="background:var(--s2, rgba(127,127,127,.12));border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.55">📊 <b>Кафе «Лето» — итоги смены · 22.11, 12:02–23:48</b><br><b>К оплате:</b> 64 380 ₽<br><b>Оплачено картой:</b> 48 120 ₽<br><b>Оплачено наличными:</b> 16 260 ₽<br><b>Наличные в кассе:</b> 16 260 ₽</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">${['💰 Выручка сегодня', '🧾 Средний чек', '👥 Текущая смена', '📊 Ещё отчёты'].map((t, i) => wBtn(t, { ghost: true, tap: i === 0 ? 'rev' : '', style: 'justify-content:center;font-size:12.5px' })).join('')}</div>
+  <div class="gx-hide" data-mark="rev" style="background:var(--s2, rgba(127,127,127,.12));border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.55;margin-top:8px">💰 <b>Выручка сегодня</b> · 18 940 ₽ · 23 чека</div></div>`, { url: 'MAX' });
+
 export const SCENES = {
   login: {
     label: 'Вход в кассу по PIN',
@@ -1900,6 +2057,88 @@ export const SCENES = {
     frames: [
       { screen: X.aggr(), cap: 'Админ → «Интеграции» → «Агрегаторы доставки». Включите своих и впишите комиссию по договору.', acts: [{ tap: 'ya', mark: 'ya' }, { type: 'com', text: '25' }, { wait: 500 }] },
       { screen: X.payAggr(), enter: 'push', cap: 'Заказ пришёл — заведите его как обычно, а при оплате нажмите на поле агрегатора: туда встанет вся сумма. В наличные он не попадёт.', acts: [{ wait: 500 }, { tap: 'ya', mark: 'ya' }, { wait: 500 }, { tap: 'pay' }] },
+    ],
+  },
+  'staff-schedule': {
+    label: 'График смен', device: 'web',
+    frames: [
+      { screen: N.schedule(), cap: 'Кабинет → «Команда» → «График смен». Нажмите на клетку и впишите время как удобно: «10-22», «с 10 до 22», ночная — «18-02».', acts: [{ wait: 400 }, { type: 'cell', text: '10–22' }, { wait: 600 }] },
+      { screen: N.schedule(), cap: '«Как на прошлой неделе» — перенести весь прошлый график одной кнопкой. Сохраняется само.', acts: [{ tap: 'copy', mark: 'copied' }, { wait: 900 }] },
+      { screen: N.schedule(), cap: 'Под временем — факт по кассе: вышел вовремя, опоздал, ушёл раньше. Не начал смену через 15 минут — сигнал в бот.', acts: [{ mark: 'copied' }, { mark: 'fact' }, { wait: 2200 }] },
+    ],
+  },
+  banquet: {
+    label: 'Банкет с меню и предоплатой',
+    frames: [
+      { screen: N.bookingsBanquet(), cap: 'Касса → «Брони» → кнопка «Банкет».', acts: [{ wait: 500 }, { tap: 'banq' }] },
+      { screen: N.banquetForm(), enter: 'push', cap: 'Повод, телефон, дата, часы, сколько гостей. Меню — «на каждого гостя» умножится само. Предоплата — сумма или 30/50/100% меню.', acts: [{ type: 'bname', text: 'Юбилей Анны' }, { wait: 300 }, { tap: 'half', mark: 'half' }, { wait: 600 }, { tap: 'create' }] },
+      { screen: N.bookingsBanquet({ card: true }), enter: 'fade', cap: 'Гость принёс деньги — «Принять предоплату»: касса пробьёт чек «аванс». В день банкета «Посадить» — меню уже в счёте, аванс зачтётся.', acts: [{ wait: 700 }, { tap: 'dep', mark: 'dep' }, { wait: 1400 }] },
+    ],
+  },
+  'booking-prepay': {
+    label: 'Предоплата брони онлайн', device: 'web',
+    frames: [
+      { screen: N.prepayWeb(), cap: 'Кабинет → «Брендинг» → «Предоплата брони»: включите и впишите сумму за гостя или за всю бронь. «Сохранить».', acts: [{ tap: 'on', mark: 'on' }, { type: 'per', text: '500' }, { tap: 'save', mark: 'save' }, { wait: 700 }] },
+      { screen: N.prepayGuest(), enter: 'fade', cap: 'Гость в «Моих бронях» вносит предоплату картой или по СБП. Касса пробьёт чек «аванс», а при посадке сумма встанет в счёт.', acts: [{ wait: 600 }, { tap: 'pay', mark: 'paid' }, { wait: 1400 }] },
+    ],
+  },
+  'second-entity': {
+    label: 'Два юрлица: два чека из одного счёта',
+    frames: [
+      { screen: N.entity(), cap: 'Админ → «Интеграции» → «Онлайн-касса» → «Второе юрлицо». Включите, впишите название и ИНН, отметьте его цеха и кассу.', acts: [{ tap: 'on', mark: 'on' }, { type: 'ename', text: 'ИП Петров — кальяны' }, { tap: 'hk', mark: 'hk' }, { wait: 300 }, { tap: 'test', mark: 'test' }, { wait: 700 }] },
+      { screen: N.entity(), over: { kind: 'slips', html: N.twoSlips() }, cap: 'Гость платит один раз, а касса пробивает два чека — каждый на кассу своего юрлица. Возврат тоже делится сам.', acts: [{ wait: 2400 }] },
+    ],
+  },
+  weighed: {
+    label: 'Весовой товар и весы',
+    frames: [
+      { screen: N.weighItem(), cap: 'Админ → «Меню» → позиция → «Продаётся на вес». Цена — за 1 кг. Весы подключаются в «Интеграции» → «Весы».', acts: [{ wait: 400 }, { tap: 'kg', mark: 'kg' }, { wait: 800 }] },
+      { screen: N.weighCheck(), over: { kind: 'dialog', html: N.weighDialog() }, cap: 'В заказе нажмите на позицию — касса берёт вес с весов. «Добавить» станет можно, когда груз перестанет качаться.', acts: [{ wait: 900 }, { mark: 'st' }, { wait: 600 }, { tap: 'add' }] },
+      { screen: N.weighCheck(), enter: 'fade', cap: 'В счёте — «0,350 кг», цена посчитана. В чек позиция уходит с мерой «килограмм», склад списывается по весу.', acts: [{ wait: 2000 }] },
+    ],
+  },
+  kegs: {
+    label: 'Разливное пиво: кега на кране',
+    frames: [
+      { screen: N.kegsList(), cap: 'Меню ☰ → «Кеги на кране» → «Поставить кегу».', acts: [{ wait: 500 }, { tap: 'new' }] },
+      { screen: N.kegForm(), enter: 'push', cap: 'Отсканируйте код на кеге — касса проверит его в «Честном знаке». Объём кеги и какие позиции из неё наливаем.', acts: [{ type: 'code', text: '0104600000000013215…' }, { mark: 'chk' }, { tap: 'vol', mark: 'vol' }, { wait: 500 }, { tap: 'save' }] },
+      { screen: N.kegsList({ added: true }), enter: 'fade', cap: 'Каждая кружка уходит в чек с кодом кеги и литрами, остаток уменьшается. Подключение кеги отметьте в ЛК «Честного знака» — «Код для ЛК».', acts: [{ wait: 800 }, { mark: 'pour' }, { wait: 1800 }] },
+    ],
+  },
+  telephony: {
+    label: 'Звонок гостя на кассу',
+    frames: [
+      { screen: N.callBanner(), cap: 'Гость звонит — на кассе звук и карточка: постоянный это гость или новый номер, визиты и бонусы.', acts: [{ wait: 1400 }, { tap: 'dlv' }] },
+      { screen: N.callOrder(), enter: 'push', cap: '«Доставка» или «С собой» — заказ открыт, номер уже вписан. Подключают в кабинете: «Настройки» → «Телефония» → адрес для АТС.', acts: [{ type: 'addr', text: 'Невский пр., 28, кв. 5' }, { wait: 1400 }] },
+    ],
+  },
+  'edo-auto': {
+    label: 'Накладные из ЭДО без файлов', device: 'web',
+    frames: [
+      { screen: N.edo(), cap: 'Кабинет → «Склад» → «Приход по накладной» → «Накладные из ЭДО сами»: Диадок или СБИС, логин и пароль (для Диадока — ещё ключ API).', acts: [{ type: 'login', text: 'buh@kafe-leto.ru' }, { tap: 'conn', mark: 'conn' }, { wait: 700 }] },
+      { screen: N.edo(), cap: 'Входящие УПД появятся сами. Отметьте нужные и «Открыть выбранные».', acts: [{ mark: 'conn' }, { tap: 'a', mark: 'a' }, { tap: 'b', mark: 'b' }, { wait: 300 }, { tap: 'open' }] },
+      { screen: N.edoPreview(), enter: 'fade', cap: 'Товары сопоставились со складом. Проверьте и «Провести» — накладная отметится «проведена».', acts: [{ wait: 700 }, { tap: 'post', mark: 'post' }, { wait: 1200 }] },
+    ],
+  },
+  'acc-mail': {
+    label: 'Бухгалтеру и 1С автоматически', device: 'web',
+    frames: [
+      { screen: N.accMail(), cap: 'Кабинет → «Обзор» → «Для бухгалтера» → «Отправлять бухгалтеру автоматически»: почта и как часто.', acts: [{ tap: 'auto', mark: 'auto' }, { type: 'mail', text: 'buh@example.ru' }, { tap: 'wk' }, { tap: 'save' }, { wait: 400 }] },
+      { screen: N.accMail(), cap: '«Отправить сейчас» — проверьте письмо. Дальше книга Excel с листами для 1С приходит сама после 7:00.', acts: [{ mark: 'auto' }, { tap: 'send', mark: 'send' }, { wait: 1600 }] },
+    ],
+  },
+  'agg-api': {
+    label: 'Заказы Яндекс Еды и Купера на кассу', device: 'web',
+    frames: [
+      { screen: N.agg(), cap: 'Кабинет → «Настройки» → «Яндекс Еда и Купер» → «Подключить». Секрет виден один раз — «Скопировать для менеджера» и отправьте менеджеру агрегатора.', acts: [{ tap: 'ya', mark: 'ya' }, { wait: 700 }, { tap: 'copy', mark: 'copy' }, { wait: 1000 }] },
+    ],
+  },
+  'max-bot': {
+    label: 'Подключить бота в MAX', device: 'web',
+    frames: [
+      { screen: N.maxWeb(), cap: 'business.max.ru → «Чат-боты» → создайте бота → «Интеграция» → «Получить токен». В кабинете: «Настройки» → «Бот в MAX» → вставьте токен.', acts: [{ type: 'token', text: 'f9Kx…2Qa' }, { tap: 'connect', mark: 'bot' }, { wait: 700 }] },
+      { screen: N.maxWeb(), cap: 'Нажмите «Начать» в боте — он пришлёт ваш MAX ID. Впишите его и «Добавить». Группа — «Получить код» и отправьте код в группе.', acts: [{ mark: 'bot' }, { type: 'maxid', text: '158334207' }, { tap: 'addid', mark: 'acc' }, { wait: 500 }, { tap: 'code', mark: 'code' }, { wait: 900 }] },
+      { screen: N.maxChat(), enter: 'fade', cap: 'Готово: итоги смены после Z-отчёта, сигналы и отчёты кнопками — в MAX, как в Telegram.', acts: [{ wait: 900 }, { tap: 'rev', mark: 'rev' }, { wait: 1400 }] },
     ],
   },
   'ai-hall': {
