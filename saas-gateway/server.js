@@ -9294,8 +9294,10 @@ async function runDeliveryPiiRetention() {
   });
 }
 
-// Telegram-боты заведений: доставка, смены, отчёты, сигналы — см. telegram.js.
-const telegram = createTelegram({
+// Боты заведений: доставка, смены, отчёты, сигналы — см. telegram.js.
+// Тот же бот работает в Telegram и в MAX (max-bot.js): заведение подключает
+// любой из них или оба; сигналы и итоги уходят во все подключённые.
+const botDeps = {
   db,
   admin,
   verifyAuth,
@@ -9306,7 +9308,20 @@ const telegram = createTelegram({
   requireTenantRole,
   publicUrl: (process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, ""),
   pii,
-});
+};
+const tgBot = createTelegram(botDeps);
+const maxBot = createTelegram({ ...botDeps, platform: "max" });
+const bothBots = (fn) => Promise.allSettled([fn(tgBot), fn(maxBot)]);
+const telegram = {
+  ...tgBot,
+  // Сигнал владельцу: true — ушёл хотя бы в один мессенджер.
+  ownerAlert: async (tid, text) => (await bothBots((b) => b.ownerAlert(tid, text))).some((r) => r.status === "fulfilled" && r.value),
+  deliveryEvent: (tid, sid, text) => bothBots((b) => b.deliveryEvent(tid, sid, text)),
+  courierMoved: (tid, sid, lat, lng) => bothBots((b) => b.courierMoved(tid, sid, lat, lng)),
+  setCourierApi: (a) => { tgBot.setCourierApi(a); maxBot.setCourierApi(a); },
+  forgetDeliverySettings: (ids) => { tgBot.forgetDeliverySettings(ids); maxBot.forgetDeliverySettings(ids); },
+  start: () => { tgBot.start(); maxBot.start(); },
+};
 
 // Курьеры и приложение курьера, кабинет «Доставка» — см. courier.js,
 // delivery-admin.js и docs/delivery.md.
@@ -10763,6 +10778,13 @@ const ROUTES = {
   "/telegramNotify": telegram.handleNotify,
   "/telegramUnlink": telegram.handleUnlink,
   "/telegramJoinChain": telegram.handleJoinChain,
+  "/maxSetup": maxBot.handleSetup,
+  "/maxLinkCode": maxBot.handleLinkCode,
+  "/maxAccess": maxBot.handleAccess,
+  "/maxStatus": maxBot.handleStatus,
+  "/maxNotify": maxBot.handleNotify,
+  "/maxUnlink": maxBot.handleUnlink,
+  "/maxJoinChain": maxBot.handleJoinChain,
   // Бот поддержки платформы: настройка — супер-админ, ссылка «Написать в Telegram» — владелец.
   "/supportBotSetup": supportBot.handleSetup,
   "/supportBotStatus": supportBot.handleStatus,
@@ -11073,6 +11095,10 @@ const server = http.createServer((req, res) => {
   // Обновления Telegram-бота заведения: /tgHook/<tenantId>, секрет в заголовке.
   if (req.method === "POST" && urlPath === `/tgHook/${supportBot.HOOK_ID}`) return runHandler(supportBot.handleHook, req, res);
   if (req.method === "POST" && urlPath === `/tgHook/${partners.HOOK_ID}`) return runHandler((rq, rs) => partners.handleHook(rq, rs, readBody), req, res);
+  // События бота заведения в MAX: /maxHook/<tenantId>, секрет в заголовке X-Max-Bot-Api-Secret.
+  if (req.method === "POST" && urlPath.startsWith("/maxHook/")) {
+    return runHandler((rq, rs) => maxBot.handleHook(rq, rs, urlPath.slice("/maxHook/".length)), req, res);
+  }
   if (req.method === "POST" && urlPath.startsWith("/tgHook/")) {
     return runHandler((rq, rs) => telegram.handleHook(rq, rs, urlPath.slice("/tgHook/".length)), req, res);
   }

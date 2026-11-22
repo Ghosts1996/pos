@@ -197,6 +197,204 @@ function telegramBoxHtml(st) {
     <div id="f-tg-msg" class="small" style="margin-top:8px"></div>`;
 }
 
+// ---------- Бот заведения в MAX (saas-gateway/max-bot.js) ----------
+// Тот же бот, что в Telegram: отчёты, сигналы, итоги смены, заказы с
+// кнопками в группе сотрудников. Можно подключить оба мессенджера.
+const maxStatusCache = new Map();
+const maxCmdCache = new Map(); // tenantId → «/start код» для группы
+
+function maxBoxHtml(st, tenantId) {
+  if (!st) return '<div class="small muted">Проверяем…</div>';
+  if (st.error) return `<div class="small" style="color:var(--danger)">${esc(st.error)}</div>`;
+  const chain = st.chain;
+  if (!st.configured) {
+    return `
+      <p class="small muted" style="margin-top:0">Бот вашего заведения в мессенджере MAX — всё то же, что умеет Telegram-бот:
+      выручка и отчёты кнопками, итоги смены сразу после Z-отчёта, начало и конец смен, отмены и возвраты,
+      заказы с собой и доставки в группу сотрудников с кнопками статусов. Серверы MAX — в России.
+      Имена, телефоны и адреса гостей бот не отправляет.</p>
+      ${chain ? `<p class="small" style="margin:0 0 8px">Сеть «${esc(chain.name)}»: бот один на все точки (${chain.points.length}).</p>` : ''}
+      <ol class="max-steps small">
+        <li>Откройте <b>business.max.ru</b> и войдите по номеру телефона. Подтвердите организацию
+          (ИП, ООО или самозанятый) — через Госуслуги или банк.</li>
+        <li>В разделе <b>Чат-боты</b> создайте бота: название и описание. MAX проверяет бота — обычно до суток.</li>
+        <li>Там же откройте <b>Интеграция</b> → <b>Получить токен</b>, скопируйте его и вставьте ниже.</li>
+      </ol>
+      <label class="field"><span>Токен бота MAX</span>
+        <input id="f-max-token" type="password" autocomplete="off" placeholder="Вставьте токен целиком"></label>
+      <button class="btn btn-primary" id="f-max-setup">Подключить бота</button>
+      <div id="f-max-msg" class="small" style="margin-top:8px"></div>`;
+  }
+  const n = st.notify || {};
+  const cb = (key, label) => `<label class="field-checkbox" style="display:flex;gap:8px;align-items:center;margin:4px 0">
+    <input type="checkbox" class="f-max-notify" data-key="${key}" style="width:auto" ${n[key] === false ? '' : 'checked'}> <span class="small">${label}</span></label>`;
+  const allowed = st.allowed || [];
+  const hasOwner = allowed.some((a) => a.role === 'owner');
+  const ROLE = { owner: 'владелец или управляющий', staff: 'сотрудник — только кнопки заказов' };
+  const cmd = maxCmdCache.get(tenantId);
+  const step = (no, done, title, body) => `<div class="max-step${done ? ' done' : ''}">
+    <div class="max-step-no">${done ? '✓' : no}</div><div class="max-step-body"><div class="max-step-title">${title}</div>${body}</div></div>`;
+  return `
+    <div class="small">Бот: <b>${esc(st.username)}</b> · токен хранится зашифрованным</div>
+    ${chain ? `<div class="small muted" style="margin-top:6px">Бот сети «${esc(chain.name)}»: ${esc(chain.points.join(', '))}. Точку переключает кнопка «📍».</div>` : ''}
+    ${st.chainBot ? `<div class="small" style="margin-top:8px;padding:8px 10px;border:1px solid var(--primary);background:var(--accent-soft);border-radius:10px">
+      У сети есть общий бот <b>${esc(st.chainBot.username)}</b> (точка «${esc(st.chainBot.home)}»).
+      <div style="margin-top:6px"><button class="btn btn-primary" id="f-max-join" style="width:auto">Перейти на бот сети</button></div></div>` : ''}
+
+    ${step(1, hasOwner, 'Впишите свой MAX ID', `
+      <p class="small muted" style="margin:2px 0 8px">Найдите бота в MAX, нажмите «Начать» — бот пришлёт ваш MAX ID (число).
+        Управлять ботом смогут только люди из этого списка.</p>
+      ${allowed.length ? `<div style="margin-bottom:8px">${allowed.map((a, i) => `
+        <div class="row" style="justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+          <span class="small"><b>${esc(a.name || 'Без подписи')}</b> · ID ${esc(String(a.id))}<br><span class="muted">${ROLE[a.role] || ROLE.owner}</span></span>
+          <button class="btn-link f-max-del" data-i="${i}" style="color:var(--danger)">Убрать</button>
+        </div>`).join('')}</div>` : ''}
+      <div class="row" style="flex-wrap:wrap;gap:8px;align-items:flex-end">
+        <label class="field" style="flex:1 1 150px;min-width:0;margin:0"><span>MAX ID</span>
+          <input id="f-max-uid" inputmode="numeric" autocomplete="off" maxlength="15" placeholder="123456789"></label>
+        <label class="field" style="flex:2 1 190px;min-width:0;margin:0"><span>Подпись (без ФИО)</span>
+          <input id="f-max-uname" maxlength="40" placeholder="управляющий"></label>
+        <label class="field" style="flex:1 1 230px;min-width:0;margin:0"><span>Права</span>
+          <select id="f-max-urole"><option value="owner">Владелец / управляющий</option><option value="staff">Сотрудник</option></select></label>
+        <button class="btn btn-ghost" id="f-max-add" style="width:auto;flex:0 0 auto">Добавить</button>
+      </div>`)}
+    ${step(2, st.owners.length > 0, 'Откройте бота и нажмите «Начать»', `
+      <p class="small muted" style="margin:2px 0 0">Владелец и управляющий из списка подключаются сами — бот пришлёт меню отчётов.
+        ${st.owners.length ? `Подключены: <b>${esc(st.owners.join(', '))}</b>.` : 'Пока никто не подключён.'}</p>`)}
+    ${step(3, !!st.staffChat, 'Группа сотрудников — по желанию', `
+      <p class="small muted" style="margin:2px 0 8px">${st.staffChat
+        ? `Подключена: <b>${esc(st.staffChat)}</b>${st.staffChatShared ? ' (общая группа сети)' : ''}.`
+        : 'Сюда придут заказы с собой и доставки с кнопками «Готовится → Готов → Выдан».'}
+        Создайте группу в MAX, добавьте бота и сделайте его администратором, затем отправьте в группе код.</p>
+      ${cmd ? `<div class="max-cmd"><code id="f-max-cmd">${esc(cmd)}</code><button class="btn btn-ghost" id="f-max-copy" style="width:auto">Скопировать</button></div>
+        <div class="small muted" style="margin-top:4px">Код действует 30 минут. Отправить должен человек из списка с правами владельца.</div>`
+        : `<button class="btn btn-ghost" id="f-max-staff" ${hasOwner ? '' : 'disabled'}>${st.staffChat ? 'Сменить группу' : 'Получить код для группы'}</button>`}`)}
+
+    <div class="small muted" style="margin:14px 0 4px">Что присылать</div>
+    ${cb('delivery', 'Заказы с собой и доставки — в группу, с кнопками')}
+    ${cb('shifts', 'Начало и конец смен — владельцу')}
+    ${cb('alerts', 'Отмены, закрытие без оплаты, возвраты, скидки от 20% и другие сигналы — владельцу')}
+    ${cb('summary', 'Итоги смены — сразу после Z-отчёта (не закрыли смену — в 10:00), владельцу')}
+    <button class="btn btn-ghost" id="f-max-unlink" style="margin-top:8px;color:var(--danger)">Отключить бота</button>
+    <div id="f-max-msg" class="small" style="margin-top:8px"></div>`;
+}
+
+function bindMaxBox(tenantId, redraw) {
+  const refresh = async () => {
+    try {
+      const r = await callSaasGateway('maxStatus', { tenantId });
+      maxStatusCache.set(tenantId, r.data);
+    } catch (e) {
+      maxStatusCache.set(tenantId, { error: e.message || 'Не удалось узнать статус бота' });
+    }
+    redraw();
+  };
+  if (!maxStatusCache.has(tenantId)) {
+    maxStatusCache.set(tenantId, null);
+    refresh();
+    return;
+  }
+  const msg = (t, bad) => { const el = $('f-max-msg'); if (el) { el.textContent = t; el.style.color = bad ? 'var(--danger)' : ''; } };
+  const dropOtherPoints = () => {
+    if (!(maxStatusCache.get(tenantId) || {}).chain) return;
+    for (const k of [...maxStatusCache.keys()]) if (k !== tenantId) maxStatusCache.delete(k);
+  };
+  if ($('f-max-setup')) $('f-max-setup').onclick = async () => {
+    const token = ($('f-max-token').value || '').trim();
+    if (!token) return msg('Вставьте токен бота из MAX для бизнеса', true);
+    $('f-max-setup').disabled = true;
+    msg('Проверяем токен…');
+    try {
+      await callSaasGateway('maxSetup', { tenantId, token });
+      $('f-max-token').value = '';
+      maxStatusCache.clear();
+      redraw();
+    } catch (e) {
+      msg(e.message, true);
+      $('f-max-setup').disabled = false;
+    }
+  };
+  const saveAccess = async (allowed, done) => {
+    try {
+      const r = await callSaasGateway('maxAccess', { tenantId, allowed });
+      dropOtherPoints();
+      const st = maxStatusCache.get(tenantId);
+      if (st) { st.allowed = r.data.allowed; st.owners = r.data.owners || []; }
+      redraw();
+      if (done) msg(done);
+    } catch (e) {
+      msg(e.message, true);
+    }
+  };
+  if ($('f-max-add')) $('f-max-add').onclick = () => {
+    const id = ($('f-max-uid').value || '').replace(/\s+/g, '');
+    if (!/^[1-9]\d{0,14}$/.test(id)) return msg('MAX ID — это число. Нажмите «Начать» в боте — он пришлёт его.', true);
+    const st = maxStatusCache.get(tenantId) || {};
+    const list = (st.allowed || []).filter((a) => String(a.id) !== id);
+    list.push({ id, name: ($('f-max-uname').value || '').trim(), role: $('f-max-urole').value });
+    saveAccess(list, 'Добавлено. Теперь откройте бота в MAX и нажмите «Начать».');
+  };
+  document.querySelectorAll('.f-max-del').forEach((el) => {
+    el.onclick = async () => {
+      const st = maxStatusCache.get(tenantId) || {};
+      const a = (st.allowed || [])[Number(el.dataset.i)];
+      if (!a || !(await uiConfirm(`Убрать ${a.name || 'ID ' + a.id} из списка? Бот перестанет его слушаться.`))) return;
+      saveAccess((st.allowed || []).filter((_, i) => i !== Number(el.dataset.i)), 'Убрано.');
+    };
+  });
+  if ($('f-max-staff')) $('f-max-staff').onclick = async () => {
+    $('f-max-staff').disabled = true;
+    try {
+      const r = await callSaasGateway('maxLinkCode', { tenantId, kind: 'staff' });
+      maxCmdCache.set(tenantId, r.data.command);
+      redraw();
+    } catch (e) {
+      msg(e.message, true);
+      $('f-max-staff').disabled = false;
+    }
+  };
+  if ($('f-max-copy')) $('f-max-copy').onclick = async () => {
+    const t = maxCmdCache.get(tenantId) || '';
+    try { await navigator.clipboard.writeText(t); toast('Код скопирован — отправьте его в группе'); } catch (_) { msg(`Скопируйте вручную: ${t}`); }
+  };
+  document.querySelectorAll('.f-max-notify').forEach((el) => {
+    el.onchange = async () => {
+      const st = maxStatusCache.get(tenantId) || {};
+      const notify = { ...(st.notify || {}) };
+      document.querySelectorAll('.f-max-notify').forEach((x) => { notify[x.dataset.key] = x.checked; });
+      try {
+        await callSaasGateway('maxNotify', { tenantId, notify });
+        dropOtherPoints();
+        if (st) st.notify = notify;
+      } catch (e) {
+        el.checked = !el.checked;
+        msg(e.message, true);
+      }
+    };
+  });
+  if ($('f-max-join')) $('f-max-join').onclick = async () => {
+    if (!(await uiConfirm('Перевести точку на бот сети? Бот этой точки отключится, список доступа перенесётся.'))) return;
+    try {
+      await callSaasGateway('maxJoinChain', { tenantId });
+      maxStatusCache.clear();
+      redraw();
+    } catch (e) {
+      msg(e.message, true);
+    }
+  };
+  if ($('f-max-unlink')) $('f-max-unlink').onclick = async () => {
+    if (!(await uiConfirm('Отключить бота в MAX? Отчёты, сигналы и кнопки заказов в MAX перестанут работать.'))) return;
+    try {
+      await callSaasGateway('maxUnlink', { tenantId });
+      maxStatusCache.clear();
+      maxCmdCache.delete(tenantId);
+      redraw();
+    } catch (e) {
+      msg(e.message, true);
+    }
+  };
+}
+
 // ---------- Открытый API заведения (saas-gateway/open-api.js): ключи владельца
 const apiKeysCache = new Map(); // tenantId → { keys } | { error } | null (загружаю)
 const apiKeyFresh = new Map(); // tenantId → только что созданный ключ, показываем один раз
@@ -8135,6 +8333,8 @@ function watchDashboardData(tenantId) {
       ${canManage ? `
         <h2>Telegram-бот заведения</h2>
         <div class="card" id="f-tg-box">${telegramBoxHtml(tgStatusCache.get(tenantId))}</div>
+        <h2>Бот в MAX</h2>
+        <div class="card" id="f-max-box">${maxBoxHtml(maxStatusCache.get(tenantId), tenantId)}</div>
       ` : ''}
 
       ${role === 'owner' ? `
@@ -9075,6 +9275,7 @@ function watchDashboardData(tenantId) {
     // «Брендинга». Правила дают владельцу менять в документе только name.
     if ($('f-copy-slug')) $('f-copy-slug').onclick = () => copyToClipboard(tenant.slug || '');
     if ($('f-tg-box')) bindTelegramBox(tenantId, draw);
+    if ($('f-max-box')) bindMaxBox(tenantId, draw);
     document.querySelectorAll('.set-chip').forEach((b) => {
       b.onclick = () => { const g = document.getElementById(b.dataset.goto); if (g) g.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
     });

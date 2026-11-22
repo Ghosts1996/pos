@@ -51,6 +51,7 @@ const path = require("path");
 const { sessionBill } = require("./guest-pay");
 const flow = require("./delivery-flow");
 const pricing = require("./delivery-pricing");
+const { createMaxApi, MaxUnreachable } = require("./max-bot");
 
 // Адрес Bot API. С серверов в РФ api.telegram.org бывает недоступен —
 // тогда сюда ставится свой ретранслятор (TELEGRAM_API_BASE в
@@ -210,7 +211,7 @@ const roleOf = (cfg, userId) => {
 };
 
 /** Список из кабинета → проверенный: ID — положительное число до 15 цифр, без повторов. */
-function parseAllowed(raw, HttpError) {
+function parseAllowed(raw, HttpError, idName = "Telegram ID") {
   if (!Array.isArray(raw)) throw new HttpError(400, "Список доступа не передан");
   if (raw.length > MAX_ALLOWED) throw new HttpError(400, `Не больше ${MAX_ALLOWED} человек`);
   const out = [];
@@ -218,7 +219,7 @@ function parseAllowed(raw, HttpError) {
   for (const a of raw) {
     const idStr = String(a && a.id != null ? a.id : "").trim();
     if (!/^[1-9]\d{0,14}$/.test(idStr)) {
-      throw new HttpError(400, `«${idStr.slice(0, 20) || "пусто"}» — не Telegram ID. Это число, его пришлёт ваш бот в ответ на /id`);
+      throw new HttpError(400, `«${idStr.slice(0, 20) || "пусто"}» — не ${idName}. Это число, его пришлёт ваш бот в ответ на /id`);
     }
     const id = Number(idStr);
     if (seen.has(id)) continue;
@@ -721,11 +722,19 @@ function staleCashText(openedAt, tz, now = new Date()) {
 
 // ---------------------------------------------------------------- модуль
 
-function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJson, HttpError, requireTenantRole, publicUrl, fetchImpl, pii }) {
+function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJson, HttpError, requireTenantRole, publicUrl, fetchImpl, pii, platform = "telegram" }) {
   const doFetch = fetchImpl || fetch;
-  const botsCol = () => db().collection("telegramBots");
+  // platform "max" — тот же бот в мессенджере MAX (см. max-bot.js): свои
+  // настройки maxBots/{tenantId}, коды maxLinks, вебхук /maxHook/<tenantId>.
+  const MAX = platform === "max";
+  const maxApi = MAX ? createMaxApi({ fetchImpl }) : null;
+  const NAME = MAX ? "MAX" : "Telegram";
+  const IDN = `${NAME} ID`;
+  const CABINET = MAX ? "Бот в MAX" : "Telegram-бот";
+  const botsCol = () => db().collection(MAX ? "maxBots" : "telegramBots");
   const tenantRef = (t) => db().collection("tenants").doc(t);
-  const linkRef = (code) => db().collection("telegramLinks").doc(code);
+  const linkRef = (code) => db().collection(MAX ? "maxLinks" : "telegramLinks").doc(code);
+  const cacheRoot = MAX ? `${CACHE_DIR}-max` : CACHE_DIR;
 
   /** tenantId точки, где подключён бот → { tenantId, token, cfg, points, … } */
   const bots = new Map();
@@ -735,6 +744,14 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   const IDEMPOTENT = new Set(["getMe", "setWebhook", "deleteWebhook", "getWebhookInfo", "getChat", "setMyCommands"]);
 
   async function api(token, method, params = {}) {
+    if (MAX) {
+      try {
+        return await maxApi.call(token, method, params);
+      } catch (e) {
+        if (e instanceof MaxUnreachable) throw new TelegramUnreachable(e.message);
+        throw e;
+      }
+    }
     let resp;
     const attempts = IDEMPOTENT.has(method) ? 3 : 1;
     for (let attempt = 1; ; attempt++) {
@@ -886,7 +903,7 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   /** Группа с темами — завести недостающие разделы и запомнить их номера.
    *  [field] — поле настроек: staffChat или staffChats.<точка>. */
   async function ensureGroupTopics(bot, staff, field) {
-    if (!staff || !staff.id) return staff;
+    if (!staff || !staff.id || MAX) return staff; // в группах MAX тем нет
     const have = staff.topics || {};
     if (GROUP_TOPICS.every(([k]) => have[k]) || Date.now() - (staff.topicsCheckedAt || 0) < 6 * 3600 * 1000) return staff;
     const chat = await api(bot.token, "getChat", { chat_id: staff.id }).catch(() => null);
@@ -906,7 +923,8 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     return next;
   }
 
-  const hookUrl = (tenantId) => (HOOK_BASE ? `${HOOK_BASE}/${tenantId}` : `${publicUrl}/tgHook/${tenantId}`);
+  const hookUrl = (tenantId) => (MAX ? `${publicUrl}/maxHook/${tenantId}`
+    : HOOK_BASE ? `${HOOK_BASE}/${tenantId}` : `${publicUrl}/tgHook/${tenantId}`);
 
   // ------------------------------------------------------------ кабинет
 
@@ -918,15 +936,19 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   async function handleSetup(req, res) {
     const { body, botId } = await guard(req);
     const token = String(body.token || "").trim();
-    if (!/^\d{5,15}:[A-Za-z0-9_-]{30,50}$/.test(token)) throw new HttpError(400, "Это не похоже на токен бота — скопируйте его из @BotFather целиком");
+    if (MAX ? !/^[A-Za-z0-9_\-.:=+/]{20,400}$/.test(token) : !/^\d{5,15}:[A-Za-z0-9_-]{30,50}$/.test(token)) {
+      throw new HttpError(400, MAX
+        ? "Это не похоже на токен бота MAX — скопируйте его целиком: MAX для бизнеса → Чат-боты → Интеграция → «Получить токен»"
+        : "Это не похоже на токен бота — скопируйте его из @BotFather целиком");
+    }
     let me;
     try {
       me = await api(token, "getMe");
     } catch (e) {
       if (e instanceof TelegramUnreachable) {
-        throw new HttpError(503, "Сервер сейчас не может достучаться до Telegram — попробуйте позже или напишите в поддержку");
+        throw new HttpError(503, `Сервер сейчас не может достучаться до ${NAME} — попробуйте позже или напишите в поддержку`);
       }
-      throw new HttpError(400, "Telegram не принял токен — проверьте, что скопировали его целиком и бот не удалён");
+      throw new HttpError(400, `${NAME} не принял токен — проверьте, что скопировали его целиком и бот не удалён`);
     }
     const taken = await botsCol().where("botId", "==", me.id).limit(2).get();
     if (taken.docs.some((d) => d.id !== botId)) {
@@ -1019,13 +1041,19 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
     const kind = body.kind === "staff" ? "staff" : "owner";
     if (!d) throw new HttpError(409, "Сначала подключите бота заведения");
     if (!allowedList(d).some((a) => a.role === "owner")) {
-      throw new HttpError(409, "Сначала впишите свой Telegram ID в «Кто управляет ботом» — его пришлёт бот в ответ на /id");
+      throw new HttpError(409, `Сначала впишите свой ${IDN} в «Кто управляет ботом» — его пришлёт бот в ответ на /id`);
     }
     const code = crypto.randomBytes(9).toString("hex");
     await linkRef(code).set({
       tenantId: body.tenantId, bot: botId, kind,
       expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 30 * 60 * 1000),
     });
+    if (MAX) {
+      // В MAX бота добавляют в группу вручную, а код отправляют в группе
+      // сообщением; личный чат подключается и без кода — «Начать» в боте.
+      sendJson(res, 200, { link: `https://max.ru/${d.username}${kind === "staff" ? "" : `?start=${code}`}`, command: `/start ${code}` });
+      return;
+    }
     const link = kind === "staff"
       ? `https://t.me/${d.username}?startgroup=${code}`
       : `https://t.me/${d.username}?start=${code}`;
@@ -1036,7 +1064,7 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
   async function handleAccess(req, res) {
     const { body, botId, cfg: d } = await guard(req);
     if (!d) throw new HttpError(409, "Сначала подключите бота заведения");
-    const allowed = parseAllowed(body.allowed, HttpError);
+    const allowed = parseAllowed(body.allowed, HttpError, IDN);
     const owners = new Set(allowed.filter((a) => a.role === "owner").map((a) => a.id));
     const chats = (d.ownerChats || []).filter((c) => owners.has(c.id));
     await botsCol().doc(botId).update({ allowed, ownerChats: chats });
@@ -1312,6 +1340,7 @@ ${courierMap}`);
    * «Курьер на карте в Telegram» (координаты человека уходят за рубеж).
    */
   async function courierMoved(tid, sid, lat, lng) {
+    if (MAX) return; // живая точка курьера — только в Telegram (настройка «Курьер на карте в Telegram»)
     if (!(await deliverySettings(tid)).liveInTelegram) return;
     await updateLivePoint(tid, sid, lat, lng);
   }
@@ -1453,7 +1482,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
 
   async function handleHook(req, res, tenantId) {
     const bot = bots.get(tenantId);
-    const given = req.headers["x-telegram-bot-api-secret-token"];
+    const given = req.headers[MAX ? "x-max-bot-api-secret" : "x-telegram-bot-api-secret-token"];
     if (!bot || !sigOk(given, bot.cfg.hookSecret)) {
       res.writeHead(403);
       return res.end();
@@ -1470,6 +1499,15 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     res.end();
     try {
       await bot.ready;
+      if (MAX) {
+        update = maxApi.toTgUpdate(update);
+        if (!update) return;
+        // Название группы — для кабинета, когда группу подключают кодом.
+        const m = update.message;
+        if (m && m.chat && m.chat.type === "group" && /^\/start\b/.test(m.text || "")) {
+          m.chat.title = ((await api(bot.token, "getChat", { chat_id: m.chat.id }).catch(() => null)) || {}).title || "";
+        }
+      }
       if (update.callback_query) await onCallback(bot, update.callback_query);
       else if (update.message) await onMessage(bot, update.message);
     } catch (e) {
@@ -1480,8 +1518,8 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
   // Личный чат владельца: привязан и его ID по-прежнему в списке владельцев.
   const ownerChats = (cfg) => (cfg.ownerChats || []).filter((c) => roleOf(cfg, c.id) === "owner");
   const isOwnerChat = (bot, chatId) => ownerChats(bot.cfg).some((c) => c.id === chatId);
-  const noAccess = (userId) => `Ваш Telegram ID: ${userId}. Управлять ботом могут только те, кого владелец `
-    + "добавил в кабинете ZalPOS → Настройки → Telegram-бот → «Кто управляет ботом». Перешлите ему это число.";
+  const noAccess = (userId) => `Ваш ${IDN}: ${userId}. Управлять ботом могут только те, кого владелец `
+    + `добавил в кабинете ZalPOS → Настройки → ${CABINET} → «Кто управляет ботом». Перешлите ему это число.`;
   const isStaffChat = (bot, chatId) => (!!bot.cfg.staffChat && bot.cfg.staffChat.id === chatId)
     || Object.values(bot.cfg.staffChats || {}).some((c) => c && c.id === chatId);
 
@@ -1528,7 +1566,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       `• Отмены позиций, закрытие без оплаты, возвраты, скидки от ${BIG_DISCOUNT_PERCENT}%.`,
       "• Заказы с собой и доставки — в рабочую группу, с кнопками статусов.",
       "",
-      "Команды: /menu — отчёты · /id — ваш Telegram ID · /stop — отключить уведомления",
+      `Команды: /menu — отчёты · /id — ваш ${IDN} · /stop — отключить уведомления`,
     );
     return lines.join("\n");
   }
@@ -1566,8 +1604,8 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     // Свой Telegram ID — любому, чтобы передать его владельцу.
     if (cmd === "/id") {
       return say(bot, chat.id, role
-        ? `Ваш Telegram ID: ${userId}. Вы в списке: ${role === "owner" ? "владелец или управляющий" : "сотрудник"}.`
-        : `Ваш Telegram ID: ${userId}. Перешлите это число владельцу заведения — он добавит его в кабинете ZalPOS → Настройки → Telegram-бот.`);
+        ? `Ваш ${IDN}: ${userId}. Вы в списке: ${role === "owner" ? "владелец или управляющий" : "сотрудник"}.`
+        : `Ваш ${IDN}: ${userId}. Перешлите это число владельцу заведения — он добавит его в кабинете ZalPOS → Настройки → ${CABINET}.`);
     }
 
     if (cmd === "/start" && arg) {
@@ -1579,7 +1617,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
       // Группа — той точки, из кабинета которой её подключают.
       const point = bot.points.some((p) => p.id === link.tenantId) ? link.tenantId : bot.tenantId;
       if (link.kind === "staff") {
-        if (!group) return say(bot, chat.id, "Эту ссылку нужно открыть, добавляя бота в рабочую группу сотрудников.");
+        if (!group) return say(bot, chat.id, MAX ? "Этот код нужно отправить в рабочей группе сотрудников, куда добавлен бот." : "Эту ссылку нужно открыть, добавляя бота в рабочую группу сотрудников.");
         if (role !== "owner") return say(bot, chat.id, `Подключить группу может только владелец или управляющий из списка. ${noAccess(userId)}`);
         const field = point === bot.tenantId ? "staffChat" : `staffChats.${point}`;
         let staff = { id: chat.id, title: chat.title || "Группа" };
@@ -1588,7 +1626,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         staff = await ensureGroupTopics(bot, staff, field);
         const others = multi(bot) && point === bot.tenantId
           ? "\nСюда же придут заказы точек сети, у которых нет своей группы." : "";
-        const topics = Object.keys(staff.topics || {}).length
+        const topics = MAX ? "" : Object.keys(staff.topics || {}).length
           ? "\n\nРазделы созданы: кухня, бар, кальяны — новые позиции заказов; доставки и самовывоз — карточки с кнопками; касса — итоги дня и важные события."
           : "\n\nСовет: включите в настройках группы «Темы» и подключите группу ещё раз — бот разложит сообщения по разделам: кухня, бар, кальяны, доставки, самовывоз, касса.";
         return say(bot, chat.id, `Группа подключена к «${pointName(bot, point)}». Сюда будут приходить заказы с собой и доставки — с кнопками статусов.${others}${topics}`);
@@ -1663,7 +1701,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     if (!chatId || (!isStaffChat(bot, chatId) && !isOwnerChat(bot, chatId))) return answer("Нет доступа");
     // Нажимать кнопки могут только люди из списка — даже в рабочей группе.
     if (!userId || !roleOf(bot.cfg, userId)) {
-      return answer(`Нет доступа. Ваш Telegram ID: ${userId || "?"} — попросите владельца добавить его в кабинете.`, true);
+      return answer(`Нет доступа. Ваш ${IDN}: ${userId || "?"} — попросите владельца добавить его в кабинете.`, true);
     }
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId || "")) return answer();
     const tid = await tenantOfSession(bot, sessionId);
@@ -1800,7 +1838,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     });
   }
 
-  const cacheFile = (tid) => path.join(CACHE_DIR, `${tid}.json`);
+  const cacheFile = (tid) => path.join(cacheRoot, `${tid}.json`);
 
   function saveSoon(st) {
     if (st.saveTimer || st.closed) return;
@@ -1814,7 +1852,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     const sales = [...st.sales.values()].filter((x) => x.closedAt < st.today && st.days.has(dayStartOf(st, x.closedAt)));
     const data = JSON.stringify({ v: 1, tz: st.venue.timezone || "", today: st.today, reconciled: st.reconciled || 0, days: [...st.days], sales });
     try {
-      fs.mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
+      fs.mkdirSync(cacheRoot, { recursive: true, mode: 0o700 });
       const tmp = `${cacheFile(st.tid)}.tmp`;
       fs.writeFileSync(tmp, data, { mode: 0o600 });
       fs.renameSync(tmp, cacheFile(st.tid));
@@ -2877,7 +2915,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
         const commands = [
           { command: "menu", description: "Отчёты" },
           ...(multi(bot) ? [{ command: "point", description: "Выбрать точку сети" }] : []),
-          { command: "id", description: "Мой Telegram ID" },
+          { command: "id", description: `Мой ${IDN}` },
           { command: "help", description: "Что умеет бот" },
           { command: "stop", description: "Отключить уведомления" },
         ];
@@ -2907,7 +2945,7 @@ ${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}
     }
     if (!bot.cfg.hookSecret || Date.now() - (bot.hookCheckAt || 0) < HOOK_CHECK_MS) return true;
     bot.hookCheckAt = Date.now();
-    const info = await api(bot.token, "getWebhookInfo").catch(() => null);
+    const info = await api(bot.token, "getWebhookInfo", MAX ? { want: hookUrl(bot.tenantId) } : {}).catch(() => null);
     if (!info) return true; // Telegram недоступен — проверим в следующий раз
     const want = hookUrl(bot.tenantId);
     const allowed = Array.isArray(info.allowed_updates) ? info.allowed_updates : [];

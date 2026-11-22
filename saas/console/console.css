@@ -2005,3 +2005,16 @@ html.zd-open { overflow: hidden; }
 .agg-kv { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
 .agg-kv code { word-break: break-all; font-size: 13px; user-select: all; }
 .agg-secret code { background: color-mix(in srgb, var(--warning, #c98a1b) 14%, transparent); padding: 4px 6px; border-radius: 6px; }
+
+/* Бот в MAX: шаги подключения */
+.max-steps { padding-left: 18px; margin: 8px 0 12px; }
+.max-steps li { margin: 4px 0; }
+.max-step { display: flex; gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); }
+.max-step:first-of-type { margin-top: 10px; }
+.max-step-no { flex: 0 0 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px;
+  border: 1.5px solid var(--primary); color: var(--primary); }
+.max-step.done .max-step-no { background: var(--primary); color: var(--on-primary, #fff); }
+.max-step-body { flex: 1; min-width: 0; }
+.max-step-title { font-weight: 600; }
+.max-cmd { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.max-cmd code { flex: 1 1 200px; padding: 9px 12px; border-radius: 10px; background: var(--accent-soft); font-size: 15px; word-break: break-all; user-select: all; }

@@ -61,7 +61,7 @@ const TOOL_UA_RE = /\b(sqlmap|nikto|nmap|masscan|zgrab|nuclei|acunetix|netsparke
 
 // Оплаты и вебхуки защищены своими секретами: их не режем никогда, чтобы
 // не потерять оплату гостя или сообщение бота.
-const NEVER_LIMIT_RE = /^\/(health$|tgHook\/|robokassa|guestPay)/;
+const NEVER_LIMIT_RE = /^\/(health$|tgHook\/|maxHook\/|robokassa|guestPay)/;
 
 /** Ключ адреса для лимитов; "" — свой/частный адрес, не ограничиваем. */
 function ipKey(raw) {
