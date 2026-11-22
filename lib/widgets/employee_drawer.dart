@@ -10,6 +10,8 @@ import '../screens/employee/x_report_screen.dart';
 import '../screens/employee/cash_screen.dart';
 import '../screens/employee/receipts_history_screen.dart';
 import '../screens/employee/inventory_count_entry_screen.dart';
+import '../screens/employee/kegs_screen.dart';
+import '../build_info.dart';
 import '../screens/employee/stock_view_screen.dart';
 import '../screens/employee/reservations_screen.dart';
 import '../screens/employee/kds_screen.dart';
@@ -349,6 +351,13 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
         subtitle: const Text('Пересчёт фактических остатков склада', style: TextStyle(fontSize: 11)),
         onTap: () => _go(InventoryCountEntryScreen(employee: widget.employee)),
       ),
+      if (kSaasMode)
+        ListTile(
+          leading: const Icon(Icons.sports_bar_outlined),
+          title: const Text('Кеги на кране'),
+          subtitle: const Text('Разливное пиво: код кеги в чеке, остаток литров', style: TextStyle(fontSize: 11)),
+          onTap: () => _go(KegsScreen(employee: widget.employee)),
+        ),
       const Divider(height: 1),
 
       ListTile(

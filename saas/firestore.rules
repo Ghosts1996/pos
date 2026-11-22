@@ -1210,6 +1210,11 @@ service cloud.firestore {
     }
     // График смен (кабинет · «Команда»): видят все сотрудники, правят
     // владелец, администратор и управляющий. День — документ ГГГГ-ММ-ДД.
+    // Кеги разливного пива на кране (касса, keg_service.dart).
+    match /tenants/{tenantId}/kegs/{doc} {
+      allow read, write: if isStaff(tenantId);
+    }
+
     // Входящие звонки (телефония для доставки): пишет только сервер
     // (telephony.js), касса читает и отмечает «взяли / скрыли».
     match /tenants/{tenantId}/incomingCalls/{doc} {

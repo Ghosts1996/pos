@@ -333,7 +333,7 @@ class AtolCloudKassaService implements KassaService {
       'price': roundKopecks(i.price),
       'quantity': i.quantity,
       'sum': i.sum,
-      'measure': i.byKg ? 11 : 0, // 0 — штуки, 11 — килограммы
+      'measure': i.byKg ? 11 : i.byLiter ? 41 : 0, // 0 — штуки, 11 — килограммы, 41 — литры
       'payment_method': atolPaymentMethod(r),
       'payment_object': i.paymentObject.ffd12Code(marked: marked),
       'vat': {'type': i.vat.providerCode},
@@ -358,7 +358,7 @@ class AtolCloudKassaService implements KassaService {
         'price': roundKopecks(i.price),
         'quantity': i.quantity,
         'sum': i.sum,
-        'measurement_unit': i.byKg ? 'кг' : 'шт',
+        'measurement_unit': i.byKg ? 'кг' : i.byLiter ? 'л' : 'шт',
         'payment_method': atolPaymentMethod(r),
         'payment_object': atolPaymentObjectCode(i.paymentObject),
         'vat': {'type': i.vat.providerCode},
@@ -557,10 +557,10 @@ class OrangeDataKassaService implements KassaService {
             'text': i.name,
             'paymentMethodType': orangeDataPaymentMethod(receipt),
             'paymentSubjectType': i.paymentObject.ffd12Code(marked: marked),
-            'quantityMeasurementUnit': i.byKg ? 11 : 0, // 0 — штуки, 11 — килограммы
+            'quantityMeasurementUnit': i.byKg ? 11 : i.byLiter ? 41 : 0, // 0 — штуки, 11 — кг, 41 — литры
             if (marked) ...{
               'itemCode': i.markingCode,
-              'plannedStatus': 1, // штучный товар реализован
+              'plannedStatus': i.measured ? 2 : 1, // 1 — штучный, 2 — мерный товар (разливное пиво) реализован
               if (permit != null)
                 'industryAttribute': {
                   'foivId': MarkingPermit.federalId,

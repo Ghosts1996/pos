@@ -145,7 +145,8 @@ class FiscalReceiptItem {
   /// на два ([splitReceiptByEntity]); в кассу не передаётся.
   final String entity;
 
-  /// Мера количества: '' — штуки, 'kg' — килограммы (весовой товар, SaaS).
+  /// Мера количества: '' — штуки, 'kg' — килограммы (весовой товар, SaaS),
+  /// 'l' — литры (разливное пиво из маркированной кеги, SaaS).
   final String unit;
 
   const FiscalReceiptItem({
@@ -161,6 +162,10 @@ class FiscalReceiptItem {
   });
 
   bool get byKg => unit == 'kg';
+  bool get byLiter => unit == 'l';
+
+  /// Мерный товар (вес, объём): код маркировки — «мерный товар реализован».
+  bool get measured => unit.isNotEmpty;
 
   Map<String, dynamic> toJson() => {
         'name': name,

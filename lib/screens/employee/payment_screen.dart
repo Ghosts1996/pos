@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../../theme/app_colors.dart';
 import '../../models/session_model.dart';
 import '../../models/aggregator.dart';
+import '../../services/keg_service.dart';
 import '../../services/fiscal_queue.dart';
 import '../../services/firestore_service.dart';
 import '../../models/terminal_bank.dart';
@@ -647,6 +648,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
         if (mounted) Navigator.of(context).pop(false);
         return;
       }
+      // Разливное пиво: налитое — в остаток кег на кране.
+      if (kSaasMode && !_training && !_closeWithoutPayment) {
+        unawaited(KegService.instance.recordPour(widget.session.orderItems).catchError((Object _) {}));
+      }
       // Кешбэк и реферальная награда. Обе операции идемпотентны:
       // повторный вызов с тем же чеком ничего не начислит.
       if (_clientUid.isNotEmpty && !_closeWithoutPayment && !_training) {
@@ -889,7 +894,26 @@ class _PaymentScreenState extends State<PaymentScreen> {
       // Можно ли дать скидку на строку (не кальяны и не табак — 15-ФЗ):
       // параллельно [items], для бонусов и «за счёт заведения».
       final discountable = <bool>[];
+      // Разливное пиво (SaaS): порция из кеги на кране — с кодом кеги,
+      // в литрах, мера «литр» (мерный маркированный товар, ФФД 1.2).
+      final kegs = kSaasMode ? await KegService.instance.onTap() : const <Keg>[];
       for (final line in widget.session.orderItems) {
+        final keg = kegs.isEmpty ? null : kegForItem(kegs, line.menuItemId);
+        if (keg != null && line.qty > 0) {
+          final liters = keg.portions[line.menuItemId]!;
+          items.add(FiscalReceiptItem(
+            name: line.displayName.length > 128 ? line.displayName.substring(0, 128) : line.displayName,
+            price: (priceOf(line) / liters * 100).roundToDouble() / 100,
+            quantity: double.parse((liters * line.qty).toStringAsFixed(3)),
+            vat: vatOf(line),
+            paymentObject: subjectOf(line),
+            markingCode: keg.code,
+            entity: entityOf(line),
+            unit: 'l',
+          ));
+          discountable.add(!PromoPolicy.restricted(line));
+          continue;
+        }
         // Коды позиции берутся из общего запаса: у одной позиции может быть
         // несколько строк (разные модификаторы), один код — в один чек.
         final pool = codesByMenuItem[line.menuItemId];

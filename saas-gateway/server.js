@@ -135,7 +135,7 @@ const RESERVED_SLUGS = new Set([
 const TENANT_SUBCOLLECTIONS = [
   "aiActions", "aiJobs", "aiLogs", "aiUsage", "auditLog", "bonusOperations",
   "branding", "cashOps", "clients", "devices", "discountCards", "employees",
-  "giftCardClaims", "giftCards", "guestOrders", "hallLabels", "incomingCalls", "hallWalls", "happyHours", "inventory",
+  "giftCardClaims", "giftCards", "guestOrders", "hallLabels", "incomingCalls", "kegs", "hallWalls", "happyHours", "inventory",
   "inventoryCounts", "inventoryItems", "inventoryMovements", "jobRuns",
   "marking_codes_sold", "menuCategories", "menuItems", "meta", "payrollAdjustments", "phoneIndex",
   "printJobs", "pushQueue", "referralCodes", "reservations", "reservationSlots",

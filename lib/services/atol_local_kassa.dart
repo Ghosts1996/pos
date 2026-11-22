@@ -97,12 +97,13 @@ class AtolLocalKassaService implements KassaService {
       'paymentMethod': advance ? 'advance' : fullPrepayment ? 'fullPrepayment' : 'fullPayment',
       'paymentObject': _paymentObject(i, fullPrepayment),
       'tax': {'type': i.vat.providerCode},
-      if (ffd12) 'measurementUnit': i.byKg ? 'kilogram' : 'piece',
+      if (ffd12) 'measurementUnit': i.byKg ? 'kilogram' : i.byLiter ? 'liter' : 'piece',
       if (marked)
         'imcParams': {
           'imcType': 'auto',
           'imc': base64.encode(utf8.encode(i.markingCode!)),
-          'itemEstimatedStatus': 'itemPieceSold',
+          // Разливное пиво (мерный товар из маркированной кеги) — «мерный в стадии реализации».
+          'itemEstimatedStatus': i.measured ? 'itemDryForSale' : 'itemPieceSold',
           'imcModeProcessing': 0,
         },
       if (marked && permit != null)

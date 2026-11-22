@@ -1874,6 +1874,9 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
             'Защита от повторной продажи работает и без токена. Списание кода при продаже — '
             'через онлайн-кассу (тег 1162).'),
         if (kSaasMode)
+          const _Hint('Разливное пиво: меню сотрудника → «Кеги на кране» — кега с кодом ставится на кран, '
+              'каждая порция уходит в чек с кодом кеги и объёмом в литрах.'),
+        if (kSaasMode)
           _Choice<String>(
             value: _czMode,
             options: const [
