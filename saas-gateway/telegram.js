@@ -722,6 +722,45 @@ function staleCashText(openedAt, tz, now = new Date()) {
 
 // ---------------------------------------------------------------- модуль
 
+// Страницы, которые открываются из бота (адрес, «Кто», курьер), — в стиле
+// сайта: бумага, карточка, медь, засечки в заголовках; тёмная тема телефона.
+// Шрифты — системные: строгая CSP этих страниц не пускает чужие файлы.
+const PAGE_CSS = `
+:root{--bg:#F3EEE6;--card:#FFFCF7;--tx:#1D1A16;--mu:#736A5D;--bd:#DFD5C5;--pr:#A4502A;--soft:#F1E1D3;--ok:#3B7454;--dot:rgba(29,26,22,.07)}
+@media (prefers-color-scheme:dark){:root{--bg:#0D0C0A;--card:#161412;--tx:#F0E8DC;--mu:#A1978A;--bd:#29251F;--pr:#E0955F;--soft:#2A1F18;--ok:#6DB287;--dot:rgba(242,234,223,.05)}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;min-height:100vh;color:var(--tx);font:17px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;-webkit-font-smoothing:antialiased;
+background:radial-gradient(70% 40% at 50% 0%,rgba(164,80,42,.10),transparent 70%),radial-gradient(circle at 1px 1px,var(--dot) 1px,transparent 1.2px) 0 0/16px 16px,var(--bg)}
+.wrap{max-width:560px;margin:0 auto;padding:max(22px,env(safe-area-inset-top)) 16px 36px}
+.brand{font:600 27px/1 Georgia,"Times New Roman",serif;letter-spacing:.01em;margin:6px 4px 18px}
+.brand em,h1 em,h2 em{color:var(--pr);font-style:italic}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:24px;padding:24px 20px;box-shadow:0 1px 0 rgba(29,26,22,.03),0 22px 44px -30px rgba(40,26,12,.35)}
+.card>:first-child{margin-top:0}.card>:last-child{margin-bottom:0}
+h1,h2{font:600 31px/1.08 Georgia,"Times New Roman",serif;margin:0 0 14px;letter-spacing:-.005em}
+.kicker{font-size:12.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--pr);margin:0 0 10px}
+p{margin:0 0 12px}
+a{color:var(--pr);text-underline-offset:3px}
+.muted{color:var(--mu)}
+.person{display:flex;gap:14px;align-items:center}
+.ava{flex:none;width:58px;height:58px;border-radius:50%;background:var(--soft);color:var(--pr);display:flex;align-items:center;justify-content:center;font:600 27px/1 Georgia,serif}
+.name{font-size:21px;font-weight:650;line-height:1.2}
+.chip{display:inline-block;margin-top:5px;padding:3px 11px;border-radius:999px;background:var(--soft);color:var(--pr);font-size:13.5px;font-weight:650}
+.rows{margin:20px 0 0;border-top:1px solid var(--bd)}
+.row{display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:14px 2px;border-bottom:1px solid var(--bd)}
+.row span{color:var(--mu)}.row b{font-weight:650;font-variant-numeric:tabular-nums;text-align:right}
+.live{display:inline-flex;align-items:center;gap:8px;color:var(--ok);font-weight:650}
+.live:before{content:"";width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px color-mix(in srgb,var(--ok) 20%,transparent)}
+.event{padding:14px 16px;border-radius:16px;background:var(--soft);margin:0 0 6px;line-height:1.45}
+.team{list-style:none;margin:6px 0 0;padding:0}
+.team li{padding:12px 0;border-bottom:1px solid var(--bd)}.team li:last-child{border-bottom:0}
+.team .ava{width:46px;height:46px;font-size:21px}.team .name{font-size:18px}
+.btn{display:block;text-align:center;padding:14px 16px;border-radius:14px;background:var(--tx);color:var(--card);text-decoration:none;font-weight:650;margin:10px 0 0}
+.btn.ghost{background:transparent;color:var(--tx);border:1px solid var(--bd)}
+.empty{text-align:center;padding:10px 0}.empty .ava{margin:0 auto 12px}
+.foot{text-align:center;color:var(--mu);font-size:12.5px;margin-top:18px}
+`;
+
 function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJson, HttpError, requireTenantRole, publicUrl, fetchImpl, pii, platform = "telegram" }) {
   const doFetch = fetchImpl || fetch;
   // platform "max" — тот же бот в мессенджере MAX (см. max-bot.js): свои
@@ -1143,8 +1182,10 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       "Referrer-Policy": "no-referrer",
       ...(csp ? { "Content-Security-Policy": csp } : {}),
     });
-    res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escHtml(title)}</title><body style="font:18px/1.5 system-ui,sans-serif;margin:24px;max-width:520px">${html}</body>`);
+    res.end(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark"><meta name="theme-color" content="#F3EEE6"><title>${escHtml(title)}</title>
+<style>${PAGE_CSS}</style><body><div class="wrap"><div class="brand">Zal<em>POS</em></div><main class="card">${html}</main>
+<div class="foot">Страница на сервере ZalPOS в России</div></div></body></html>`);
   }
 
   /** Заведение переведено на хранение в РФ: имён и контактов в Firestore нет. */
@@ -1179,12 +1220,15 @@ function createTelegram({ db, admin, verifyAuth, parseJsonBody, readBody, sendJs
       name = String(rec.name || name);
     }
     const courierMap = await courierMapHtml(t, ses);
-    page(200, `<h2 style="margin:0 0 12px">Доставка №${esc(orderNo(s, ses.orderNo))}</h2>
-<p><b>Адрес:</b><br>${esc(address) || "не указан"}</p>
-${phone ? `<p><b>Телефон:</b> <a href="tel:${esc(phone.replace(/[^+\d]/g, ""))}">${esc(phone)}</a></p>` : ""}
-${name ? `<p><b>Имя:</b> ${esc(name)}</p>` : ""}
-${address ? `<p><a href="https://yandex.ru/maps/?text=${encodeURIComponent(address)}">Открыть адрес в Яндекс Картах</a></p>` : ""}
-${courierMap}`);
+    page(200, `<div class="kicker">Доставка</div><h2>Заказ №${esc(orderNo(s, ses.orderNo))}</h2>
+<div class="rows" style="margin-top:6px">
+<div class="row" style="display:block"><span>Адрес</span><div style="margin-top:4px;font-weight:600">${esc(address) || "не указан"}</div></div>
+${name ? `<div class="row"><span>Гость</span><b>${esc(name)}</b></div>` : ""}
+${phone ? `<div class="row"><span>Телефон</span><b><a href="tel:${esc(phone.replace(/[^+\d]/g, ""))}">${esc(phone)}</a></b></div>` : ""}
+</div>
+${phone ? `<a class="btn" href="tel:${esc(phone.replace(/[^+\d]/g, ""))}">Позвонить гостю</a>` : ""}
+${address ? `<a class="btn ghost" href="https://yandex.ru/maps/?text=${encodeURIComponent(address)}">Открыть адрес в Яндекс Картах</a>` : ""}
+<div style="margin-top:18px">${courierMap}</div>`);
   }
 
   /** Карта с курьером: точка из последней передачи геолокации (не старше 10 минут). */
@@ -1431,39 +1475,62 @@ ${courierMap}`);
     const esc = escHtml;
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(t) || !["a", "sh", "team"].includes(what) || !/^[A-Za-z0-9_-]{1,128}$/.test(id)
         || exp < Date.now() || !sigOk(u.searchParams.get("k"), whoSig(secretKey(), t, what, id, exp))) {
-      return page(403, "<p>Ссылка устарела или неверна. Откройте её из свежего сообщения бота.</p>");
+      return page(403, `<div class="empty"><div class="ava">!</div><h2>Ссылка устарела</h2>
+<p class="muted">Откройте её из свежего сообщения бота.</p></div>`);
     }
     const venue = await venueOf(t).catch(() => ({}));
-    const person = async (raw, employeeId = "") => {
-      const name = await nameOfWho(t, raw, employeeId);
+    const place = venueTitle(venue);
+    const kicker = (k) => `<div class="kicker">${esc(k)}${place ? ` · ${esc(place)}` : ""}</div>`;
+    // Карточка человека: инициал в кружке, имя и должность плашкой.
+    const person = async (raw, employeeId = "", extra = "") => {
+      const name = String(await nameOfWho(t, raw, employeeId) || "Сотрудник");
       const role = await roleOfWho(t, raw, employeeId);
-      return `${esc(name)}${role ? ` <span style="color:#666">(${esc(role)})</span>` : ""}`;
+      return `<div class="person"><div class="ava">${esc(name.trim().charAt(0).toUpperCase() || "?")}</div><div>
+<div class="name">${esc(name)}</div>${role ? `<span class="chip">${esc(role)}</span>` : ""}${extra}</div></div>`;
     };
+    const dur = (ms) => {
+      const m = Math.max(0, Math.round(ms / 60000));
+      return m < 60 ? `${m} мин` : `${Math.floor(m / 60)} ч${m % 60 ? ` ${m % 60} мин` : ""}`;
+    };
+    const dayLabelOf = (d) => new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", timeZone: venue.timezone || "Europe/Moscow" }).format(d);
     if (what === "a") {
       const a = (await tenantRef(t).collection("auditLog").doc(id).get()).data();
-      if (!a) return page(404, "<p>Событие не найдено.</p>");
+      if (!a) return page(404, `<div class="empty"><h2>Событие не найдено</h2><p class="muted">Возможно, его уже удалили.</p></div>`);
       const d = a.details || {};
       const text = alertText(venue.name || "Заведение", { ...a, whoRole: "", approvedRole: "" }) || "";
-      return page(200, `<p>${esc(text)}</p>
-<p><b>Кто:</b> ${await person(a.employeeName)}</p>
-${d.approvedBy ? `<p><b>Подтвердил:</b> ${await person(d.approvedBy)}</p>` : ""}`);
+      const at = toDate(a.createdAt || a.at);
+      return page(200, `${kicker("Событие в кассе")}<h2>Кто это сделал</h2>
+<div class="event">${esc(text).replace(/\n/g, "<br>")}</div>
+<div class="rows" style="border-top:0">
+<div class="row" style="display:block"><span>Сотрудник</span><div style="margin-top:10px">${await person(a.employeeName)}</div></div>
+${d.approvedBy ? `<div class="row" style="display:block"><span>Подтвердил</span><div style="margin-top:10px">${await person(d.approvedBy)}</div></div>` : ""}
+${at ? `<div class="row"><span>Когда</span><b>${esc(dayLabelOf(at))}, ${esc(hhmm(at, venue.timezone))}</b></div>` : ""}</div>`);
     }
     if (what === "sh") {
       const sh = (await tenantRef(t).collection("staffShifts").doc(id).get()).data();
-      if (!sh) return page(404, "<p>Смена не найдена.</p>");
+      if (!sh) return page(404, `<div class="empty"><h2>Смена не найдена</h2><p class="muted">Возможно, её исправили или удалили в кассе.</p></div>`);
       const started = toDate(sh.startedAt);
       const ended = toDate(sh.endedAt);
-      return page(200, `<p><b>Сотрудник:</b> ${await person(sh.employeeName, sh.employeeId)}</p>
-${started ? `<p>Начал смену в ${esc(hhmm(started, venue.timezone))}</p>` : ""}
-${ended ? `<p>Закончил в ${esc(hhmm(ended, venue.timezone))}</p>` : ""}`);
+      const status = ended ? `<div style="margin-top:8px" class="muted">Смена закончена</div>` : `<div style="margin-top:8px"><span class="live">Сейчас на смене</span></div>`;
+      return page(200, `${kicker("Смена сотрудника")}
+${await person(sh.employeeName, sh.employeeId, status)}
+<div class="rows">
+${started ? `<div class="row"><span>День</span><b>${esc(dayLabelOf(started))}</b></div>` : ""}
+${started ? `<div class="row"><span>Начал смену</span><b>${esc(hhmm(started, venue.timezone))}</b></div>` : ""}
+${ended ? `<div class="row"><span>Закончил</span><b>${esc(hhmm(ended, venue.timezone))}</b></div>` : ""}
+${started ? `<div class="row"><span>${ended ? "Отработал" : "Уже на смене"}</span><b>${esc(dur((ended || new Date()).getTime() - started.getTime()))}</b></div>` : ""}
+</div>`);
     }
     const team = await onShiftStaff(t);
-    if (!team.length) return page(200, "<p>Сейчас на смене никого не отмечено.</p>");
+    if (!team.length) {
+      return page(200, `${kicker("Смена")}<div class="empty"><h2>На смене никого</h2><p class="muted">Сейчас никто не отметил начало смены в кассе.</p></div>`);
+    }
     const rows = [];
     for (const m of team) {
-      rows.push(`<li>${await person(m.raw, m.id)}${m.since ? `, ${esc(sinceLabel(m.since, venue.timezone))}` : ""}</li>`);
+      rows.push(`<li>${await person(m.raw, m.id, m.since ? `<div class="muted" style="margin-top:4px;font-size:15px">${esc(sinceLabel(m.since, venue.timezone))}</div>` : "")}</li>`);
     }
-    return page(200, `<h2 style="margin:0 0 12px">${esc(venueTitle(venue))}${venueTitle(venue) ? " — " : ""}на смене сейчас</h2><ul>${rows.join("")}</ul>`);
+    return page(200, `${kicker("Смена")}<h2>На смене сейчас</h2><p class="muted">${team.length} ${[2, 3, 4].includes(team.length % 10) && ![12, 13, 14].includes(team.length % 100) ? "человека" : "человек"}</p>
+<ul class="team">${rows.join("")}</ul>`);
   }
 
   function addressUrl(tenantId, sessionId) {

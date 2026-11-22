@@ -386,7 +386,8 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   const alertMsg = sent.find((m) => m.body.chat_id === 501 && /без оплаты/.test(m.body.text));
   res = mkRes();
   await tg.handleWho({ url: alertMsg.body.reply_markup.inline_keyboard[0][0].url.replace(/^https?:\/\/[^/]+(\/saas)?/, "") }, res);
-  assert.equal(res.code, 200); assert.match(res.body, /Кто:<\/b> Анна/);
+  assert.equal(res.code, 200); assert.match(res.body, /<span>Сотрудник<\/span>[\s\S]*?class="name">Анна</);
+  assert.match(res.body, /Zal<em>POS<\/em>/, "страница — в стиле ZalPOS");
   // Отчёт «Текущая смена» — должности и ссылка, без имён.
   sent.length = 0;
   await hookA({ message: { chat: { id: 501, type: "private" }, from: { id: 501 }, text: "👥 Текущая смена" } });
