@@ -650,7 +650,7 @@ test("несколько ключей из панели: порядок, ста�
   assert.strictEqual(cfg.ai.providers[0].keyEnc, p1.keyEnc, "пустое поле ключа — старый ключ остаётся");
   assert.ok(cfg.ai.providers[1].keyEnc && !JSON.stringify(cfg).includes("sk-deepseek"));
   assert.deepStrictEqual(h.sent.body.ai.providers.map((p) => p.title), ["Tooken Club", "DeepSeek"]);
-  await h.bot.handleUpdate(pm("Как добавить официанта?"));
+  await h.bot.handleUpdate(pm("Можно ли официанту видеть только свои столы?"));
   await h.bot.idle();
   assert.strictEqual(h.aiCalls[h.aiCalls.length - 1].model, "gpt-4o-mini");
   await h.bot.handleUpdate(pm("/new"));
@@ -663,7 +663,7 @@ test("бот видит устройство программы, но клиен
   const h = harness();
   await setup(h);
   h.aiReplies.push("**Откройте «Интеграции»** — касса пробивает чеки через kassa_service.dart и АТОЛ.");
-  await h.bot.handleUpdate(pm("Как подключить онлайн-кассу АТОЛ для чеков 54-ФЗ?"));
+  await h.bot.handleUpdate(pm("Касса АТОЛ при чеке 54-ФЗ пишет ошибку связи, что проверить?"));
   await h.bot.idle();
   const prompt = JSON.stringify(h.aiCalls[h.aiCalls.length - 1].messages);
   assert.ok(prompt.includes("Как устроено в программе") && prompt.includes("Конфиденциальность"), "нет карты кода или правил");
@@ -1467,7 +1467,7 @@ test("ИИ позвал специалиста («не знаю») — на но
   const h = harness();
   await setup(h);
   h.aiReplies.push("Точно не знаю, подключаю специалиста.\n[[ОПЕРАТОР: нет ответа в знаниях]]");
-  await h.bot.handleUpdate(pm("Как подключить весы Масса-К к кассе?"));
+  await h.bot.handleUpdate(pm("Как подключить кофемашину к кассе?"));
   await h.bot.idle();
   let [t] = tickets(h.store);
   assert.strictEqual(t.escalated, true);
@@ -2252,6 +2252,37 @@ test("знает все возможности и не опровергает и
     const m = sb.matchTemplate(q, idx);
     assert.ok(m && m.template.id === id && m.score >= 0.65 && m.score - m.second >= 0.12, `${q} → ${m && m.template.id} ${m && m.score.toFixed(2)}/${m && m.second.toFixed(2)}`);
   }
+});
+
+test("частые вопросы подписчиков — готовым ответом без ИИ, жалобы и ошибки — нет", async () => {
+  const { TEMPLATES } = require("./support-templates");
+  const { MORE_TEMPLATES } = require("./support-templates-more");
+  const { EXTRA_Q, EXTRA_TEMPLATES } = require("./support-templates-extra");
+  const { FEATURE_Q, FEATURE_TEMPLATES } = require("./support-templates-features");
+  const all = [...TEMPLATES, ...MORE_TEMPLATES, ...EXTRA_TEMPLATES, ...FEATURE_TEMPLATES].filter((t, i, a) => a.findIndex((x) => x.id === t.id) === i)
+    .map((t) => ({ ...t, q: [...t.q, ...(EXTRA_Q[t.id] || []), ...(FEATURE_Q[t.id] || [])], id: `b_${t.id}`, source: "builtin", status: "active" }));
+  const ids = new Set(all.map((t) => t.id.slice(2)));
+  assert.deepStrictEqual(Object.keys(FEATURE_Q).filter((k) => !ids.has(k)), [], "формулировки к несуществующему шаблону");
+  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "saas", "console", "guide.js"), "utf8");
+  const guide = (await import(`data:text/javascript;base64,${Buffer.from(src).toString("base64")}`)).GUIDE;
+  const idx = sb.tplIndex([...all, ...sb.guideTemplates(guide)]);
+  const pick = (q) => { const p = sb.directPick(sb.matchTemplate(q, idx)); return p ? p.id.replace(/^b_/, "") : null; };
+  for (const [q, id] of [
+    ["а в макс бота можно подключить", "max-bot-how"], ["как макс бот настроить", "max-bot-how"], ["корпоратив на 20 человек с предоплатой", "banquet-how"],
+    ["где расписание смен", "staff-schedule-how"], ["сыр продаем на вес как пробивать", "weighed-how"], ["поставить новую кегу", "draft-beer-how"],
+    ["кто звонит видно на кассе?", "telephony-how"], ["как подключить сбис", "edo-auto-how"], ["1с интеграция есть", "accounting-1c-how"],
+    ["заказы купера сами на кассу", "aggregators-api-how"], ["бронь с депозитом", "booking-prepay-how"], ["второе ип на кальяны", "second-entity-how"],
+    ["меркурий гасить всд", "mercury-how"], ["посчитать себестоимость блюд", "foodcost-how"], ["вебхук для амо", "webhooks-how"],
+    ["что приходит после закрытия смены", "z-summary-how"], ["печать через usb на планшете", "printer-usb-how"], ["денежный ящик", "cash-drawer-how"],
+    ["вернуть деньги за тариф", "subscription-refund"], ["подписка кончилась что будет", "nonpay-what"], ["оплатить подписку", "pay-card"],
+    ["как вернуть чек гостю", "refund"], ["пересадить гостей", "table-move"], ["Где Z отчёт", "z-report"], ["убрать позицию из счета", "cancel-item"],
+    ["Нужны закрывающие документы акт", "billing-docs-how"], ["Как поменять пароль", "password"], ["районы доставки", "delivery-zones-how"],
+  ]) assert.strictEqual(pick(q), id, `«${q}» → ${pick(q)}`);
+  // Жалобы и сбои — не готовым текстом: разбирается ИИ и зовёт человека.
+  for (const q of ["касса вылетает при оплате картой что делать", "ошибка 231 при печати чека атол", "у меня пропали все чеки за вчера срочно",
+    "бот в максе прислал чужие данные", "весы показывают неправильный вес и списали лишнее"]) assert.strictEqual(pick(q), null, `«${q}» не должен уйти шаблоном`);
+  // «Максим» — имя, а не мессенджер MAX.
+  assert.ok(!sb.stems("Максим сказал").includes("max"));
 });
 
 test("ссылки на статьи инструкции: адрес как на сайте, повтор заголовка — с id раздела", () => {

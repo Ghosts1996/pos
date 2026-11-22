@@ -36,11 +36,13 @@ const crypto = require("crypto");
 const { TEMPLATES: BASE_TEMPLATES } = require("./support-templates");
 const { MORE_TEMPLATES } = require("./support-templates-more");
 const { EXTRA_Q, EXTRA_TEMPLATES } = require("./support-templates-extra");
+const { FEATURE_Q, FEATURE_TEMPLATES } = require("./support-templates-features");
 // Встроенные шаблоны: основные и дополнительные (одинаковые id — побеждает основной),
 // плюс новые формулировки вопросов к ним (как реально спрашивают клиенты).
-const TEMPLATES = [...BASE_TEMPLATES, ...MORE_TEMPLATES, ...EXTRA_TEMPLATES]
+const TEMPLATES = [...BASE_TEMPLATES, ...MORE_TEMPLATES, ...EXTRA_TEMPLATES, ...FEATURE_TEMPLATES]
   .filter((t, i, all) => all.findIndex((x) => x.id === t.id) === i)
-  .map((t) => (EXTRA_Q[t.id] ? { ...t, q: [...t.q, ...EXTRA_Q[t.id]] } : t));
+  .map((t) => (EXTRA_Q[t.id] ? { ...t, q: [...t.q, ...EXTRA_Q[t.id]] } : t))
+  .map((t) => (FEATURE_Q[t.id] ? { ...t, q: [...t.q, ...FEATURE_Q[t.id]] } : t));
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
@@ -537,6 +539,11 @@ const SYNONYMS = [
   [/(?<![а-я])тг(?![а-я])|телеграм[а-я]*/g, "telegram"], [/(?<![а-я])ии(?![а-я])|нейросет[а-я]*|chatgpt|гпт/g, "ии"],
   [/стоимост[а-я]*|(?<![а-я])цен[аыу](?![а-я])|прайс[а-я]*|сколько стоит/g, "цена тариф"],
   [/(?<![а-я])(ип|ооо|юрлиц[а-я]*|юр\.? ?лиц[а-я]*)(?![а-я])/g, "юрлицо организация"], [/безнал[а-я]*|расч[её]тн[а-я]* сч[её]т[а-я]*/g, "безнал счёт"],
+  // Названия сервисов кириллицей — к одному слову с шаблонами.
+  [/(?<![а-я])(макс|максе|максом|максу|макса)(?![а-я])/g, "max"], [/(?<![а-я])сбис[а-я]*|тензор[а-я]*|(?<![а-я])saby(?![a-z])/g, "sbis"],
+  [/диадок[а-я]*|контур[а-я]*/g, "diadoc"], [/(?<![а-я])манго(?![а-я])|mango/g, "mango телефония"], [/(?<![а-я])амо(?![а-я])|амо ?срм|amo ?crm/g, "amocrm crm"],
+  [/битрикс[а-я]*|bitrix[a-z0-9]*/g, "bitrix crm"], [/(?<![а-я])атол[а-я]*/g, "atol"], [/(?<![а-я])кег[а-я]*/g, "кега"],
+  [/(?<![а-я])всд(?![а-я])/g, "всд меркурий"], [/(?<![а-я0-9])1 ?[сc](?![а-яa-z0-9])/g, "odin1c"], [/(?<![а-я])эдо(?![а-я])/g, "эдо диадок сбис"],
 ];
 
 /** Основы слов: первые 5 букв (точно) и «~» + первые 4 (мягко: «уголок» и
@@ -597,6 +604,11 @@ const LEARNED_DIRECT = 0.72;
 const TPL_DIRECT = 0.65;
 const TPL_MARGIN = 0.12;
 const TPL_HINT = 0.5;
+// Вопрос почти дословно совпал с примером встроенного шаблона — отвечаем им,
+// даже если такой же пример есть у другого (дубли в инструкции и шаблонах).
+const TPL_EXACT = 0.92;
+// Рядом только статья инструкции (та же тема) — готовый ответ при совпадении от 0,75.
+const TPL_OWN = 0.75;
 
 /** Шаблоны → с основами слов каждого примера и весами слов. */
 function tplIndex(list) {
@@ -629,9 +641,40 @@ function matchTemplate(question, index, { audience = "any", exclude = [] } = {})
     }
     if (best > 0) scored.push({ t, score: best });
   }
-  scored.sort((a, b) => b.score - a.score);
+  // Равный счёт — выше проверенный встроенный ответ, чем пересказ инструкции.
+  scored.sort((a, b) => b.score - a.score || (a.t.source === "guide") - (b.t.source === "guide"));
   if (!scored.length) return null;
-  return { template: scored[0].t, score: scored[0].score, second: scored[1] ? scored[1].score : 0 };
+  // Второй по счёту среди встроенных: статья инструкции на ту же тему —
+  // не повод сомневаться в готовом ответе.
+  const own = scored.slice(1).find((x) => x.t.source !== "guide");
+  return { template: scored[0].t, score: scored[0].score, second: scored[1] ? scored[1].score : 0, secondOwn: own ? own.score : 0, list: scored.slice(0, 8) };
+}
+
+/**
+ * Каким шаблоном ответить сразу, без ИИ (null — не уверены, решает ИИ).
+ * Встроенный ответ — при совпадении от TPL_DIRECT и запасе до другого
+ * шаблона; почти дословное совпадение — даже без запаса. Статья инструкции —
+ * построже; если рядом с ней встроенный ответ на ту же тему (разница до
+ * 0,15), отвечаем им: он короче и проверен.
+ */
+function directPick(m) {
+  if (!m || !Array.isArray(m.list) || !m.list.length) return null;
+  const ok = (x) => x && x.t.status !== "off" && x.t.status !== "candidate" && x.t.direct !== false;
+  const isG = (x) => x.t.source === "guide";
+  const [a, b] = m.list;
+  const own = m.list.filter((x) => !isG(x));
+  const gd = m.list.filter(isG);
+  const sc = (x) => (x ? x.score : 0);
+  if (!isG(a)) {
+    const sure = a.score >= TPL_DIRECT && (a.score - sc(b) >= TPL_MARGIN || a.score >= TPL_EXACT
+      || (a.score >= TPL_OWN && a.score - sc(own[1]) >= TPL_MARGIN));
+    return sure && ok(a) ? a.t : null;
+  }
+  if (a.score >= GUIDE_DIRECT && a.score - sc(b) >= 0.15) return ok(a) ? a.t : null;
+  const o = own[0];
+  if (o && o.score >= TPL_OWN && a.score - o.score <= 0.15 && o.score - sc(own[1]) >= TPL_MARGIN) return ok(o) ? o.t : null;
+  if (a.score >= TPL_EXACT && a.score - sc(gd[1]) >= 0.1) return ok(a) ? a.t : null;
+  return null;
 }
 
 /** Тарифы из «Тарифы сейчас»: [{ name, chain, month, half, year, extra,
@@ -2306,20 +2349,19 @@ function createSupportBot(deps) {
     }
     // Вопрос про действующее объявление (акцию) — отвечает ИИ по его тексту, не шаблон.
     const newsHit = rankDocs(question, state.news, 1, 3).length > 0;
-    const guideTpl = tplMatch && tplMatch.template.source === "guide";
-    if (tplMatch && tplMatch.template.status === "active" && tplMatch.template.direct
-      && tplMatch.score >= (guideTpl ? GUIDE_DIRECT : TPL_DIRECT) && tplMatch.score - tplMatch.second >= (guideTpl ? 0.15 : TPL_MARGIN)
+    const picked = directPick(tplMatch);
+    if (picked && picked.status === "active"
       && !askedBack && !newsHit && !UNHAPPY.test(norm(question)) && !isUrgent(question)
       && !deceitSignals(question).length && !suspiciousLinks(question).length
       ) {
-      const tp = tplMatch.template;
+      const tp = picked;
       const reply = parseAiReply(tplFill(tp.a));
       const markup = t.channel === "telegram" ? { inline_keyboard: [[{ text: "👍 Помогло", callback_data: `sb:ok:${t.id}` }, { text: "👤 Позвать человека", callback_data: `sb:hu:${t.id}` }]] } : null;
       await deliver(t, reply.text, { markup, html: mdToHtml(reply.md), md: reply.md });
       await patch(t, { lastTemplate: tp.id, lastTemplateAt: ts(now()), tplReplies: (Number(t.tplReplies) || 0) + 1 });
       tplCount(tp.id, "uses");
       countTpl();
-      const note = await toTopicHtml(t, `📋 <b>Ответ по шаблону</b> <i>· без ИИ · совпадение ${Math.round(tplMatch.score * 100)} %</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>`,
+      const note = await toTopicHtml(t, `📋 <b>Ответ по шаблону</b> <i>· без ИИ · совпадение ${Math.round(((tplMatch.list || []).find((x) => x.t === picked) || tplMatch).score * 100)} %</i>\n<blockquote expandable>${mdToHtml(reply.md)}</blockquote>`,
         { reply_markup: { inline_keyboard: [[{ text: "🚫 Выключить шаблон", callback_data: `sb:tploff:${tp.id}` }]] } });
       await movePanel(t, note);
       return;
@@ -5046,6 +5088,6 @@ function createSupportBot(deps) {
 }
 
 module.exports = {
-  createSupportBot, matchTemplate, planAdvice, comparesWithOther, CHIP_TEMPLATES, guideTemplates, parsePlans, countsFrom, tplIndex, plansFrom, parseStaff, topicLink, topicKeyboard, humanTrigger, aiCall, gibberish, noiseKind, isUrgent, smallTalk, secretKinds, maskSecrets, scrubPii, parseAiReply, plain,
+  createSupportBot, matchTemplate, directPick, planAdvice, comparesWithOther, CHIP_TEMPLATES, guideTemplates, parsePlans, countsFrom, tplIndex, plansFrom, parseStaff, topicLink, topicKeyboard, humanTrigger, aiCall, gibberish, noiseKind, isUrgent, smallTalk, secretKinds, maskSecrets, scrubPii, parseAiReply, plain,
   boldUi, stems, rankDocs, indexDoc, guideDocs, faqDocs, buildMessages, guardReply, mdToHtml, deceitSignals, suspiciousLinks, neutralize, promisesSomething, venueCard, venueBrief, venueIssues, fmtDate, fmtWhen, aiPaused, topicTitle, siteWho, splitText, HOOK_ID, SYSTEM_PROMPT, SYSTEM_CORE, promptParts,
 };
