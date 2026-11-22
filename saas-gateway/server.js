@@ -68,6 +68,7 @@ const { createHallImport } = require("./hall-import");
 const { createMercury } = require("./mercury");
 const { createBoard } = require("./board");
 const { createKiosk } = require("./kiosk");
+const { createTelephony } = require("./telephony");
 const { createGuestMarketing, rootKeyOf: guestRootKey } = require("./guest-marketing");
 const { createRushHour } = require("./rush-hour");
 const { createShield } = require("./shield");
@@ -132,7 +133,7 @@ const RESERVED_SLUGS = new Set([
 const TENANT_SUBCOLLECTIONS = [
   "aiActions", "aiJobs", "aiLogs", "aiUsage", "auditLog", "bonusOperations",
   "branding", "cashOps", "clients", "devices", "discountCards", "employees",
-  "giftCardClaims", "giftCards", "guestOrders", "hallLabels", "hallWalls", "happyHours", "inventory",
+  "giftCardClaims", "giftCards", "guestOrders", "hallLabels", "incomingCalls", "hallWalls", "happyHours", "inventory",
   "inventoryCounts", "inventoryItems", "inventoryMovements", "jobRuns",
   "marking_codes_sold", "menuCategories", "menuItems", "meta", "payrollAdjustments", "phoneIndex",
   "printJobs", "pushQueue", "referralCodes", "reservations", "reservationSlots",
@@ -10545,6 +10546,10 @@ const mercury = createMercury({
 // Киоск самообслуживания: заказ на планшете, оплата на кассе (kiosk.js, kiosk-web/).
 const kiosk = createKiosk({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole });
 
+// Телефония для доставки: входящий звонок от АТС → карточка на кассе (telephony.js).
+const telephony = createTelephony({ db, admin, verifyAuth, parseJsonBody, readBody, sendJson, HttpError, requireTenantRole, pii,
+  encrypt: (v) => tgEncrypt(tgSecretKey(), v), decrypt: (v) => tgDecrypt(tgSecretKey(), v) });
+
 // Табло заказов для гостей «Готовится / Готов» (board.js, board-web/).
 const board = createBoard({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole });
 
@@ -10863,6 +10868,7 @@ const ROUTES = {
   "/mercury": (req, res) => mercury.handle(req, res),
   "/boardLink": (req, res) => board.handleLink(req, res),
   "/kioskLink": (req, res) => kiosk.handleLink(req, res),
+  "/telephonyLink": (req, res) => telephony.handleLink(req, res),
   "/guestAdsConsent": (req, res) => guestMarketing.handleConsent(req, res),
   "/guestSegments": (req, res) => guestMarketing.handleSegments(req, res),
   "/guestCampaign": (req, res) => guestMarketing.handleCampaign(req, res),
@@ -11086,6 +11092,10 @@ const server = http.createServer((req, res) => {
   if (urlPath === "/kiosk" && (req.method === "GET" || req.method === "HEAD")) {
     res.writeHead(301, { Location: `${(process.env.SAAS_GATEWAY_PUBLIC_URL || "https://pii.zalpos.ru/saas").replace(/\/+$/, "")}/kiosk/` });
     return res.end();
+  }
+  // Телефония: события АТС о входящих звонках (telephony.js).
+  if (urlPath.startsWith("/tel/") && (req.method === "GET" || req.method === "POST")) {
+    return runHandler((rq, rs) => telephony.handleHook(rq, rs, urlPath.slice("/tel/".length)), req, res);
   }
   if (urlPath.startsWith("/kiosk/")) {
     return runHandler((rq, rs) => kiosk.serve(rq, rs, urlPath.slice("/kiosk/".length), parseJsonBody), req, res);

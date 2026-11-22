@@ -1568,6 +1568,81 @@ function bindKioskBox(tenantId, redraw) {
   }
 }
 
+// ---------- Настройки → «Телефония» (saas-gateway/telephony.js)
+const telCache = new Map(); // tenantId → { url, enabled, hasSalt } | { error } | null
+const TEL_PBX = [
+  ['Манго Офис', 'Личный кабинет → «Интеграции» → «API-коннектор»: в поле «Адрес внешней системы» вставьте адрес выше. Подпись («соль») из того же окна по желанию впишите ниже — тогда касса проверит, что звонок пришёл именно от Манго.'],
+  ['Новофон', 'В личном кабинете, в разделе интеграций и API, найдите уведомления о звонках (вебхуки): вставьте адрес и включите событие начала входящего звонка (NOTIFY_START). Проверку адреса Новофоном касса проходит сама.'],
+  ['Телфин, Сипуни, UIS, Билайн, МТС Exolve, Asterisk и другие', 'В настройках АТС найдите «Уведомление о входящем звонке», «Вебхук» или «Вызов URL при звонке» — вставьте адрес. АТС должна передать номер звонящего (обычно параметр phone, from, caller или caller_id) — касса поймёт сама.'],
+];
+
+function telBoxHtml(tenantId) {
+  const st = telCache.get(tenantId);
+  const intro = `<p class="small muted" style="margin-top:0">Звонит гость — на кассе сразу всплывает карточка «Звонит +7 …»:
+    постоянный ли это гость, сколько у него визитов и бонусов. Кнопки «Доставка» и «С собой» открывают заказ с уже вписанным номером —
+    остаётся записать адрес и блюда. Нужна облачная АТС (виртуальный номер) — подключение в её личном кабинете, за 5 минут.</p>`;
+  if (st === undefined) return `${intro}<button class="btn btn-ghost" id="f-tel-get">Подключить телефонию</button>`;
+  if (st === null) return `${intro}<p class="small muted">Загружаю…</p>`;
+  if (st.error) return `${intro}<p class="small" style="color:var(--danger)">${esc(st.error)}</p><button class="btn btn-ghost" id="f-tel-get">Повторить</button>`;
+  return `${intro}
+    <label class="field-checkbox" style="display:flex;align-items:center;gap:10px;margin:4px 0 10px">
+      <input type="checkbox" id="f-tel-on" style="width:auto" ${st.enabled ? 'checked' : ''}>
+      <span>Показывать звонки на кассе</span>
+    </label>
+    <div class="small muted" style="margin-bottom:4px">Адрес для АТС:</div>
+    <div style="font-family:var(--mono, monospace);word-break:break-all;margin:0 0 10px;user-select:all">${esc(st.url)}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      <button class="btn btn-primary" id="f-tel-copy" style="width:auto;padding:0 18px">Скопировать адрес</button>
+      <button class="btn btn-ghost" id="f-tel-test" style="width:auto;padding:0 18px">Проверить звонок на кассе</button>
+      <button class="btn btn-ghost" id="f-tel-rotate" style="width:auto;padding:0 18px">Сменить адрес</button>
+    </div>
+    <div class="tel-pbx">
+      ${TEL_PBX.map(([name, how]) => `<details><summary>${esc(name)}</summary><p class="small">${esc(how)}</p></details>`).join('')}
+    </div>
+    <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:6px">
+      <label class="grow" style="min-width:220px">
+        <span class="small muted">Подпись Манго («соль»), необязательно${st.hasSalt ? ' — вписана' : ''}</span>
+        <input id="f-tel-salt" type="password" autocomplete="off" placeholder="${st.hasSalt ? '•••••••• (вписана)' : 'из API-коннектора Манго'}">
+      </label>
+      <button class="btn btn-ghost" id="f-tel-salt-save" style="width:auto;padding:0 18px">Сохранить</button>
+    </div>
+    <p class="small muted" style="margin:10px 0 0">Номер звонящего хранится в справочнике в России и удаляется через 2 суток;
+      в мессенджер он не уходит. Адрес — как пароль: не публикуйте его. Сменили адрес — впишите новый в АТС.</p>`;
+}
+
+function bindTelBox(tenantId, redraw) {
+  const call = async (body) => {
+    try {
+      telCache.set(tenantId, (await callSaasGateway('telephonyLink', { tenantId, ...body })).data);
+      return true;
+    } catch (e) {
+      telCache.set(tenantId, { error: e.message || 'Не удалось получить адрес' });
+      return false;
+    } finally {
+      redraw();
+    }
+  };
+  if ($('f-tel-get')) $('f-tel-get').onclick = () => { telCache.set(tenantId, null); redraw(); call({ action: 'get' }); };
+  if ($('f-tel-copy')) $('f-tel-copy').onclick = () => copyToClipboard(telCache.get(tenantId)?.url || '');
+  if ($('f-tel-on')) $('f-tel-on').onchange = (e) => call({ action: 'settings', enabled: e.target.checked });
+  if ($('f-tel-test')) {
+    $('f-tel-test').onclick = async () => {
+      if (await call({ action: 'test' })) toast('Готово — на кассе в зале должна всплыть карточка «Звонит +7 (900) 000-00-00»');
+    };
+  }
+  if ($('f-tel-salt-save')) {
+    $('f-tel-salt-save').onclick = async () => {
+      if (await call({ action: 'settings', mangoSalt: $('f-tel-salt').value })) toast($('f-tel-salt')?.value ? 'Подпись сохранена' : 'Сохранено');
+    };
+  }
+  if ($('f-tel-rotate')) {
+    $('f-tel-rotate').onclick = async () => {
+      if (!(await uiConfirm('Сменить адрес для АТС? Старый перестанет работать — впишите новый в настройках АТС.', { ok: 'Сменить', danger: false }))) return;
+      if (await call({ action: 'rotate' })) toast('Адрес сменён');
+    };
+  }
+}
+
 // ---------- Склад → «Фудкост и закупка» (saas-gateway/foodcost.js)
 const foodcostCache = new Map(); // tenantId → данные | { error } | null
 
@@ -7841,6 +7916,8 @@ function watchDashboardData(tenantId) {
         <div class="card" id="f-board-box">${boardBoxHtml(tenantId)}</div>` : ''}
       ${role === 'owner' || role === 'admin' ? `<h2>Киоск самообслуживания</h2>
         <div class="card" id="f-kiosk-box">${kioskBoxHtml(tenantId)}</div>` : ''}
+      ${role === 'owner' || role === 'admin' ? `<h2>Телефония: звонки на кассу</h2>
+        <div class="card" id="f-tel-box">${telBoxHtml(tenantId)}</div>` : ''}
       </section>
 
       ${canManage ? `<section class="set-group" id="set-conn">
@@ -8778,6 +8855,7 @@ function watchDashboardData(tenantId) {
     });
     if ($('f-board-box')) bindBoardBox(tenantId, draw);
     if ($('f-kiosk-box')) bindKioskBox(tenantId, draw);
+    if ($('f-tel-box')) bindTelBox(tenantId, draw);
     if ($('f-api-box')) bindApiKeysBox(tenantId, draw);
     if ($('f-wh-box')) bindWebhooksBox(tenantId, draw);
     if ($('f-backup-tenant')) $('f-backup-tenant').onclick = () => exportVenueBackup({ tenantId, fileKey: tenant.slug, label: tenant.name });

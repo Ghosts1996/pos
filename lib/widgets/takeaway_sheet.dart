@@ -48,20 +48,36 @@ class TakeawaySheet extends StatelessWidget {
         builder: (_) => TakeawaySheet(employee: employee),
       );
 
-  Future<void> _open(BuildContext context, String sessionId) async {
+  Future<void> _open(BuildContext context, String sessionId) => openOrder(context, employee, sessionId, closeSheet: true);
+
+  /// Открыть заказ с собой/доставки (экран заказа служебного стола).
+  static Future<void> openOrder(BuildContext context, Employee employee, String sessionId, {bool closeSheet = false}) async {
     final fs = FirestoreService();
     final table = await fs.ensureTakeawayTable();
     if (!context.mounted) return;
     final nav = Navigator.of(context);
-    nav.pop();
+    if (closeSheet) nav.pop();
     nav.push(MaterialPageRoute(
       builder: (_) => TableDetailScreen(table: table, employee: employee, sessionId: sessionId),
     ));
   }
 
-  Future<void> _create(BuildContext context, {required bool delivery}) async {
-    final data = await showDialog<_NewOrder>(context: context, builder: (_) => _NewOrderDialog(delivery: delivery));
-    if (data == null || !context.mounted) return;
+  Future<void> _create(BuildContext context, {required bool delivery}) =>
+      createOrder(context, employee, delivery: delivery, closeSheet: true);
+
+  /// Новый заказ с собой или доставки. [phone] и [name] — уже вписаны
+  /// (звонок гостя, SaaS). → id чека или null, если передумали.
+  static Future<String?> createOrder(
+    BuildContext context,
+    Employee employee, {
+    required bool delivery,
+    String phone = '',
+    String name = '',
+    bool closeSheet = false,
+  }) async {
+    final data = await showDialog<_NewOrder>(
+        context: context, builder: (_) => _NewOrderDialog(delivery: delivery, phone: phone, name: name));
+    if (data == null || !context.mounted) return null;
     final fs = FirestoreService();
     try {
       final table = await fs.ensureTakeawayTable();
@@ -93,12 +109,14 @@ class TakeawaySheet extends StatelessWidget {
         sessionId: sessionId,
         numbered: true,
       );
-      if (context.mounted) await _open(context, id);
+      if (context.mounted) await openOrder(context, employee, id, closeSheet: closeSheet);
+      return id;
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('Не удалось создать заказ: ${humanError(e, lower: true)}')));
       }
+      return null;
     }
   }
 
@@ -185,15 +203,17 @@ class _NewOrder {
 
 class _NewOrderDialog extends StatefulWidget {
   final bool delivery;
-  const _NewOrderDialog({required this.delivery});
+  final String phone;
+  final String name;
+  const _NewOrderDialog({required this.delivery, this.phone = '', this.name = ''});
 
   @override
   State<_NewOrderDialog> createState() => _NewOrderDialogState();
 }
 
 class _NewOrderDialogState extends State<_NewOrderDialog> {
-  final _name = TextEditingController();
-  final _phone = TextEditingController();
+  late final _name = TextEditingController(text: widget.name);
+  late final _phone = TextEditingController(text: widget.phone);
   final _address = TextEditingController();
   String? _error;
 
@@ -223,7 +243,7 @@ class _NewOrderDialogState extends State<_NewOrderDialog> {
         children: [
           TextField(
             controller: _name,
-            autofocus: true,
+            autofocus: widget.phone.isEmpty,
             textCapitalization: TextCapitalization.words,
             decoration: const InputDecoration(labelText: 'Имя гостя или номер заказа (необязательно)'),
           ),
@@ -237,6 +257,7 @@ class _NewOrderDialogState extends State<_NewOrderDialog> {
           if (widget.delivery)
             TextField(
               controller: _address,
+              autofocus: widget.phone.isNotEmpty,
               minLines: 1,
               maxLines: 3,
               decoration: InputDecoration(labelText: 'Адрес доставки', errorText: _error),

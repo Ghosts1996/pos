@@ -16,6 +16,7 @@ import '../../services/venue_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/adaptive.dart';
 import '../../utils/hall_layout.dart';
+import '../../widgets/incoming_call_banner.dart';
 import '../../widgets/ai_assistant_sheet.dart';
 import '../../widgets/plan_upsell.dart';
 import '../../widgets/employee_drawer.dart';
@@ -200,6 +201,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
       body: Column(
         children: [
           if (kSaasMode) const ShiftAgeBanner(),
+          if (kSaasMode) IncomingCallBanner(employee: widget.employee),
           GuestRequestsBanner(
             employee: widget.employee,
             onOpenTable: (tableId, sessionId) async {

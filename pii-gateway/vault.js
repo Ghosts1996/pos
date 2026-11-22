@@ -33,7 +33,8 @@
 
 const crypto = require("crypto");
 
-const CONTACT_KINDS = ["reservation", "waitlist", "delivery", "session", "card"];
+// call — номер входящего звонка (телефония для доставки, telephony.js шлюза).
+const CONTACT_KINDS = ["reservation", "waitlist", "delivery", "session", "card", "call"];
 const STAFF_ROLES = ["owner", "admin", "manager", "employee"];
 const TENANT_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -45,6 +46,7 @@ const EXTRA_KEYS = {
   card: ["notes"],
   reservation: [],
   waitlist: [],
+  call: [],
 };
 // Гость сам может указать только пожелания к заказу; курьер и подпись
 // чека — дело персонала.
@@ -406,7 +408,7 @@ function createVault({ query, firestore, verifyToken, internalToken = "", cacheM
       return;
     }
     if (!CONTACT_KINDS.includes(k)) throw new VaultError(400, "неизвестный вид записи");
-    if (!a.staff && (k === "card" || k === "session")) throw new VaultError(403, "только для персонала заведения");
+    if (!a.staff && (k === "card" || k === "session" || k === "call")) throw new VaultError(403, "только для персонала заведения");
     const address = field(f.address, LIMITS.address);
     const extra = cleanExtra(k, f.extra, !a.staff);
     const r = await query(

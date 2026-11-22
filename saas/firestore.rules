@@ -1210,6 +1210,15 @@ service cloud.firestore {
     }
     // График смен (кабинет · «Команда»): видят все сотрудники, правят
     // владелец, администратор и управляющий. День — документ ГГГГ-ММ-ДД.
+    // Входящие звонки (телефония для доставки): пишет только сервер
+    // (telephony.js), касса читает и отмечает «взяли / скрыли».
+    match /tenants/{tenantId}/incomingCalls/{doc} {
+      allow read: if isStaff(tenantId);
+      allow update: if isStaff(tenantId) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'handledAt', 'sessionId']) &&
+        request.resource.data.status in ['ringing', 'taken', 'dismissed'];
+    }
+
     match /tenants/{tenantId}/staffSchedule/{day} {
       allow read: if isStaff(tenantId);
       allow write: if hasRole(tenantId, ['owner', 'admin', 'manager']) &&

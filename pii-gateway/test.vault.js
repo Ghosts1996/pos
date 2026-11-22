@@ -168,6 +168,18 @@ const test = (name, fn) => tests.push([name, fn]);
     assert.equal((await staff({ tenantId: "t1", kind: "pii_put", k: "card", id: "c1", fields: { name: "Постоянный", extra: { notes: "скидка" } } })).status, 200);
   });
 
+  test("входящий звонок (call): сервер пишет номер, касса читает, гость — нет", async () => {
+    let r = await internal({ tenantId: "t1", kind: "pii_put", items: [{ k: "call", id: "call-1", fields: { phone: "8 900 111-22-33" } }] });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    r = await staff({ tenantId: "t1", kind: "pii_lookup", refs: [{ k: "call", id: "call-1" }] });
+    assert.equal(r.json.contacts[0].phone, "79001112233");
+    assert.equal((await guest({ tenantId: "t1", kind: "pii_lookup", refs: [{ k: "call", id: "call-1" }] })).json.contacts.length, 0);
+    assert.equal((await guest({ tenantId: "t1", kind: "pii_put", k: "call", id: "call-2", fields: { phone: "79000000000" } })).status, 403);
+    assert.equal((await internal({ tenantId: "t1", kind: "pii_erase", k: "call", id: "call-1" })).status, 200);
+    r = await staff({ tenantId: "t1", kind: "pii_lookup", refs: [{ k: "call", id: "call-1" }] });
+    assert.equal(r.json.contacts[0].phone, "");
+  });
+
   test("доставка: точка на карте (geo) — числами, одной записью с адресом; гость сам её не ставит", async () => {
     // Сервер пишет заказ гостя пачкой (демо, заказ из приложения): точка не должна ронять запись.
     let r = await internal({ tenantId: "t1", kind: "pii_put", items: [

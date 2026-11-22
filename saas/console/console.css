@@ -1960,3 +1960,9 @@ html.zd-open { overflow: hidden; }
 .sched-fact.warn { color: var(--warning, #c98a1b); }
 .sched-tot { font-weight: 600; white-space: nowrap; }
 .sched-tot span { font-weight: 400; color: var(--text-muted, #8a8a8a); }
+
+/* Настройки → «Телефония»: как подключить свою АТС */
+.tel-pbx { margin-top: 12px; border-top: 1px solid var(--border); }
+.tel-pbx details { border-bottom: 1px solid var(--border); padding: 8px 0; }
+.tel-pbx summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.tel-pbx details p { margin: 6px 0 2px; line-height: 1.45; }

@@ -2022,6 +2022,30 @@ describe("Облачная печать (printJobs)", () => {
   });
 });
 
+describe("Входящие звонки (incomingCalls)", () => {
+  beforeEach(async () => {
+    await seedTwoTenants();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenantMembers/tenantA_empA"), {
+        tenantId: "tenantA", userId: "empA", role: "employee", status: "active",
+      });
+      await setDoc(doc(ctx.firestore(), "tenants/tenantA/incomingCalls/c1"), { status: "ringing", tail: "4567", at: 1 });
+    });
+  });
+
+  it("касса видит звонок и отмечает «взяли»; создать звонок, сменить номер и чужим — нельзя", async () => {
+    const emp = ctxFor("empA");
+    await assertSucceeds(getDoc(doc(emp, "tenants/tenantA/incomingCalls/c1")));
+    await assertSucceeds(updateDoc(doc(emp, "tenants/tenantA/incomingCalls/c1"), { status: "taken", sessionId: "s1", handledAt: 2 }));
+    await assertFails(updateDoc(doc(emp, "tenants/tenantA/incomingCalls/c1"), { tail: "0000" }));
+    await assertFails(updateDoc(doc(emp, "tenants/tenantA/incomingCalls/c1"), { status: "hacked" }));
+    await assertFails(setDoc(doc(emp, "tenants/tenantA/incomingCalls/c2"), { status: "ringing", tail: "1" }));
+    await assertFails(deleteDoc(doc(emp, "tenants/tenantA/incomingCalls/c1")));
+    await assertFails(getDoc(doc(ctxFor("guestA"), "tenants/tenantA/incomingCalls/c1")));
+    await assertFails(getDoc(doc(ctxFor("ownerB"), "tenants/tenantA/incomingCalls/c1")));
+  });
+});
+
 describe("Стены на схеме зала", () => {
   const wall = (over = {}) => ({ zone: "Основной зал", points: [26, 26, 520, 26, 520, 390], closed: false, ...over });
 
