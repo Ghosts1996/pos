@@ -70,6 +70,7 @@ const { createBoard } = require("./board");
 const { createKiosk } = require("./kiosk");
 const { createTelephony } = require("./telephony");
 const { createEdo } = require("./edo");
+const { createAccountingMail } = require("./accounting-mail");
 const { createGuestMarketing, rootKeyOf: guestRootKey } = require("./guest-marketing");
 const { createRushHour } = require("./rush-hour");
 const { createShield } = require("./shield");
@@ -10551,6 +10552,11 @@ const edo = createEdo({
   ownerAlert: (tid, text) => telegram.ownerAlert(tid, text),
 });
 
+// Выгрузка для бухгалтера и 1С — сама на почту бухгалтеру (accounting-mail.js).
+const accountingMail = createAccountingMail({
+  db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole, getMailer: () => getAuthMailer(),
+});
+
 // Киоск самообслуживания: заказ на планшете, оплата на кассе (kiosk.js, kiosk-web/).
 const kiosk = createKiosk({ db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole });
 
@@ -10875,6 +10881,7 @@ const ROUTES = {
   "/hallImport": (req, res) => hallImport.handle(req, res),
   "/mercury": (req, res) => mercury.handle(req, res),
   "/edo": (req, res) => edo.handle(req, res),
+  "/accountingMail": (req, res) => accountingMail.handle(req, res),
   "/boardLink": (req, res) => board.handleLink(req, res),
   "/kioskLink": (req, res) => kiosk.handleLink(req, res),
   "/telephonyLink": (req, res) => telephony.handleLink(req, res),
@@ -11144,6 +11151,11 @@ scheduleDailyJob("foodcostWatch", 60 * 60 * 1000, () => foodcost.runAll(), 17 * 
 // Новые входящие ВСД «Меркурия» — владельцу в бот (гасить в течение рабочего дня).
 scheduleDailyJob("mercuryWatch", 60 * 60 * 1000, () => mercury.runAll(), 23 * 60 * 1000);
 scheduleDailyJob("edoWatch", 60 * 60 * 1000, () => edo.runAll(), 27 * 60 * 1000);
+// Каждый час: кому пора (после 7:00 по времени заведения) — выгрузку бухгалтеру.
+if (require.main === module) {
+  setTimeout(() => accountingMail.runAll().catch((e) => console.error("saas-gateway: выгрузка бухгалтеру:", e.message || e)), 9 * 60 * 1000).unref();
+  setInterval(() => accountingMail.runAll().catch((e) => console.error("saas-gateway: выгрузка бухгалтеру:", e.message || e)), 60 * 60 * 1000).unref();
+}
 // Smoke-тесты поднимают сервер без секретов — бот там не нужен.
 if (process.env.PORT !== "8099") {
   telegram.start();

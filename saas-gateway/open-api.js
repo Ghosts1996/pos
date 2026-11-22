@@ -11,6 +11,7 @@
 //   GET /api/v1/sales?from=2026-11-01&to=2026-11-07[&cursor=…]
 //   GET /api/v1/shifts?from=…&to=…
 //   GET /api/v1/stock
+//   GET /api/v1/accounting?from=…&to=…   — продажи для 1С по дням
 //   Authorization: Bearer zp_<id>_<secret>
 //
 // Персональных данных гостей и сотрудников в ответах нет (имена, телефоны,
@@ -406,6 +407,15 @@ function createOpenApi(deps) {
       const range = parseRange(query, await venueTz(tid), HttpError, now);
       const cursor = decodeCursor(query.get("cursor"), HttpError);
       return pageByTime(`tenants/${tid}/sessions`, "closedAt", range, cursor, checkOut);
+    },
+    // Для 1С: розничные продажи по дням (номенклатура, количество, сумма со
+    // скидкой, ставка НДС), оплаты по дням, номенклатура — как листы «1С» в
+    // выгрузке для бухгалтера (accounting-mail.js). Период — до 31 дня.
+    async accounting(tid, tenant, query) {
+      const tz = await venueTz(tid);
+      const range = parseRange(query, tz, HttpError, now);
+      const { accountingJson } = require("./accounting-mail");
+      return { data: await accountingJson(db, admin, tid, range.from, range.to, tz), from: new Date(range.from).toISOString(), to: new Date(range.to).toISOString() };
     },
     async shifts(tid, tenant, query) {
       const range = parseRange(query, await venueTz(tid), HttpError, now);

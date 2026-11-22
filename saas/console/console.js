@@ -7410,6 +7410,7 @@ function watchDashboardData(tenantId) {
           <button type="button" class="btn btn-primary" id="f-acc-export" style="width:auto">Скачать Excel</button>
         </div>
         <div class="small" id="f-acc-status" aria-live="polite"></div>
+        ${role === 'owner' || role === 'admin' ? `<div id="f-accmail-box">${accMailHtml(tenantId)}</div>` : ''}
       </div>
       ${menuAbcBoxHtml(tenantId)}
       <h2>Быстрый доступ</h2>
@@ -8632,6 +8633,7 @@ function watchDashboardData(tenantId) {
       };
     });
     if (activeTab === 'overview') bindMenuAbc(tenantId, draw);
+    if (activeTab === 'overview' && $('f-accmail-box')) bindAccMail(tenantId, draw);
     if (activeTab === 'overview' && $('f-acc-export')) {
       $('f-acc-export').onclick = () => exportForAccountant(tenantId, tenant.name, generalSettings?.timezone || 'Europe/Moscow');
     }
@@ -10362,6 +10364,73 @@ function bindMenuAbc(tenantId, draw) {
     st.loading = false;
     draw();
   };
+}
+
+// ---------- «Для бухгалтера» → сама на почту и 1С по адресу (saas-gateway/accounting-mail.js)
+const accMailCache = new Map(); // tenantId → настройки | { error } | null
+const ACC_PERIODS = [['day', 'каждый день — за вчера'], ['week', 'каждый понедельник — за прошлую неделю'], ['month', '1-го числа — за прошлый месяц']];
+
+function accMailHtml(tenantId) {
+  const st = accMailCache.get(tenantId);
+  if (!st) return '<div class="accmail"><span class="small muted">Загружаю…</span></div>';
+  if (st.error && !('enabled' in st)) return `<div class="accmail"><span class="small" style="color:var(--danger)">${esc(st.error)}</span></div>`;
+  const when = st.lastSentAt ? new Date(st.lastSentAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+  return `<div class="accmail">
+    <label class="accmail-on"><input type="checkbox" id="f-accmail-on" ${st.enabled ? 'checked' : ''}>
+      <span><b>Отправлять бухгалтеру автоматически</b><br><span class="small muted">Тот же файл приходит на почту сам — после 7:00 по времени заведения.</span></span></label>
+    <div class="accmail-row">
+      <input id="f-accmail-email" type="email" inputmode="email" autocomplete="off" placeholder="buh@example.ru" value="${esc(st.email || '')}" aria-label="Почта бухгалтера">
+      <select id="f-accmail-period" aria-label="Как часто">${ACC_PERIODS.map(([v, t]) => `<option value="${v}" ${st.period === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+    </div>
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+      <button class="btn btn-ghost" id="f-accmail-save" style="width:auto">Сохранить</button>
+      <button class="btn btn-ghost" id="f-accmail-send" style="width:auto" ${st.email ? '' : 'disabled'}>Отправить сейчас</button>
+    </div>
+    ${!st.mailReady ? '<p class="small" style="color:var(--warning);margin:8px 0 0">Почта сервера не настроена — письма не уйдут, напишите в поддержку.</p>' : ''}
+    ${when ? `<p class="small muted" style="margin:8px 0 0">Последнее письмо: ${esc(when)}${st.lastLabel ? ` · за ${esc(st.lastLabel)}` : ''}</p>` : ''}
+    ${st.lastError ? `<p class="small" style="color:var(--danger);margin:6px 0 0">Не отправилось: ${esc(st.lastError)}</p>` : ''}
+    ${st.error ? `<p class="small" style="color:var(--danger);margin:6px 0 0">${esc(st.error)}</p>` : ''}
+    <details class="accmail-1c"><summary>1С может забирать продажи сама</summary>
+      <p class="small">Для программиста 1С: «Настройки» → «Открытый API» → создать ключ, затем обработка загрузки в 1С делает запрос
+      <code>GET https://pii.zalpos.ru/saas/api/v1/accounting?from=2026-11-01&amp;to=2026-11-30</code> с заголовком
+      <code>Authorization: Bearer &lt;ключ&gt;</code>. В ответе — розничные продажи по дням (номенклатура, количество, сумма со скидкой, ставка НДС, товар или услуга),
+      оплаты по дням и номенклатура, те же цифры, что в листах «1С» файла. Период — до 31 дня. Полное описание полей пришлёт поддержка.</p>
+    </details>
+  </div>`;
+}
+
+function bindAccMail(tenantId, redraw) {
+  const set = (v) => { accMailCache.set(tenantId, v); redraw(); };
+  const call = (body) => callSaasGateway('accountingMail', { tenantId, ...body }).then((r) => r.data);
+  const st = accMailCache.get(tenantId);
+  if (!st) {
+    call({ action: 'get' }).then(set).catch((e) => set({ error: e.message || 'Не загрузилось' }));
+    return;
+  }
+  const form = () => ({ email: $('f-accmail-email').value.trim(), period: $('f-accmail-period').value, enabled: $('f-accmail-on').checked });
+  const save = async (quiet) => {
+    try {
+      set(await call({ action: 'settings', ...form() }));
+      if (!quiet) toast('Сохранено');
+      return true;
+    } catch (e) { set({ ...st, ...form(), error: e.message || String(e) }); return false; }
+  };
+  if ($('f-accmail-save')) $('f-accmail-save').onclick = () => save(false);
+  if ($('f-accmail-on')) $('f-accmail-on').onchange = () => save(true);
+  if ($('f-accmail-email')) $('f-accmail-email').oninput = () => { if ($('f-accmail-send')) $('f-accmail-send').disabled = !$('f-accmail-email').value.trim(); };
+  if ($('f-accmail-send')) {
+    $('f-accmail-send').onclick = async () => {
+      const btn = $('f-accmail-send');
+      btn.disabled = true;
+      btn.textContent = 'Отправляю…';
+      if (!(await save(true))) return;
+      try {
+        const r = await call({ action: 'send', period: form().period });
+        toast(`Отправлено на ${r.to}: за ${r.label}, чеков ${r.checks}`);
+      } catch (e) { set({ ...accMailCache.get(tenantId), error: e.message || String(e) }); }
+      finally { const b = $('f-accmail-send'); if (b) { b.disabled = false; b.textContent = 'Отправить сейчас'; } }
+    };
+  }
 }
 
 async function exportForAccountant(tenantId, venueName, tz) {

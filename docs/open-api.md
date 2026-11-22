@@ -34,6 +34,7 @@ https://pii.zalpos.ru/saas/api/v1/<метод>
 | `GET /stock` | остатки склада: id, name, category, unit, quantity, minQuantity, costPrice, active |
 | `GET /sales?from=…&to=…` | закрытые чеки за период |
 | `GET /shifts?from=…&to=…` | закрытые смены с цифрами Z-отчёта |
+| `GET /accounting?from=…&to=…` | продажи для 1С по дням (см. ниже) — одним ответом, без страниц |
 
 ### Период
 
@@ -63,6 +64,20 @@ https://pii.zalpos.ru/saas/api/v1/<метод>
 ### Смена (`/shifts`)
 
 `id`, `status`, `openedAt`, `closedAt`, `z`: number, salesCount, salesTotal, salesCash, salesCard, salesTerminal, salesAggregator, salesComp, discounts, refundsCount, refundsTotal, refundsCash, refundsCashless, unpaidCount, unpaidTotal, tipsCash, tipsCard, openingCash, deposits, payouts, collections, expectedCash, countedCash, leftCash.
+
+### Для 1С (`/accounting`)
+
+Те же цифры, что листы «1С» в выгрузке для бухгалтера (кабинет → «Обзор» → «Для бухгалтера»). Подходит для обработки загрузки «Отчёта о розничных продажах» в 1С.
+
+- `retail` — продажи по дням: `date` (ДД.ММ.ГГГГ), `name` (номенклатура), `qty`, `price` (средняя цена со скидкой), `sum` (сумма со скидкой), `vat` («22%», «10%», «Без НДС» или `null` — ставка заведения), `kind` (`goods` — товар, `service` — услуга).
+- `payments` — оплаты по дням: `date`, `cash`, `cashless` (карта, СБП, терминал), `aggregator`, `comp` (за счёт заведения), `total` (выручка дня = сумма `retail` за день).
+- `nomenclature` — справочник: `name`, `unit` («шт»), `vat`, `kind`.
+
+Возвраты, закрытые без оплаты и учебные чеки стажёра не входят. Скидка разнесена по строкам, копейки — в самую большую строку дня.
+
+Пример: `curl -H "Authorization: Bearer zp_…" "https://pii.zalpos.ru/saas/api/v1/accounting?from=2026-11-01&to=2026-11-30"`
+
+Если 1С не нужна «живая» загрузка, бухгалтер может получать ту же книгу Excel на почту сам — кабинет → «Обзор» → «Для бухгалтера» → «Отправлять бухгалтеру автоматически» (каждый день, неделю или месяц).
 
 ## Персональные данные
 

@@ -1987,3 +1987,13 @@ html.zd-open { overflow: hidden; }
 .edo-sup { flex-basis: 100%; font-size: 13px; color: var(--text-muted, #8a8a8a); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .edo-sum { flex: none; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .edo-tag { font-size: 11px; font-weight: 600; color: var(--success, #22a06b); }
+
+/* «Для бухгалтера» → отправка на почту */
+.accmail { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.accmail-on { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.accmail-on input { width: auto; margin-top: 3px; }
+.accmail-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin-top: 10px; }
+@media (max-width: 560px) { .accmail-row { grid-template-columns: 1fr; } }
+.accmail-1c { margin-top: 12px; }
+.accmail-1c summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.accmail-1c code { word-break: break-all; font-size: 12.5px; }

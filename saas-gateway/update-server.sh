@@ -161,6 +161,8 @@ cp "$REPO/saas/console/guide.js" /opt/saas-gateway/kb/guide.mjs 2>/dev/null || t
 # Правила доступа — их же исполняет собственный сервер данных (data-server.js).
 cp "$REPO/saas/firestore.rules" /opt/saas-gateway/kb/firestore.rules 2>/dev/null || true
 cp "$REPO/saas/console/console.js" /opt/saas-gateway/kb/console.js 2>/dev/null || true
+# Выгрузка для бухгалтера и 1С — та же книга, что в кабинете (accounting-mail.js).
+cp "$REPO/saas/console/accounting-export.js" /opt/saas-gateway/kb/accounting-export.mjs 2>/dev/null || true
 # Карта кода — что за что отвечает (описания и надписи, без кода и секретов).
 node /opt/saas-gateway/build-code-map.js "$REPO" /opt/saas-gateway/kb/code-map.json || true
 # Что нового — последние изменения программы, бот поддержки рассказывает о них клиентам.
