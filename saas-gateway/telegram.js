@@ -104,7 +104,8 @@ function saleOf(id, d) {
   const s = { id, closedAt: msOf(d.closedAt), refundedAt: msOf(d.refundedAt) };
   for (const k of SALE_FIELDS) if (d[k] !== undefined && d[k] !== null) s[k] = d[k];
   s.orderItems = (Array.isArray(d.orderItems) ? d.orderItems : [])
-    .map((i) => ({ name: i.name, price: i.price, qty: i.qty, kind: i.kind, noPromo: i.noPromo === true, ...(pricing.isFeeLine(i) ? { fee: true } : {}) }));
+    .map((i) => ({ name: i.name, price: i.price, qty: i.qty, kind: i.kind, noPromo: i.noPromo === true,
+      ...(i.menuItemId === "zalpos_service" ? { menuItemId: i.menuItemId } : {}), ...(pricing.isFeeLine(i) ? { fee: true } : {}) }));
   return s;
 }
 
@@ -406,7 +407,8 @@ function salesStats(sessions, excludeTobacco = true, period = sessions && sessio
       // Топ и доли — что действительно продали: возвращённый чек не в них.
       if (s.refunded) continue;
       // Плата за доставку — в выручке, но не блюдо: не в топе и не в долях цехов.
-      if (i.fee || pricing.isFeeLine(i)) continue;
+      // И процент за обслуживание — тоже не блюдо.
+      if (i.fee || pricing.isFeeLine(i) || i.menuItemId === "zalpos_service") continue;
       const kind = i.kind === "hookah" || i.kind === "bar" ? i.kind : "kitchen";
       st.kinds[kind] += sum;
       const name = i.name || "—";

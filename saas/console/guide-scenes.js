@@ -968,6 +968,20 @@ X.timeCafeScreen = () => X.scr('Тайм-кафе', `<div class="gx-mu" style="f
     <div class="gx-unfold"${mk('ex')}>${X.card('<div style="font-size:12.5px;line-height:1.45">Сколько заплатит один гость:<br><b>20 мин — 105 ₽ · 1 ч — 300 ₽ · 1 ч 30 мин — 450 ₽ · 3 ч — 900 ₽</b></div>')}</div>
   </div>`, { bottom: btn('Сохранить', { icon: 'check', tap: 'save' }) });
 
+/** Админ → «Обслуживание»: процент за обслуживание в счёте зала. */
+X.serviceScreen = () => X.scr('Обслуживание', `<div class="gx-mu" style="font-size:12px;line-height:1.4;margin-bottom:4px">Процент добавляется строкой в счёт зала и пересчитывается сам. С собой и доставка — без него.</div>
+  ${switchRow('Начислять процент за обслуживание', '', { tap: 'on', mark: 'on' })}
+  <div class="gx-unfold"${mk('on')} style="--max:520px">
+    ${field('Процент', { type: 'pct', style: 'height:50px;margin:8px 0 10px' })}
+    ${X.chips(['5 %', '7 %', '10 %', '12 %', '15 %'], -1, 2, 'p10')}
+    <div class="gx-mu" style="font-size:12px;margin:2px 2px 6px">Начислять, когда за столом гостей</div>
+    ${X.chips(['всегда', 'от 2', 'от 4', 'от 6', 'от 8'], 0)}
+    <div class="gx-unfold"${mk('ex')}>${X.card('<div style="font-size:12.5px;line-height:1.45">В счёте: «Обслуживание 10 %»<br><b>Счёт 1 000 ₽ → +100 ₽ · 3 500 ₽ → +350 ₽</b></div>')}</div>
+  </div>`, { bottom: btn('Сохранить', { icon: 'check', tap: 'save' }) });
+const SVC_ORDER = [...ORDER3, { n: 'Обслуживание 10 %', p: 'от суммы счёта', q: 1, sum: '203 ₽', mark: 'svc' }];
+X.serviceOff = dialog('Обслуживание 10 %', '<p>Процент пересчитывается сам, когда меняется заказ. Если гость отказался от него, уберите строку — в этот счёт она больше не добавится.</p>',
+  `${btn('Закрыть', { kind: 'text' })}${btn('Гость отказался', { kind: 'sm', tap: 'off' })}`);
+
 /** Счёт стола в тайм-кафе: сколько уже набежало и кнопка «Время в счёт». */
 X.cafeTable = ({ items = [], total = '0 ₽', tap = {}, recount = false } = {}) => {
   // Неразрывный дефис: на узкой плитке «Тайм-кафе» не делится на две строки.
@@ -1820,6 +1834,17 @@ export const SCENES = {
       { screen: X.cafeTable({ items: [CAFE_ORDER[1]], total: '250 ₽', tap: { cafe: 'cafe' } }), enter: 'push', cap: 'На экране стола видно, сколько гость уже должен за время. Нажмите «Тайм-кафе», чтобы добавить время в счёт.', acts: [{ wait: 1000 }, { tap: 'cafe' }] },
       { screen: X.cafeTable({ items: [CAFE_ORDER[1]], total: '250 ₽' }), over: { kind: 'dialog', html: X.cafeDialog }, cap: 'Кнопками «−» и «+» укажите, сколько гостей платят за время. Сумму за гостя можно поправить. Затем нажмите «В счёт».', acts: [{ tap: 'plus', mark: 'g2' }, { wait: 700 }, { tap: 'ok' }] },
       { screen: X.cafeTable({ items: CAFE_ORDER, total: '1 090 ₽', tap: { close: 'close' }, recount: true }), enter: 'fade', cap: 'Время появилось в счёте отдельной строкой. Повторное нажатие «Тайм-кафе» пересчитает её, а при закрытии стола время пересчитается на момент оплаты.', acts: [{ wait: 1300 }, { tap: 'close' }] },
+    ],
+  },
+  'service-charge': {
+    label: 'Процент за обслуживание',
+    frames: [
+      { screen: adminHome({ tap: 'Обслуживание', tiles: [...ADMIN_TILES.slice(0, 4), ['percent', 'Обслуживание'], ...ADMIN_TILES.slice(4, 8)] }),
+        cap: 'Войдите по PIN администратора и откройте «Обслуживание».', acts: [{ wait: 400 }, { tap: 'tile' }] },
+      { screen: X.serviceScreen(), enter: 'push', cap: 'Включите процент и укажите его: например, 10 %. Можно начислять только большим компаниям — от 4, 6 или 8 гостей.', acts: [{ tap: 'on', mark: 'on' }, { wait: 400 }, { tap: 'p10' }, { type: 'pct', text: '10' }, { mark: 'ex' }, { wait: 900 }, { tap: 'save' }] },
+      { screen: X.checkWithPre({ items: SVC_ORDER, total: '2 233 ₽' }), enter: 'push', cap: 'В счёте зала появилась строка «Обслуживание 10 %». Она пересчитывается сама, когда добавляют блюда или дают скидку.', acts: [{ wait: 600 }, { mark: 'svc' }, { wait: 1400 }] },
+      { screen: X.checkWithPre({ items: SVC_ORDER, total: '2 233 ₽' }), over: { kind: 'dialog', html: X.serviceOff }, cap: 'Гость отказался — нажмите на строку и «Гость отказался». В этот счёт процент больше не добавится, вернуть можно кнопкой «Вернуть».', acts: [{ wait: 900 }, { tap: 'off' }] },
+      { screen: X.checkWithPre({ items: ORDER3, total: '2 030 ₽' }), enter: 'fade', cap: 'Строки нет, итог пересчитан. В фискальном чеке процент — услуга; скидки и бонусы на него не действуют.', acts: [{ wait: 1600 }] },
     ],
   },
   'venue-profile': {

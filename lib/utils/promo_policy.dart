@@ -38,7 +38,10 @@ class PromoPolicy {
       categoryKind == 'hookah' || menuTobacco(item, categoryName);
 
   /// Позицию нельзя удешевлять скидкой и бонусами.
-  static bool restricted(OrderItem item) => excludeTobacco && (item.noPromo || looksTobacco(item.name));
+  /// Процент за обслуживание (ServiceCharge.lineId) — никогда: это не
+  /// товар, а скидка на него меняла бы сам процент.
+  static bool restricted(OrderItem item) =>
+      item.menuItemId == 'zalpos_service' || excludeTobacco && (item.noPromo || looksTobacco(item.name));
 
   /// Сумма позиций, на которые можно дать скидку и начислить/списать бонусы.
   static double promoBase(Iterable<OrderItem> items) =>

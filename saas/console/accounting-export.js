@@ -35,7 +35,7 @@ export function checkTotal(s, excludeTobacco = true, tobaccoRe = BILL_TOBACCO_RE
   for (const i of Array.isArray(s.orderItems) ? s.orderItems : []) {
     const sum = num(i.price) * num(i.qty);
     total += sum;
-    if (!(excludeTobacco && (i.noPromo === true || tobaccoRe.test(String(i.name || ''))))) promoBase += sum;
+    if (!(i.menuItemId === 'zalpos_service' || (excludeTobacco && (i.noPromo === true || tobaccoRe.test(String(i.name || '')))))) promoBase += sum;
   }
   return r2(total - (promoBase * num(s.discountPercent)) / 100);
 }
@@ -149,7 +149,7 @@ export function build1cSheets(sessions, menu, { tz = 'Europe/Moscow', excludeTob
   const kindOf = (i) => {
     const m = (menu && i.menuItemId && menu[i.menuItemId]) || null;
     const subj = m ? String(m.fiscalSubject || '') : '';
-    return subj === 'service' || i.menuItemId === 'zalpos_delivery' ? 'Услуга' : 'Товар';
+    return subj === 'service' || i.menuItemId === 'zalpos_delivery' || i.menuItemId === 'zalpos_service' ? 'Услуга' : 'Товар';
   };
   for (const s of sessions) {
     const day = fmtDay(s.closedAt, tz);
@@ -166,7 +166,7 @@ export function build1cSheets(sessions, menu, { tz = 'Europe/Moscow', excludeTob
       const qty = num(i.qty);
       if (qty <= 0) continue;
       const name = String(i.name || '').trim() || 'Позиция';
-      const noDisc = excludeTobacco && (i.noPromo === true || tobaccoRe.test(name));
+      const noDisc = i.menuItemId === 'zalpos_service' || (excludeTobacco && (i.noPromo === true || tobaccoRe.test(name)));
       const sum = num(i.price) * qty * (noDisc ? 1 : 1 - disc / 100);
       const vat = vatOf(i);
       const kind = kindOf(i);

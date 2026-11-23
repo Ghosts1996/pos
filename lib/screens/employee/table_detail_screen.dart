@@ -26,6 +26,7 @@ import 'split_bill_screen.dart';
 import '../../utils/table_label.dart';
 import '../../services/venue_service.dart';
 import '../../utils/human_error.dart';
+import '../../utils/service_charge.dart';
 import '../../utils/money.dart';
 import '../../utils/kitchen_slips.dart';
 import '../../utils/time_cafe.dart';
@@ -372,10 +373,58 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
       if (fresh != null) session = fresh;
       if (!mounted) return;
     }
+    // Процент за обслуживание (SaaS) — по счёту на момент оплаты.
+    if (ServiceCharge.ready || session.orderItems.any(ServiceCharge.isLine)) {
+      session = await _withServiceLine(session);
+      if (!mounted) return;
+    }
     final done = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => PaymentScreen(session: session)),
     );
     if (done == true && mounted) Navigator.pop(context);
+  }
+
+  /// Пересчитать строку «Обслуживание» в чеке и вернуть свежий чек.
+  Future<SessionModel> _withServiceLine(SessionModel session) async {
+    try {
+      await _fs.syncServiceLine(session.id);
+      final fresh = await _fs.sessionStream(session.id).first.timeout(const Duration(seconds: 6));
+      if (fresh != null) return fresh;
+    } catch (_) {
+      // Без связи строка пересчитана по копии в памяти — показываем, что есть.
+    }
+    return session;
+  }
+
+  /// Нажатие на строку «Обслуживание»: гость отказался — строка уходит из
+  /// счёта и больше не появляется (ст. 16 ЗоЗПП: навязывать нельзя).
+  Future<void> _serviceLineTap(SessionModel session) async {
+    final off = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('${ServiceCharge.title} ${ServiceCharge.percentLabel(ServiceCharge.percent)}'),
+        content: const Text('Процент пересчитывается сам, когда меняется заказ. '
+            'Если гость отказался от него, уберите строку — в этот счёт она больше не добавится.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Закрыть')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Гость отказался')),
+        ],
+      ),
+    );
+    if (off != true) return;
+    try {
+      await _fs.setServiceOff(session.id, true);
+    } catch (e) {
+      _showError('Не удалось убрать: ${humanError(e, lower: true)}');
+    }
+  }
+
+  Future<void> _serviceBack(SessionModel session) async {
+    try {
+      await _fs.setServiceOff(session.id, false);
+    } catch (e) {
+      _showError('Не удалось вернуть: ${humanError(e, lower: true)}');
+    }
   }
 
   Future<void> _applyCard(String sessionId) async {
@@ -710,6 +759,10 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     if (session.orderItems.isEmpty) {
       _showError('В счёте пока ничего нет');
       return;
+    }
+    if (ServiceCharge.ready || session.orderItems.any(ServiceCharge.isLine)) {
+      session = await _withServiceLine(session);
+      if (!mounted) return;
     }
     try {
       await printer.printPrecheck(PrecheckData(
@@ -1120,8 +1173,12 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
     final rows = <Widget>[];
     for (var k = 0; k < session.orderItems.length; k++) {
       final i = session.orderItems[k];
+      // Процент за обслуживание (SaaS): без «+/−», нажатие — «Гость отказался».
+      final svc = ServiceCharge.isLine(i);
       if (k > 0) rows.add(Divider(height: 1, color: AppColors.border));
-      rows.add(Padding(
+      rows.add(InkWell(
+        onTap: svc ? () => _serviceLineTap(session) : null,
+        child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Row(
           children: [
@@ -1141,10 +1198,16 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                   const SizedBox(height: 2),
                   Row(
                     children: [
-                      Text('${_money(i.price)} × ${i.qty}',
-                          style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
-                      const SizedBox(width: 8),
-                      Flexible(child: _kitchenState(i, kds: kds)),
+                      Flexible(
+                        child: Text(svc ? 'от суммы счёта · нажмите, если гость отказался' : '${_money(i.price)} × ${i.qty}',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                      ),
+                      if (!svc) ...[
+                        const SizedBox(width: 8),
+                        Flexible(child: _kitchenState(i, kds: kds)),
+                      ],
                     ],
                   ),
                   // Готово на раздаче — официант забрал и отдал гостю.
@@ -1164,7 +1227,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                         label: Text(i.toServe > 1 ? 'Подано ×${i.toServe}' : 'Подано'),
                       ),
                     ),
-                  if (i.menuItemId.isNotEmpty)
+                  if (i.menuItemId.isNotEmpty && !svc)
                     Wrap(
                       spacing: 14,
                       crossAxisAlignment: WrapCrossAlignment.center,
@@ -1177,7 +1240,7 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                 ],
               ),
             ),
-            if (i.menuItemId.isNotEmpty)
+            if (i.menuItemId.isNotEmpty && !svc)
               _QtyStepper(
                 qty: i.qty,
                 onMinus: () => _changeQty(session, i, -1),
@@ -1189,6 +1252,23 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                   textAlign: TextAlign.right,
                   style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
             ),
+          ],
+        ),
+      ),
+      ));
+    }
+    // Гость отказался от процента за обслуживание — можно вернуть.
+    if (kSaasMode && session.serviceOff && ServiceCharge.ready && session.orderType.isEmpty) {
+      if (rows.isNotEmpty) rows.add(Divider(height: 1, color: AppColors.border));
+      rows.add(Padding(
+        padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text('${ServiceCharge.title} ${ServiceCharge.percentLabel(ServiceCharge.percent)} — гость отказался',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+            ),
+            TextButton(onPressed: () => _serviceBack(session), child: const Text('Вернуть')),
           ],
         ),
       ));

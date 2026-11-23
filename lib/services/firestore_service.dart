@@ -7,6 +7,7 @@ import 'people_directory.dart';
 import 'signals/signal_hub.dart';
 import '../utils/weighed.dart';
 import '../utils/time_cafe.dart';
+import '../utils/service_charge.dart';
 import '../utils/parse.dart';
 import '../utils/pin_hash.dart';
 import '../utils/shared_stream.dart';
@@ -871,8 +872,17 @@ class FirestoreService {
   /// гостя.
   Future<void> setGuests(SessionModel s, int guests) async {
     final n = guests.clamp(1, 99);
-    unawaited(AppScope.col('sessions').doc(s.id).update({'guests': n}).catchError((Object _) {}));
-    if (!TimeCafe.hasLine(s)) return;
+    final saved = AppScope.col('sessions').doc(s.id).update({'guests': n}).catchError((Object _) {});
+    // Процент за обслуживание «от N гостей»: пересчёт — после записи числа гостей.
+    if (ServiceCharge.ready && ServiceCharge.minGuests > 0 && NetStatus.online.value) {
+      await saved.timeout(const Duration(seconds: 8), onTimeout: () {});
+    } else {
+      unawaited(saved);
+    }
+    if (!TimeCafe.hasLine(s)) {
+      if (ServiceCharge.ready) await syncServiceLine(s.id);
+      return;
+    }
     await _editCheckItems(s.id, (items) {
       final i = items.indexWhere((x) => x.menuItemId == TimeCafe.lineId);
       if (i < 0 || items[i].qty == n) return false;
@@ -1039,7 +1049,9 @@ class FirestoreService {
           final data = (await tx.get(ref)).data();
           if (data == null) return;
           final items = _openCheckItems(data);
-          if (edit(items)) tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
+          // Процент за обслуживание (SaaS) пересчитывается вместе со счётом.
+          final changed = edit(items) | ServiceCharge.syncItems(items, data);
+          if (changed) tx.update(ref, {'orderItems': items.map((e) => e.toMap()).toList()});
         });
         return;
       } on FirebaseException catch (e) {
@@ -1051,7 +1063,7 @@ class FirestoreService {
     final data = snap.data();
     if (data == null) throw StateError('Чека нет в памяти устройства — дождитесь связи');
     final items = _openCheckItems(data);
-    if (!edit(items)) return;
+    if (!(edit(items) | ServiceCharge.syncItems(items, data))) return;
     // Без await: без сети подтверждение сервера придёт только после её
     // возвращения, а локальная копия обновляется сразу.
     unawaited(ref.update({'orderItems': items.map((e) => e.toMap()).toList()}).catchError((Object _) {}));
@@ -1069,11 +1081,32 @@ class FirestoreService {
         .toList();
   }
 
-  Future<void> applyDiscountCard(String sessionId, DiscountCard? card) {
-    return _write(AppScope.col('sessions').doc(sessionId).update({
+  Future<void> applyDiscountCard(String sessionId, DiscountCard? card) async {
+    await _write(AppScope.col('sessions').doc(sessionId).update({
       'discountCardId': card?.id,
       'discountPercent': card?.discountPercent ?? 0,
     }));
+    // Процент за обслуживание считается со счёта со скидкой.
+    if (ServiceCharge.ready) unawaited(syncServiceLine(sessionId).catchError((Object _) {}));
+  }
+
+  /// Привести строку «Обслуживание N %» в чеке в порядок (SaaS): перед
+  /// предчеком и оплатой, после смены скидки или числа гостей.
+  Future<void> syncServiceLine(String sessionId) async {
+    if (!kSaasMode) return;
+    await _editCheckItems(sessionId, (_) => false);
+  }
+
+  /// Гость отказался от процента за обслуживание (или кассир вернул его):
+  /// отметка в чеке и сразу пересчёт строки.
+  Future<void> setServiceOff(String sessionId, bool off) async {
+    final ref = AppScope.col('sessions').doc(sessionId);
+    if (NetStatus.online.value) {
+      await ref.update({'serviceOff': off});
+    } else {
+      unawaited(ref.update({'serviceOff': off}).catchError((Object _) {}));
+    }
+    await syncServiceLine(sessionId);
   }
 
   /// Экран оплаты гостя: закрывает чек с разбивкой суммы по способам оплаты,

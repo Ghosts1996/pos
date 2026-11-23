@@ -11094,7 +11094,7 @@ function sessionBill(session, excludeTobacco = true) {
   for (const i of items) {
     const sum = (Number(i.price) || 0) * (Number(i.qty) || 0);
     total += sum;
-    const restricted = excludeTobacco && (i.noPromo === true || BILL_TOBACCO_RE.test(String(i.name || '')));
+    const restricted = i.menuItemId === 'zalpos_service' || (excludeTobacco && (i.noPromo === true || BILL_TOBACCO_RE.test(String(i.name || ''))));
     if (!restricted) promoBase += sum;
   }
   const discount = Number(session.discountPercent) || 0;

@@ -17,6 +17,8 @@ export function menuAbc(sessions, menuItems = []) {
       if (qty <= 0) continue;
       const name = String(it.name || '').trim() || 'Без названия';
       const id = String(it.menuItemId || '');
+      // Процент за обслуживание — не блюдо меню.
+      if (id === 'zalpos_service') continue;
       const key = id || name;
       const row = byItem.get(key) || { key, name, menuItemId: id, qty: 0, revenue: 0 };
       row.qty += qty;

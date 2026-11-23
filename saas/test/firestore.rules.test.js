@@ -508,6 +508,19 @@ describe("Ролевая модель внутри одного заведени
     await assertFails(getDoc(doc(ownerBDb, "tenants/tenantA/settings/timeCafe")));
   });
 
+  it("процент за обслуживание (settings/serviceCharge) читает гость своего заведения, пишет только сотрудник", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(ctx.firestore().doc("tenants/tenantA/settings/serviceCharge"), { enabled: true, percent: 10 });
+    });
+    const empDb = ctxFor("empA");
+    await assertSucceeds(setDoc(doc(empDb, "tenants/tenantA/settings/serviceCharge"), { enabled: true, percent: 12 }));
+    const guestDb = ctxFor("guestA");
+    await assertSucceeds(getDoc(doc(guestDb, "tenants/tenantA/settings/serviceCharge")));
+    await assertFails(setDoc(doc(guestDb, "tenants/tenantA/settings/serviceCharge"), { percent: 0 }));
+    const ownerBDb = ctxFor("ownerB");
+    await assertFails(getDoc(doc(ownerBDb, "tenants/tenantA/settings/serviceCharge")));
+  });
+
   it("остальные settings/* (например settings/integrations) пишет любой сотрудник, но не гость и не чужое заведение", async () => {
     // Регрессия: lib/screens/admin/integrations_settings_screen.dart тоже
     // открывается с кассы и падал бы по той же причине, что и employees/

@@ -817,6 +817,7 @@ async function boot() {
     // Уровни лояльности не ждём: до их прихода действуют пороги по умолчанию.
     applyLoyaltyTiers();
     loadTimeCafe();
+    loadServiceCharge();
     watchProfile();
     watchVenue();
     $('tabbar').hidden = false;
@@ -990,6 +991,33 @@ async function applyLoyaltyTiers() {
   } catch (_) {
     // Нет сети/прав/документа — работаем с дефолтными порогами.
   }
+}
+
+// ---------- ОБСЛУЖИВАНИЕ ----------
+// Процент за обслуживание (settings/serviceCharge, lib/utils/service_charge.dart):
+// касса сама ставит строку в счёт зала; гость узнаёт о проценте заранее —
+// в меню (ст. 16 ЗоЗПП). С собой и доставка — без него.
+let SERVICE_CHARGE = null;
+async function loadServiceCharge() {
+  try {
+    const snap = await getDoc(doc(state.root, 'settings', 'serviceCharge'));
+    const m = snap.exists() ? snap.data() : {};
+    const pct = Number(String(m.percent ?? '').replace(',', '.'));
+    const title = String(m.title || '').replace(/\s+/g, ' ').trim().slice(0, 30) || 'Обслуживание';
+    SERVICE_CHARGE = m.enabled === true && pct > 0 && pct <= 30
+      ? { pct: Math.round(pct * 10) / 10, title, minGuests: Math.max(0, Math.round(Number(m.minGuests) || 0)) } : null;
+  } catch (_) {
+    SERVICE_CHARGE = null; // нет прав или сети — заметку не показываем
+  }
+  const el = document.getElementById('svcNote');
+  if (el) el.innerHTML = serviceNoteHtml();
+}
+function serviceNoteHtml() {
+  const s = SERVICE_CHARGE;
+  if (!s) return '';
+  const pct = String(s.pct).replace('.', ',');
+  const who = s.minGuests > 1 ? `, если за столом от ${s.minGuests} гостей` : '';
+  return `<p class="small muted" style="margin:-4px 0 12px">В зале к счёту добавляется «${esc(s.title)}» ${pct} %${who}. С собой и доставка — без него.</p>`;
 }
 
 // ---------- ТАЙМ-КАФЕ ----------
@@ -1490,7 +1518,7 @@ async function showConsentText(kind = 'pd') {
 const TOBACCO_RE = /кальян|табак|никотин|hookah|shisha|снюс|вейп|сигар/i;
 
 function screenMenu() {
-  screenEl().innerHTML = `<h1>Меню</h1><div id="menu"><div class="spinner"></div></div>`;
+  screenEl().innerHTML = `<h1>Меню</h1><div id="svcNote">${serviceNoteHtml()}</div><div id="menu"><div class="spinner"></div></div>`;
 
   let cats = [];
   let items = [];

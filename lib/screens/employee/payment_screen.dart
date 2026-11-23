@@ -10,6 +10,7 @@ import '../../services/fiscal_queue.dart';
 import '../../services/firestore_service.dart';
 import '../../models/terminal_bank.dart';
 import '../../services/payment_terminal_service.dart';
+import '../../utils/service_charge.dart';
 import '../../utils/weighed.dart';
 import '../../utils/sale_kind.dart';
 import '../../services/printer_service.dart';
@@ -875,6 +876,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       // Строка «Доставка» — всегда основному.
       String entityOf(OrderItem line) => kassa2Active &&
               line.menuItemId != kDeliveryFeeItemId &&
+              !ServiceCharge.isLine(line) &&
               kassa2Kinds.contains(line.effectiveKind)
           ? '2'
           : '';
@@ -885,7 +887,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
       }
 
       // Строка «Доставка» (SaaS, добавляет сервер) — услуга, в меню её нет.
-      FiscalPaymentObject subjectOf(OrderItem line) => kSaasMode && line.menuItemId == kDeliveryFeeItemId
+      // Процент за обслуживание (ServiceCharge) — тоже услуга.
+      FiscalPaymentObject subjectOf(OrderItem line) =>
+          kSaasMode && (line.menuItemId == kDeliveryFeeItemId || ServiceCharge.isLine(line))
           ? FiscalPaymentObject.service
           : FiscalPaymentObjectX.fromId(menu[line.menuItemId]?.fiscalSubject);
 

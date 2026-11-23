@@ -495,6 +495,10 @@ class SessionModel {
   final bool closedWithoutPayment; // стол закрыт без фактической оплаты
   /// Учебный чек стажёра (SaaS): без ОФД, склада и бонусов, вне выручки и отчётов.
   final bool training;
+
+  /// Гость отказался от процента за обслуживание (SaaS, ServiceCharge):
+  /// строку «Обслуживание» в этот чек касса больше не добавляет.
+  final bool serviceOff;
   final bool receiptPrinted;
   final bool fiscalReceiptPrinted;
 
@@ -573,6 +577,7 @@ class SessionModel {
     String guestContact = '',
     this.closedWithoutPayment = false,
     this.training = false,
+    this.serviceOff = false,
     this.receiptPrinted = false,
     this.fiscalReceiptPrinted = false,
     this.tipsCash = 0,
@@ -642,6 +647,7 @@ class SessionModel {
       guestContact: asText(data['guestContact']),
       closedWithoutPayment: data['closedWithoutPayment'] ?? false,
       training: data['training'] == true,
+      serviceOff: data['serviceOff'] == true,
       receiptPrinted: data['receiptPrinted'] ?? false,
       fiscalReceiptPrinted: data['fiscalReceiptPrinted'] ?? false,
       tipsCash: (data['tipsCash'] ?? 0).toDouble(),

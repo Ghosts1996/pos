@@ -5,6 +5,7 @@ import '../models/session_model.dart';
 import '../models/shift_model.dart';
 import 'money.dart';
 import 'sale_kind.dart';
+import 'service_charge.dart';
 
 /// Z-отчёт — итог кассовой смены при её закрытии. В отличие от X-отчёта
 /// он один на смену, получает порядковый номер и больше не меняется:
@@ -251,7 +252,12 @@ class ZReport {
       final k = s.orderTotal <= 0 ? 0.0 : sum / s.orderTotal;
       for (final i in s.orderItems) {
         // Плата за доставку (SaaS) — отдельной строкой, не «Кухня».
-        final kind = kSaasMode && i.menuItemId == kDeliveryFeeItemId ? 'Доставка' : SaleKind.label(i.effectiveKind);
+        // Процент за обслуживание — тоже своей строкой.
+        final kind = kSaasMode && i.menuItemId == kDeliveryFeeItemId
+            ? 'Доставка'
+            : kSaasMode && i.menuItemId == ServiceCharge.lineId
+                ? 'Обслуживание'
+                : SaleKind.label(i.effectiveKind);
         kinds[kind] = (kinds[kind] ?? 0) + i.total * k;
         final key = '${i.menuItemId.isNotEmpty ? i.menuItemId : i.name}_${i.price}';
         final it = items[key] ?? ZItemLine(name: i.name, price: i.price);
