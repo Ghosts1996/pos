@@ -8,6 +8,7 @@ import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../utils/adaptive.dart';
 import '../utils/kitchen_slips.dart';
+import 'printers/raster_text.dart';
 import 'signals/signal_settings.dart';
 import '../models/aggregator.dart';
 import '../build_info.dart';
@@ -360,35 +361,118 @@ Future<List<int>> buildReceiptBytes(ReceiptData data, {PaperSize? paper}) async 
 /// переносит строки по ширине, текст не обрезается.
 PaperSize printPaper = PaperSize.mm58;
 
-/// Кодировка русского текста (settings/integrations.printerEncoding):
-/// cp866 — по умолчанию (ESC t 17, большинство Xprinter, Gprinter, Rongta,
-/// Epson); cp1251 — Windows-1251 (ESC t 46, Epson и совместимые);
-/// cp1251x — Windows-1251 у Xprinter и клонов (ESC t 73); utf8 — принтеры,
-/// переключённые в UTF-8 своей утилитой (кодовую страницу не шлём).
-String printEncoding = 'cp866';
+/// Кодировка русского текста (settings/integrations.printerEncoding).
+/// Номер таблицы (ESC t n) у принтеров разный: у Epson CP866 — 17, а у
+/// китайских Xprinter XP-58 / POS-58 под 17 стоит греческая таблица, CP866 —
+/// под 7, Windows-1251 — под 6. Поэтому вариантов несколько, а кнопка
+/// «Подобрать кодировку» печатает их все сразу (см. [buildEncodingTestBytes]):
+/// какой номер строки читается — тот и выбирают.
+class PrintEncodingOption {
+  final String id;
+  final String label;
 
-const printEncodings = {
-  'cp866': 'CP866 (по умолчанию)',
-  'cp1251': 'Windows-1251 (Epson и совместимые)',
-  'cp1251x': 'Windows-1251 (Xprinter и клоны)',
-  'utf8': 'UTF-8',
+  /// Номер кодовой таблицы для ESC t; null — не переключаем (UTF-8).
+  final int? table;
+
+  /// 'cp866', 'cp1251' или 'utf8'.
+  final String charset;
+
+  /// Перед ESC t выключить режим иероглифов (FS .) — китайские прошивки
+  /// иначе читают русские буквы парами байтов.
+  final bool kanjiOff;
+  const PrintEncodingOption(this.id, this.label, this.table, this.charset, {this.kanjiOff = false});
+
+  bool get isImage => charset == 'image';
+
+  List<int> encode(String text) => switch (charset) {
+        'cp1251' => Cp1251Codec.encodeString(text),
+        'utf8' => utf8.encode(text),
+        _ => Cp866Codec.encodeString(text),
+      };
+
+  /// Команды в начале документа.
+  List<int> get prefix => [if (kanjiOff) ...const [0x1C, 0x2E], if (table != null) ...[0x1B, 0x74, table!]];
+}
+
+/// Порядок — номера строк на полоске «Подобрать кодировку».
+const printEncodingOptions = [
+  // Касса рисует буквы сама и шлёт картинку — таблицы принтера не нужны.
+  PrintEncodingOption('image', 'Картинкой — на любом принтере (рекомендуем)', null, 'image'),
+  PrintEncodingOption('cp866', 'CP866, таблица 17 (Epson, Rongta, Gprinter)', 17, 'cp866'),
+  PrintEncodingOption('cp866c', 'CP866, таблица 7 (Xprinter XP-58, POS-58 и похожие)', 7, 'cp866', kanjiOff: true),
+  PrintEncodingOption('cp1251c', 'Windows-1251, таблица 6 (Xprinter, POS-58)', 6, 'cp1251', kanjiOff: true),
+  PrintEncodingOption('cp1251', 'Windows-1251, таблица 46 (Epson и совместимые)', 46, 'cp1251'),
+  PrintEncodingOption('cp1251x', 'Windows-1251, таблица 73', 73, 'cp1251'),
+  PrintEncodingOption('cp866k', 'CP866, таблица 17 без иероглифов (китайские прошивки)', 17, 'cp866', kanjiOff: true),
+  PrintEncodingOption('utf8', 'UTF-8 (принтер переключён в UTF-8 своей утилитой)', null, 'utf8'),
+];
+
+/// По умолчанию в ZalPOS — картинкой: русский текст на любом принтере.
+/// В hookah-pos — как было, CP866.
+final String defaultPrintEncoding = kSaasMode ? 'image' : 'cp866';
+String printEncoding = defaultPrintEncoding;
+
+/// id → подпись с номером строки полоски: «2 — CP866, таблица 7 (…)».
+final Map<String, String> printEncodings = {
+  for (var i = 0; i < printEncodingOptions.length; i++)
+    printEncodingOptions[i].id: '${i + 1} — ${printEncodingOptions[i].label}',
 };
+
+PrintEncodingOption printEncodingOf(String id) =>
+    printEncodingOptions.firstWhere((e) => e.id == id, orElse: () => printEncodingOf(defaultPrintEncoding));
 
 /// Генератор ESC/POS с выбранными шириной ленты и кодировкой и команда
 /// выбора кодовой страницы, с которой начинается каждый документ.
 (Generator, List<int>) escPosGenerator(CapabilityProfile profile, {PaperSize? paper, String? encoding}) {
   final p = paper ?? printPaper;
-  switch (encoding ?? printEncoding) {
-    case 'cp1251':
-      return (Generator(p, profile, codec: const Cp1251Codec()), const [0x1B, 0x74, 46]);
-    case 'cp1251x':
-      return (Generator(p, profile, codec: const Cp1251Codec()), const [0x1B, 0x74, 73]);
-    case 'utf8':
-      return (Generator(p, profile, codec: utf8), const <int>[]);
-    default:
-      final g = Generator(p, profile, codec: const Cp866Codec());
-      return (g, g.setGlobalCodeTable('CP866'));
+  final e = printEncodingOf(encoding ?? printEncoding);
+  if (e.isImage) return (RasterGenerator(p, profile), const <int>[]);
+  if (e.id == 'cp866') {
+    // Как было всегда: таблица CP866 профиля (ESC t 17) и в начале, и у строк.
+    final g = Generator(p, profile, codec: const Cp866Codec());
+    return (g, g.setGlobalCodeTable('CP866'));
   }
+  final Encoding codec = switch (e.charset) {
+    'cp1251' => const Cp1251Codec(),
+    'utf8' => utf8,
+    _ => const Cp866Codec(),
+  };
+  return (Generator(p, profile, codec: codec), e.prefix);
+}
+
+/// Полоска «Подобрать кодировку»: одна и та же русская фраза всеми
+/// вариантами по очереди, перед каждой — номер (латиницей и цифрами, их
+/// любая таблица печатает одинаково). Какая строка читается — тот номер и
+/// выбирают в списке «Кодировка русского текста».
+Future<List<int>> buildEncodingTestBytes({PaperSize? paper}) async {
+  final profile = await CapabilityProfile.load();
+  final g = Generator(paper ?? printPaper, profile, codec: const Cp866Codec());
+  final out = <int>[0x1B, 0x40, 0x1C, 0x2E, 0x1B, 0x74, 0x00];
+  void ascii(String t) => out
+    ..addAll(t.codeUnits)
+    ..add(0x0A);
+  ascii('ZalPOS: podbor kodirovki');
+  ascii('Najdite stroku s normalnym');
+  ascii('russkim tekstom i vyberite');
+  ascii('ee nomer v kasse.');
+  ascii('--------------------------------');
+  for (var i = 0; i < printEncodingOptions.length; i++) {
+    final e = printEncodingOptions[i];
+    if (e.isImage) {
+      out.addAll(RasterGenerator(paper ?? printPaper, profile).text('${i + 1}) Привет! Ёж, щука, чек'));
+      continue;
+    }
+    out.addAll(e.prefix);
+    out.addAll('${i + 1}) '.codeUnits);
+    out.addAll(e.encode('Привет! Ёж, щука, чек'));
+    out.add(0x0A);
+    // Следующий номер — снова в обычной таблице.
+    out.addAll(const [0x1B, 0x74, 0x00]);
+  }
+  ascii('--------------------------------');
+  out.addAll(g.feed(2));
+  out.addAll(g.cut());
+  return out;
 }
 
 /// Открывать денежный ящик при оплате наличными (settings/integrations.
@@ -735,7 +819,7 @@ void _applyPrintFlags(Map<String, dynamic> data) {
     // сборке всё как раньше (58 мм, CP866).
     printPaper = '${data['printerPaper'] ?? ''}' == '80' ? PaperSize.mm80 : PaperSize.mm58;
     final enc = '${data['printerEncoding'] ?? ''}';
-    printEncoding = printEncodings.containsKey(enc) ? enc : 'cp866';
+    printEncoding = printEncodings.containsKey(enc) ? enc : defaultPrintEncoding;
     drawerOnCash = data['printerDrawerOnCash'] as bool? ?? false;
     printHubOn = data['printHub'] as bool? ?? false;
   }

@@ -117,6 +117,8 @@ void main() {
 
     test('печать: цех и стол крупно, позиции, пожелание, русские буквы', () async {
       TestWidgetsFlutterBinding.ensureInitialized();
+      // Печать текстом в CP866 (в ZalPOS по умолчанию — картинкой, см. printer_extras_test).
+      printEncoding = 'cp866';
       final slips = kitchenSlipsFor(
         _check([
           _line('soup', SaleKind.kitchen, 2, note: 'без лука'),
@@ -143,6 +145,8 @@ void main() {
 
     test('предчек: заголовок, позиции, скидка, итог и пометка «не кассовый чек»', () async {
       TestWidgetsFlutterBinding.ensureInitialized();
+      // Печать текстом в CP866 (в ZalPOS по умолчанию — картинкой, см. printer_extras_test).
+      printEncoding = 'cp866';
       final bytes = await buildPrecheckBytes(PrecheckData(
         venueName: 'Кафе Лето',
         tableName: 'Стол 5',

@@ -68,6 +68,7 @@ void main() {
     expect(find.text('Облачная печать'), findsOneWidget);
     expect(find.text('Принтер этого устройства'), findsOneWidget, reason: 'тесты идут как Android: есть USB через RawBT');
     expect(find.text('USB-принтер (OTG)'), findsOneWidget);
+    expect(find.text('Подобрать кодировку'), findsOneWidget);
 
     await tester.ensureVisible(find.text('80 мм'));
     await tester.tap(find.text('80 мм'));
@@ -89,7 +90,8 @@ void main() {
     }
     final data = (await tester.runAsync(() => AppScope.col('settings').doc('integrations').get(const GetOptions(source: Source.server))))!.data()!;
     expect(data['printerPaper'], '80');
-    expect(data['printerEncoding'], 'cp866');
+    // По умолчанию в ZalPOS — картинкой: русский текст на любом принтере.
+    expect(data['printerEncoding'], 'image');
     expect(data['printerDrawerOnCash'], isTrue);
     expect(data['printHub'], isTrue);
     expect(drawerOnCash, isTrue);

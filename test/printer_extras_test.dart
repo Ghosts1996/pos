@@ -4,7 +4,10 @@ import 'dart:io';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hookah_pos/build_info.dart';
 import 'package:hookah_pos/services/printer_service.dart';
+import 'package:hookah_pos/services/printers/raster_font.dart';
+import 'package:hookah_pos/services/printers/raster_text.dart';
 import 'package:hookah_pos/services/printers/device_printers.dart';
 import 'package:hookah_pos/services/printers/lan_scan.dart';
 
@@ -43,7 +46,8 @@ void main() {
     expect(escPosGenerator(profile, encoding: 'cp1251').$2, [0x1B, 0x74, 46]);
     expect(escPosGenerator(profile, encoding: 'cp1251x').$2, [0x1B, 0x74, 73]);
     expect(escPosGenerator(profile, encoding: 'utf8').$2, isEmpty);
-    // По умолчанию — как было всегда: CP866.
+    // CP866 — как было всегда.
+    printEncoding = 'cp866';
     final bytes = await buildPrecheckBytes(PrecheckData(
       venueName: 'Тест',
       tableName: 'Стол 1',
@@ -64,6 +68,104 @@ void main() {
     ));
     expect(w.take(3).toList(), [0x1B, 0x74, 46]);
     expect(_contains(w, const Cp1251Codec().encode('Чай')), isTrue);
+  });
+
+  test('китайские принтеры: CP866 — таблица 7, Windows-1251 — таблица 6, без режима иероглифов', () async {
+    final profile = await CapabilityProfile.load();
+    expect(escPosGenerator(profile, encoding: 'cp866c').$2, [0x1C, 0x2E, 0x1B, 0x74, 7]);
+    expect(escPosGenerator(profile, encoding: 'cp1251c').$2, [0x1C, 0x2E, 0x1B, 0x74, 6]);
+    expect(escPosGenerator(profile, encoding: 'cp866k').$2, [0x1C, 0x2E, 0x1B, 0x74, 17]);
+    // Незнакомое значение — как по умолчанию (ZalPOS — картинкой, hookah-pos — CP866).
+    final unknown = escPosGenerator(profile, encoding: 'нет такой');
+    expect(unknown.$1 is RasterGenerator, kSaasMode);
+    if (!kSaasMode) expect(unknown.$2, [0x1B, 0x74, 17]);
+    printEncoding = 'cp866c';
+    try {
+      final b = await buildReceiptBytes(ReceiptData(
+        venueName: 'Тестовая печать',
+        tableName: '—',
+        employeeName: '—',
+        closedAt: DateTime(2026, 11, 23, 17),
+        items: const [ReceiptLine('Тестовая строка', right: '0')],
+        total: 0,
+        paymentMethod: '—',
+        footerNote: 'Проверка',
+      ));
+      expect(b.take(5).toList(), [0x1C, 0x2E, 0x1B, 0x74, 7]);
+      // Дальше в документе таблица не переключается обратно на 17.
+      for (var i = 5; i + 2 < b.length; i++) {
+        expect(b[i] == 0x1B && b[i + 1] == 0x74, isFalse, reason: 'лишняя ESC t на позиции $i');
+      }
+      expect(_contains(b, const Cp866Codec().encode('Тестовая печать')), isTrue);
+    } finally {
+      printEncoding = 'cp866';
+    }
+  });
+
+  test('полоска «Подобрать кодировку»: все варианты под номерами, номера совпадают со списком', () async {
+    final b = await buildEncodingTestBytes();
+    expect(b.take(2).toList(), [0x1B, 0x40]);
+    for (var i = 0; i < printEncodingOptions.length; i++) {
+      final e = printEncodingOptions[i];
+      if (!e.isImage) {
+        expect(_contains(b, [...e.prefix, ...'${i + 1}) '.codeUnits, ...e.encode('Привет! Ёж, щука, чек')]), isTrue, reason: e.id);
+      }
+      expect(printEncodings[e.id], startsWith('${i + 1} — '));
+    }
+    expect(printEncodingOptions.map((e) => e.id).toSet().length, printEncodingOptions.length);
+  });
+
+  test('картинкой: никаких кодовых таблиц, только растр GS v 0; русские буквы из своего шрифта', () async {
+    final profile = await CapabilityProfile.load();
+    final (g, prefix) = escPosGenerator(profile, encoding: 'image');
+    expect(prefix, isEmpty);
+    expect(g, isA<RasterGenerator>());
+    final r = g as RasterGenerator;
+    // Каждая буква — в шрифте (ни одной «?»): кириллица, Ё, №, ₽, кавычки.
+    const sample = 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя №1 ₽ «» — 0123456789';
+    for (final ch in sample.runes) {
+      expect(kRasterChars.runes.contains(ch) || ch == 0x20, isTrue, reason: String.fromCharCode(ch));
+    }
+    final t = r.text('Тестовая печать');
+    // GS v 0, 48 байт в строке (384 точки), 24 строки.
+    expect(t.take(8).toList(), [0x1D, 0x76, 0x30, 0x00, 48, 0, 24, 0]);
+    expect(t.length, 8 + 48 * 24);
+    // Ни ESC t, ни сырых байтов текста — только картинка.
+    for (var i = 0; i + 1 < t.length; i++) {
+      if (t[i] == 0x1B && t[i + 1] == 0x74) fail('ESC t в печати картинкой');
+    }
+    // Крупный шрифт — вдвое выше, длинный текст переносится.
+    final big = r.text('Счёт', styles: const PosStyles(height: PosTextSize.size2, width: PosTextSize.size2));
+    expect(big.sublist(6, 8), [48, 0]);
+    expect(RasterGenerator.wrap('Очень длинное название блюда которое не помещается', 16).every((l) => l.runes.length <= 16), isTrue);
+    // Строка из колонок: высота — по самой длинной колонке.
+    final row = r.row([PosColumn(text: 'Борщ украинский с пампушками', width: 8), PosColumn(text: '450 ₽', width: 4, styles: const PosStyles(align: PosAlign.right))]);
+    expect(row.length % (8 + 48 * 24), 0);
+    expect(row.length ~/ (8 + 48 * 24), 2);
+    // 80 мм — 72 байта в строке.
+    final w80 = RasterGenerator(PaperSize.mm80, profile).text('Чек');
+    expect(w80.sublist(4, 6), [72, 0]);
+  });
+
+  test('чек картинкой собирается целиком: шапка, позиции, итог, отрезка', () async {
+    printEncoding = 'image';
+    try {
+      final b = await buildReceiptBytes(ReceiptData(
+        venueName: 'Кафе «Лето»',
+        tableName: 'Стол 2',
+        employeeName: 'Алина',
+        closedAt: DateTime(2026, 11, 23, 17),
+        items: const [ReceiptLine('Хинкали с бараниной ×5', right: '650 ₽'), ReceiptLine('Чай чёрный', right: '200 ₽')],
+        total: 850,
+        paymentMethod: 'Наличные',
+        footerNote: 'Спасибо, ждём вас снова!',
+      ));
+      expect(b.take(3).toList(), [0x1D, 0x76, 0x30]);
+      expect(_contains(b, const Cp866Codec().encode('Стол')), isFalse, reason: 'текст не уходит байтами');
+      expect(_contains(b, [0x1D, 0x56]), isTrue, reason: 'отрезка');
+    } finally {
+      printEncoding = 'cp866';
+    }
   });
 
   test('80 мм — строка шире, чем на 58 мм', () async {

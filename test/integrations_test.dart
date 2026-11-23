@@ -20,6 +20,8 @@ void main() {
 
     test('сетевой принтер получает чек с кодовой страницей CP866 и русским текстом', () async {
       TestWidgetsFlutterBinding.ensureInitialized();
+      // Печать текстом в CP866 (в ZalPOS по умолчанию — картинкой, см. printer_extras_test).
+      printEncoding = 'cp866';
       final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
       final received = <int>[];
       final done = Completer<void>();

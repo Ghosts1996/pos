@@ -56,7 +56,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   final _networkIpCtrl = TextEditingController();
   // Только SaaS: лента, кодировка, ящик, облачная печать, принтер устройства.
   String _paper = '58';
-  String _encoding = 'cp866';
+  String _encoding = defaultPrintEncoding;
   bool _drawerOnCash = false;
   bool _printHub = false;
   String _devType = '';
@@ -167,7 +167,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     if (kSaasMode) {
       _paper = '${data['printerPaper'] ?? ''}' == '80' ? '80' : '58';
       final enc = '${data['printerEncoding'] ?? ''}';
-      _encoding = printEncodings.containsKey(enc) ? enc : 'cp866';
+      _encoding = printEncodings.containsKey(enc) ? enc : defaultPrintEncoding;
       _drawerOnCash = data['printerDrawerOnCash'] as bool? ?? false;
       _printHub = data['printHub'] as bool? ?? false;
       await DevicePrinterPrefs.load();
@@ -855,11 +855,25 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
         initialValue: _encoding,
         decoration: const InputDecoration(
           labelText: 'Кодировка русского текста',
-          helperText: 'Вместо букв печатаются «кракозябры» — выберите другую и нажмите «Тестовая печать»',
+          helperText: 'Вместо букв непонятные символы — нажмите «Подобрать кодировку» и выберите номер строки, которая читается',
           helperMaxLines: 2,
         ),
-        items: [for (final e in printEncodings.entries) DropdownMenuItem(value: e.key, child: Text(e.value))],
-        onChanged: (v) => setState(() => _encoding = v ?? 'cp866'),
+        isExpanded: true,
+        items: [
+          for (final e in printEncodings.entries)
+            DropdownMenuItem(value: e.key, child: Text(e.value, maxLines: 2, overflow: TextOverflow.ellipsis)),
+        ],
+        onChanged: (v) => setState(() => _encoding = v ?? defaultPrintEncoding),
+      ),
+      const SizedBox(height: 8),
+      // Номер таблицы у принтеров разный — печатаем все варианты сразу.
+      Align(
+        alignment: Alignment.centerLeft,
+        child: OutlinedButton.icon(
+          onPressed: _testing ? null : _calibratePrinter,
+          icon: const Icon(Icons.translate_rounded),
+          label: const Text('Подобрать кодировку'),
+        ),
       ),
       if (devOptions.length > 1) ...[
         const SizedBox(height: 12),
@@ -950,6 +964,36 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
         footerNote: 'Если вы это видите — принтер настроен верно',
       ));
       if (mounted) setState(() => _printerResult = 'Чек отправлен на печать');
+    } catch (e) {
+      if (mounted) setState(() => _printerResult = 'Ошибка печати: ${humanError(e, lower: true)}');
+    } finally {
+      if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  /// Полоска со всеми вариантами кодировки под номерами — какая строка
+  /// читается, тот номер и выбирают в списке.
+  Future<void> _calibratePrinter() async {
+    setState(() {
+      _testing = true;
+      _printerResult = null;
+    });
+    _applyActivePrinter();
+    final printer = activeReceiptPrinter;
+    if (printer == null) {
+      setState(() {
+        _testing = false;
+        _printerResult = 'Принтер не выбран';
+      });
+      return;
+    }
+    try {
+      await printer.printBytes(await buildEncodingTestBytes());
+      if (mounted) {
+        setState(() => _printerResult = 'Напечатаны строки 1–${printEncodingOptions.length}. Найдите строку, где '
+            'русский текст читается нормально, выберите этот номер в списке «Кодировка», нажмите «Тестовая печать» '
+            'и «Сохранить».');
+      }
     } catch (e) {
       if (mounted) setState(() => _printerResult = 'Ошибка печати: ${humanError(e, lower: true)}');
     } finally {
