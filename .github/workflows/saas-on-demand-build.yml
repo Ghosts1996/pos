@@ -417,6 +417,9 @@ jobs:
         run: |
           DRAWABLE=android/app/src/main/res/drawable
           mkdir -p "$DRAWABLE"
+          # Приложение гостя — силуэт сервировочного колокола (клош): белый
+          # значок в шторке, понятный для любого заведения. Был «!» — владелец
+          # 27.11.2026: «некрасивое уведомление, непонятный восклицательный знак».
           cat > "$DRAWABLE/ic_notification.xml" <<'XMLEOF'
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
               android:width="24dp"
@@ -425,10 +428,7 @@ jobs:
               android:viewportHeight="24">
             <path
                 android:fillColor="#FFFFFFFF"
-                android:pathData="M10.6,3.2h2.8v11.2h-2.8z"/>
-            <path
-                android:fillColor="#FFFFFFFF"
-                android:pathData="M12,18.6m-2,0a2,2 0 1,0 4,0a2,2 0 1,0 -4,0"/>
+                android:pathData="M2,17h20v2H2z M13.84,7.79c0.1,-0.24 0.16,-0.51 0.16,-0.79 0,-1.1 -0.9,-2 -2,-2s-2,0.9 -2,2c0,0.28 0.06,0.55 0.16,0.79C6.25,8.6 3.27,11.93 3,16h18c-0.27,-4.07 -3.25,-7.4 -7.16,-8.21z"/>
           </vector>
           XMLEOF
           if [ "${{ matrix.app }}" = "pos" ]; then
