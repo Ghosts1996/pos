@@ -122,6 +122,30 @@ void main() {
     });
   });
 
+  test('патч ещё готовится — ничего не качаем, честно говорим и спросим позже', () async {
+    final asked = <String>[];
+    final s = AppUpdateService(
+      app: 'pos',
+      platform: 'android',
+      currentBuild: 100,
+      gatewayUrl: 'https://gw.test/saas',
+      clientFactory: () => MockClient((req) async {
+        asked.add(req.url.path);
+        return http.Response(jsonEncode({'update': false, 'preparing': true, 'buildNumber': 101, 'retryInSec': 60}), 200);
+      }),
+      dirProvider: () async => dir,
+      authToken: () async => 'tok',
+      tenantId: () => 'tenant1',
+      isForeground: () => false,
+    );
+    final text = await s.checkManually();
+    expect(text, contains('готовит маленькое обновление'));
+    expect(s.preparingBuild, 101);
+    expect(s.state.value.phase, AppUpdatePhase.none);
+    expect(asked.where((p) => p.contains('downloadBuild')), isEmpty);
+    s.dispose();
+  });
+
   test('ответ без патча или с кривым патчем — обычное обновление', () {
     final base = {'update': true, 'buildNumber': 50, 'sizeBytes': 10, 'url': '/downloadBuild?jobId=a&token=b'};
     expect(AppUpdateInfo.fromJson(base, current: 49)?.patch, isNull);

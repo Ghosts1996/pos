@@ -201,6 +201,15 @@ class AppUpdateService {
   }
 
   Timer? _timer;
+  Timer? _soon;
+
+  /// Новая версия, к которой сервер сейчас готовит патч (null — нет такой).
+  int? preparingBuild;
+
+  void _recheckSoon() {
+    if (_soon?.isActive ?? false) return;
+    _soon = Timer(const Duration(seconds: 75), () => unawaited(checkNow()));
+  }
   AppLifecycleListener? _lifecycle;
   DateTime? _lastCheck;
   bool _checking = false;
@@ -242,6 +251,7 @@ class AppUpdateService {
   @visibleForTesting
   void dispose() {
     _timer?.cancel();
+    _soon?.cancel();
     _lifecycle?.dispose();
     _downloadClient?.close();
   }
@@ -289,6 +299,11 @@ class AppUpdateService {
       }
       final json = jsonDecode(resp.body);
       if (json is! Map<String, dynamic>) return null;
+      // Сервер ещё строит маленький патч к новой версии — спросим снова
+      // через минуту-две, а не качаем весь файл.
+      final n = json['buildNumber'];
+      preparingBuild = json['update'] != true && json['preparing'] == true && n is int && n > currentBuild ? n : null;
+      if (preparingBuild != null) _recheckSoon();
       return AppUpdateInfo.fromJson(json, current: currentBuild);
     } finally {
       client.close();
@@ -319,6 +334,11 @@ class AppUpdateService {
     try {
       final info = await _ask(strict: true);
       _lastCheck = DateTime.now();
+      final soon = preparingBuild;
+      if (info == null && soon != null) {
+        return 'Вышла новая версия ${kSaasMode ? versionOf(soon) : buildPhrase(soon)}. Сервер готовит маленькое '
+            'обновление — только изменения, а не весь файл. Через минуту-две приложение скачает его само.';
+      }
       if (info == null) return 'У вас последняя версия (${buildPhrase(currentBuild)})';
       hiddenUntil.value = null; // «Позже» больше не прячет плашку
       await checkNow();

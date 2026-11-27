@@ -204,6 +204,26 @@ async function main() {
   const skipped = await request("POST", "/appUpdate", { body: { tenantId: "tA", app: "guest", platform: "android", current: 100 } });
   check("пропустило больше трёх версий — целиком", skipped.json && skipped.json.update === true && !skipped.json.patch);
 
+  // Сборка только что вышла, а патч от версии устройства ещё строится —
+  // устройство ждёт («готовится»), а не качает весь файл.
+  const bdir = path.join(buildsDir, "tB");
+  fs.mkdirSync(bdir, { recursive: true });
+  await set("tenants/tB", { name: "B", slug: "b", status: "active" });
+  await set("buildJobs/b1", { tenantId: "tB", type: "guest", platform: "android", status: "superseded", deltaBase: true, buildNumber: 200, createdAt: T(now - 60000) });
+  fs.writeFileSync(path.join(bdir, "b1.apk"), v1);
+  await set("buildJobs/b2", { tenantId: "tB", type: "guest", platform: "android", status: "success", buildNumber: 201, createdAt: T(now), completedAt: T(Date.now()) });
+  fs.writeFileSync(path.join(bdir, "b2.apk"), v2);
+  const wait = await request("POST", "/appUpdate", { body: { tenantId: "tB", app: "guest", platform: "android", current: 200 } });
+  check("патч ещё строится — «готовится», а не весь файл",
+    wait.json && wait.json.update === false && wait.json.preparing === true && wait.json.buildNumber === 201, JSON.stringify(wait.json));
+  const noBase = await request("POST", "/appUpdate", { body: { tenantId: "tB", app: "guest", platform: "android", current: 150 } });
+  check("версии без базы — сразу целиком", noBase.json && noBase.json.update === true && !noBase.json.patch, JSON.stringify(noBase.json));
+  const ready = await waitFor(async () => {
+    const r = await request("POST", "/appUpdate", { body: { tenantId: "tB", app: "guest", platform: "android", current: 200 } });
+    return r.json && r.json.update === true && r.json.patch;
+  });
+  check("патч построился сам — устройство получает его", ready);
+
   console.log(`apk-delta: ${passed} passed, ${failed} failed`);
   fs.rmSync(dir, { recursive: true, force: true });
   process.exit(failed ? 1 : 0);

@@ -3634,6 +3634,13 @@ const BUILD_STATUS_LABELS = {
 const BUILD_TYPE_LABELS = {
   pos: 'Касса', guest: 'Гостевое приложение',
 };
+// Номер сборки → версия, как в кассе (lib/build_info.dart versionOf):
+// 623 → «1.0.623», 1020 → «1.1.020».
+function buildVersionOf(n) {
+  const b = Number(n);
+  if (!Number.isInteger(b) || b <= 0) return '';
+  return `1.${Math.floor(b / 1000)}.${String(b % 1000).padStart(3, '0')}`;
+}
 function buildJobLabel(j) {
   const base = BUILD_TYPE_LABELS[j.type] || j.type || 'Сборка';
   return j.platform === 'windows' ? `${base} (Windows)` : base;
@@ -7843,7 +7850,8 @@ function watchDashboardData(tenantId) {
         ${(buildJobs || []).some((j) => j.status !== 'superseded') ? buildJobs.filter((j) => j.status !== 'superseded').map((j) => `
           <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
             <div class="grow small muted">
-              ${esc(buildJobLabel(j))} · ${fmtDateTime(j.createdAt)} · ${esc(BUILD_STATUS_LABELS[j.status] || j.status)}
+              <span style="color:var(--text)">${esc(buildJobLabel(j))}${buildVersionOf(j.buildNumber) ? ` · <b>версия ${buildVersionOf(j.buildNumber)}</b>` : ''}</span>
+              <div>${fmtDateTime(j.createdAt)} · ${esc(BUILD_STATUS_LABELS[j.status] || j.status)}</div>
               ${j.status === 'failed' && j.errorMessage ? `<div>${esc(j.errorMessage)}</div>` : ''}
             </div>
             ${j.status === 'success' ? `
@@ -14047,6 +14055,7 @@ function watchAllBuildJobs() {
         <div class="small grow" style="min-width:0">
           <b>${esc(j.tenantName || j.tenantId)}</b> ·
           ${esc(buildJobLabel(j))} ·
+          ${buildVersionOf(j.buildNumber) ? `версия ${buildVersionOf(j.buildNumber)} · ` : ''}
           <span style="${j.status === 'failed' ? 'color:var(--danger)' : ''}">${esc(BUILD_STATUS_LABELS[j.status] || j.status)}</span>
           ${j.status === 'failed' && j.errorMessage ? `<div class="muted">${esc(j.errorMessage)}</div>` : ''}
         </div>

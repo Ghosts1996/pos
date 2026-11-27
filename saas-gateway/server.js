@@ -3500,7 +3500,7 @@ async function runApkDeltaQueue() {
   apkDeltaBusy = true;
   try {
     while (apkDeltaQueue.length) {
-      if (os.freemem() < APK_DELTA_MIN_FREE_MEM && !process.env.APK_DELTAS) {
+      if (memAvailable() < APK_DELTA_MIN_FREE_MEM && !process.env.APK_DELTAS) {
         // Мало памяти (идёт сборка карты) — попробуем при следующем обходе.
         apkDeltaQueue.length = 0;
         break;
@@ -3511,6 +3511,37 @@ async function runApkDeltaQueue() {
   } finally {
     apkDeltaBusy = false;
   }
+}
+
+/** Сколько памяти можно взять (MemAvailable): os.freemem() — только
+ *  «совсем свободная», без кэша диска, на сервере с 2 ГБ она почти всегда
+ *  мала, и патчи откладывались бы. */
+function memAvailable() {
+  try {
+    const m = /^MemAvailable:\s+(\d+)\s*kB/m.exec(fs.readFileSync("/proc/meminfo", "utf8"));
+    if (m) return Number(m[1]) * 1024;
+  } catch (_) {}
+  return os.freemem();
+}
+
+// Новая сборка свежая, а патч к ней от версии устройства ещё строится —
+// устройство подождёт (до APK_PATCH_WAIT_MS после сборки), а не качает
+// весь файл. Дольше — отдаём целиком.
+const APK_PATCH_WAIT_MS = 20 * 60 * 1000;
+
+async function apkPatchPending(tenantId, latest, current) {
+  if (!APK_DELTAS_ON || !Number.isInteger(current) || current <= 0) return false;
+  const done = latest.completedAt ? Date.parse(latest.completedAt) : NaN;
+  if (!Number.isFinite(done) || Date.now() - done > APK_PATCH_WAIT_MS) return false;
+  const dir = path.join(TENANT_BUILDS_DIR, tenantId);
+  if (fs.existsSync(path.join(dir, `${latest.id}.from${current}.json`))) return false; // патч уже решён (не вышел)
+  const snap = await db().collection("buildJobs").where("tenantId", "==", tenantId)
+    .where("buildNumber", "==", current).limit(10).get();
+  const base = snap.docs.find((d) => d.data().type === latest.type && (d.data().platform || "android") === "android"
+    && fs.existsSync(path.join(dir, `${d.id}.apk`)));
+  if (!base) return false;
+  queueApkDeltas(tenantId);
+  return true;
 }
 
 async function buildApkDeltas(tenantId) {
@@ -4114,6 +4145,9 @@ async function handleAppUpdate(req, res) {
   const url = `/downloadBuild?jobId=${encodeURIComponent(latest.id)}&token=${encodeURIComponent(`${expiresAt}.${token}`)}`;
   // Обновление «как у Google»: у устройства прошлая сборка — только разница.
   const meta = platform === "android" ? apkPatchFor(latest.tenantId || tenantId, latest.id, current) : null;
+  if (platform === "android" && !meta && await apkPatchPending(latest.tenantId || tenantId, latest, current).catch(() => false)) {
+    return sendJson(res, 200, { update: false, preparing: true, buildNumber, retryInSec: 60 });
+  }
   sendJson(res, 200, {
     update: true,
     buildNumber,
