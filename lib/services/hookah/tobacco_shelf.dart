@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import '../app_scope.dart';
 import '../../data/app_db.dart';
 import '../gateway_api.dart';
+import 'brand_profiles.dart';
 import 'flavors.dart';
 import 'mix_engine.dart';
 import 'photo_prep.dart';
@@ -55,6 +56,8 @@ class TobaccoShelf {
     final name = fixCanName(brand, '${m['name'] ?? ''}'.trim());
     var line = '${m['line'] ?? ''}'.trim();
     if (line.length > 30 || line.toLowerCase() == brand.toLowerCase()) line = '';
+    // Линейка в самой надписи марки: «Darkside Shot», «Сарма 360», «Noir».
+    if (line.isEmpty) line = lineFromBrandText('${m['brand'] ?? ''}');
     final words = (m['flavors'] is List) ? (m['flavors'] as List).join(', ') : '${m['flavors'] ?? ''}';
     final flavors = flavorsOfCan(brand, name, words);
     var strength = '${m['strength'] ?? ''}';

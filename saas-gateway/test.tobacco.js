@@ -41,6 +41,7 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     const { build } = require("./tools/tobacco-cans-from-dart");
     const fresh = build(path.join(__dirname, ".."));
     const saved = JSON.parse(fs.readFileSync(path.join(__dirname, "tobacco-cans.json"), "utf8"));
+    assert.ok(saved.brands.length > 150 && saved.cans.Darkside.length > 10);
     assert.deepEqual(saved, fresh, "tobacco-cans.json устарел — node tools/tobacco-cans-from-dart.js");
     const db = require("./tobacco-db");
     const prompt = require("./tobacco").TOBACCO_AI_PROMPT;
@@ -55,6 +56,15 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     assert.equal(items[1].brand, "Black Burn");
     assert.equal(items[2].brand, "", "«Мята» бывает у всех — марку не ставим");
     assert.equal(db.canonicalBrand("овердоз"), "Overdose");
+    // Все марки из списка владельца — в базе и в подсказке ИИ.
+    for (const name of ["Morpheus", "Bliss", "Zaghloul", "187 Strassenbande", "Kismet", "Soex", "Молодость", "Табабка", "Endorphin"]) {
+      assert.ok(db.brands().some((b) => b.name === name), name);
+      assert.ok(prompt.includes(name), `в подсказке: ${name}`);
+    }
+    assert.equal(db.canonicalBrand("NOIR"), "Tangiers");
+    assert.equal(db.canonicalBrand("эндорфин"), "Endorphin");
+    assert.equal(db.canonicalBrand("HLGN"), "Хулиган");
+    assert.ok(/Darkside[^\n]*Линейки: Core/.test(prompt));
   });
 
   await ok("марку не видно — берётся у банки того же вида на снимке", async () => {

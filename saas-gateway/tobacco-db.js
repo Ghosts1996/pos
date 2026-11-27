@@ -35,9 +35,8 @@ const BRANDS = [
   { name: "Duft", aka: ["дуфт"], look: "надпись DUFT", lines: "Pheromone, Strong (крепче), All-in" },
   { name: "Satyr", aka: ["сатир"], look: "надпись SATYR, рисунок сатира", lines: "" },
   { name: "Jent", aka: ["джент"], look: "надпись JENT", lines: "Cigar (крепче)" },
-  { name: "Tangiers", aka: ["танжирс"], look: "простая банка или жестянка с наклейкой Tangiers и названием вкуса", lines: "Noir, Birquq, F-Line (очень крепкие)" },
+  { name: "Tangiers", aka: ["танжирс", "noir", "нуар"], look: "простая банка или жестянка с наклейкой Tangiers и названием вкуса; надпись NOIR — это линейка Tangiers Noir", lines: "Noir, Birquq, F-Line (очень крепкие)" },
   { name: "WTO", aka: ["вто", "world tobacco original"], look: "надпись WTO / World Tobacco Original, линейки по странам листа", lines: "" },
-  { name: "Noir", aka: ["нуар"], look: "тёмная банка, надпись NOIR", lines: "" },
   { name: "Blanch", aka: ["бланш", "бланч"], look: "светлая банка, надпись BLANCH", lines: "" },
   { name: "Timeless", aka: ["таймлесс"], look: "надпись TIMELESS", lines: "" },
   { name: "Kraken", aka: ["кракен"], look: "надпись KRAKEN, рисунок осьминога/кракена", lines: "" },
@@ -64,12 +63,17 @@ const BRANDS = [
   { name: "Nakhla", aka: ["нахла"], look: "надпись NAKHLA, зелёные тона", lines: "" },
 ];
 
-let cans = {};
+// Из каталога кассы: известные банки, все марки с синонимами и видом
+// (classic/light/mixed/dark/strong/herbal), линейки с крепостью.
+let db = { cans: {}, brands: [], lines: {} };
 try {
-  cans = JSON.parse(fs.readFileSync(path.join(__dirname, "tobacco-cans.json"), "utf8"));
+  db = { ...db, ...JSON.parse(fs.readFileSync(path.join(__dirname, "tobacco-cans.json"), "utf8")) };
 } catch (_) {
-  cans = {};
+  /* без файла — только BRANDS */
 }
+const cans = db.cans || {};
+const KIND_WORD = { classic: "классика на светлом листе", light: "светлый лист", medium: "средняя крепость", mixed: "смешанный лист",
+  dark: "тёмный лист, крепкий", strong: "крепкий тёмный лист", herbal: "без табака" };
 
 const key = (s) => String(s || "").toLowerCase().replace(/ё/g, "е").replace(/[^a-zа-я0-9]/g, "");
 
@@ -79,6 +83,9 @@ function canonicalBrand(raw) {
   if (!k) return String(raw || "").trim();
   for (const b of BRANDS) {
     if (key(b.name) === k || b.aka.some((a) => key(a) === k)) return b.name;
+  }
+  for (const b of db.brands || []) {
+    if (key(b.name) === k || (b.aka || []).some((a) => key(a) === k)) return b.name;
   }
   for (const b of Object.keys(cans)) if (key(b) === k) return b;
   return String(raw || "").trim();
@@ -102,13 +109,30 @@ function brandByName(name) {
 /** Текст для подсказки ИИ: как выглядят банки марок и их известные вкусы. */
 function promptCatalog({ namesPerBrand = 30 } = {}) {
   const lines = [];
+  const linesOf = (name) => ((db.lines || {})[name] || []).map((l) => l.line).filter((l) => /^[a-z0-9]/i.test(l) || /^[а-я]/i.test(l));
   for (const b of BRANDS) {
     const known = (cans[b.name] || []).map((c) => c.names[0]).slice(0, namesPerBrand);
+    const lineList = b.lines || linesOf(b.name).join(", ");
     lines.push(`• ${b.name}${b.aka.length ? ` (${b.aka.slice(0, 3).join(", ")})` : ""} — ${b.look}.`
-      + (b.lines ? ` Линейки: ${b.lines}.` : "")
+      + (lineList ? ` Линейки: ${lineList}.` : "")
       + (known.length ? ` Вкусы марки: ${known.join(", ")}.` : ""));
   }
+  // Остальные марки — по надписи на банке (вид оформления у них разный).
+  const rest = (db.brands || []).filter((b) => !BRANDS.some((x) => x.name === b.name));
+  if (rest.length) {
+    lines.push(`Ещё марки (узнавай по надписи на банке, пиши так): ${rest.map((b) => {
+      const ls = linesOf(b.name);
+      const ru = (b.aka || []).find((a) => /[а-я]/i.test(a));
+      return `${b.name}${ru ? ` / ${ru}` : ""}${ls.length ? ` [линейки ${ls.join(", ")}]` : ""}`;
+    }).join("; ")}.`);
+  }
   return lines.join("\n");
+}
+
+/** Вид марки словами (для подсказок): «тёмный лист, крепкий». */
+function kindOf(brand) {
+  const b = (db.brands || []).find((x) => x.name === canonicalBrand(brand));
+  return b ? KIND_WORD[b.kind] || "" : "";
 }
 
 /** Правка ответа ИИ по базе: марка к одному написанию, пустая марка — по известному вкусу. */
@@ -123,4 +147,4 @@ function enrich(items) {
   return items;
 }
 
-module.exports = { BRANDS, canonicalBrand, brandByName, promptCatalog, enrich, cans: () => cans };
+module.exports = { BRANDS, canonicalBrand, brandByName, promptCatalog, enrich, kindOf, cans: () => cans, brands: () => db.brands || [] };

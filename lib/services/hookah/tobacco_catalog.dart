@@ -21,21 +21,21 @@ class TobaccoBrand {
 }
 
 const List<TobaccoBrand> kTobaccoBrands = [
-  TobaccoBrand('Darkside', ['dark side', 'дарксайд', 'дарк сайд', 'ds'], 'strong'),
+  TobaccoBrand('Darkside', ['dark side', 'дарксайд', 'дарк сайд', 'ds', 'darkside shot'], 'strong'),
   TobaccoBrand('Musthave', ['must have', 'musth', 'must h', 'маст хэв', 'мастхэв', 'маст хев', 'мастхев'], 'medium'),
-  TobaccoBrand('Black Burn', ['blackburn', 'блэк бёрн', 'блэк берн', 'блек берн', 'bb'], 'strong'),
+  TobaccoBrand('Black Burn', ['blackburn', 'блэк бёрн', 'блэк берн', 'блек берн', 'bb', 'blackburn shock', 'black burn shock'], 'strong'),
   TobaccoBrand('Element', ['элемент', 'element вода', 'element земля', 'element воздух', 'element огонь'], 'medium'),
-  TobaccoBrand('Tangiers', ['танжирс', 'tangiers noir', 'tangiers birquq'], 'strong'),
+  TobaccoBrand('Tangiers', ['танжирс', 'tangiers noir', 'tangiers birquq', 'noir', 'нуар', 'cane mint'], 'strong'),
   TobaccoBrand('Al Fakher', ['alfakher', 'аль факер', 'альфакер', 'аль-факер', 'аль фахер'], 'light'),
-  TobaccoBrand('Adalya', ['адалия', 'адалья'], 'light'),
+  TobaccoBrand('Adalya', ['адалия', 'адалья', 'adalya black'], 'light'),
   TobaccoBrand('Serbetli', ['щербетли', 'шербетли'], 'light'),
   TobaccoBrand('Fumari', ['фумари'], 'light'),
   TobaccoBrand('Starbuzz', ['старбаз', 'star buzz'], 'medium'),
-  TobaccoBrand('Nakhla', ['нахла'], 'light'),
+  TobaccoBrand('Nakhla', ['нахла', 'nakhla mizo', 'nakhla mix'], 'light'),
   TobaccoBrand('Afzal', ['афзал'], 'light'),
   TobaccoBrand('Spectrum', ['спектрум', 'spectrum hard', 'spectrum kitchen'], 'medium'),
-  TobaccoBrand('Sebero', ['себеро', 'sebero black'], 'medium'),
-  TobaccoBrand('Duft', ['дуфт', 'duft pheromone', 'duft all-in'], 'medium'),
+  TobaccoBrand('Sebero', ['себеро', 'sebero black', 'себеро блэк'], 'medium'),
+  TobaccoBrand('Duft', ['дуфт', 'duft pheromone', 'duft all-in', 'duft all in'], 'medium'),
   TobaccoBrand('Satyr', ['сатир', 'satyr aroma'], 'strong'),
   TobaccoBrand('Bonche', ['бонче', 'бонш', 'бонч'], 'strong'),
   TobaccoBrand('Jent', ['джент', 'jent cigar'], 'medium'),
@@ -44,7 +44,7 @@ const List<TobaccoBrand> kTobaccoBrands = [
   TobaccoBrand('Dogma', ['догма'], 'strong'),
   TobaccoBrand('Banger', ['бангер', 'бэнгер', 'бенгер'], 'medium'),
   TobaccoBrand('Overdose', ['овердоз', 'over dose'], 'strong'),
-  TobaccoBrand('Хулиган', ['hooligan', 'huligan', 'хулиган hard'], 'strong'),
+  TobaccoBrand('Хулиган', ['hooligan', 'huligan', 'хулиган hard', 'hlgn', 'хлгн'], 'strong'),
   TobaccoBrand('MattPear', ['matt pear', 'мэт пир', 'мэттпир'], 'medium'),
   TobaccoBrand('Palitra', ['палитра'], 'medium'),
   TobaccoBrand('NАШ', ['nash', 'наш'], 'medium'),
@@ -52,7 +52,7 @@ const List<TobaccoBrand> kTobaccoBrands = [
   TobaccoBrand('Kraken', ['кракен'], 'strong'),
   TobaccoBrand('Daily Hookah', ['дейли хука', 'daily'], 'medium'),
   TobaccoBrand('Burn', ['бёрн', 'берн'], 'medium'),
-  TobaccoBrand('Sarma', ['сарма'], 'medium'),
+  TobaccoBrand('Sarma', ['сарма', 'сарма 360', 'sarma 360'], 'medium'),
   TobaccoBrand('Craftium', ['крафтиум'], 'medium'),
   TobaccoBrand('Starline', ['старлайн', 'star line'], 'medium'),
   TobaccoBrand('Morpheus', ['морфеус'], 'medium'),
@@ -60,16 +60,88 @@ const List<TobaccoBrand> kTobaccoBrands = [
   TobaccoBrand('Terror', ['террор'], 'strong'),
   TobaccoBrand('Timeline', ['таймлайн'], 'medium'),
   TobaccoBrand('Chabacco', ['чабакко', 'чабако'], 'light'),
-  TobaccoBrand('Brusko', ['бруско'], 'light'),
+  TobaccoBrand('Brusko', ['бруско', 'brusko bit'], 'light'),
   TobaccoBrand('Zomo', ['зомо'], 'light'),
   TobaccoBrand('Dedushka', ['дедушка'], 'strong'),
   TobaccoBrand('WTO', ['вто', 'world tobacco original', 'world tobacco'], 'strong'),
-  TobaccoBrand('Noir', ['нуар'], 'strong'),
   TobaccoBrand('Blanch', ['бланш', 'blansh', 'бланч'], 'medium'),
   TobaccoBrand('Timeless', ['таймлесс', 'таймлес'], 'medium'),
   TobaccoBrand('Sapphire Crown', ['сапфир кроун', 'sapphire'], 'light'),
   TobaccoBrand('Frigate', ['фригат', 'фрегат', 'frigate dry', 'фригат сухой'], 'strong'),
   TobaccoBrand('Original Virginia', ['ориджинал вирджиния', 'original virginia', 'ov'], 'strong'),
+];
+
+/// Ещё марки (список владельца 28.11.2026): «Название|синонимы через ;|вид».
+/// Вид задаёт лист, крепость и жаростойкость (brand_profiles.dart, если у
+/// марки нет своего профиля): classic — классика на светлом листе с
+/// глицерином (в подбор миксов не идёт), light — светлый лист, mixed —
+/// смешанный, dark — тёмный крепкий, strong — очень крепкий, herbal — без
+/// табака (чайная или травяная смесь).
+const List<String> kMoreBrandLines = [
+  // Российские и СНГ
+  'Bliss|блисс|mixed', 'JOY|джой|mixed', 'Fake|фейк|mixed', 'Молодость|molodost|mixed', 'Total Flame|тотал флейм|mixed',
+  'База|baza|mixed', 'Rustpunk|растпанк|mixed', 'Табабка|tababka|mixed', 'Azure|азур|mixed', 'Jam|джем табак|mixed',
+  'Swonq|свонк|mixed', 'Cobweb|кобвеб|mixed', 'Peter Ralf|питер ральф|mixed', 'Endorphin|эндорфин|mixed', 'Nual|нуал|mixed',
+  'Kobra|кобра|dark', 'Ugly|агли|mixed', 'Alchemist Blend|alchemist;алхимик|mixed', 'Lavoo|лаву|mixed', 'Pure Tobacco|пьюр|mixed',
+  'Decloud|деклауд|mixed', 'B3|б3|mixed', 'Smoke Angels|смоук энджелс|mixed', 'Izi|изи|light', 'Вайт|white;уайт|mixed',
+  'Gibrid|гибрид|mixed', 'Craft|крафт|mixed', 'D-Gastro|d gastro;д-гастро|mixed', 'D-Mini|d mini;д-мини|mixed',
+  'Blackside|блэксайд|dark', 'Chef\'s|chefs;шефс|mixed', 'Doobacco|дубакко|mixed', 'Unity|юнити|mixed', '420 Hookah|420|mixed',
+  'Gixom|гиксом|light', 'Dead Horse|дэд хорс|dark', 'Creepy|крипи|mixed', 'Cultt|культ|mixed', 'Hookah Tree Tobacco|hookah tree|mixed',
+  // США
+  'Nirvana|нирвана|light', 'Trifecta|трифекта|mixed', 'Social Smoke|социал смоук|light',
+  // Европа (в основном светлый лист)
+  '187 Strassenbande|187|light', 'Holster|холстер|light', 'Nameless|неймлесс|light', 'Hookain|хукейн|mixed', 'Kismet|кисмет|strong',
+  'Revoshi|ревоши|light', 'Overdozz|овердозз|light', 'True Passion|тру пэшн|light', 'XRacher|xracher;икс рахер|light',
+  'Aqua Mentha|аква мента|light', 'Baboos|бабус|light', 'Capital Bra Smoke|capital bra|light', 'Chaos|хаос табак|light',
+  'Dschinni|джинни|light', 'Fog Your Life|fog|light', 'Freestyle|фристайл|light', 'Inhale|инхейл|light', 'Jewels|джуелс|light',
+  'Karamel|карамел табак|light', 'Tonic|тоник табак|light', 'Vibe|вайб|light', 'Xtreme|экстрим табак|light', 'Zumerret|зумеррет|light',
+  'Havana|гавана табак|light', 'Maridan|маридан|light', 'O\'s Tobacco|os tobacco;оз табак|light', '7 Days|7 дней|light',
+  'Start Now|старт нау|light', 'Tumbaki|тумбаки|light', 'Rosh|рош|light', 'Nube|нубе|light', 'Malaika|малайка|light',
+  'Lirra|лирра|light', 'Izmir|измир|light', 'Fasil|фасиль|light', 'Haze|хейз|light', 'Fantasia|фантазия|light',
+  'Hookafina|хукафина|light', 'Argelini|аргелини|light', 'Smyrna|смирна|light', 'Al Massiva|аль массива|light',
+  'Asman|асман|light', 'Daim|даим|light',
+  // Классика: арабская, египетская, турецкая патока
+  'Zaghloul|заглуль|classic', 'Salloum|саллум|classic', 'Kahn El Khalili|хан эль халили|classic', 'Al Ajamy|аль аджами|classic',
+  'Al Amir|аль амир|classic', 'Al Fakhamah|аль фахама|classic', 'Al Sultan|аль султан|classic', 'Bahraini|бахрейни|classic',
+  'El Rosha|эль роша|classic', 'Golden Layalina|голден лаялина|classic', 'Layalina|лаялина|classic', 'Al Waha|аль ваха|classic',
+  'Waha|ваха|classic', 'Al-Waha Elite|al waha elite|classic', 'Mazaya|мазайа;мазая|classic', 'Buta|бута|classic', 'Jibiar|джибиар|classic',
+  'Al Mawardi|аль мавардии|classic', 'Al Rayan|аль раян|classic', 'Othmani|отмани|classic', 'Romman|роман табак|classic',
+  'Khalil Mamoon Tobacco|khalil mamoon;халил мамун|classic', 'Mizo|мизо|classic', 'Noor|нур табак|classic',
+  'Prince Molasses|принс моласс|classic', 'Rajah|раджа|classic', 'Saalaam|салам табак|classic', 'Sindbad|синдбад|classic',
+  'Amy Gold|эми голд|classic', 'Afzal|афзал|classic',
+  // Без табака
+  'Soex|соекс|herbal', 'Hydro Herbal|гидро хербал|herbal',
+];
+
+class _MoreBrand {
+  final TobaccoBrand brand;
+  final String kind;
+  const _MoreBrand(this.brand, this.kind);
+}
+
+final List<_MoreBrand> _more = [
+  for (final line in kMoreBrandLines)
+    (() {
+      final f = line.split('|');
+      final kind = f[2];
+      final strength = switch (kind) { 'dark' || 'strong' => 'strong', 'mixed' => 'medium', _ => 'light' };
+      return _MoreBrand(TobaccoBrand(f[0], [for (final a in f[1].split(';')) if (a.trim().isNotEmpty) a.trim()], strength), kind);
+    })(),
+];
+
+/// Вид марки из дополнительного списка (classic/light/mixed/dark/strong/herbal) или null.
+String? moreBrandKind(String name) {
+  for (final m in _more) {
+    if (m.brand.name == name) return m.kind;
+  }
+  return null;
+}
+
+/// Все марки: основные и дополнительные (без повторов по названию).
+final List<TobaccoBrand> kAllBrands = [
+  ...kTobaccoBrands,
+  for (final m in _more)
+    if (!kTobaccoBrands.any((b) => b.name == m.brand.name)) m.brand,
 ];
 
 /// Известные банки: «Марка|Название; другое написание|вкусы (ключи flavors.dart)».
@@ -311,6 +383,7 @@ const List<String> kKnownCanLines = [
   // Полка владельца 28.11.2026: банки, у которых марку часто не видно.
   'Spectrum|Мощная мята|mint',
   'Overdose|Мята|mint',
+  'Tangiers|Cane Mint; Кейн минт|mint, sugarcane',
   'Timeline|Лайм|lime',
   'Banger|Жвачка арбуз-клубника; Жвачка, арбуз-клубника|candy, watermelon, strawberry',
   'Banger|Фейхоа-можжевельник|feijoa, juniper',
@@ -347,7 +420,7 @@ final List<KnownCan> kKnownCans = [
 String canonicalBrand(String raw) {
   final k = _key(raw);
   if (k.isEmpty) return raw.trim();
-  for (final b in kTobaccoBrands) {
+  for (final b in kAllBrands) {
     if (_key(b.name) == k || b.aliases.any((a) => _key(a) == k)) return b.name;
   }
   return raw.trim();
@@ -355,7 +428,7 @@ String canonicalBrand(String raw) {
 
 TobaccoBrand? brandOf(String name) {
   final c = canonicalBrand(name);
-  for (final b in kTobaccoBrands) {
+  for (final b in kAllBrands) {
     if (b.name == c) return b;
   }
   return null;

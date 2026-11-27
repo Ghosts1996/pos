@@ -136,8 +136,6 @@ const List<BrandProfile> kBrandProfiles = [
       'Крепкий тёмный лист с яркими вкусами. Новичку — в миксе со светлым листом, не больше трети.'),
   BrandProfile('WTO', Leaf.dark, 8, 5, Pack.edges, 14, 16, 7,
       'Табак с выраженным табачным вкусом (линейки по странам листа). Для ценителей крепкого; в миксе — основа.'),
-  BrandProfile('Noir', Leaf.dark, 7, 5, Pack.edges, 15, 17, 6,
-      'Тёмный лист, плотный вкус. Хорошо держит жар, подходит как крепкая основа.'),
   BrandProfile('Terror', Leaf.dark, 8, 5, Pack.edges, 14, 16, 7,
       'Крепкий тёмный лист. Греть дольше, не забивать плотно.'),
   BrandProfile('Dedushka', Leaf.dark, 8, 5, Pack.edges, 14, 16, 7,
@@ -199,7 +197,30 @@ const List<BrandProfile> kBrandProfiles = [
   BrandProfile('Afzal', Leaf.light, 3, 2, Pack.fluffy, 18, 20, 4, 'Классика на светлом листе с глицерином.', mixable: false),
 ];
 
-final Map<String, BrandProfile> _byName = {for (final p in kBrandProfiles) p.brand: p};
+/// Профиль по виду марки из дополнительного списка (tobacco_catalog.dart):
+/// цифры — ориентир по типу листа, у конкретной банки может отличаться.
+BrandProfile? _byKind(String brand, String kind) => switch (kind) {
+      'classic' => BrandProfile(brand, Leaf.light, 3, 2, Pack.fluffy, 18, 20, 4,
+          'Классика на светлом листе с глицерином: мягкая, боится перегрева. Цифры — ориентир.', mixable: false),
+      'light' => BrandProfile(brand, Leaf.light, 4, 3, Pack.fluffy, 18, 20, 4,
+          'Светлый лист: мягкий, ароматный, не перегревать — 2–3 угля. Цифры — ориентир.'),
+      'mixed' => BrandProfile(brand, Leaf.mixed, 5, 4, Pack.fluffy, 16, 18, 5,
+          'Средняя крепость, держит жар. Цифры — ориентир, смотрите линейку на банке.'),
+      'dark' => BrandProfile(brand, Leaf.dark, 7, 5, Pack.edges, 15, 17, 6,
+          'Тёмный лист: крепкий, держит жар, внакидку без трамбовки. Цифры — ориентир.'),
+      'strong' => BrandProfile(brand, Leaf.dark, 8, 5, Pack.edges, 14, 16, 7,
+          'Очень крепкий тёмный лист: новичку — не больше трети микса. Цифры — ориентир.'),
+      'herbal' => BrandProfile(brand, Leaf.tea, 1, 4, Pack.fluffy, 16, 18, 5,
+          'Без табака и никотина (травяная/чайная смесь): подходит тем, кто не курит табак.', mixable: false),
+      _ => null,
+    };
+
+final Map<String, BrandProfile> _byName = {
+  for (final p in kBrandProfiles) p.brand: p,
+  for (final line in kMoreBrandLines)
+    if (!kBrandProfiles.any((p) => p.brand == line.split('|').first))
+      if (_byKind(line.split('|').first, line.split('|')[2]) case final p?) line.split('|').first: p,
+};
 
 /// Профиль марки по написанию с банки («дарксайд», «BONCHE»). null — не знаем.
 BrandProfile? profileOf(String brand) {
@@ -209,16 +230,35 @@ BrandProfile? profileOf(String brand) {
 
 /// Крепость линеек, у которых она заметно отличается от обычной у марки.
 const Map<String, Map<String, int>> kLineStrength = {
-  'Darkside': {'core': 7, 'base': 8, 'rare': 7, 'xperience': 7},
+  'Darkside': {'core': 7, 'base': 8, 'rare': 7, 'xperience': 7, 'shot': 7},
+  'Black Burn': {'shock': 8},
+  'Adalya': {'black': 6},
+  'Nakhla': {'mizo': 3, 'mix': 3},
+  'Sarma': {'360': 6},
   'Spectrum': {'classic': 4, 'hard': 7, 'kitchen': 5},
   'Element': {'вода': 4, 'воздух': 4, 'земля': 6, 'огонь': 7},
   'Sebero': {'black': 7, 'classic': 5},
-  'Duft': {'strong': 7, 'pheromone': 6},
+  'Duft': {'strong': 7, 'pheromone': 6, 'all-in': 5, 'all in': 5},
   'Хулиган': {'hard': 8},
   'Trofimoff': {'burley': 7, 'classic': 5},
-  'Tangiers': {'birquq': 7, 'noir': 9, 'f-line': 9},
+  'Tangiers': {'birquq': 7, 'noir': 9, 'нуар': 9, 'f-line': 9},
   'Jent': {'cigar': 8},
 };
+
+/// Линейка из надписи марки: «Darkside Shot» → Shot, «Сарма 360» → 360,
+/// «Noir» (это Tangiers) → Noir. Пусто — линейки в надписи нет.
+String lineFromBrandText(String raw) {
+  final brand = canonicalBrand(raw);
+  final map = kLineStrength[brand];
+  if (map == null) return '';
+  final t = ' ${raw.toLowerCase().replaceAll('ё', 'е')} ';
+  for (final k in map.keys) {
+    if (RegExp('[^a-zа-я0-9]${RegExp.escape(k)}(?![a-zа-я0-9])').hasMatch(t)) {
+      return k == 'нуар' ? 'Noir' : (RegExp(r'^[a-z]').hasMatch(k) ? '${k[0].toUpperCase()}${k.substring(1)}' : k);
+    }
+  }
+  return '';
+}
 
 /// Крепость линейки марки или null — линейка не известна.
 int? lineStrength(String brand, String line) {
@@ -260,7 +300,7 @@ int canStrength(String brand, String strengthTag, {String line = ''}) {
 /// Возвращает каноническое имя или null.
 String? brandInText(String text) {
   final t = ' ${text.toLowerCase().replaceAll('ё', 'е')} ';
-  for (final b in kTobaccoBrands) {
+  for (final b in kAllBrands) {
     for (final w in [b.name, ...b.aliases]) {
       final k = w.toLowerCase().replaceAll('ё', 'е');
       if (k.length < 3) continue;

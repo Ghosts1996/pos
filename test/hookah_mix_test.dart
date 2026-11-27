@@ -134,7 +134,7 @@ void main() {
 
     test('марка в просьбе: «на бонче», «Нуар», но не «второй стол»', () {
       expect(brandInText('собери что-то ягодное на бонче'), 'Bonche');
-      expect(brandInText('есть Нуар?'), 'Noir');
+      expect(brandInText('есть Нуар?'), 'Tangiers', reason: 'Noir — линейка Tangiers');
       expect(brandInText('ВТО крепкий?'), 'WTO');
       expect(brandInText('второй стол просит кислое'), isNull);
       expect(brandInText('Мастхев с холодком'), 'Musthave');
@@ -204,6 +204,27 @@ void main() {
       expect(can.flavors, containsAll(['orange', 'candy']));
       final byWords = TobaccoShelf.fromScan({'brand': 'Deus', 'name': 'Orange Tic Tac', 'flavors': ['апельсин', 'драже']});
       expect(byWords.flavors, containsAll(['orange', 'candy']));
+    });
+
+    test('все марки из списка владельца: узнаются, у каждой лист, крепость и жар', () {
+      for (final b in ['Morpheus', 'Bliss', 'JOY', 'Fake', 'Молодость', 'Total Flame', 'База', 'Rustpunk', 'Табабка', 'Azure',
+        'Zaghloul', 'Kahn El Khalili', '187 Strassenbande', 'Kismet', 'Soex', 'Hydro Herbal', 'Endorphin', 'Кобра', 'HLGN',
+        'Blansh', 'Сарма 360', 'Nakhla Mizo', 'Darkside Shot', 'Blackburn Shock', 'Adalya Black', 'Duft All-In', 'Brusko Bit']) {
+        final p = profileOf(b);
+        expect(p, isNotNull, reason: b);
+        expect(canProfileLine(b), isNotEmpty, reason: b);
+      }
+      expect(canonicalBrand('Эндорфин'), 'Endorphin');
+      expect(canonicalBrand('NOIR'), 'Tangiers');
+      expect(profileOf('Zaghloul')!.mixable, isFalse, reason: 'арабская классика — не в миксы');
+      expect(profileOf('Soex')!.leaf, Leaf.tea);
+      expect(profileOf('Kismet')!.leaf, Leaf.dark);
+      expect(TobaccoShelf.fromScan({'brand': 'NOIR', 'name': 'Cane Mint'}).line, 'Noir');
+      expect(TobaccoShelf.fromScan({'brand': 'Darkside Shot', 'name': 'X'}).line, 'Shot');
+      expect(TobaccoShelf.fromScan({'brand': 'Сарма 360', 'name': 'Y'}).line, '360');
+      expect(TobaccoShelf.fromScan({'brand': 'Tangiers', 'name': 'Cane Mint'}).flavors, containsAll(['mint', 'sugarcane']));
+      expect(canStrength('Tangiers', '', line: 'Noir'), 9);
+      expect(brandInText('второй стол просит кислое'), isNull);
     });
 
     test('линейка меняет крепость; строка «лист · крепость · жар» для банки', () {
