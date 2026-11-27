@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../services/ai/ai_agents.dart';
 import '../../services/ai/ai_settings.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/ai_assistant_sheet.dart';
 import '../../utils/adaptive.dart';
+import '../../widgets/ai_rich_text.dart';
+import '../../utils/human_error.dart';
 
 /// «ИИ-разборы» для администратора: выручка, закупки, отзывы, маркетинг.
 /// Каждая карточка — один готовый сценарий агента в один тап, без промптов.
@@ -35,10 +38,12 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
       _result = '';
     });
     try {
-      final text = await task();
+      // Не крутим бесконечно: ИИ не ответил за 2 минуты — понятная ошибка.
+      final text = await task().timeout(const Duration(minutes: 2),
+          onTimeout: () => throw TimeoutException('ИИ не ответил за 2 минуты. Проверьте ключ ИИ и попробуйте ещё раз.'));
       if (mounted) setState(() => _result = text);
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = e is TimeoutException ? (e.message ?? 'ИИ не ответил') : humanError(e));
     }
     if (mounted) setState(() => _busy = false);
   }
@@ -215,7 +220,7 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
             style: TextStyle(
                 color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.w700)),
         const SizedBox(height: 12),
-        SelectableText(_result,
+        AiRichText(_result,
             style: TextStyle(color: AppColors.textPrimary, height: 1.45)),
         const SizedBox(height: 32),
       ],

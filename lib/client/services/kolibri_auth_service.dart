@@ -172,6 +172,47 @@ class KolibriAuthService {
     } catch (_) {}
   }
 
+  /// Код для входа в этот аккаунт на другом телефоне или после выхода:
+  /// «<uid>.<ключ>» (тот же ключ восстановления, сервер хранит только его
+  /// отпечаток). Пусто — ключ ещё не принят сервером.
+  Future<String> loginCode() async {
+    await _registerRecovery();
+    final prefs = await SharedPreferences.getInstance();
+    final uid = prefs.getString(_recoveryUidKey);
+    final secret = prefs.getString(_recoverySecretKey);
+    if (uid == null || secret == null || prefs.getString(_recoveryRegisteredKey) != uid || uid != this.uid) return '';
+    return '$uid.$secret';
+  }
+
+  /// Выйти из аккаунта, не удаляя данные: забыть ключ на этом телефоне и
+  /// начать новый пустой профиль. Вернуться — «Войти по коду».
+  Future<void> logout() async {
+    await forgetDevice();
+    await _auth.signOut();
+    _pending = null;
+    await ensureGuest();
+  }
+
+  /// Вход по коду или ссылке (…/app/#g=<uid>.<ключ>). true — вошли в тот аккаунт.
+  Future<bool> loginWithCode(String raw) async {
+    final m = RegExp(r'([A-Za-z0-9_-]{6,128})\.([A-Za-z0-9_-]{20,128})').firstMatch(raw.trim());
+    if (m == null) return false;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_recoveryUidKey, m.group(1)!);
+    await prefs.setString(_recoverySecretKey, m.group(2)!);
+    await prefs.setString(_recoveryRegisteredKey, m.group(1)!);
+    await _auth.signOut();
+    final res = await _restoreSession();
+    _pending = null;
+    if (res != _Restore.restored) {
+      await forgetDevice();
+      await ensureGuest();
+      return false;
+    }
+    await ensureGuest();
+    return true;
+  }
+
   /// Забыть ключ восстановления — гость удалил свои данные.
   Future<void> forgetDevice() async {
     final prefs = await SharedPreferences.getInstance();

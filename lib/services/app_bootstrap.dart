@@ -28,6 +28,7 @@ import 'background_jobs_service.dart';
 import 'signals/signal_bootstrap.dart';
 import '../utils/startup_log.dart';
 import 'app_auth.dart';
+import 'ai/ai_agents.dart';
 
 /// Всё, что не блокирует старт приложения — принтер/касса/ИИ подтянутся
 /// чуть позже, если настроены, а не настроены — ничего не сломается.
@@ -67,6 +68,8 @@ void startBackgroundServices() {
   TimeCafe.watch();
   // Процент за обслуживание (settings/serviceCharge, только SaaS) — живьём.
   ServiceCharge.watch();
+  // Указания владельца для ИИ-ассистентов (settings/aiNotes) — живьём.
+  if (kSaasMode) AiOwnerNotes.watch();
 
   // Локальные уведомления зала: брони, вызовы гостей, угли через 35 минут,
   // конец сеанса через 10. Слежение ведёт фоновая служба (HallWatchService):

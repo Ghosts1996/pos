@@ -7,6 +7,7 @@ import '../../services/ai/tooken_client.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
+import '../../build_info.dart';
 
 /// Админский экран подключения ИИ: провайдер (Tooken Club, DarkAPI,
 /// Google Gemini или свой шлюз), ключи, модели, резервный провайдер,
@@ -24,6 +25,7 @@ class AiSettingsScreen extends StatefulWidget {
 }
 
 class _AiSettingsScreenState extends State<AiSettingsScreen> {
+  late final _notesCtrl = TextEditingController(text: AiOwnerNotes.text);
   final _store = AiSettingsStore.instance;
 
   late AiSettings _settings;
@@ -469,6 +471,38 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
             Text('«Думающим» моделям (Gemini, DeepSeek-reasoner) нужен запас: они тратят лимит и на размышления.',
                 style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
             const Divider(height: 32),
+            if (kSaasMode) ...[
+              _section('Указания ассистентам'),
+              Text('Что важно знать ИИ о вашем заведении: что предлагать, о чём напоминать, чего не говорить. '
+                  'Например: «к кальяну предлагай чайник чая», «кухня работает до 23:00», «у нас две PS5 и настолки». '
+                  'Гостевому помощнику эти указания не показываются.',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _notesCtrl,
+                minLines: 3,
+                maxLines: 8,
+                maxLength: 2000,
+                decoration: const InputDecoration(hintText: 'Свои правила для ассистентов'),
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  icon: const Icon(Icons.check),
+                  label: const Text('Сохранить указания'),
+                  onPressed: () async {
+                    final messenger = ScaffoldMessenger.of(context);
+                    try {
+                      await AiOwnerNotes.save(_notesCtrl.text);
+                      messenger.showSnackBar(const SnackBar(content: Text('Указания сохранены — ассистенты учтут их сразу')));
+                    } catch (e) {
+                      messenger.showSnackBar(SnackBar(content: Text('Не удалось сохранить: ${humanError(e, lower: true)}')));
+                    }
+                  },
+                ),
+              ),
+              const Divider(height: 32),
+            ],
             _section('Агенты'),
             ...AiAgents.all.map(
               (a) => SwitchListTile(

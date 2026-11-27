@@ -188,10 +188,12 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
               // Данные зала кладём в промпт заранее: иначе ассистент
               // отвечает «данных нет», если шлюз не умеет инструменты.
               asyncContextBuilder: AiService.instance.hallContext,
-              quickPrompts: const [
+              quickPrompts: [
                 'Какие столы освободятся через час?',
                 'Куда посадить компанию из шести человек?',
                 'Что заканчивается на складе?',
+                // Кальянная: микс из того, что на полке, — без ИИ.
+                if (kSaasMode && VenueService.instance.cached.terms.isHookah) 'Подбери микс: кислое и свежее',
               ],
             )),
           ),

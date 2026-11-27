@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/app_scope.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import '../../utils/human_error.dart';
 import '../../utils/money.dart';
 import '../../utils/adaptive.dart';
 import '../../services/people_directory.dart';
+import '../../widgets/ai_rich_text.dart';
 
 /// Три ленты в одном экране:
 ///  • «Сводки ИИ» — что фоновые агенты нашли и предложили;
@@ -164,7 +166,7 @@ class _NotesTabState extends State<_NotesTab> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  SelectableText(d['text']?.toString() ?? '',
+                  AiRichText(d['text']?.toString() ?? '',
                       style: TextStyle(color: AppColors.textPrimary, height: 1.4)),
                 ],
               ),
@@ -213,11 +215,11 @@ class _AiActionsTab extends StatelessWidget {
             final date = ts is Timestamp ? ts.toDate() : DateTime.now();
             return ListTile(
               leading: Icon(Icons.smart_toy, color: AppColors.primary),
-              title: Text(d['tool']?.toString() ?? '',
+              title: Text(_toolLabel('${d['tool'] ?? ''}'),
                   style: TextStyle(color: AppColors.textPrimary)),
               subtitle: Text(
-                '${d['scope'] == 'guest' ? 'гость' : Pd.whoName('${d['employeeName'] ?? ''}').isEmpty ? 'сотрудник' : Pd.whoName('${d['employeeName']}')} · '
-                '${_fmt(date)}\n${d['args'] ?? ''}',
+                '${d['scope'] == 'guest' ? 'по просьбе гостя' : Pd.whoName('${d['employeeName'] ?? ''}').isEmpty ? 'по просьбе сотрудника' : 'попросил(а) ${Pd.whoName('${d['employeeName']}')}'} · '
+                '${_fmt(date)}${_argsText(d['args']).isEmpty ? '' : '\n${_argsText(d['args'])}'}',
                 style: TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
               isThreeLine: true,
@@ -347,3 +349,38 @@ class _AuditTabState extends State<_AuditTab> {
 String _fmt(DateTime d) =>
     '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')} '
     '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+
+/// Что сделал ИИ — по-русски, а не служебным именем команды.
+String _toolLabel(String tool) => const {
+      'create_reservation': 'Создал бронь',
+      'set_menu_item_availability': 'Изменил стоп-лист',
+      'add_reservation_note': 'Добавил заметку к брони',
+      'call_staff': 'Позвал сотрудника к столу',
+      'notify_staff': 'Отправил уведомление персоналу',
+      'save_guest_taste_note': 'Запомнил вкус гостя',
+    }[tool] ??
+    'Действие: $tool';
+
+/// Подробности действия строками «поле: значение» вместо JSON.
+String _argsText(Object? raw) {
+  Object? v = raw;
+  if (raw is String) {
+    try {
+      v = jsonDecode(raw);
+    } catch (_) {
+      return raw.length > 200 ? '${raw.substring(0, 200)}…' : raw;
+    }
+  }
+  if (v is! Map) return '';
+  const names = {
+    'name': 'имя', 'guests': 'гостей', 'date': 'дата', 'time': 'время', 'table': 'стол', 'tableName': 'стол',
+    'note': 'заметка', 'text': 'текст', 'menuItemName': 'позиция', 'available': 'в продаже', 'message': 'сообщение', 'reason': 'причина',
+  };
+  final parts = <String>[];
+  v.forEach((k, val) {
+    if (val == null || '$val'.isEmpty || '$k'.toLowerCase().contains('id')) return;
+    final shown = val is bool ? (val ? 'да' : 'нет') : '$val';
+    parts.add('${names[k] ?? k}: $shown');
+  });
+  return parts.join(' · ');
+}

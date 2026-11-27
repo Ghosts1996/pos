@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/ai/ai_agents.dart';
 import '../services/ai/ai_settings.dart';
 import '../services/ai/tooken_client.dart';
 import '../theme/app_colors.dart';
+import 'ai_rich_text.dart';
+import '../build_info.dart';
+import '../services/ai/staff_brain.dart';
 
 /// Универсальная панель диалога с ИИ-агентом.
 ///
@@ -71,10 +75,15 @@ class AiAssistantSheet extends StatefulWidget {
 class _ChatLine {
   final bool mine;
   String text;
+
+  /// Ответ из базы знаний кассы, без ИИ и без токенов.
+  bool local = false;
   _ChatLine(this.mine, this.text);
 }
 
 class _AiAssistantSheetState extends State<AiAssistantSheet> {
+  /// Ассистент зала в SaaS: ответы без ИИ из базы знаний кассы.
+  bool get _brain => kSaasMode && widget.agent.id == AiAgents.hall.id;
   final _input = TextEditingController();
   final _scroll = ScrollController();
   final _lines = <_ChatLine>[];
@@ -86,6 +95,8 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
   @override
   void initState() {
     super.initState();
+    // Ассистент зала: в фоне дописываем карточки знаний о новых позициях меню.
+    if (_brain) unawaited(StaffBrain.instance.buildCards());
     if (widget.initialQuestion != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _send(widget.initialQuestion!));
     }
@@ -118,8 +129,39 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
     _scrollToEnd();
 
     final reply = _lines.last;
+    // Сначала — то, что касса знает сама: миксы, состав, что подать, склад.
+    if (_brain) {
+      String? local;
+      try {
+        local = await StaffBrain.instance.localAnswer(question).timeout(const Duration(seconds: 12));
+      } catch (_) {}
+      if (local != null) {
+        if (!mounted) return;
+        setState(() {
+          reply
+            ..text = local!
+            ..local = true;
+          _busy = false;
+        });
+        _scrollToEnd();
+        return;
+      }
+      if (!AiSettingsStore.instance.current.isReady) {
+        setState(() {
+          reply.text = 'Без ИИ я отвечаю про миксы, состав и рецепт позиций, что подать к блюду и что заканчивается на складе. '
+              'Для остальных вопросов подключите ИИ: Администратор → Настройки ИИ.';
+          reply.local = true;
+          _busy = false;
+        });
+        return;
+      }
+    }
     try {
-      final ctx = await _buildContext();
+      var ctx = await _buildContext();
+      if (_brain) {
+        final cards = await StaffBrain.instance.cardsContext(question).catchError((Object _) => '');
+        if (cards.isNotEmpty) ctx = '$ctx\n\n$cards';
+      }
       final stream = AiService.instance.askStream(
         widget.agent,
         question,
@@ -134,6 +176,7 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
       _history
         ..add(AiMessage.user(question))
         ..add(AiMessage.assistant(reply.text));
+      if (_brain) unawaited(StaffBrain.instance.rememberAnswer(question, reply.text));
       // Храним только последние 6 реплик — длинная история дорого стоит
       // в токенах и редко нужна.
       while (_history.length > 6) {
@@ -273,8 +316,18 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
                 height: 18,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : SelectableText(
-                line.text,
+            : line.local
+                ? Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                    AiRichText(line.text, style: TextStyle(color: AppColors.textPrimary, fontSize: 14, height: 1.35)),
+                    const SizedBox(height: 6),
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.bolt, size: 13, color: AppColors.textMuted),
+                      const SizedBox(width: 3),
+                      Text('из базы знаний · без ИИ', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                    ]),
+                  ])
+                : AiRichText(
+                isMine ? line.text.replaceAll('*', '') : line.text,
                 style: TextStyle(
                   color: isMine ? AppColors.onAccent : AppColors.textPrimary,
                   fontSize: 14,
@@ -313,7 +366,7 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
             Expanded(
               child: TextField(
                 controller: _input,
-                enabled: ready && !_busy,
+                enabled: (ready || _brain) && !_busy,
                 minLines: 1,
                 maxLines: 4,
                 textInputAction: TextInputAction.send,
@@ -330,7 +383,7 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
             ),
             const SizedBox(width: 8),
             FilledButton(
-              onPressed: ready && !_busy ? () => _send(_input.text) : null,
+              onPressed: (ready || _brain) && !_busy ? () => _send(_input.text) : null,
               style: FilledButton.styleFrom(
                 minimumSize: const Size(52, 48),
                 backgroundColor: AppColors.primary,

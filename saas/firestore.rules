@@ -463,6 +463,17 @@ service cloud.firestore {
       allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
       allow write: if isStaff(tenantId);
     }
+    // Табак на полках (кальянная): правит персонал, гость за столом видит
+    // только вкусы — по ним приложение подбирает микс по его просьбе.
+    match /tenants/{tenantId}/tobaccoShelf/{canId} {
+      allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
+      allow write: if isStaff(tenantId);
+    }
+    // Карточки знаний о позициях меню и склада (ИИ пишет один раз, касса
+    // и ассистент берут отсюда без токенов) и кэш ответов ассистента.
+    match /tenants/{tenantId}/aiKnowledge/{docId} {
+      allow read, write: if isStaff(tenantId);
+    }
     // Процент за обслуживание видит и гость: о нём предупреждают до заказа
     // (ст. 16 ЗоЗПП) — в меню и в счёте.
     match /tenants/{tenantId}/settings/serviceCharge {

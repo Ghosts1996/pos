@@ -508,6 +508,17 @@ describe("Ролевая модель внутри одного заведени
     await assertFails(getDoc(doc(ownerBDb, "tenants/tenantA/settings/timeCafe")));
   });
 
+  it("полка табака (tobaccoShelf): пишет сотрудник, гость своего заведения только читает; aiKnowledge — только персонал", async () => {
+    const empDb = ctxFor("empA");
+    await assertSucceeds(setDoc(doc(empDb, "tenants/tenantA/tobaccoShelf/c1"), { brand: "Deus", name: "Cola", flavors: ["cola"], inStock: true }));
+    const guestDb = ctxFor("guestA");
+    await assertSucceeds(getDoc(doc(guestDb, "tenants/tenantA/tobaccoShelf/c1")));
+    await assertFails(setDoc(doc(guestDb, "tenants/tenantA/tobaccoShelf/c2"), { name: "x" }));
+    await assertFails(getDoc(doc(ctxFor("ownerB"), "tenants/tenantA/tobaccoShelf/c1")));
+    await assertSucceeds(setDoc(doc(empDb, "tenants/tenantA/aiKnowledge/m1"), { text: "Суп" }));
+    await assertFails(getDoc(doc(guestDb, "tenants/tenantA/aiKnowledge/m1")));
+  });
+
   it("процент за обслуживание (settings/serviceCharge) читает гость своего заведения, пишет только сотрудник", async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(ctx.firestore().doc("tenants/tenantA/settings/serviceCharge"), { enabled: true, percent: 10 });

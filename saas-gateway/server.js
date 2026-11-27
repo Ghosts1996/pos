@@ -65,6 +65,7 @@ const { createReviews } = require("./reviews");
 const { createFoodcost } = require("./foodcost");
 const { createStaffSchedule } = require("./staff-schedule");
 const { createHallImport } = require("./hall-import");
+const { createTobacco } = require("./tobacco");
 const { createMercury } = require("./mercury");
 const { createBoard } = require("./board");
 const { createKiosk } = require("./kiosk");
@@ -10552,6 +10553,13 @@ const hallImport = createHallImport({
   aiVendor: (tid) => venueAiVendor(tid), aiComplete: (v, o) => venueAiComplete(v, o), extractJson, limiter: menuAiLimiter,
 });
 
+// Табак на полках: фото полки → банки (ИИ заведения), общий каталог новинок (tobacco.js).
+const tobacco = createTobacco({
+  verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole,
+  aiVendor: (tid) => venueAiVendor(tid), aiComplete: (v, o) => venueAiComplete(v, o), extractJson, limiter: menuAiLimiter,
+  stateDir: process.env.TOBACCO_STATE_DIR || path.join(__dirname, "state"),
+});
+
 // ФГИС «Меркурий»: входящие ВСД и гашение из кабинета (mercury.js).
 const mercury = createMercury({
   db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole,
@@ -10905,6 +10913,7 @@ const ROUTES = {
   "/guestReviews": (req, res) => reviews.handle(req, res),
   "/foodcost": (req, res) => foodcost.handle(req, res),
   "/hallImport": (req, res) => hallImport.handle(req, res),
+  "/tobaccoShelf": (req, res) => tobacco.handle(req, res),
   "/mercury": (req, res) => mercury.handle(req, res),
   "/edo": (req, res) => edo.handle(req, res),
   "/accountingMail": (req, res) => accountingMail.handle(req, res),

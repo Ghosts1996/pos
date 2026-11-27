@@ -27,6 +27,7 @@ import '../../utils/table_label.dart';
 import '../../services/venue_service.dart';
 import '../../utils/human_error.dart';
 import '../../utils/service_charge.dart';
+import '../../widgets/table_ai_tips_bar.dart';
 import '../../utils/money.dart';
 import '../../utils/kitchen_slips.dart';
 import '../../utils/time_cafe.dart';
@@ -1062,6 +1063,8 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
                   _emptyOrder(session)
                 else
                   _orderList(session),
+                // Допродажи без ИИ: что чаще берут вместе (только SaaS).
+                if (kSaasMode && session.orderItems.isNotEmpty) TableAiTipsBar(session: session),
               ],
             ),
           ),

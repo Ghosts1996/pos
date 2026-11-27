@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../app_scope.dart';
@@ -54,6 +55,7 @@ const _brandRules = '''
 - Прежде чем что-то менять в данных, убедись, что тебя об этом просили.
 - Алкоголь и кальян — только совершеннолетним; не поощряй злоупотребление.
 - Цены — в рублях, ровно как в данных.
+- Пиши обычным текстом без разметки: без **, #, `, таблиц. Пункты — каждый с новой строки, начиная с «— ».
 ''';
 
 /// Реклама табака и стимулирование его продажи запрещены (ст. 16 № 15-ФЗ):
@@ -135,15 +137,21 @@ class AiAgents {
     description: 'Отвечает по залу, броням и счетам, сам подтягивает данные.',
     tools: {'get_hall_state', 'get_reservations', 'get_stock', 'get_menu', 'get_session', 'notify_staff'},
     systemPrompt: '''$_brandRules
-Роль: помощник персонала зала и администратора.
-Сначала вызови нужные инструменты, потом отвечай. Формат: 3–6 коротких строк,
+Роль: помощник персонала на смене — официанта, кассира, бармена, кальянщика,
+администратора. Ты знаешь зал, брони, открытые счета, меню, состав и рецепты
+позиций, склад и миксы кальянов и помогаешь работать прямо сейчас: кого куда
+посадить, что предложить гостю, что в блюде, из чего микс, что заканчивается.
+Отвечай только на рабочие вопросы смены. На просьбы написать ТЗ, код, договор,
+стратегию, рекламу или о посторонних темах коротко откажи одной строкой и
+предложи, с чем можешь помочь на смене.
+Сначала посмотри данные, потом отвечай. Формат: 2–6 коротких строк,
 каждая — действие или факт, по которому можно действовать сразу.''',
   );
 
   static const upsell = AiAgent(
     id: 'upsell',
     title: 'Агент допродаж',
-    description: 'Предлагает уместное дополнение к текущему чеку.',
+    description: 'Строка «К заказу подойдёт» на экране стола: что чаще берут вместе по продажам заведения. Без расхода токенов.',
     systemPrompt: '''$_brandRules
 Роль: подсказка кассиру, что предложить гостю к текущему заказу.
 Учитывай позиции в чеке, время за столом, перезабивки и остатки.
@@ -437,6 +445,7 @@ class AiService {
     final messages = <AiMessage>[
       AiMessage.system(agent.prompt),
       if (venue.isNotEmpty) AiMessage.system('О ЗАВЕДЕНИИ:\n$venue'),
+      if (AiOwnerNotes.forAgent(agent).isNotEmpty) AiMessage.system('УКАЗАНИЯ ВЛАДЕЛЬЦА:\n${AiOwnerNotes.forAgent(agent)}'),
       AiMessage.system(
           'Текущее время: ${DateTime.now().toIso8601String()} (${_weekdayRu(DateTime.now())})'),
       if (extraContext.isNotEmpty) AiMessage.system('ДАННЫЕ:\n$extraContext'),
@@ -500,6 +509,7 @@ class AiService {
       messages: [
         AiMessage.system(agent.prompt),
         if (venue.isNotEmpty) AiMessage.system('О ЗАВЕДЕНИИ:\n$venue'),
+        if (AiOwnerNotes.forAgent(agent).isNotEmpty) AiMessage.system('УКАЗАНИЯ ВЛАДЕЛЬЦА:\n${AiOwnerNotes.forAgent(agent)}'),
         if (extraContext.isNotEmpty) AiMessage.system('ДАННЫЕ:\n$extraContext'),
         ...history,
         AiMessage.user(userMessage),
@@ -757,6 +767,32 @@ class AiService {
   }
 }
 
+/// Карточки знаний о позициях меню (StaffBrain): одна строка на позицию
+/// «id | название | описание | состав» → {id: текст}. Один запрос на 15
+/// позиций; результат хранится и больше не запрашивается.
+extension AiServiceKnowledge on AiService {
+  Future<Map<String, String>> describeMenuItems(String lines) async {
+    final json = await _client.completeJson(
+      messages: [
+        AiMessage.system('''$_brandRules
+Роль: шеф и бар-менеджер заведения. Для каждой позиции меню напиши карточку
+для персонала: 2–3 короткие строки — что это и какой вкус, как подать или чем
+удивить гостя, с чем рекомендовать (напиток или закуска). Не выдумывай
+состав, которого нет в данных; аллергены называй, только если они очевидны
+из состава (орехи, молоко, глютен, морепродукты).
+Верни строго JSON: {"cards":{"<id>":"текст"}}'''),
+        AiMessage.user(lines),
+      ],
+      model: _settings.model,
+      agentId: AiAgents.hall.id,
+      maxTokens: 1800,
+    );
+    final cards = json['cards'];
+    if (cards is! Map) return const {};
+    return {for (final e in cards.entries) '${e.key}': cleanAiText(e.value, maxLength: 400)};
+  }
+}
+
 /// Черновик сторис от ИИ, уже разобранный по полям.
 class StoryDraft {
   final String title;
@@ -855,4 +891,32 @@ String loyaltyTiersText() {
   return ClientProfile.tiers
       .map((t) => '${t.name} (с ${num(t.from)} ₽) — ${num(t.cashback)}%')
       .join(', ');
+}
+
+/// Указания владельца для ассистентов (settings/aiNotes.text, SaaS):
+/// «предлагай чай к кальяну», «у нас две PS5 и настолки», «кухня до 23:00».
+/// Действуют во всех агентах персонала; гостевому консьержу не уходят —
+/// там могут быть внутренние правила.
+class AiOwnerNotes {
+  AiOwnerNotes._();
+  static String text = '';
+  static StreamSubscription<dynamic>? _sub;
+
+  static String forAgent(AiAgent agent) => agent.id == AiAgents.concierge.id ? '' : text;
+
+  static void watch() {
+    _sub?.cancel();
+    try {
+      _sub = AppScope.col('settings').doc('aiNotes').snapshots().listen(
+            (d) => text = '${d.data()?['text'] ?? ''}'.trim(),
+            onError: (Object _) {},
+          );
+    } catch (_) {}
+  }
+
+  static Future<void> save(String value) async {
+    final v = value.trim();
+    await AppScope.col('settings').doc('aiNotes').set({'text': v.length > 2000 ? v.substring(0, 2000) : v});
+    text = v;
+  }
 }

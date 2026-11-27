@@ -5,6 +5,11 @@ import '../../services/ai/tooken_client.dart';
 import '../../services/guest_link_service.dart';
 import '../theme/kolibri_theme.dart';
 import '../../utils/human_error.dart';
+import '../../widgets/ai_rich_text.dart';
+import '../../build_info.dart';
+import '../../services/venue_service.dart';
+import '../../services/hookah/mix_engine.dart';
+import '../../services/hookah/tobacco_shelf.dart';
 
 /// ИИ-помощник гостя: меню и состав блюд, популярное, столы и брони,
 /// бонусы, вызов персонала; про кальян — если гость спросит сам.
@@ -65,16 +70,52 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
   bool _busy = false;
   String? _error;
 
-  List<String> get _quick => const [
+  /// Гость за столом (открытый счёт) — только тогда подбираем микс кальяна.
+  bool _atTable = false;
+
+  bool get _hookahVenue => kSaasMode && VenueService.instance.cached.terms.isHookah;
+
+  List<String> get _quick => [
+        if (_atTable && _hookahVenue) 'Подбери микс кальяна',
         'Что у вас популярное?',
         'Мы вчетвером, что взять?',
         'Есть свободный стол на вечер?',
         'Как работают бонусы?',
       ];
 
+  static final _mixAsk = RegExp(r'микс|кальян|табак|забить|забивк', caseSensitive: false);
+
+  Future<bool> _checkAtTable() async {
+    try {
+      final p = await _link.profileOnce(widget.guestUid).timeout(const Duration(seconds: 6));
+      return (p?.activeSessionId ?? '').isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Микс кальяна — без ИИ и без лимита вопросов: из вкусов на полке
+  /// заведения, только гостю за столом и только по его просьбе (табак не
+  /// рекламируем: без марок и картинок).
+  Future<String> _mixReply(String text) async {
+    if (!await _checkAtTable()) {
+      return 'Подобрать микс кальяна можно, когда вы за столом: отсканируйте QR-код на столе или спросите кальянщика.';
+    }
+    final engine = MixEngine(await TobaccoShelf.once());
+    final req = MixRequest.parse(text);
+    final picks = engine.pick(req.isEmpty ? MixRequest.parse('для новичка') : req);
+    final body = engine.render(picks, forGuest: true);
+    return picks.isEmpty ? body : '$body\n\nСкажите кальянщику название микса — он соберёт его для вас.';
+  }
+
   @override
   void initState() {
     super.initState();
+    if (kSaasMode) {
+      _checkAtTable().then((v) {
+        if (mounted && v != _atTable) setState(() => _atTable = v);
+      });
+    }
     if (widget.initialQuestion != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _send(widget.initialQuestion!));
     }
@@ -97,6 +138,16 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
       _msgs.add(_Msg(true, text));
       _input.clear();
     });
+
+    if (_hookahVenue && _mixAsk.hasMatch(text)) {
+      final reply = await _mixReply(text);
+      if (!mounted) return;
+      setState(() {
+        _msgs.add(_Msg(false, reply));
+        _busy = false;
+      });
+      return;
+    }
 
     // Каждый вопрос стоит денег на шлюзе ИИ, поэтому доступ ограничен:
     // нужен указанный телефон, реальное присутствие за столом (QR) и не
@@ -228,7 +279,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
                                 : KolibriColors.surfaceElevated,
                             borderRadius: BorderRadius.circular(16),
                           ),
-                          child: SelectableText(
+                          child: AiRichText(
                             m.text,
                             style: TextStyle(
                               color: m.mine ? KolibriColors.onPrimary : KolibriColors.textPrimary,

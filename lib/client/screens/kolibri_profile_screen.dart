@@ -275,6 +275,97 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     }
   }
 
+  /// Выход без удаления данных: сначала код для входа — без него к этим
+  /// бонусам не вернуться (пароля и SMS у гостя нет).
+  Future<void> _logout() async {
+    final sid = widget.profile?.activeSessionId ?? '';
+    final code = await _auth.loginCode();
+    if (!mounted) return;
+    final link = code.isEmpty ? '' : '${(AppScope.slug ?? '').isEmpty ? '' : 'https://${AppScope.slug}.zalpos.ru/app/#g='}$code';
+    final go = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Выйти из аккаунта?', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Text(
+                'Ваши бонусы, уровень и история останутся. Чтобы вернуться в этот аккаунт, сохраните код для входа — '
+                'пароля и SMS у нас нет.${sid.isNotEmpty ? '\n\nСейчас у вас открыт счёт за столом: после выхода приложение его не покажет.' : ''}',
+                style: TextStyle(color: KolibriColors.textMuted, height: 1.4),
+              ),
+              const SizedBox(height: 16),
+              if (code.isNotEmpty)
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.copy_rounded, size: 18),
+                  label: const Text('Скопировать код для входа'),
+                  onPressed: () async {
+                    await Clipboard.setData(ClipboardData(text: link.isEmpty ? code : link));
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                          const SnackBar(content: Text('Код скопирован — сохраните его в заметках или отправьте себе')));
+                    }
+                  },
+                ),
+              const SizedBox(height: 8),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Выйти')),
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Остаться')),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (go != true || !mounted) return;
+    setState(() => _deleting = true);
+    try {
+      await _auth.logout();
+      _name.clear();
+      _phone.clear();
+      _snack('Вы вышли из аккаунта');
+    } catch (_) {
+      _snack('Не удалось выйти: проверьте интернет и попробуйте снова');
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
+  Future<void> _loginWithCode() async {
+    final ctrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Войти по коду'),
+        content: TextField(
+          controller: ctrl,
+          minLines: 1,
+          maxLines: 3,
+          decoration: const InputDecoration(hintText: 'Вставьте код или ссылку для входа'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Войти')),
+        ],
+      ),
+    );
+    final code = ctrl.text;
+    ctrl.dispose();
+    if (ok != true || !mounted) return;
+    setState(() => _deleting = true);
+    try {
+      final done = await _auth.loginWithCode(code);
+      _snack(done ? 'Вы вошли в свой аккаунт' : 'Код не подошёл — проверьте, что скопировали его целиком');
+    } catch (_) {
+      _snack('Не удалось войти: проверьте интернет и попробуйте снова');
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
   Future<void> _checkUpdate() async {
     final service = AppUpdateService.instance;
     if (service == null) return;
@@ -713,6 +804,23 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
               label: const Text('Другой код демо'),
             ),
           ),
+
+        // Выйти, не удаляя данные, и войти обратно по коду (только SaaS).
+        if (kSaasMode && AppScope.isSaasMode && kSaasGatewayUrl.isNotEmpty) ...[
+          Center(
+            child: TextButton.icon(
+              onPressed: _deleting ? null : _logout,
+              icon: const Icon(Icons.logout_rounded, size: 18),
+              label: const Text('Выйти из аккаунта'),
+            ),
+          ),
+          Center(
+            child: TextButton(
+              onPressed: _deleting ? null : _loginWithCode,
+              child: Text('Войти по коду', style: TextStyle(color: KolibriColors.textMuted, fontSize: 13)),
+            ),
+          ),
+        ],
 
         // Гость удаляет свои данные сам и сразу (152-ФЗ): _deleteMyData.
         if (AppScope.isSaasMode && kSaasGatewayUrl.isNotEmpty)

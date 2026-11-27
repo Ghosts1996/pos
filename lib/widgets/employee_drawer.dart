@@ -11,7 +11,9 @@ import '../screens/employee/cash_screen.dart';
 import '../screens/employee/receipts_history_screen.dart';
 import '../screens/employee/inventory_count_entry_screen.dart';
 import '../screens/employee/kegs_screen.dart';
+import '../screens/employee/tobacco_shelf_screen.dart';
 import '../build_info.dart';
+import '../services/venue_service.dart';
 import '../screens/employee/stock_view_screen.dart';
 import '../screens/employee/reservations_screen.dart';
 import '../screens/employee/kds_screen.dart';
@@ -351,6 +353,14 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
         subtitle: const Text('Пересчёт фактических остатков склада', style: TextStyle(fontSize: 11)),
         onTap: () => _go(InventoryCountEntryScreen(employee: widget.employee)),
       ),
+      // Кальянная: табак на полке и подбор миксов (без ИИ).
+      if (kSaasMode && VenueService.instance.cached.terms.isHookah)
+        ListTile(
+          leading: const Icon(Icons.local_fire_department_outlined),
+          title: const Text('Табак и миксы'),
+          subtitle: const Text('Полка табака по фото, подбор микса под гостя', style: TextStyle(fontSize: 11)),
+          onTap: () => _go(const TobaccoShelfScreen()),
+        ),
       if (kSaasMode)
         ListTile(
           leading: const Icon(Icons.sports_bar_outlined),
