@@ -68,8 +68,8 @@ jobs:
         env:
           WITH_GUEST: ${{ inputs.job_id_kolibri != '' }}
         run: |
-          pos='{"app":"pos","entrypoint":"lib/main.dart","project_name":"hookahpossaas","application_id":"com.hookahpossaas","gservices_secret":"GOOGLE_SERVICES_JSON_SAAS","appid_secret":"SAAS_FIREBASE_APP_ID","default_icon":"assets/icon/icon.png","default_adaptive_icon":"assets/icon/icon_foreground.png","default_adaptive_bg":"assets/icon/icon_background.png","default_label":"ZalPOS","artifact_prefix":"zalpos-kassa"}'
-          guest='{"app":"kolibri","entrypoint":"lib/client/kolibri_main.dart","project_name":"kolibriloungesaas","application_id":"com.kolibriloungesaas","gservices_secret":"GOOGLE_SERVICES_JSON_SAAS_KOLIBRI","appid_secret":"SAAS_FIREBASE_APP_ID_KOLIBRI","default_icon":"assets/icon/guest_icon.png","default_adaptive_icon":"assets/icon/guest_icon_foreground.png","default_adaptive_bg":"assets/icon/guest_icon_background.png","default_label":"ZalPOS","artifact_prefix":"zalpos-guest"}'
+          pos='{"app":"pos","title":"Касса (Android)","entrypoint":"lib/main.dart","project_name":"hookahpossaas","application_id":"com.hookahpossaas","gservices_secret":"GOOGLE_SERVICES_JSON_SAAS","appid_secret":"SAAS_FIREBASE_APP_ID","default_icon":"assets/icon/icon.png","default_adaptive_icon":"assets/icon/icon_foreground.png","default_adaptive_bg":"assets/icon/icon_background.png","default_label":"ZalPOS","artifact_prefix":"zalpos-kassa"}'
+          guest='{"app":"kolibri","title":"Приложение гостя (Android)","entrypoint":"lib/client/kolibri_main.dart","project_name":"kolibriloungesaas","application_id":"com.kolibriloungesaas","gservices_secret":"GOOGLE_SERVICES_JSON_SAAS_KOLIBRI","appid_secret":"SAAS_FIREBASE_APP_ID_KOLIBRI","default_icon":"assets/icon/guest_icon.png","default_adaptive_icon":"assets/icon/guest_icon_foreground.png","default_adaptive_bg":"assets/icon/guest_icon_background.png","default_label":"ZalPOS","artifact_prefix":"zalpos-guest"}'
           if [ "$WITH_GUEST" = "true" ]; then
             echo "include=[$pos,$guest]" >> "$GITHUB_OUTPUT"
           else
@@ -84,7 +84,9 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.apps.outputs.include) }}
-    name: Build ${{ matrix.app }}
+    # Название задачи — без внутренних имён (app = kolibri — служебное имя
+    # приложения гостя, его читает сервер; менять нельзя).
+    name: ${{ matrix.title || format('Build {0}', matrix.app) }}
 
     steps:
       # Первым делом — формат всех входных параметров. Их присылает
@@ -661,7 +663,7 @@ jobs:
   # google-services.json и секреты *_APP_ID здесь не нужны.
   build-windows:
     runs-on: windows-latest
-    name: Build pos (Windows)
+    name: Касса (Windows)
 
     steps:
       # Первым делом — формат всех входных параметров. Их присылает
