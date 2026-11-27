@@ -28,13 +28,18 @@ const TOBACCO_AI_PROMPT = `На фото — полка с банками таб
 Крупные слова на банках вроде «СЛЕПОТА», «ИМПОТЕНЦИЯ», «ИНФАРКТ», «ИНСУЛЬТ», «ГАНГРЕНА», «МУЧИТЕЛЬНАЯ СМЕРТЬ», «БЕСПЛОДИЕ», «КУРЕНИЕ УБИВАЕТ», «СОДЕРЖИТ СИСТЕМНЫЕ ЯДЫ» и фото болезней — обязательные предупреждения о вреде. Это НЕ вкус и НЕ марка: никогда не пиши их в name.
 Часто предупреждение закрывает лицевую сторону, а вкус написан от руки маркером на ленте или наклейке («Kriek», «Finlandia vanilla») — рукописная надпись и есть название вкуса. Ищи и мелкий текст состава: «с ароматом вишни» → вкус вишня. Марку ищи на ленте, крышке, боковой полосе (например TERROR, BONCHE, DARKSIDE, DEDUSHKA, ЛАСТОЧКА), а если её не видно — оставь brand пустым, не выдумывай.
 Фото может быть тёмным или смазанным — всё равно разбери каждую надпись, которую можно прочитать хотя бы частично; не пропускай банку, если читается вкус.
+Марку и линейку узнавай и по виду банки, когда надпись мелкая: Darkside — чёрная банка, крупный белый/цветной логотип DARKSIDE, линейки Core, Base, Rare, Xperience; Musthave — белая/цветная банка с надписью MUSTHAVE; Black Burn — чёрная банка с логотипом BLACK BURN и красочной этикеткой вкуса; Element — линейки Вода/Воздух/Земля/Огонь (цвет крышки по стихии); Spectrum — Classic, Hard Line, Kitchen Line; Bonche — крафтовая банка с крупной надписью вкуса латиницей (SALAMI, SESAME); Северный, NАШ, Sarma, Deus, Trofimoff, Overdose, Dogma, Banger, Хулиган — русские марки, название вкуса обычно по-русски.
+Frigate — сухой табак (без глицерина, для крепости микса): вкуса часто нет, name — как написано, flavors — «табачный».
+Бывают необычные «гастрономические» вкусы (салями, плов, сыр, бекон, кунжут) — пиши их как есть, это не ошибка.
+Читай название по буквам и не исправляй на похожее слово: «Тростниковая мята», а не «Простниковая»; «Бубльгум» — это жвачка (bubble gum); «Wintergreen» / «Винтергрин» — грушанка, мятно-холодный вкус.
 Для каждой банки верни:
-- brand — марку, как написано (частые: Darkside, Musthave, Black Burn, Element, Blanch, Timeless, Sapphire Crown, Original Virginia, Tangiers, Al Fakher, Adalya, Serbetli, Fumari, Starbuzz, Spectrum, Sebero, Duft, Satyr, Bonche, Jent, Trofimoff, Deus, Dogma, Banger, Overdose, Хулиган, MattPear, Palitra, NАШ, Северный, Kraken, Daily Hookah, Burn, Sarma, Craftium, Starline, Morpheus, Lastochka, Terror, Timeline, Chabacco, Brusko, Zomo, Dedushka и др.);
+- brand — марку, как написано (частые: Darkside, Musthave, Black Burn, Element, Blanch, Timeless, WTO, Noir, Frigate, Sapphire Crown, Original Virginia, Tangiers, Al Fakher, Adalya, Serbetli, Fumari, Starbuzz, Spectrum, Sebero, Duft, Satyr, Bonche, Jent, Trofimoff, Deus, Dogma, Banger, Overdose, Хулиган, MattPear, Palitra, NАШ, Северный, Kraken, Daily Hookah, Burn, Sarma, Craftium, Starline, Morpheus, Lastochka, Terror, Timeline, Chabacco, Brusko, Zomo, Dedushka и др.);
 - name — название вкуса так, как написано на банке, без перевода (например «Pinkman», «Supernova», «Ice Baby», «Love 66», «Спелая лесная малина»);
 - flavors — из чего вкус, простыми русскими словами. Если название «придуманное», напиши, что знаешь об этой банке (Pinkman — грейпфрут, клубника, малина; Supernova — ментол, холодок; Love 66 — маракуйя, дыня, арбуз, мята). Не знаешь вкус и по надписи не понять — оставь пустым, не выдумывай;
-- strength — крепость, если написана или известна линейка (light|medium|strong), иначе пусто.
+- strength — крепость, если написана или известна линейка (light|medium|strong), иначе пусто;
+- line — линейка марки, если видна (Core, Base, Hard Line, Земля…), иначе пусто.
 Одинаковые банки (одна марка и вкус) — один раз. Нечитаемые — пропусти.
-Ответь только JSON: {"items":[{"brand":"Black Burn","name":"Ice Baby","flavors":["грейпфрут","ягоды","холодок"],"strength":"strong"}]}`;
+Ответь только JSON: {"items":[{"brand":"Black Burn","name":"Ice Baby","flavors":["грейпфрут","ягоды","холодок"],"strength":"strong","line":""}]}`;
 
 function cleanText(v, max) {
   return String(v == null ? "" : v).replace(/[\u0000-\u001f<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
@@ -63,10 +68,11 @@ function itemsFromAi(parsed) {
     if (isWarning(name)) name = flavors.length ? flavors[0][0].toUpperCase() + flavors[0].slice(1) : "";
     if (!name) continue;
     const strength = ["light", "medium", "strong"].includes(it.strength) ? it.strength : "";
+    const line = isWarning(it.line) ? "" : cleanText(it.line, 30);
     const key = `${brand.toLowerCase()}|${name.toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ brand, name, flavors, strength });
+    out.push({ brand, name, flavors, strength, ...(line ? { line } : {}) });
   }
   return out;
 }

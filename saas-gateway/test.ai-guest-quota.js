@@ -50,6 +50,10 @@ const server = require("./server.js");
   const src = fs.readFileSync(path.join(__dirname, "server.js"), "utf8");
   assert.ok(/await takeGuestAiQuota\(firestore, decoded\.uid\);\n  \}/.test(src));
   passed++;
+  // Номер гостя — в справочнике в РФ, в профиле только phoneOnFile: такой
+  // гость за столом тоже получает ИИ (раньше — «доступен гостю … с телефоном»).
+  assert.ok(/c\.phoneOnFile === true/.test(src), "отметка phoneOnFile = телефон указан");
+  passed++;
   console.log(`ai-guest-quota: ${passed} проверок`);
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

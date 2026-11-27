@@ -83,7 +83,7 @@ const List<Flavor> kFlavors = [
   Flavor('ice', 'холодок', FlavorFamily.fresh, ['лед', 'льда', 'холодок', 'ice', 'cool', 'кулер', 'cooler', 'фрост', 'frost', 'север'], cooling: true),
   Flavor('menthol', 'ментол', FlavorFamily.fresh, ['ментол', 'menthol'], cooling: true),
   Flavor('eucalyptus', 'эвкалипт', FlavorFamily.fresh, ['эвкалипт', 'eucalyptus'], cooling: true),
-  Flavor('wintergreen', 'винтергрин', FlavorFamily.fresh, ['винтергрин', 'wintergreen', 'жвачка мятная'], cooling: true),
+  Flavor('wintergreen', 'винтергрин', FlavorFamily.fresh, ['винтергрин', 'винтегрин', 'винтер грин', 'винтер-грин', 'wintergreen', 'winter green', 'грушанка', 'жвачка мятная'], cooling: true),
   Flavor('pine', 'хвоя', FlavorFamily.fresh, ['хвоя', 'елка', 'ель', 'сосна', 'pine', 'fir'], cooling: true),
   Flavor('cucumber', 'огурец', FlavorFamily.fresh, ['огурец', 'огурца', 'cucumber']),
   Flavor('tarragon', 'тархун', FlavorFamily.herb, ['тархун', 'эстрагон', 'tarragon', 'лимонад тархун']),
@@ -97,8 +97,9 @@ const List<Flavor> kFlavors = [
   Flavor('chocolate', 'шоколад', FlavorFamily.dessert, ['шоколад', 'шоколада', 'chocolate', 'какао', 'cocoa', 'брауни', 'brownie']),
   Flavor('cookie', 'печенье', FlavorFamily.dessert, ['печенье', 'печенья', 'орео', 'oreo', 'cookie', 'выпечка', 'пирог', 'пирожное', 'cake', 'cheesecake', 'чизкейк', 'тесто', 'dough', 'хлопья', 'cereal', 'вафли', 'вафля', 'waffle', 'пончик', 'donut']),
   Flavor('honey', 'мёд', FlavorFamily.dessert, ['мед', 'меда', 'медовый', 'honey']),
-  Flavor('candy', 'леденцы', FlavorFamily.dessert, ['леденцы', 'леденец', 'конфеты', 'candy', 'скитлз', 'skittles', 'мармелад', 'драже', 'жвачка', 'bubble gum', 'бабл гам', 'сахарная вата', 'cotton candy']),
+  Flavor('candy', 'леденцы', FlavorFamily.dessert, ['леденцы', 'леденец', 'конфеты', 'candy', 'скитлз', 'skittles', 'мармелад', 'драже', 'жвачка', 'жвачки', 'жевательная резинка', 'bubble gum', 'bubblegum', 'бабл гам', 'баблгам', 'бабл-гам', 'бубльгум', 'бубль гум', 'бабблгам', 'тутси', 'фруктовая жвачка', 'сахарная вата', 'cotton candy']),
   Flavor('jam', 'варенье', FlavorFamily.dessert, ['варенье', 'джем', 'джема', 'jam', 'конфитюр']),
+  Flavor('sugarcane', 'сахарный тростник', FlavorFamily.dessert, ['сахарный тростник', 'тростник', 'тростниковый', 'тростниковая', 'sugarcane', 'sugar cane']),
   Flavor('marshmallow', 'маршмеллоу', FlavorFamily.dessert, ['маршмеллоу', 'зефир', 'marshmallow']),
   // Пряности
   Flavor('cinnamon', 'корица', FlavorFamily.spice, ['корица', 'корицы', 'cinnamon']),
@@ -118,6 +119,9 @@ const List<Flavor> kFlavors = [
   Flavor('pinacolada', 'пина колада', FlavorFamily.drink, ['пина колада', 'pina colada']),
   Flavor('cocktail', 'коктейль', FlavorFamily.drink, ['коктейль', 'cocktail', 'сангрия', 'sangria', 'мартини', 'бейлис', 'ром', 'rum', 'виски', 'ликер', 'alcohol', 'глинтвейн', 'mulled wine', 'шампанское', 'champagne', 'космополитен', 'cosmopolitan']),
   Flavor('kvass', 'квас', FlavorFamily.drink, ['квас', 'kvass', 'тархун-квас']),
+  // Табачные и солёные — у сухих табаков и «кухонных» линеек
+  Flavor('tobacco', 'табачный', FlavorFamily.herb, ['табачный', 'чистый табак', 'сухой табак', 'натуральный табак', 'без аромата', 'unflavored', 'tobacco', 'сигара', 'сигарный', 'cigar', 'трубочный']),
+  Flavor('savory', 'солёно-пряный', FlavorFamily.spice, ['салями', 'salami', 'колбаса', 'плов', 'сыр', 'cheese', 'бекон', 'bacon', 'копченый', 'копченая', 'smoked', 'соленый', 'солёный', 'salty', 'томат', 'tomato', 'огуречный рассол', 'шашлык']),
   // Цветочные
   Flavor('rose', 'роза', FlavorFamily.floral, ['роза', 'розы', 'rose']),
   Flavor('lavender', 'лаванда', FlavorFamily.floral, ['лаванда', 'лаванды', 'lavender']),

@@ -12,6 +12,7 @@ import '../../utils/service_charge.dart';
 import '../app_scope.dart';
 import '../../data/app_db.dart';
 import '../firestore_service.dart';
+import '../hookah/brand_profiles.dart';
 import '../hookah/mix_engine.dart';
 import '../hookah/tobacco_shelf.dart';
 import '../venue_service.dart';
@@ -82,6 +83,10 @@ class StaffBrain {
 
   // ------------------------------------------------------ ответы без ИИ
 
+  /// Подбор миксов с памятью: та же просьба или «ещё» — другие миксы.
+  static final _mixes = MixSession();
+  static bool _lastWasMix = false;
+
   static final _mixRe = RegExp(r'микс|забить|забивк|какой кальян|кальян\w* .*(вкус|посоветуй|подбери)|табак');
   static final _infoRe = RegExp(r'что в |что входит|состав|из чего|рецепт|как готов|расскажи|что такое|аллерг|выход|сколько грам|описани');
   static final _pairRe = RegExp(r'что (предложить|подать|посоветовать|допродать) к|с чем (подать|предложить)|к (нему|ней|этому) предложить|допродаж');
@@ -90,15 +95,37 @@ class StaffBrain {
   /// Вопросы про то, что сейчас в зале: на них кэш не годится.
   static final _liveRe = RegExp(r'стол|брон|сейчас|смен|заказ|чек|гост|свобод|занят|сегодня|вчера|выручк|склад|остат|кто ');
 
+  static final _dryRe = RegExp(r'сух(ой|ого|им) табак|для крепости|как (сделать|добавить) крепост|усилител');
+  static final _brandQRe = RegExp(r'забив|жаро|крепост|угл|прогре|как курит|расскажи|что за|какой лист|лист|сколько грам|греть|пригора|горчит|держит жар');
+  static final _rulesRe = RegExp(r'как (правильно )?(миксовать|смешивать|собрать микс|составить микс|делать микс)|правила микс|как сочетать|пропорци');
+
+  /// Про марку табака («как забивать бонч», «жаростойкость дарксайда») и
+  /// про правила миксов — по справочнику, без ИИ. null — вопрос не про это.
+  static String? tobaccoAnswer(String question) {
+    final q = _norm(question);
+    if (_rulesRe.hasMatch(q)) return kMixRules;
+    if (_dryRe.hasMatch(q)) return kDryTobacco;
+    final brand = brandInText(question);
+    if (brand == null || q.contains('микс') || !_brandQRe.hasMatch(q)) return null;
+    final p = profileOf(brand);
+    return p == null ? null : '${p.card()}\nЦифры — ориентир: у линеек одной марки крепость и жар бывают разными.';
+  }
+
   /// Ответ без ИИ или null — тогда спрашиваем модель.
   Future<String?> localAnswer(String question) async {
     final q = _norm(question);
     if (q.isEmpty) return null;
     final venue = VenueService.instance.cached;
-    if (venue.terms.isHookah && _mixRe.hasMatch(q)) {
+    if (venue.terms.isHookah) {
+      final tobacco = tobaccoAnswer(question);
+      if (tobacco != null) return tobacco;
+    }
+    final mixFollow = _lastWasMix && MixRequest.parse(question).more;
+    _lastWasMix = false;
+    if (venue.terms.isHookah && (_mixRe.hasMatch(q) || mixFollow)) {
+      _lastWasMix = true;
       final engine = MixEngine(await TobaccoShelf.once());
-      final req = MixRequest.parse(question);
-      return engine.render(engine.pick(req.isEmpty ? MixRequest.parse('для новичка') : req));
+      return _mixes.answer(engine, question);
     }
     final items = await menu();
     final item = itemIn(question, items);

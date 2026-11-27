@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hookah_pos/services/ai/staff_brain.dart';
+import 'package:hookah_pos/services/hookah/brand_profiles.dart';
 import 'package:hookah_pos/services/hookah/flavors.dart';
 import 'package:hookah_pos/services/hookah/mix_base.dart';
 import 'package:hookah_pos/services/hookah/mix_engine.dart';
@@ -110,5 +112,140 @@ void main() {
     }
     expect(kMixes.length, greaterThan(300));
     expect(kMixes.map((m) => m.name).toSet().length, kMixes.length, reason: 'названия миксов не повторяются');
+  });
+
+  group('справочник марок', () {
+    TobaccoCan can(String id, String brand, List<String> flavors) =>
+        TobaccoCan(id: id, brand: brand, name: id, flavors: flavors);
+
+    test('у каждой марки из каталога, кроме редких, есть профиль; цифры в пределах', () {
+      for (final b in ['Darkside', 'Musthave', 'Black Burn', 'Bonche', 'Dogma', 'Северный', 'Banger', 'Spectrum', 'Sarma',
+        'Overdose', 'Blanch', 'Noir', 'WTO', 'Trofimoff', 'Deus', 'Element']) {
+        final p = profileOf(b);
+        expect(p, isNotNull, reason: b);
+        expect(p!.strength, inInclusiveRange(1, 10));
+        expect(p.heat, inInclusiveRange(1, 5));
+        expect(p.gramsMin, lessThanOrEqualTo(p.gramsMax));
+      }
+      expect(profileOf('дарксайд')!.leaf, Leaf.dark);
+      expect(profileOf('Al Fakher')!.mixable, isFalse);
+      expect(profileOf('Adalya')!.mixable, isFalse);
+    });
+
+    test('марка в просьбе: «на бонче», «Нуар», но не «второй стол»', () {
+      expect(brandInText('собери что-то ягодное на бонче'), 'Bonche');
+      expect(brandInText('есть Нуар?'), 'Noir');
+      expect(brandInText('ВТО крепкий?'), 'WTO');
+      expect(brandInText('второй стол просит кислое'), isNull);
+      expect(brandInText('Мастхев с холодком'), 'Musthave');
+    });
+
+    test('Adalya и Al Fakher в миксы не идут', () {
+      final e = MixEngine([can('af', 'Al Fakher', ['grape']), can('ad', 'Adalya', ['mint'])]);
+      expect(e.noShelf, isTrue);
+    });
+
+    test('лёгкое — светлый лист, крепкое — тёмный, «на дарксайде» — Darkside', () {
+      final shelf = [
+        can('ds', 'Darkside', ['raspberry']),
+        can('bl', 'Blanch', ['raspberry']),
+        can('mh', 'Musthave', ['lemon']),
+      ];
+      final e = MixEngine(shelf);
+      expect(e.cansFor('raspberry', MixRequest.parse('что-нибудь лёгкое')).first.id, 'bl');
+      expect(e.cansFor('raspberry', MixRequest.parse('покрепче')).first.id, 'ds');
+      expect(e.cansFor('raspberry', MixRequest.parse('на дарксайде')).first.id, 'ds');
+    });
+
+    test('забивка: тёмный + светлый лист — слоями, угли и крепость', () {
+      final parts = [
+        (part: const MixPart('raspberry', 5), flavor: 'raspberry', can: can('ds', 'Darkside', ['raspberry'])),
+        (part: const MixPart('lemon', 5), flavor: 'lemon', can: can('bl', 'Blanch', ['lemon'])),
+      ];
+      final how = howToPack(parts);
+      expect(how, contains('слоями: сверху Darkside'));
+      expect(how, contains('снизу Blanch'));
+      expect(how, contains('внакидку'));
+      expect(how, contains('Крепость ≈ 6/10'));
+      expect(guestStrength(parts), 'Крепость: средний.');
+    });
+
+    test('ассистент: про марку и правила — без ИИ; просьба о миксе — не карточка марки', () {
+      expect(StaffBrain.tobaccoAnswer('как забивать бонч?'), contains('Bonche'));
+      expect(StaffBrain.tobaccoAnswer('какая жаростойкость у дарксайда'), contains('жаростойкость очень высокая'));
+      expect(StaffBrain.tobaccoAnswer('как правильно миксовать'), kMixRules);
+      expect(StaffBrain.tobaccoAnswer('забей микс на дарксайде с малиной'), isNull);
+      expect(StaffBrain.tobaccoAnswer('какой стол свободен'), isNull);
+    });
+
+    test('миксов больше 500, названия не повторяются', () {
+      expect(kMixes.length, greaterThan(500));
+      expect(kMixes.map((m) => m.name).toSet().length, kMixes.length);
+    });
+  });
+
+  group('вкусы с полки владельца, сухой табак, другие варианты', () {
+    TobaccoCan c(String id, String brand, List<String> f) => TobaccoCan(id: id, brand: brand, name: id, flavors: f);
+
+    test('Бубльгум, Винтегрин, Тростниковая мята, салями, плов — вкусы узнаются', () {
+      expect(flavorsInText('Бубльгум'), ['candy']);
+      expect(flavorsInText('Винтегрин'), ['wintergreen']);
+      expect(flavorsInText('WINTERGREEN'), ['wintergreen']);
+      expect(flavorsInText('Тростниковая мята'), containsAll(['sugarcane', 'mint']));
+      expect(flavorsInText('SALAMI'), ['savory']);
+      expect(flavorsInText('Плов'), ['savory']);
+      expect(flavorsOfCan('NАШ', 'Бубльгум', ''), ['candy']);
+    });
+
+    test('ошибка ИИ в букве: «Простниковая мята» → «Тростниковая мята»', () {
+      expect(fixCanName('Black Burn', 'Простниковая мята'), 'Тростниковая мята');
+      expect(fixCanName('Black Burn', 'Тросниковая мята'), 'Тростниковая мята');
+      expect(fixCanName('Black Burn', 'Ice Baby'), 'Ice Baby');
+      final can = TobaccoShelf.fromScan({'brand': 'BLACK BURN', 'name': 'Простниковая мята'});
+      expect(can.name, 'Тростниковая мята');
+      expect(can.flavors, containsAll(['sugarcane', 'mint']));
+    });
+
+    test('Frigate — сухой табак: не вкус, а добавка для крепости', () {
+      expect(canonicalBrand('ФРИГАТ'), 'Frigate');
+      expect(profileOf('Frigate')!.booster, isTrue);
+      expect(flavorsOfCan('Frigate', 'Caribbean Nights', ''), ['tobacco']);
+      final e = MixEngine([
+        c('rb', 'Darkside', ['raspberry']),
+        c('lm', 'Musthave', ['lemon']),
+        c('mt', 'Musthave', ['mint']),
+        c('fr', 'Frigate', ['tobacco']),
+      ]);
+      expect(e.shelf.any((x) => x.id == 'fr'), isFalse, reason: 'в миксы как вкус не идёт');
+      expect(e.boosters.single.id, 'fr');
+      final req = MixRequest.parse('что-нибудь крепкое с малиной');
+      final text = e.render(e.pick(req), req: req);
+      expect(text, contains('сухого табака Frigate'));
+      expect(StaffBrain.tobaccoAnswer('что такое сухой табак?'), contains('крепость'));
+      expect(StaffBrain.tobaccoAnswer('как забивать фригат'), contains('сухой табак'));
+    });
+
+    test('та же просьба ещё раз и «ещё» — другие миксы, потом по кругу', () {
+      final e = MixEngine(const []);
+      final s = MixSession();
+      final a = s.answer(e, 'кислое');
+      final b = s.answer(e, 'кислое');
+      final d = s.answer(e, 'ещё');
+      String first(String t) => t.split('\n').first;
+      expect(first(a), isNot(first(b)));
+      expect(first(b), isNot(first(d)));
+      expect(MixRequest.parse('другое').more, isTrue);
+      expect(MixRequest.parse('что-нибудь интереснее').tags, contains('необычный'));
+      expect(MixRequest.parse('парфюмное').tags, contains('цветочный'));
+      // Новая просьба — память сбрасывается.
+      final x = s.answer(e, 'сладкое');
+      expect(x, isNot(contains('закончились')));
+    });
+
+    test('табачный и солёный вкус не подменяют фрукт', () {
+      final e = MixEngine([c('sal', 'Bonche', ['savory']), c('tb', 'WTO', ['tobacco'])]);
+      expect(e.substitute('basil', const {}, const {}), isNull);
+      expect(e.substitute('raspberry', const {}, const {}), isNull);
+    });
   });
 }

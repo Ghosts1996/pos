@@ -1,5 +1,7 @@
+import 'brand_profiles.dart';
 import 'flavors.dart';
 import 'mix_base.dart';
+import 'tobacco_catalog.dart';
 
 /// Банка табака на полке заведения (tenants/{t}/tobaccoShelf).
 class TobaccoCan {
@@ -16,6 +18,9 @@ class TobaccoCan {
   final String strength;
   final bool inStock;
 
+  /// Линейка марки, если видна по банке: «Core», «Base», «Hard», «Земля».
+  final String line;
+
   const TobaccoCan({
     required this.id,
     required this.brand,
@@ -23,9 +28,13 @@ class TobaccoCan {
     required this.flavors,
     this.strength = '',
     this.inStock = true,
+    this.line = '',
   });
 
-  String get label => brand.isEmpty ? '«$name»' : '$brand «$name»';
+  String get label {
+    final b = [brand, line].where((x) => x.isNotEmpty).join(' ');
+    return b.isEmpty ? '«$name»' : '$b «$name»';
+  }
 
   factory TobaccoCan.fromMap(String id, Map<String, dynamic> m) {
     final name = '${m['name'] ?? ''}'.trim();
@@ -39,6 +48,7 @@ class TobaccoCan {
       flavors: keys.isNotEmpty ? keys : flavorsInText('$name ${m['note'] ?? ''}'),
       strength: '${m['strength'] ?? ''}',
       inStock: m['inStock'] != false,
+      line: '${m['line'] ?? ''}'.trim(),
     );
   }
 
@@ -47,6 +57,7 @@ class TobaccoCan {
         'name': name,
         'flavors': flavors,
         if (strength.isNotEmpty) 'strength': strength,
+        if (line.isNotEmpty) 'line': line,
         'inStock': inStock,
       };
 }
@@ -57,7 +68,23 @@ class MixRequest {
   final Set<String> tags;
   final List<String> want;
   final Set<String> avoid;
-  const MixRequest({this.tags = const {}, this.want = const [], this.avoid = const {}});
+
+  /// Марка, на которой просили собрать («на дарксайде»): её банки — первыми.
+  final String? brand;
+
+  /// Просят другие варианты: «ещё», «другое», «не то».
+  final bool more;
+  const MixRequest({this.tags = const {}, this.want = const [], this.avoid = const {}, this.brand, this.more = false});
+
+  /// Ключ просьбы — та же просьба ещё раз даёт другие миксы.
+  String get key => [
+        (tags.toList()..sort()).join(','),
+        (want.toList()..sort()).join(','),
+        (avoid.toList()..sort()).join(','),
+        brand ?? '',
+      ].join('|');
+
+  static final _moreRe = RegExp(r'(^|[^а-яa-z])(ещ[её]|друг(ое|ие|ой|ую|их)|иначе|не то|не та|не нравится|поменяй|замени|вариант)');
 
   static const _tagWords = <String, String>{
     'кисл': 'кислый',
@@ -75,6 +102,8 @@ class MixRequest {
     'выпеч': 'десертный',
     'прян': 'пряный',
     'цвет': 'цветочный',
+    'парфюм': 'цветочный',
+    'духи': 'цветочный',
     'трав': 'травяной',
     'напит': 'напиток',
     'газиров': 'напиток',
@@ -110,7 +139,7 @@ class MixRequest {
       avoid.addAll(flavorsInText(m.group(1)!));
     }
     final want = [for (final f in flavorsInText(t)) if (!avoid.contains(f)) f];
-    return MixRequest(tags: tags, want: want, avoid: avoid);
+    return MixRequest(tags: tags, want: want, avoid: avoid, brand: brandInText(text), more: _moreRe.hasMatch(t));
   }
 
   bool get isEmpty => tags.isEmpty && want.isEmpty;
@@ -129,19 +158,43 @@ class MixPick {
 /// Подбор миксов без ИИ: база миксов × полка заведения × просьба гостя.
 class MixEngine {
   MixEngine(List<TobaccoCan> shelf, {List<Mix>? mixes})
-      : shelf = [for (final c in shelf) if (c.inStock && c.flavors.isNotEmpty) c],
+      : shelf = [
+          // Классика на светлом листе с глицерином в миксы не идёт.
+          for (final c in shelf)
+            if (c.inStock && c.flavors.isNotEmpty && (profileOf(c.brand)?.mixable ?? true)) c
+        ],
+        boosters = [
+          for (final c in shelf)
+            if (c.inStock && (profileOf(c.brand)?.booster ?? false)) c
+        ],
         mixes = mixes ?? kMixes;
 
   final List<TobaccoCan> shelf;
+
+  /// Сухой табак на полке (Frigate) — добавка для крепости, не вкус.
+  final List<TobaccoCan> boosters;
   final List<Mix> mixes;
 
   /// Полка не заполнена — подбираем по всей базе, без банок.
   bool get noShelf => shelf.isEmpty;
 
-  /// Банки с этим вкусом: сначала «чистые» (один вкус), потом смешанные.
-  List<TobaccoCan> cansFor(String flavor) {
+  /// Банки с этим вкусом: сначала марка, о которой просили, потом
+  /// подходящие по крепости (лёгкое — светлый лист, крепкое — тёмный),
+  /// потом «чистые» (один вкус).
+  List<TobaccoCan> cansFor(String flavor, [MixRequest? req]) {
     final list = [for (final c in shelf) if (c.flavors.contains(flavor)) c];
-    list.sort((a, b) => a.flavors.length.compareTo(b.flavors.length));
+    final light = req != null && (req.tags.contains('лёгкий') || req.tags.contains('для новичка'));
+    final strong = req != null && req.tags.contains('крепкий');
+    int rank(TobaccoCan c) {
+      var r = c.flavors.length;
+      if (req?.brand != null && canonicalBrand(c.brand) == req!.brand) r -= 100;
+      final s = canStrength(c.brand, c.strength);
+      if (light) r += s * 3;
+      if (strong) r -= s * 3;
+      return r;
+    }
+
+    list.sort((a, b) => rank(a).compareTo(rank(b)));
     return list;
   }
 
@@ -151,8 +204,8 @@ class MixEngine {
   /// холодок, кислое на кислое), потом то же семейство.
   String? substitute(String flavor, Set<String> avoid, Set<String> used) {
     final f = kFlavorByKey[flavor];
-    if (f == null) return null;
-    final av = available.difference(avoid).difference(used);
+    if (f == null || _special.contains(flavor)) return null;
+    final av = available.difference(avoid).difference(used).difference(_special);
     if (f.cooling) {
       for (final k in ['mint', 'ice', 'menthol', 'wintergreen', 'eucalyptus', 'lemongrass', 'pine']) {
         if (av.contains(k)) return k;
@@ -175,9 +228,14 @@ class MixEngine {
     return best;
   }
 
-  List<MixPick> pick(MixRequest req, {int limit = 3}) {
+  /// Табачный и солёный вкус — не замена фрукту и не основа своего микса.
+  static const _special = {'tobacco', 'savory'};
+
+  /// [exclude] — названия миксов, которые уже показали («другие варианты»).
+  List<MixPick> pick(MixRequest req, {int limit = 3, Set<String> exclude = const {}}) {
     final picks = <MixPick>[];
     for (final mix in mixes) {
+      if (exclude.contains(mix.name)) continue;
       if (mix.flavors.any(req.avoid.contains)) continue;
       final used = <String>{};
       final parts = <({MixPart part, String flavor, TobaccoCan? can})>[];
@@ -189,7 +247,7 @@ class MixEngine {
           continue;
         }
         var flavor = p.flavor;
-        var cans = cansFor(flavor);
+        var cans = cansFor(flavor, req);
         if (cans.isEmpty) {
           final s = substitute(flavor, req.avoid, used);
           if (s == null) {
@@ -197,7 +255,7 @@ class MixEngine {
             break;
           }
           flavor = s;
-          cans = cansFor(s);
+          cans = cansFor(s, req);
           subs++;
         }
         used.add(flavor);
@@ -214,12 +272,12 @@ class MixEngine {
       // Просили конкретное — микс без этого вкуса не годится.
       if (req.want.isNotEmpty && !req.want.any((w) => parts.any((x) => x.flavor == w))) continue;
       if (req.tags.isNotEmpty && !req.tags.any(mix.tags.contains) && req.want.isEmpty) continue;
-      if (req.tags.contains('крепкий')) {
-        if (parts.any((x) => x.can?.strength == 'strong')) score += 2;
+      final power = mixStrength(parts);
+      if (power != null) {
+        if (req.tags.contains('крепкий')) score += power >= 7 ? 3 : (power >= 6 ? 1 : -2);
+        if (req.tags.contains('лёгкий') || req.tags.contains('для новичка')) score += power <= 4.5 ? 3 : (power >= 7 ? -4 : 0);
       }
-      if (req.tags.contains('лёгкий') || req.tags.contains('для новичка')) {
-        if (parts.any((x) => x.can?.strength == 'strong')) score -= 3;
-      }
+      if (req.brand != null && parts.any((x) => x.can != null && canonicalBrand(x.can!.brand) == req.brand)) score += 3;
       score -= subs * 1.5;
       picks.add(MixPick(mix, parts, subs, score));
     }
@@ -236,7 +294,7 @@ class MixEngine {
     }
     if (out.isEmpty && !noShelf) {
       final own = _compose(req);
-      if (own != null) out.add(own);
+      if (own != null && !exclude.contains(own.mix.name)) out.add(own);
     }
     return out;
   }
@@ -244,7 +302,7 @@ class MixEngine {
   /// Ничего из базы не подошло — собираем по правилам из того, что есть:
   /// основа (что просили или сочный фрукт) + акцент + холодок.
   MixPick? _compose(MixRequest req) {
-    final av = available.difference(req.avoid);
+    final av = available.difference(req.avoid).difference({for (final k in _special) if (!req.want.contains(k)) k});
     if (av.isEmpty) return null;
     String? base;
     for (final w in req.want) {
@@ -269,12 +327,12 @@ class MixEngine {
       if (cool != null) MixPart(cool, 2),
     ];
     final mix = Mix('Свой микс: ${_cap(name)}', mixParts, req.tags, 'Собран из того, что есть на полке');
-    return MixPick(mix, [for (final p in mixParts) (part: p, flavor: p.flavor, can: cansFor(p.flavor).firstOrNull)], 0, 0);
+    return MixPick(mix, [for (final p in mixParts) (part: p, flavor: p.flavor, can: cansFor(p.flavor, req).firstOrNull)], 0, 0);
   }
 
   /// Текст ответа: без разметки, по строкам. [forGuest] — без марок табака:
   /// гостю — вкус и доли, банку выберет кальянщик.
-  String render(List<MixPick> picks, {bool forGuest = false}) {
+  String render(List<MixPick> picks, {bool forGuest = false, MixRequest? req}) {
     if (picks.isEmpty) {
       return forGuest
           ? 'Подходящего микса не нашлось — спросите кальянщика, он подберёт вкус лично для вас.'
@@ -292,6 +350,10 @@ class MixEngine {
       }
       if (p.substitutions > 0 && !forGuest) b.writeln('— Один вкус заменён похожим из того, что есть');
       if (p.mix.note.isNotEmpty) b.writeln(p.mix.note);
+      final how = forGuest ? guestStrength(p.parts) : howToPack(p.parts);
+      if (how.isNotEmpty) b.writeln(how);
+      final boost = forGuest ? '' : boosterTip(boosters, p.parts, req);
+      if (boost.isNotEmpty) b.writeln(boost);
       if (i < picks.length - 1) b.writeln();
     }
     if (noShelf && !forGuest) {
@@ -299,6 +361,107 @@ class MixEngine {
       b.write('Полка табака не заполнена — миксы из общей базы. Сфотографируйте полки в разделе «Табак и миксы», и подбор будет только из того, что есть.');
     }
     return b.toString().trim();
+  }
+}
+
+typedef _Parts = List<({MixPart part, String flavor, TobaccoCan? can})>;
+
+/// Крепость микса 1–10: средняя по долям (марка банки → справочник).
+/// null — ни у одной банки марка не известна.
+double? mixStrength(_Parts parts) {
+  var sum = 0.0;
+  var w = 0;
+  var known = false;
+  for (final x in parts) {
+    final c = x.can;
+    if (c == null) continue;
+    if (profileOf(c.brand) != null || c.strength.isNotEmpty) known = true;
+    sum += canStrength(c.brand, c.strength) * x.part.share;
+    w += x.part.share;
+  }
+  if (!known || w == 0) return null;
+  return sum / w;
+}
+
+/// Гостю — только крепость словами.
+String guestStrength(_Parts parts) {
+  final s = mixStrength(parts);
+  return s == null ? '' : 'Крепость: ${strengthWord(s)}.';
+}
+
+/// Кальянщику: крепость, забивка (слоями — если марки по-разному держат
+/// жар), граммы, угли и прогрев — по справочнику марок.
+String howToPack(_Parts parts) {
+  final profs = [
+    for (final x in parts)
+      if (x.can != null && profileOf(x.can!.brand) != null) (p: profileOf(x.can!.brand)!, share: x.part.share, can: x.can!),
+  ];
+  final s = mixStrength(parts);
+  if (profs.isEmpty) return s == null ? '' : 'Крепость ≈ ${s.toStringAsFixed(0)}/10, ${strengthWord(s)}.';
+  final b = StringBuffer();
+  if (s != null) b.write('Крепость ≈ ${s.round()}/10, ${strengthWord(s)}. ');
+  final darkShare = profs.where((x) => x.p.leaf == Leaf.dark).fold<int>(0, (a, x) => a + x.share);
+  final pack = darkShare >= 4
+      ? 'внакидку с отступом 2–3 мм, без трамбовки'
+      : (profs.every((x) => x.p.pack == Pack.overpack) ? '«с горкой», рыхло' : 'пушистая внасыпку, не трамбовать');
+  final gMin = (profs.map((x) => x.p.gramsMin).reduce((a, c) => a + c) / profs.length).round();
+  final gMax = (profs.map((x) => x.p.gramsMax).reduce((a, c) => a + c) / profs.length).round();
+  b.write('Забивка: $pack, $gMin–$gMax г');
+  final hi = profs.map((x) => x.p.heat).reduce((a, c) => a > c ? a : c);
+  final lo = profs.map((x) => x.p.heat).reduce((a, c) => a < c ? a : c);
+  if (hi - lo >= 2) {
+    final top = {for (final x in profs) if (x.p.heat == hi) x.p.brand}.join(', ');
+    final bottom = {for (final x in profs) if (x.p.heat == lo) x.p.brand}.join(', ');
+    b.write('; слоями: сверху $top (держит жар), снизу $bottom — иначе нежный табак пригорит');
+  } else {
+    b.write('; табаки перемешать');
+  }
+  b.write('. ');
+  final warm = profs.map((x) => x.p.warmup).reduce((a, c) => a > c ? a : c);
+  b.write(lo <= 3
+      ? 'Угли: 2–3 по 25 мм (лучше калауд), прогрев $warm мин, следите за пригаром.'
+      : 'Угли: 3 по 25 мм, прогрев $warm мин.');
+  if (s != null && s >= 7 && profs.any((x) => x.p.leaf == Leaf.dark)) b.write(' Новичку — уменьшить долю тёмного листа.');
+  return b.toString();
+}
+
+/// Просили крепче, а микс средний — подсказать сухой табак с полки.
+String boosterTip(List<TobaccoCan> boosters, _Parts parts, MixRequest? req) {
+  if (boosters.isEmpty || req == null || !req.tags.contains('крепкий')) return '';
+  final s = mixStrength(parts);
+  if (s != null && s >= 8) return '';
+  return 'Для крепости: 1–2 из 10 сухого табака ${boosters.first.label} на дно чаши — вкус не изменится.';
+}
+
+/// Подбор с памятью: та же просьба ещё раз (или «ещё», «другое») — другие
+/// миксы, пока они не закончатся; потом — по кругу.
+class MixSession {
+  MixRequest? _last;
+  final Set<String> _shown = {};
+
+  /// Ответ на просьбу. [fallback] — что подбирать, если просьба пустая.
+  String answer(MixEngine engine, String text, {bool forGuest = false, String fallback = 'для новичка'}) {
+    var req = MixRequest.parse(text);
+    if (req.isEmpty) {
+      req = (req.more && _last != null) ? _last! : MixRequest.parse(fallback);
+    }
+    if (_last == null || req.key != _last!.key) _shown.clear();
+    var picks = engine.pick(req, exclude: _shown);
+    var again = false;
+    if (picks.isEmpty && _shown.isNotEmpty) {
+      _shown.clear();
+      again = true;
+      picks = engine.pick(req);
+    }
+    _last = req;
+    _shown.addAll(picks.map((p) => p.mix.name));
+    final body = engine.render(picks, forGuest: forGuest, req: req);
+    return again ? 'Другие варианты под эту просьбу закончились — показываю сначала.\n\n$body' : body;
+  }
+
+  void reset() {
+    _last = null;
+    _shown.clear();
   }
 }
 

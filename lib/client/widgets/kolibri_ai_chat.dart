@@ -73,6 +73,12 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
   /// Гость за столом (открытый счёт) — только тогда подбираем микс кальяна.
   bool _atTable = false;
 
+  /// Подбор миксов с памятью: «ещё», «другое», «интереснее» — новые миксы.
+  final _mixes = MixSession();
+
+  /// Последний ответ был миксом — «а что-нибудь интереснее?» тоже про микс.
+  bool _lastWasMix = false;
+
   bool get _hookahVenue => kSaasMode && VenueService.instance.cached.terms.isHookah;
 
   List<String> get _quick => [
@@ -102,10 +108,9 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
       return 'Подобрать микс кальяна можно, когда вы за столом: отсканируйте QR-код на столе или спросите кальянщика.';
     }
     final engine = MixEngine(await TobaccoShelf.once());
-    final req = MixRequest.parse(text);
-    final picks = engine.pick(req.isEmpty ? MixRequest.parse('для новичка') : req);
-    final body = engine.render(picks, forGuest: true);
-    return picks.isEmpty ? body : '$body\n\nСкажите кальянщику название микса — он соберёт его для вас.';
+    final body = _mixes.answer(engine, text, forGuest: true, fallback: 'сладкий, фруктовый');
+    if (body.startsWith('Подходящего микса не нашлось')) return body;
+    return '$body\n\nПонравился — скажите кальянщику название микса. Хотите другое — напишите «ещё» или «что-нибудь кислое / свежее / необычное».';
   }
 
   @override
@@ -139,15 +144,21 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
       _input.clear();
     });
 
-    if (_hookahVenue && _mixAsk.hasMatch(text)) {
+    final follow = _lastWasMix && (() {
+      final r = MixRequest.parse(text);
+      return r.more || r.tags.isNotEmpty || r.want.isNotEmpty;
+    })();
+    if (_hookahVenue && (_mixAsk.hasMatch(text) || follow)) {
       final reply = await _mixReply(text);
       if (!mounted) return;
       setState(() {
         _msgs.add(_Msg(false, reply));
         _busy = false;
+        _lastWasMix = true;
       });
       return;
     }
+    _lastWasMix = false;
 
     // Каждый вопрос стоит денег на шлюзе ИИ, поэтому доступ ограничен:
     // нужен указанный телефон, реальное присутствие за столом (QR) и не

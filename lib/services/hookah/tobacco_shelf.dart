@@ -49,12 +49,33 @@ class TobaccoShelf {
   /// прочитал ИИ, иначе обычная для марки.
   static TobaccoCan fromScan(Map<String, dynamic> m) {
     final brand = canonicalBrand('${m['brand'] ?? ''}');
-    final name = '${m['name'] ?? ''}'.trim();
+    // Ошибка ИИ в букву-две у известной банки — правим по каталогу.
+    final name = fixCanName(brand, '${m['name'] ?? ''}'.trim());
+    var line = '${m['line'] ?? ''}'.trim();
+    if (line.length > 30 || line.toLowerCase() == brand.toLowerCase()) line = '';
     final words = (m['flavors'] is List) ? (m['flavors'] as List).join(', ') : '${m['flavors'] ?? ''}';
     final flavors = flavorsOfCan(brand, name, words);
     var strength = '${m['strength'] ?? ''}';
     if (!const {'light', 'medium', 'strong'}.contains(strength)) strength = brandOf(brand)?.strength ?? '';
-    return TobaccoCan(id: idOf(brand, name), brand: brand, name: name, flavors: flavors, strength: strength);
+    return TobaccoCan(id: idOf(brand, name), brand: brand, name: name, flavors: flavors, strength: strength, line: line);
+  }
+
+  /// Исправить банку вручную: марка, название, вкусы словами. Поменялись
+  /// марка или название — у банки новый номер, старая запись удаляется.
+  static Future<TobaccoCan> edit(TobaccoCan old, {required String brand, required String name, required String flavorWords}) async {
+    final b = canonicalBrand(brand);
+    final n = name.trim();
+    final words = flavorWords.trim();
+    var flavors = words.isEmpty ? flavorsOfCan(b, n, '') : flavorsInText(words);
+    if (flavors.isEmpty) flavors = flavorsOfCan(b, n, words);
+    var strength = old.strength;
+    if (b != old.brand) strength = brandOf(b)?.strength ?? '';
+    final can = TobaccoCan(id: idOf(b, n), brand: b, name: n, flavors: flavors, strength: strength, inStock: old.inStock, line: old.line);
+    final batch = AppDb.instance.batch();
+    batch.set(_col().doc(can.id), {...can.toMap(), 'manual': true, 'updatedAt': FieldValue.serverTimestamp()});
+    if (can.id != old.id) batch.delete(_col().doc(old.id));
+    await batch.commit();
+    return can;
   }
 
   /// Фото полки → банки (через ИИ заведения на сервере). Снимок готовит

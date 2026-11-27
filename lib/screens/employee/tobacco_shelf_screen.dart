@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../services/app_lock.dart';
 import '../../services/hookah/flavors.dart';
+import '../../services/hookah/brand_profiles.dart';
 import '../../services/hookah/mix_engine.dart';
 import '../../services/hookah/tobacco_shelf.dart';
 import '../../theme/app_colors.dart';
@@ -26,6 +27,9 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
   final Set<String> _chips = {};
   String? _answer;
   bool _scanning = false;
+
+  /// Та же просьба ещё раз — другие миксы.
+  final _mixes = MixSession();
   List<TobaccoCan> _shelf = const [];
 
   static const _quick = ['Кислое', 'Сладкое', 'Свежее', 'Ягодное', 'Тропическое', 'Десертное', 'Для новичка', 'Необычное', 'Напиток'];
@@ -36,12 +40,60 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
     super.dispose();
   }
 
-  void _pick() {
-    final text = [..._chips, _ask.text].join(', ');
+  void _pick({bool more = false}) {
+    final text = [..._chips, _ask.text, if (more) 'ещё'].join(', ');
     final engine = MixEngine(_shelf);
-    final req = MixRequest.parse(text);
-    final picks = engine.pick(req.isEmpty ? MixRequest.parse('для новичка, сладкий') : req);
-    setState(() => _answer = engine.render(picks));
+    setState(() => _answer = _mixes.answer(engine, text, fallback: 'для новичка, сладкий'));
+  }
+
+  /// Банку прочитали неверно — исправить марку, название, вкусы или удалить.
+  Future<void> _editCan(TobaccoCan c) async {
+    final brand = TextEditingController(text: c.brand);
+    final name = TextEditingController(text: c.name);
+    final words = TextEditingController(text: c.flavors.map((f) => kFlavorByKey[f]?.name ?? f).join(', '));
+    final res = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Банка табака'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: brand, decoration: const InputDecoration(labelText: 'Марка')),
+            const SizedBox(height: 8),
+            TextField(controller: name, decoration: const InputDecoration(labelText: 'Название, как на банке')),
+            const SizedBox(height: 8),
+            TextField(
+              controller: words,
+              decoration: const InputDecoration(labelText: 'Вкусы словами', hintText: 'Например: мята, лёд'),
+            ),
+          ]),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'delete'),
+            style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+            child: const Text('Удалить'),
+          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, 'save'), child: const Text('Сохранить')),
+        ],
+      ),
+    );
+    if (!mounted || res == null) return;
+    try {
+      if (res == 'delete') {
+        await TobaccoShelf.remove(c.id);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Удалено: ${c.label}')));
+        return;
+      }
+      if (name.text.trim().isEmpty) return;
+      final saved = await TobaccoShelf.edit(c, brand: brand.text, name: name.text, flavorWords: words.text);
+      if (saved.flavors.isEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Вкус не узнан — допишите его словами, например «малина, мята».')));
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
+    }
   }
 
   Future<void> _scan(ImageSource source) async {
@@ -203,6 +255,15 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
                   if (_answer != null) ...[
                     const SizedBox(height: 14),
                     AiRichText(_answer!, style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () => _pick(more: true),
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Другие варианты'),
+                      ),
+                    ),
                   ],
                 ])),
                 const SizedBox(height: 16),
@@ -231,7 +292,8 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
                 ]),
                 const SizedBox(height: 6),
                 Text('Снимайте одну-две полки за раз, при хорошем свете, чтобы надписи читались. '
-                    'Закончилась банка — выключите её, и она пропадёт из подбора.',
+                    'Закончилась банка — выключите её, и она пропадёт из подбора. '
+                    'Прочитано неверно — нажмите на банку: исправить или удалить.',
                     style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
                 const SizedBox(height: 8),
                 if (_shelf.isEmpty)
@@ -240,10 +302,7 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
                     child: Center(child: Text('Банок пока нет', style: TextStyle(color: AppColors.textMuted))),
                   ),
                 for (final e in byBrand.entries) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12, bottom: 4),
-                    child: Text(e.key, style: TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w600)),
-                  ),
+                  _BrandHeader(brand: e.key),
                   for (final c in e.value)
                     Dismissible(
                       key: ValueKey(c.id),
@@ -257,10 +316,15 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
                       onDismissed: (_) => TobaccoShelf.remove(c.id),
                       child: SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: Text(c.name),
-                        subtitle: Text(
-                          c.flavors.isEmpty ? 'вкус не узнан' : c.flavors.map((f) => kFlavorByKey[f]?.name ?? f).join(', '),
-                          style: TextStyle(fontSize: 12, color: c.flavors.isEmpty ? AppColors.warning : AppColors.textMuted),
+                        title: InkWell(onTap: () => _editCan(c), child: Text(c.line.isEmpty ? c.name : '${c.name} · ${c.line}')),
+                        subtitle: InkWell(
+                          onTap: () => _editCan(c),
+                          child: Text(
+                            c.flavors.isEmpty
+                                ? 'вкус не узнан — нажмите, чтобы исправить'
+                                : c.flavors.map((f) => kFlavorByKey[f]?.name ?? f).join(', '),
+                            style: TextStyle(fontSize: 12, color: c.flavors.isEmpty ? AppColors.warning : AppColors.textMuted),
+                          ),
                         ),
                         value: c.inStock,
                         onChanged: (v) => TobaccoShelf.setInStock(c.id, v),
@@ -328,6 +392,46 @@ class _ScanReviewState extends State<_ScanReview> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Заголовок марки на полке: лист, крепость, жар, забивка — по справочнику.
+/// Нажатие — полная карточка (угли, граммы, прогрев, совет).
+class _BrandHeader extends StatelessWidget {
+  final String brand;
+  const _BrandHeader({required this.brand});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = profileOf(brand);
+    final title = Text(brand, style: TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w600));
+    if (p == null) return Padding(padding: const EdgeInsets.only(top: 12, bottom: 4), child: title);
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        builder: (_) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Text(p.card(), style: const TextStyle(fontSize: 15, height: 1.45)),
+          ),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.only(top: 12, bottom: 4),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          title,
+          const SizedBox(height: 2),
+          Text(
+            '${p.leafLabel} · крепость ${p.strength}/10 · жар ${p.heat}/5 · '
+            '${p.pack == Pack.edges ? 'внакидку' : (p.pack == Pack.overpack ? 'с горкой' : 'пушисто')}'
+            '${p.mixable ? '' : ' · в миксы не идёт'}',
+            style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+          ),
+        ]),
       ),
     );
   }

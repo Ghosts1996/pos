@@ -8648,10 +8648,18 @@ async function handleAiProxy(req, res) {
     // проверки ИИ заведения можно было бы расходовать в обход приложения.
     const c = client.data() || {};
     const sid = String(c.activeSessionId || "");
-    const sessionTenant = chainId ? String(c.activeTenantId || "") : tenantId;
+    // Точка сети, где открыт счёт; приложение, не знающее о сети, её не
+    // пишет — тогда та точка, из которой спрашивают.
+    const sessionTenant = chainId ? String(c.activeTenantId || tenantId) : tenantId;
     const idOk = (v, max) => new RegExp(`^[A-Za-z0-9_-]{1,${max}}$`).test(v);
-    if (!String(c.phone || "").trim() || !idOk(sid, 128) || !idOk(sessionTenant, 64)) {
-      throw new HttpError(403, "ИИ-помощник доступен гостю за столом с указанным в профиле телефоном");
+    // Номер гостя хранится в справочнике в РФ, в профиле — только отметка
+    // phoneOnFile (её ставит pii-gateway); старые профили — с номером.
+    const hasPhone = !!String(c.phone || "").trim() || c.phoneOnFile === true;
+    if (!hasPhone) {
+      throw new HttpError(403, "Укажите номер телефона в профиле — так доступен ИИ-помощник");
+    }
+    if (!idOk(sid, 128) || !idOk(sessionTenant, 64)) {
+      throw new HttpError(403, "ИИ-помощник доступен за столом — отсканируйте QR-код на столе");
     }
     const ses = await firestore.collection("tenants").doc(sessionTenant).collection("sessions").doc(sid).get();
     if (!ses.exists || ses.data().status !== "active") {

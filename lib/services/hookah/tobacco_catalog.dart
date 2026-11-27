@@ -22,7 +22,7 @@ class TobaccoBrand {
 
 const List<TobaccoBrand> kTobaccoBrands = [
   TobaccoBrand('Darkside', ['dark side', 'дарксайд', 'дарк сайд', 'ds'], 'strong'),
-  TobaccoBrand('Musthave', ['must have', 'musth', 'must h', 'маст хэв', 'мастхэв', 'маст хев'], 'medium'),
+  TobaccoBrand('Musthave', ['must have', 'musth', 'must h', 'маст хэв', 'мастхэв', 'маст хев', 'мастхев'], 'medium'),
   TobaccoBrand('Black Burn', ['blackburn', 'блэк бёрн', 'блэк берн', 'блек берн', 'bb'], 'strong'),
   TobaccoBrand('Element', ['элемент', 'element вода', 'element земля', 'element воздух', 'element огонь'], 'medium'),
   TobaccoBrand('Tangiers', ['танжирс', 'tangiers noir', 'tangiers birquq'], 'strong'),
@@ -37,12 +37,12 @@ const List<TobaccoBrand> kTobaccoBrands = [
   TobaccoBrand('Sebero', ['себеро', 'sebero black'], 'medium'),
   TobaccoBrand('Duft', ['дуфт', 'duft pheromone', 'duft all-in'], 'medium'),
   TobaccoBrand('Satyr', ['сатир', 'satyr aroma'], 'strong'),
-  TobaccoBrand('Bonche', ['бонче', 'бонш'], 'strong'),
+  TobaccoBrand('Bonche', ['бонче', 'бонш', 'бонч'], 'strong'),
   TobaccoBrand('Jent', ['джент', 'jent cigar'], 'medium'),
   TobaccoBrand('Trofimoff', ["trofimoff's", 'трофимов', 'трофимофф'], 'medium'),
   TobaccoBrand('Deus', ['деус'], 'medium'),
   TobaccoBrand('Dogma', ['догма'], 'strong'),
-  TobaccoBrand('Banger', ['бангер', 'бэнгер'], 'medium'),
+  TobaccoBrand('Banger', ['бангер', 'бэнгер', 'бенгер'], 'medium'),
   TobaccoBrand('Overdose', ['овердоз', 'over dose'], 'strong'),
   TobaccoBrand('Хулиган', ['hooligan', 'huligan', 'хулиган hard'], 'strong'),
   TobaccoBrand('MattPear', ['matt pear', 'мэт пир', 'мэттпир'], 'medium'),
@@ -63,9 +63,12 @@ const List<TobaccoBrand> kTobaccoBrands = [
   TobaccoBrand('Brusko', ['бруско'], 'light'),
   TobaccoBrand('Zomo', ['зомо'], 'light'),
   TobaccoBrand('Dedushka', ['дедушка'], 'strong'),
+  TobaccoBrand('WTO', ['вто', 'world tobacco original', 'world tobacco'], 'strong'),
+  TobaccoBrand('Noir', ['нуар'], 'strong'),
   TobaccoBrand('Blanch', ['бланш', 'blansh', 'бланч'], 'medium'),
   TobaccoBrand('Timeless', ['таймлесс', 'таймлес'], 'medium'),
   TobaccoBrand('Sapphire Crown', ['сапфир кроун', 'sapphire'], 'light'),
+  TobaccoBrand('Frigate', ['фригат', 'фрегат', 'frigate dry', 'фригат сухой'], 'strong'),
   TobaccoBrand('Original Virginia', ['ориджинал вирджиния', 'original virginia', 'ov'], 'strong'),
 ];
 
@@ -301,6 +304,9 @@ const List<String> kKnownCanLines = [
   'Sebero|Mangolcrian|mango',
   'NАШ|Pina|pineapple',
   'NАШ|Crazy Green|kiwi',
+  'NАШ|Бубльгум; Bubblegum; Бабл гам|candy',
+  'Overdose|Wintergreen; Винтергрин; Винтегрин|wintergreen',
+  'Black Burn|Тростниковая мята; Sugarcane Mint; Простниковая мята|sugarcane, mint',
 ];
 
 class KnownCan {
@@ -366,5 +372,46 @@ KnownCan? knownCan(String brand, String name) {
 List<String> flavorsOfCan(String brand, String name, String aiWords) {
   final known = knownCan(brand, name);
   if (known != null) return [for (final f in known.flavors) if (kFlavorByKey.containsKey(f)) f];
-  return flavorsInText('$aiWords, $name');
+  final found = flavorsInText('$aiWords, $name');
+  // Сухой табак (Frigate) — без аромата: «табачный», даже если название
+  // ничего не говорит («Caribbean Nights»).
+  if (found.isEmpty && canonicalBrand(brand) == 'Frigate') return const ['tobacco'];
+  return found;
+}
+
+/// Исправить название, которое ИИ прочитал с ошибкой в одну-две буквы:
+/// «Простниковая мята» → «Тростниковая мята» (известная банка той же марки).
+String fixCanName(String brand, String name) {
+  final b = canonicalBrand(brand);
+  final n = _key(name);
+  if (n.length < 5) return name;
+  String? best;
+  var bestD = 3;
+  for (final c in kKnownCans) {
+    if (c.brand != b) continue;
+    for (final x in c.names) {
+      final k = _key(x);
+      if ((k.length - n.length).abs() > 2) continue;
+      final d = _dist(k, n);
+      if (d < bestD) {
+        bestD = d;
+        best = c.names.first;
+      }
+    }
+  }
+  // Не больше одной ошибки на 6 букв.
+  return best != null && bestD <= (n.length / 6).floor().clamp(1, 2) ? best : name;
+}
+
+int _dist(String a, String b) {
+  var prev = List<int>.generate(b.length + 1, (i) => i);
+  for (var i = 1; i <= a.length; i++) {
+    final cur = List<int>.filled(b.length + 1, 0)..[0] = i;
+    for (var j = 1; j <= b.length; j++) {
+      final cost = a.codeUnitAt(i - 1) == b.codeUnitAt(j - 1) ? 0 : 1;
+      cur[j] = [prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost].reduce((x, y) => x < y ? x : y);
+    }
+    prev = cur;
+  }
+  return prev[b.length];
 }
