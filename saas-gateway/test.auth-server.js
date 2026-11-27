@@ -75,6 +75,30 @@ async function main() {
   check("вход с новым паролем", r.status === 200);
   r = await request("POST", "/auth/anonymous", {});
   check("анонимный вход (устройство)", r.status === 200 && r.json.uid && r.json.uid !== s.uid);
+  {
+    // Короткий код входа гостя: выдаётся гостю, по нему — вход в тот же
+    // аккаунт; новый код отменяет прежний; кривой код — отказ.
+    const anon = r.json;
+    const tok = anon.idToken;
+    const reg = await request("POST", "/registerGuestRecovery", { token: tok, body: { secret: "a".repeat(43) } });
+    check("ключ восстановления гостя принят", reg.status === 200);
+    const c1 = (await request("POST", "/guestLoginCode", { token: tok, body: {} })).json || {};
+    check("код входа вида XXXX-XXXX", /^[2-9A-HJKMNP-Z]{4}-[2-9A-HJKMNP-Z]{4}$/.test(c1.code || ""));
+    const r1 = await request("POST", "/restoreGuestSession", { body: { code: (c1.code || "").toLowerCase().replace("-", " ") } });
+    check("вход по коду (строчными, с пробелом) -> токен", r1.status === 200 && !!(r1.json || {}).token);
+    const c2 = (await request("POST", "/guestLoginCode", { token: tok, body: {} })).json || {};
+    const r2 = await request("POST", "/restoreGuestSession", { body: { code: c1.code } });
+    check("старый код после нового не работает", c2.code && c2.code !== c1.code && r2.status === 403);
+    const r3 = await request("POST", "/restoreGuestSession", { body: { code: "12" } });
+    check("кривой код -> 400", r3.status === 400);
+    const reg2 = await request("POST", "/registerGuestRecovery", { token: tok, body: { secret: "b".repeat(43) } });
+    const r4 = await request("POST", "/restoreGuestSession", { body: { uid: anon.uid, secret: "a".repeat(43) } });
+    check("ключ первого телефона работает после входа на втором", reg2.status === 200 && r4.status === 200);
+    const r5 = await request("POST", "/guestLoginCode", { body: {} });
+    check("код без входа -> 401", r5.status === 401);
+    const r6 = await request("POST", "/guestLoginCode", { token: s.idToken, body: {} });
+    check("код входа — только гостю (не владельцу с почтой)", r6.status === 403);
+  }
   r = await request("POST", "/auth/me", { token: "bad.token.value" });
   check("плохой токен → 401", r.status === 401);
   r = await request("POST", "/authBackend", { token: s.idToken, body: { action: "enable" } });

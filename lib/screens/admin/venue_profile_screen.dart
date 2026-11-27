@@ -29,6 +29,9 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
   final _about = TextEditingController();
   final _rules = TextEditingController();
   final _lat = TextEditingController();
+  final _refInviter = TextEditingController();
+  final _refInvitee = TextEditingController();
+  bool _referralEnabled = true;
   final _lon = TextEditingController();
   final _sellerName = TextEditingController();
   final _sellerInn = TextEditingController();
@@ -85,6 +88,9 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
     _hookah = p.terms.isHookah;
     _tipsEnabled = p.tipsEnabled;
     _tipsTeamEnabled = p.tipsTeamEnabled;
+    _referralEnabled = p.referralEnabled;
+    _refInviter.text = p.referralInviterBonus.toStringAsFixed(0);
+    _refInvitee.text = p.referralInviteeBonus.toStringAsFixed(0);
     _guestSbpPay = p.guestSbpPay;
     _deliveryEnabled = p.deliveryEnabled;
     _sellerName.text = p.sellerName;
@@ -95,6 +101,12 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
       _hours[i] = TextEditingController(text: p.workingHours[i] ?? '');
     }
     if (mounted) setState(() => _loading = false);
+  }
+
+  /// Бонус из поля: целое 0…100 000, пусто или ошибка — прежнее значение.
+  static double _bonusField(TextEditingController c, double fallback) {
+    final n = int.tryParse(c.text.replaceAll(RegExp(r'\s'), ''));
+    return (n == null || n < 0 || n > 100000) ? fallback : n.toDouble();
   }
 
   String get _innDigits => _sellerInn.text.replaceAll(RegExp(r'\D'), '');
@@ -156,6 +168,9 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
       hookahEnabled: _hookah,
       tipsEnabled: _tipsEnabled,
       tipsTeamEnabled: _tipsTeamEnabled,
+      referralEnabled: _referralEnabled,
+      referralInviterBonus: _bonusField(_refInviter, _profile.referralInviterBonus),
+      referralInviteeBonus: _bonusField(_refInvitee, _profile.referralInviteeBonus),
       guestSbpPay: _guestSbpPay,
       deliveryEnabled: _deliveryEnabled,
       sellerName: _sellerName.text.trim(),
@@ -329,6 +344,46 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                   style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                 ),
               ),
+            if (kSaasMode) ...[
+              const Divider(height: 32),
+              const Text('Пригласить друга', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+              SwitchListTile(
+                key: const Key('referral-enabled'),
+                contentPadding: EdgeInsets.zero,
+                value: _referralEnabled,
+                onChanged: (v) => setState(() => _referralEnabled = v),
+                title: const Text('Гости приглашают друзей за бонусы'),
+                subtitle: Text(
+                  'У гостя в приложении — свой код. Друг вводит его до первого визита; '
+                  'после первого оплаченного счёта бонусы получают оба. Выключите — '
+                  'карточка «Пригласить друга» пропадёт у гостей, новые коды не примутся.',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                ),
+              ),
+              if (_referralEnabled)
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        key: const Key('referral-invitee'),
+                        controller: _refInvitee,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Другу, бонусов'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        key: const Key('referral-inviter'),
+                        controller: _refInviter,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Пригласившему, бонусов'),
+                      ),
+                    ),
+                  ],
+                ),
+              const Divider(height: 32),
+            ],
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: _deliveryEnabled,

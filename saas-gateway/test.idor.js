@@ -55,7 +55,7 @@ const PUBLIC = new Set([
   "/partnerInviteInfo", "/partnerMe", "/supportBotStatus", "/auth/me", "/auth/login", "/auth/signup", "/auth/anonymous",
   "/auth/refresh", "/auth/logout", "/auth/exchange", "/auth/custom", "/auth/apply", "/auth/reauth", "/auth/password",
   "/robokassaSuccess", "/robokassaFail", "/deviceIdentify", "/recordAdminLogin", "/sendAuthEmail", "/telegramStatus",
-  "/supportCabinetMessages", "/supportTicketList", "/registerGuestRecovery", "/restoreGuestSession", "/aiKeyProbe",
+  "/supportCabinetMessages", "/supportTicketList", "/registerGuestRecovery", "/restoreGuestSession", "/guestLoginCode", "/aiKeyProbe",
   "/db/session", "/db/listen", "/db/get", "/db/query", "/db/commit", "/chainLocationQuote", "/partnerDashboard",
 ]);
 

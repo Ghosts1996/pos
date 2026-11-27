@@ -65,6 +65,12 @@ class VenueProfile {
   /// Гость может оставить чаевые из приложения.
   final bool tipsEnabled;
 
+  /// «Пригласить друга» в приложении гостя (SaaS): владелец может выключить
+  /// и задать свои бонусы — другу за первый визит и тому, кто пригласил.
+  final bool referralEnabled;
+  final double referralInviterBonus;
+  final double referralInviteeBonus;
+
   /// Кроме конкретного сотрудника, гостю доступен вариант «Всей смене» —
   /// сумма делится поровну между теми, кто был на смене в этот момент.
   final bool tipsTeamEnabled;
@@ -155,6 +161,9 @@ class VenueProfile {
     this.hookahEnabled,
     this.tipsEnabled = true,
     this.tipsTeamEnabled = true,
+    this.referralEnabled = true,
+    this.referralInviterBonus = 300,
+    this.referralInviteeBonus = 200,
     this.guestSbpPay = false,
     this.onlinePay = '',
     this.deliveryEnabled = false,
@@ -193,6 +202,9 @@ class VenueProfile {
       hookahEnabled: data['hookahEnabled'] is bool ? data['hookahEnabled'] as bool : null,
       tipsEnabled: data['tipsEnabled'] != false,
       tipsTeamEnabled: data['tipsTeamEnabled'] != false,
+      referralEnabled: data['referralEnabled'] != false,
+      referralInviterBonus: _bonusOr(data['referralInviterBonus'], 300),
+      referralInviteeBonus: _bonusOr(data['referralInviteeBonus'], 200),
       guestSbpPay: data['guestSbpPay'] == true,
       onlinePay: asText(data['onlinePay']),
       piiMode: asText(data['piiMode']),
@@ -228,6 +240,11 @@ class VenueProfile {
         if (hookahEnabled != null) 'hookahEnabled': hookahEnabled,
         'tipsEnabled': tipsEnabled,
         'tipsTeamEnabled': tipsTeamEnabled,
+        if (kSaasMode) ...{
+          'referralEnabled': referralEnabled,
+          'referralInviterBonus': referralInviterBonus,
+          'referralInviteeBonus': referralInviteeBonus,
+        },
         'guestSbpPay': guestSbpPay,
         'deliveryEnabled': deliveryEnabled,
         'sellerName': sellerName,
@@ -237,6 +254,13 @@ class VenueProfile {
       };
 
   VenueTerms get terms => VenueTerms(venueType, withHookah: hookahEnabled);
+
+  /// Бонус «Пригласить друга»: число 0…100000, иначе — по умолчанию.
+  static double _bonusOr(Object? v, double fallback) {
+    final n = v is num ? v.toDouble() : double.tryParse('${v ?? ''}');
+    if (n == null || n.isNaN || n < 0 || n > 100000) return fallback;
+    return n.roundToDouble();
+  }
 
   /// Часы работы на сегодня — строкой, как их показывают гостю.
   String get todayHours => workingHours[DateTime.now().weekday] ?? 'выходной';
@@ -258,6 +282,9 @@ class VenueProfile {
     bool? hookahEnabled,
     bool? tipsEnabled,
     bool? tipsTeamEnabled,
+    bool? referralEnabled,
+    double? referralInviterBonus,
+    double? referralInviteeBonus,
     bool? guestSbpPay,
     bool? deliveryEnabled,
     String? sellerName,
@@ -282,6 +309,9 @@ class VenueProfile {
         hookahEnabled: hookahEnabled ?? this.hookahEnabled,
         tipsEnabled: tipsEnabled ?? this.tipsEnabled,
         tipsTeamEnabled: tipsTeamEnabled ?? this.tipsTeamEnabled,
+        referralEnabled: referralEnabled ?? this.referralEnabled,
+        referralInviterBonus: referralInviterBonus ?? this.referralInviterBonus,
+        referralInviteeBonus: referralInviteeBonus ?? this.referralInviteeBonus,
         guestSbpPay: guestSbpPay ?? this.guestSbpPay,
         onlinePay: onlinePay,
         piiMode: piiMode,

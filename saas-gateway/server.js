@@ -7962,27 +7962,89 @@ async function handleRegisterGuestRecovery(req, res) {
   const user = await authApi().getUser(decoded.uid);
   // Только гостевые аккаунты: у владельцев и сотрудников свой вход.
   if (user.email || user.phoneNumber) throw new HttpError(403, "Не гостевой аккаунт");
-  await db().collection("guestRecovery").doc(decoded.uid).set({
-    hash: sha256hex(secret),
+  // Несколько телефонов одного гостя (вошёл по коду на втором) — у каждого
+  // свой ключ; храним отпечатки последних пяти.
+  const ref = db().collection("guestRecovery").doc(decoded.uid);
+  const prev = await ref.get();
+  const hash = sha256hex(secret);
+  const old = prev.exists ? prev.data() : {};
+  const hashes = [hash, ...[old.hash, ...(Array.isArray(old.hashes) ? old.hashes : [])]
+    .filter((h) => typeof h === "string" && h && h !== hash)].slice(0, 5);
+  await ref.set({
+    hash,
+    hashes,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
   sendJson(res, 200, { ok: true });
 }
 
+// Короткий код для входа гостя: «K7QM-4XTR» вместо длинного ключа. Без 0/O,
+// 1/I/L — чтобы не путать при переписывании. Храним только отпечаток кода
+// (guestLoginCodes/{sha256}); новый код заменяет прежний.
+const LOGIN_CODE_ABC = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+const normLoginCode = (v) => String(v || "").toUpperCase().replace(/[^A-Z0-9]/g, "")
+  .replace(/O/g, "0").replace(/[IL]/g, "1");
+const LOGIN_CODE_RE = new RegExp(`^[${LOGIN_CODE_ABC}]{8}$`);
+
+function newLoginCode() {
+  let out = "";
+  const bytes = crypto.randomBytes(16);
+  for (let i = 0; out.length < 8 && i < bytes.length; i++) {
+    // 248 = 31×8 — без перекоса в пользу первых букв.
+    if (bytes[i] < 248) out += LOGIN_CODE_ABC[bytes[i] % LOGIN_CODE_ABC.length];
+  }
+  return out.length === 8 ? out : newLoginCode();
+}
+
+async function handleGuestLoginCode(req, res) {
+  const decoded = await verifyAuth(req);
+  const user = await authApi().getUser(decoded.uid);
+  if (user.email || user.phoneNumber) throw new HttpError(403, "Не гостевой аккаунт");
+  const ref = db().collection("guestRecovery").doc(decoded.uid);
+  const prev = await ref.get();
+  const oldHash = prev.exists ? String(prev.data().codeHash || "") : "";
+  const code = newLoginCode();
+  const codeHash = sha256hex(code);
+  await db().collection("guestLoginCodes").doc(codeHash).set({
+    uid: decoded.uid,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await ref.set({ codeHash, codeAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  if (oldHash && oldHash !== codeHash) {
+    await db().collection("guestLoginCodes").doc(oldHash).delete().catch(() => {});
+  }
+  sendJson(res, 200, { code: `${code.slice(0, 4)}-${code.slice(4)}` });
+}
+
 async function handleRestoreGuestSession(req, res) {
   if (guestRecoveryLimited(clientIp(req))) throw new HttpError(429, "Слишком много попыток — попробуйте позже");
   const body = await parseJsonBody(req);
-  const { uid, secret } = body;
-  if (typeof uid !== "string" || !/^[A-Za-z0-9]{10,128}$/.test(uid)
+  let { uid, secret } = body;
+  if (body.code != null) {
+    // Вход по короткому коду (Профиль → «Войти по коду»).
+    const code = normLoginCode(body.code);
+    if (!LOGIN_CODE_RE.test(code)) throw new HttpError(400, "Некорректный код");
+    const codeSnap = await db().collection("guestLoginCodes").doc(sha256hex(code)).get();
+    uid = codeSnap.exists ? String(codeSnap.data().uid || "") : "";
+    if (!uid) {
+      shield.authFailed(req);
+      throw new HttpError(403, "Код не подошёл");
+    }
+    secret = null;
+  } else if (typeof uid !== "string" || !/^[A-Za-z0-9]{10,128}$/.test(uid)
       || typeof secret !== "string" || !RECOVERY_SECRET_RE.test(secret)) {
     throw new HttpError(400, "Некорректный запрос");
   }
   const ref = db().collection("guestRecovery").doc(uid);
   const snap = await ref.get();
-  const stored = snap.exists ? String(snap.data().hash || "") : "";
-  const given = sha256hex(secret);
-  if (stored.length !== given.length || !crypto.timingSafeEqual(Buffer.from(stored), Buffer.from(given))) {
-    throw new HttpError(403, "Не удалось восстановить вход");
+  if (secret != null) {
+    const data = snap.exists ? snap.data() : {};
+    const known = [data.hash, ...(Array.isArray(data.hashes) ? data.hashes : [])].filter((h) => typeof h === "string" && h);
+    const given = Buffer.from(sha256hex(secret));
+    const ok = known.some((h) => h.length === given.length && crypto.timingSafeEqual(Buffer.from(h), given));
+    if (!ok) throw new HttpError(403, "Не удалось восстановить вход");
+  } else if (!snap.exists) {
+    throw new HttpError(403, "Код не подошёл");
   }
   try {
     const user = await authApi().getUser(uid);
@@ -8098,6 +8160,9 @@ async function anonymizeGuestData({ root, scope, rootId, clientUid, c, forgetInV
 
   // Ключ восстановления входа (guestRecovery) — иначе приложение вернуло бы
   // удалённый аккаунт при следующем запуске.
+  const recSnap = await firestore.collection("guestRecovery").doc(clientUid).get().catch(() => null);
+  const codeHash = recSnap && recSnap.exists ? String(recSnap.data().codeHash || "") : "";
+  if (codeHash) await firestore.collection("guestLoginCodes").doc(codeHash).delete().catch(() => {});
   await firestore.collection("guestRecovery").doc(clientUid).delete().catch(() => {});
   // Согласие на рекламные сообщения: отказ, без IP-адреса и браузера.
   await guestMarketing.forgetConsent(scope, rootId, clientUid)
@@ -10991,6 +11056,7 @@ const ROUTES = {
   "/deleteGuestData": handleDeleteGuestData,
   "/registerGuestRecovery": handleRegisterGuestRecovery,
   "/restoreGuestSession": handleRestoreGuestSession,
+  "/guestLoginCode": handleGuestLoginCode,
   "/aiProxy": handleAiProxy,
   "/guestMenuTranslate": handleGuestMenuTranslate,
   "/menuImportAi": (req, res) => handleMenuImportAi(req, res),

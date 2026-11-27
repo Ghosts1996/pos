@@ -97,13 +97,15 @@ class _KolibriExtrasScreenState extends State<KolibriExtrasScreen> {
           title: 'Занять очередь',
           child: _waitlistBlock(),
         ),
-        const SizedBox(height: 16),
-
-        _section(
-          icon: Icons.group_add,
-          title: 'Пригласить друга',
-          child: _referralBlock(),
-        ),
+        // Заведение могло выключить «Пригласить друга» (Профиль заведения).
+        if (ReferralService.enabled) ...[
+          const SizedBox(height: 16),
+          _section(
+            icon: Icons.group_add,
+            title: 'Пригласить друга',
+            child: _referralBlock(),
+          ),
+        ],
       ],
     );
   }

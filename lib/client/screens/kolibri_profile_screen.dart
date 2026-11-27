@@ -275,13 +275,14 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     }
   }
 
-  /// Выход без удаления данных: сначала код для входа — без него к этим
-  /// бонусам не вернуться (пароля и SMS у гостя нет).
+  /// Выход без удаления данных: сначала короткий код для входа — по нему
+  /// гость вернётся к своим бонусам на этом или другом телефоне.
   Future<void> _logout() async {
     final sid = widget.profile?.activeSessionId ?? '';
+    setState(() => _deleting = true);
     final code = await _auth.loginCode();
     if (!mounted) return;
-    final link = code.isEmpty ? '' : '${(AppScope.slug ?? '').isEmpty ? '' : 'https://${AppScope.slug}.zalpos.ru/app/#g='}$code';
+    setState(() => _deleting = false);
     final go = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -295,23 +296,48 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
               const Text('Выйти из аккаунта?', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
               Text(
-                'Ваши бонусы, уровень и история останутся. Чтобы вернуться в этот аккаунт, сохраните код для входа — '
-                'пароля и SMS у нас нет.${sid.isNotEmpty ? '\n\nСейчас у вас открыт счёт за столом: после выхода приложение его не покажет.' : ''}',
+                code.isNotEmpty
+                    ? 'Бонусы, уровень и история визитов сохранятся. Чтобы вернуться, '
+                        'откройте «Профиль» → «Войти по коду» и введите этот код:'
+                    : 'Бонусы, уровень и история визитов сохранятся. Код для входа сейчас '
+                        'не получить — нет связи с сервером. Попробуйте позже, иначе вернуть '
+                        'бонусы поможет только персонал заведения.',
                 style: TextStyle(color: KolibriColors.textMuted, height: 1.4),
               ),
-              const SizedBox(height: 16),
-              if (code.isNotEmpty)
+              if (sid.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('Сейчас у вас открыт счёт за столом — после выхода приложение его не покажет.',
+                    style: TextStyle(color: KolibriColors.gold, height: 1.4)),
+              ],
+              if (code.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    color: KolibriColors.surface,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: KolibriColors.border),
+                  ),
+                  child: SelectableText(
+                    code,
+                    key: const Key('guest-login-code'),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800, letterSpacing: 4),
+                  ),
+                ),
+                const SizedBox(height: 10),
                 OutlinedButton.icon(
                   icon: const Icon(Icons.copy_rounded, size: 18),
-                  label: const Text('Скопировать код для входа'),
+                  label: const Text('Скопировать код'),
                   onPressed: () async {
-                    await Clipboard.setData(ClipboardData(text: link.isEmpty ? code : link));
+                    await Clipboard.setData(ClipboardData(text: code));
                     if (ctx.mounted) {
                       ScaffoldMessenger.of(ctx).showSnackBar(
-                          const SnackBar(content: Text('Код скопирован — сохраните его в заметках или отправьте себе')));
+                          const SnackBar(content: Text('Код скопирован — сохраните его в заметках')));
                     }
                   },
                 ),
+              ],
               const SizedBox(height: 8),
               FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Выйти')),
               TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Остаться')),
@@ -342,9 +368,11 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
         title: const Text('Войти по коду'),
         content: TextField(
           controller: ctrl,
-          minLines: 1,
-          maxLines: 3,
-          decoration: const InputDecoration(hintText: 'Вставьте код или ссылку для входа'),
+          autofocus: true,
+          textCapitalization: TextCapitalization.characters,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, letterSpacing: 3),
+          decoration: const InputDecoration(hintText: 'K7QM-4XTR', helperText: 'Код из 8 знаков, который вы сохранили при выходе'),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
@@ -358,7 +386,7 @@ class _KolibriProfileScreenState extends State<KolibriProfileScreen> {
     setState(() => _deleting = true);
     try {
       final done = await _auth.loginWithCode(code);
-      _snack(done ? 'Вы вошли в свой аккаунт' : 'Код не подошёл — проверьте, что скопировали его целиком');
+      _snack(done ? 'Вы вошли в свой аккаунт' : 'Код не подошёл — проверьте буквы и цифры');
     } catch (_) {
       _snack('Не удалось войти: проверьте интернет и попробуйте снова');
     } finally {

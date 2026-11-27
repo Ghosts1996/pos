@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../build_info.dart';
 import 'app_scope.dart';
+import 'venue_service.dart';
 import 'push_service.dart';
 import '../data/app_db.dart';
 
@@ -25,9 +27,11 @@ class ReferralService {
   CollectionReference<Map<String, dynamic>> get _codes =>
       AppScope.loyaltyCol('referralCodes');
 
-  /// Сколько бонусов получает каждая сторона.
-  static const double inviterBonus = 300;
-  static const double inviteeBonus = 200;
+  /// Сколько бонусов получает каждая сторона. В ZalPOS заведение задаёт
+  /// свои в «Профиле заведения» (и может выключить приглашения).
+  static double get inviterBonus => kSaasMode ? VenueService.instance.cached.referralInviterBonus : 300;
+  static double get inviteeBonus => kSaasMode ? VenueService.instance.cached.referralInviteeBonus : 200;
+  static bool get enabled => !kSaasMode || VenueService.instance.cached.referralEnabled;
 
   /// Код гостя. Генерируется один раз и живёт в профиле.
   Future<String> ensureCode(String uid) async {
@@ -68,6 +72,7 @@ class ReferralService {
   Future<String> applyCode({required String uid, required String code}) async {
     final normalized = code.trim().toUpperCase();
     if (normalized.isEmpty) return 'Введите код.';
+    if (!enabled) return 'Приглашения друзей здесь сейчас не действуют.';
 
     final me = await AppScope.loyaltyCol('clients').doc(uid).get();
     if ((me.data()?['referredBy'] as String?)?.isNotEmpty == true) {

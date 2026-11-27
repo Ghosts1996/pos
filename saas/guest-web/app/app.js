@@ -4465,7 +4465,7 @@ function loginLinkOf(k) {
 }
 
 /// «Выйти из профиля»: данные не удаляются, на телефоне остаётся пустой
-/// новый профиль. Пароля и SMS у гостя нет — вернуться можно по ссылке входа
+/// новый профиль. Вернуться можно по ссылке входа
 /// (предлагаем сохранить её до выхода) или через персонал по номеру телефона.
 function askLogout() {
   const link = loginLinkOf(readGuestKey());
@@ -4612,10 +4612,14 @@ function watchVisits() {
 // Четыре редких действия на одном экране — как в приложении на Android.
 // Отдельная вкладка под каждое только запутывала бы нижнее меню.
 
-/// Сколько бонусов получает каждая сторона — те же числа, что в
-/// ReferralService на Android.
-const INVITER_BONUS = 300;
-const INVITEE_BONUS = 200;
+/// Сколько бонусов получает каждая сторона — как ReferralService на
+/// Android: заведение задаёт свои в «Профиле заведения» кассы и может
+/// выключить приглашения (venueProfile.referralEnabled).
+function refBonus(key, fallback) {
+  const n = Number((state.venue || {})[key]);
+  return Number.isFinite(n) && n >= 0 && n <= 100000 ? Math.round(n) : fallback;
+}
+const referralOn = () => (state.venue || {}).referralEnabled !== false;
 
 function screenExtras() {
   screenEl().innerHTML = `
@@ -4650,13 +4654,13 @@ function screenExtras() {
       <div id="xQueue" style="margin-top:12px"><div class="spinner"></div></div>
     </div>
 
-    <div class="card">
+    ${referralOn() ? `<div class="card">
       <div class="row"><span style="color:var(--primary)">${ic('users')}</span>
         <b class="grow">Пригласить друга</b></div>
       <div style="margin-top:12px">
         <div id="xMyCode" style="font-size:18px;font-weight:700">Ваш код: …</div>
         <p class="small muted" style="margin:6px 0 14px">Друг называет его в
-          первый визит: ему ${INVITEE_BONUS} ${plural(INVITEE_BONUS, 'бонус', 'бонуса', 'бонусов')}, вам — ${INVITER_BONUS}.</p>
+          первый визит: ему ${refBonus('referralInviteeBonus', 200)} ${plural(refBonus('referralInviteeBonus', 200), 'бонус', 'бонуса', 'бонусов')}, вам — ${refBonus('referralInviterBonus', 300)}.</p>
         <div class="row" style="gap:10px">
           <input id="xRef" class="grow" placeholder="Код друга"
             autocapitalize="characters" spellcheck="false">
@@ -4664,14 +4668,14 @@ function screenExtras() {
         </div>
         <div id="xRefMsg" class="small" style="margin-top:10px;color:var(--gold)"></div>
       </div>
-    </div>`;
+    </div>` : ''}`;
 
   renderExtrasTips();
   renderQueue();
-  ensureReferralCode();
+  if (referralOn()) ensureReferralCode();
   $('xCardBtn').onclick = activateGiftCard;
   watchGiftClaims();
-  $('xRefBtn').onclick = applyReferralCode;
+  if ($('xRefBtn')) $('xRefBtn').onclick = applyReferralCode;
 }
 
 // ---------- ЧАЕВЫЕ ----------
@@ -5197,6 +5201,7 @@ async function applyReferralCode() {
   const say = (text) => { msg.textContent = text; };
 
   if (!code) return say('Введите код.');
+  if (!referralOn()) return say('Приглашения друзей здесь сейчас не действуют.');
   if ((p.referredBy || '').length > 0) return say('Код уже применён раньше.');
   if ((p.referralCode || '') === code) return say('Это ваш собственный код.');
   if ((Number(p.visits) || 0) > 0) return say('Код можно применить только до первого визита.');
@@ -5210,8 +5215,9 @@ async function applyReferralCode() {
 
     await setDoc(doc(state.loyaltyRoot, 'clients', state.uid),
       { referredBy: inviter, referralCodeUsed: code }, { merge: true });
-    say(`Код принят: после первого визита вам начислим ${INVITEE_BONUS} ${plural(INVITEE_BONUS, 'бонус', 'бонуса', 'бонусов')}, `
-      + `другу — ${INVITER_BONUS}.`);
+    const mine = refBonus('referralInviteeBonus', 200);
+    say(`Код принят: после первого визита вам начислим ${mine} ${plural(mine, 'бонус', 'бонуса', 'бонусов')}, `
+      + `другу — ${refBonus('referralInviterBonus', 300)}.`);
   } catch (_) {
     say('Не удалось применить код — проверьте связь.');
   }

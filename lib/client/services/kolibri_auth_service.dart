@@ -172,16 +172,33 @@ class KolibriAuthService {
     } catch (_) {}
   }
 
-  /// Код для входа в этот аккаунт на другом телефоне или после выхода:
-  /// «<uid>.<ключ>» (тот же ключ восстановления, сервер хранит только его
-  /// отпечаток). Пусто — ключ ещё не принят сервером.
+  /// Короткий код для входа в этот аккаунт на другом телефоне или после
+  /// выхода: «K7QM-4XTR». Его выдаёт сервер (хранит только отпечаток), новый
+  /// код отменяет прежний. Пусто — нет связи или ключ ещё не принят сервером.
   Future<String> loginCode() async {
     await _registerRecovery();
-    final prefs = await SharedPreferences.getInstance();
-    final uid = prefs.getString(_recoveryUidKey);
-    final secret = prefs.getString(_recoverySecretKey);
-    if (uid == null || secret == null || prefs.getString(_recoveryRegisteredKey) != uid || uid != this.uid) return '';
-    return '$uid.$secret';
+    final current = _auth.currentUser;
+    if (!kSaasMode || kSaasGatewayUrl.isEmpty || current == null) return '';
+    try {
+      final token = await current.getIdToken();
+      final resp = await http
+          .post(
+            Uri.parse('$kSaasGatewayUrl/guestLoginCode'),
+            headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
+            body: '{}',
+          )
+          .timeout(const Duration(seconds: 15));
+      if (resp.statusCode != 200) return '';
+      return ((jsonDecode(resp.body) as Map<String, dynamic>)['code'] as String?) ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Короткий код «K7QM-4XTR» (буквы любые, пробелы и дефисы не важны).
+  static String? shortCodeOf(String raw) {
+    final c = raw.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    return RegExp(r'^[A-Z0-9]{8}$').hasMatch(c) ? c : null;
   }
 
   /// Выйти из аккаунта, не удаляя данные: забыть ключ на этом телефоне и
@@ -195,6 +212,8 @@ class KolibriAuthService {
 
   /// Вход по коду или ссылке (…/app/#g=<uid>.<ключ>). true — вошли в тот аккаунт.
   Future<bool> loginWithCode(String raw) async {
+    final short = shortCodeOf(raw);
+    if (short != null) return _loginWithShortCode(short);
     final m = RegExp(r'([A-Za-z0-9_-]{6,128})\.([A-Za-z0-9_-]{20,128})').firstMatch(raw.trim());
     if (m == null) return false;
     final prefs = await SharedPreferences.getInstance();
@@ -209,6 +228,28 @@ class KolibriAuthService {
       await ensureGuest();
       return false;
     }
+    await ensureGuest();
+    return true;
+  }
+
+  Future<bool> _loginWithShortCode(String code) async {
+    if (!kSaasMode || kSaasGatewayUrl.isEmpty) return false;
+    final resp = await http
+        .post(
+          Uri.parse('$kSaasGatewayUrl/restoreGuestSession'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'code': code, 'auth': _auth.isOwn ? 'own' : 'firebase'}),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (resp.statusCode == 400 || resp.statusCode == 403) return false;
+    if (resp.statusCode != 200) throw StateError('restore ${resp.statusCode}');
+    final token = (jsonDecode(resp.body) as Map<String, dynamic>)['token'] as String?;
+    if (token == null || token.isEmpty) return false;
+    // Этот телефон получит свой ключ восстановления для нового аккаунта.
+    await forgetDevice();
+    await _auth.signOut();
+    await _auth.signInWithCustomToken(token);
+    _pending = null;
     await ensureGuest();
     return true;
   }
