@@ -197,6 +197,15 @@ void main() {
       expect(flavorsOfCan('NАШ', 'Бубльгум', ''), ['candy']);
     });
 
+    test('Deus «Orange Tic Tac»: название с крышки, «аромат апельсинового драже» сбоку', () {
+      expect(flavorsInText('аромат апельсинового драже'), containsAll(['orange', 'candy']));
+      final can = TobaccoShelf.fromScan({'brand': 'DEUS', 'name': 'ORANGE TIC TAC'});
+      expect(can.brand, 'Deus');
+      expect(can.flavors, containsAll(['orange', 'candy']));
+      final byWords = TobaccoShelf.fromScan({'brand': 'Deus', 'name': 'Orange Tic Tac', 'flavors': ['апельсин', 'драже']});
+      expect(byWords.flavors, containsAll(['orange', 'candy']));
+    });
+
     test('ошибка ИИ в букве: «Простниковая мята» → «Тростниковая мята»', () {
       expect(fixCanName('Black Burn', 'Простниковая мята'), 'Тростниковая мята');
       expect(fixCanName('Black Burn', 'Тросниковая мята'), 'Тростниковая мята');

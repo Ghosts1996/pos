@@ -96,15 +96,48 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
     }
   }
 
+  /// Снимки для распознавания: из галереи — до 4 сразу; камерой — после
+  /// каждого кадра «Снять ещё сторону?» (название бывает на крышке, а марка
+  /// и «аромат …» — сбоку), до 4 кадров одной банки или полки.
+  Future<List<XFile>> _takePhotos(ImageSource source) async {
+    final picker = ImagePicker();
+    if (source == ImageSource.gallery) {
+      final many = await AppLock.instance
+          .whileAway(() => picker.pickMultiImage(maxWidth: 2400, maxHeight: 2400, imageQuality: 92, limit: 4));
+      return many.take(4).toList();
+    }
+    final shots = <XFile>[];
+    while (shots.length < 4) {
+      // Берём крупно и почти без сжатия: осветление тёмного снимка и подгонка
+      // под лимит сервера — на кассе (photo_prep.dart).
+      final photo = await AppLock.instance.whileAway(
+          () => picker.pickImage(source: source, maxWidth: 2400, maxHeight: 2400, imageQuality: 92));
+      if (photo == null) break;
+      shots.add(photo);
+      if (shots.length >= 4 || !mounted) break;
+      final more = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Снимков: ${shots.length}'),
+          content: const Text('Если часть надписи на крышке или сбоку — снимите эту же банку с другой стороны. '
+              'Все снимки распознаются вместе, банка запишется один раз.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Снять ещё сторону')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Распознать')),
+          ],
+        ),
+      );
+      if (more != true) break;
+    }
+    return shots;
+  }
+
   Future<void> _scan(ImageSource source) async {
-    // Берём крупно и почти без сжатия: осветление тёмного снимка и подгонка
-    // под лимит сервера — на кассе (photo_prep.dart).
-    final photo = await AppLock.instance.whileAway(
-        () => ImagePicker().pickImage(source: source, maxWidth: 2400, maxHeight: 2400, imageQuality: 92));
-    if (photo == null || !mounted) return;
+    final photos = await _takePhotos(source);
+    if (photos.isEmpty || !mounted) return;
     setState(() => _scanning = true);
     try {
-      final cans = await TobaccoShelf.scan(photo);
+      final cans = await TobaccoShelf.scan(photos);
       if (!mounted) return;
       final chosen = await showModalBottomSheet<List<TobaccoCan>>(
         context: context,
@@ -292,6 +325,7 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
                 ]),
                 const SizedBox(height: 6),
                 Text('Снимайте одну-две полки за раз, при хорошем свете, чтобы надписи читались. '
+                    'Название на крышке, а марка сбоку — снимите банку с двух сторон, это одна позиция. '
                     'Закончилась банка — выключите её, и она пропадёт из подбора. '
                     'Прочитано неверно — нажмите на банку: исправить или удалить.',
                     style: TextStyle(color: AppColors.textMuted, fontSize: 12)),

@@ -305,6 +305,7 @@ const List<String> kKnownCanLines = [
   'NАШ|Pina|pineapple',
   'NАШ|Crazy Green|kiwi',
   'NАШ|Бубльгум; Bubblegum; Бабл гам|candy',
+  'Deus|Orange Tic Tac; Апельсиновый Тик Так; Апельсиновое драже|orange, candy',
   'Overdose|Wintergreen; Винтергрин; Винтегрин|wintergreen',
   'Black Burn|Тростниковая мята; Sugarcane Mint; Простниковая мята|sugarcane, mint',
 ];

@@ -11,11 +11,12 @@ class HttpError extends Error { constructor(s, m) { super(m); this.status = s; }
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tobacco-"));
 let t = Date.UTC(2026, 10, 25);
 let aiAnswer = "";
+let lastAi = null;
 const roles = { "u-emp": "employee", "u-guest": "guest" };
 const tob = createTobacco({
   verifyAuth: async (req) => ({ uid: req.uid }), parseJsonBody: async (req) => req.body, sendJson: (res, code, body) => { res.code = code; res.body = body; },
   HttpError, requireTenantRole: async (tid, uid, allowed) => { if (!allowed.includes(roles[uid])) throw new HttpError(403, "нет прав"); },
-  aiVendor: async (tid) => (tid === "noai" ? null : { id: "x" }), aiComplete: async () => aiAnswer,
+  aiVendor: async (tid) => (tid === "noai" ? null : { id: "x" }), aiComplete: async (v, o) => { lastAi = o; return aiAnswer; },
   extractJson: (s) => JSON.parse(s.slice(s.indexOf("{"), s.lastIndexOf("}") + 1)), limiter: new Map(), stateDir: dir, now: () => t,
 });
 const page = { mediaType: "image/jpeg", data: "QUJD" };
@@ -34,6 +35,21 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     assert.equal(items.length, 2);
     assert.deepEqual(items[1].flavors, ["клубника", "малина", "грейпфрут"]);
     assert.equal(items[1].strength, "");
+  });
+
+  await ok("банка с нескольких сторон: все снимки в одном запросе, лимит общий", async () => {
+    aiAnswer = '{"items":[{"brand":"Deus","name":"Orange Tic Tac","flavors":["апельсин","драже"]}]}';
+    const r = await tob.scan("t1", { pages: [page, page] });
+    assert.equal(lastAi.content.filter((c) => c.type === "image").length, 2);
+    assert.ok(/ОДНОГО и того же места/.test(lastAi.content[0].text));
+    assert.equal(r.items.length, 1);
+    assert.equal(r.items[0].name, "Orange Tic Tac");
+    // один снимок — без пояснения про несколько сторон
+    await tob.scan("t1", { page });
+    assert.ok(!/ОДНОГО и того же места/.test(lastAi.content[0].text));
+    const big = { mediaType: "image/jpeg", data: "A".repeat(500000) };
+    await assert.rejects(tob.scan("t1", { pages: [big, big] }), (e) => e.status === 413);
+    await assert.rejects(tob.scan("t1", { pages: [page, page, page, page, page] }), (e) => e.status === 400);
   });
 
   await ok("предупреждения о вреде («СЛЕПОТА», «ИНФАРКТ») — не вкус и не марка", async () => {
@@ -113,6 +129,6 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     assert.equal(again.fresh().total, 3);
   });
 
-  console.log(`tobacco: ${n} из 6 проверок`);
+  console.log(`tobacco: ${n} из 7 проверок`);
   fs.rmSync(dir, { recursive: true, force: true });
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -27,6 +27,7 @@ const TOBACCO_AI_PROMPT = `На фото — полка с банками таб
 НЕ бери банки с обоев, плакатов, наклеек, фотографий и рекламы на стене — только настоящие банки на полке.
 Крупные слова на банках вроде «СЛЕПОТА», «ИМПОТЕНЦИЯ», «ИНФАРКТ», «ИНСУЛЬТ», «ГАНГРЕНА», «МУЧИТЕЛЬНАЯ СМЕРТЬ», «БЕСПЛОДИЕ», «КУРЕНИЕ УБИВАЕТ», «СОДЕРЖИТ СИСТЕМНЫЕ ЯДЫ» и фото болезней — обязательные предупреждения о вреде. Это НЕ вкус и НЕ марка: никогда не пиши их в name.
 Часто предупреждение закрывает лицевую сторону, а вкус написан от руки маркером на ленте или наклейке («Kriek», «Finlandia vanilla») — рукописная надпись и есть название вкуса. Ищи и мелкий текст состава: «с ароматом вишни» → вкус вишня. Марку ищи на ленте, крышке, боковой полосе (например TERROR, BONCHE, DARKSIDE, DEDUSHKA, ЛАСТОЧКА), а если её не видно — оставь brand пустым, не выдумывай.
+У ОДНОЙ банки надписи часто разнесены: название вкуса — на крышке или верхней наклейке (например «ORANGE TIC TAC»), а марка и «аромат …» — на боковой ленте (например «DEUS», «аромат апельсинового драже»), рядом может быть предупреждение («ИМПОТЕНЦИЯ»). Собери всё, что видно на одной банке, в ОДНУ запись: name — название вкуса, brand — марка с ленты, flavors — из «аромат …» (апельсиновое драже → апельсин, драже). Текст, обрезанный краем или повёрнутый, всё равно дочитывай по видимой части. Известные слова: Tic Tac — драже-конфеты, Bubble gum/Бубльгум — жвачка.
 Фото может быть тёмным или смазанным — всё равно разбери каждую надпись, которую можно прочитать хотя бы частично; не пропускай банку, если читается вкус.
 Марку и линейку узнавай и по виду банки, когда надпись мелкая: Darkside — чёрная банка, крупный белый/цветной логотип DARKSIDE, линейки Core, Base, Rare, Xperience; Musthave — белая/цветная банка с надписью MUSTHAVE; Black Burn — чёрная банка с логотипом BLACK BURN и красочной этикеткой вкуса; Element — линейки Вода/Воздух/Земля/Огонь (цвет крышки по стихии); Spectrum — Classic, Hard Line, Kitchen Line; Bonche — крафтовая банка с крупной надписью вкуса латиницей (SALAMI, SESAME); Северный, NАШ, Sarma, Deus, Trofimoff, Overdose, Dogma, Banger, Хулиган — русские марки, название вкуса обычно по-русски.
 Frigate — сухой табак (без глицерина, для крепости микса): вкуса часто нет, name — как написано, flavors — «табачный».
@@ -40,6 +41,8 @@ Frigate — сухой табак (без глицерина, для крепо�
 - line — линейка марки, если видна (Core, Base, Hard Line, Земля…), иначе пусто.
 Одинаковые банки (одна марка и вкус) — один раз. Нечитаемые — пропусти.
 Ответь только JSON: {"items":[{"brand":"Black Burn","name":"Ice Baby","flavors":["грейпфрут","ягоды","холодок"],"strength":"strong","line":""}]}`;
+
+const MULTI_NOTE = `Это несколько снимков ОДНОГО и того же места с разных сторон (одна банка или одна полка). Одну и ту же банку на разных снимках узнавай по форме, цвету и наклейкам и записывай ОДИН раз, объединив всё, что прочитано на всех снимках: название с крышки или верхней наклейки, марку и «аромат …» с боковой ленты.`;
 
 function cleanText(v, max) {
   return String(v == null ? "" : v).replace(/[\u0000-\u001f<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
@@ -131,11 +134,18 @@ function createTobacco(deps) {
   }
 
   async function scan(tid, body) {
-    const page = body.page;
-    if (!page || !TYPES.has(page.mediaType) || typeof page.data !== "string" || !/^[A-Za-z0-9+/=]+$/.test(page.data)) {
-      throw new HttpError(400, "Нужна фотография JPEG, PNG или WebP");
+    // Несколько снимков одной банки или полки с разных сторон (название на
+    // крышке, марка и «аромат …» сбоку) — одним запросом, ИИ сводит их.
+    const pages = (Array.isArray(body.pages) && body.pages.length ? body.pages : [body.page]).slice(0, 5);
+    if (pages.length > 4) throw new HttpError(400, "Не больше 4 снимков за раз");
+    let total = 0;
+    for (const page of pages) {
+      if (!page || !TYPES.has(page.mediaType) || typeof page.data !== "string" || !/^[A-Za-z0-9+/=]+$/.test(page.data)) {
+        throw new HttpError(400, "Нужна фотография JPEG, PNG или WebP");
+      }
+      total += page.data.length;
     }
-    if (page.data.length > 960000) throw new HttpError(413, "Фото больше 0,9 МБ — снимите полку ещё раз");
+    if (total > 960000) throw new HttpError(413, "Фото больше 0,9 МБ — снимите полку ещё раз");
     const t = now();
     const lim = limiter.get(tid);
     if (!lim || lim.resetAt <= t) limiter.set(tid, { count: 1, resetAt: t + 3600000 });
@@ -147,7 +157,10 @@ function createTobacco(deps) {
     try {
       const text = await aiComplete(vendor, {
         system: "Ты внимательно читаешь надписи на банках табака. Отвечай только JSON.",
-        content: [{ type: "text", text: TOBACCO_AI_PROMPT }, { type: "image", mediaType: page.mediaType, data: page.data }],
+        content: [
+          { type: "text", text: pages.length > 1 ? `${TOBACCO_AI_PROMPT}\n\n${MULTI_NOTE}` : TOBACCO_AI_PROMPT },
+          ...pages.map((page) => ({ type: "image", mediaType: page.mediaType, data: page.data })),
+        ],
         maxTokens: 4000, heavy: true,
       });
       parsed = extractJson(text);

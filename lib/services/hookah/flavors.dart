@@ -97,7 +97,7 @@ const List<Flavor> kFlavors = [
   Flavor('chocolate', 'шоколад', FlavorFamily.dessert, ['шоколад', 'шоколада', 'chocolate', 'какао', 'cocoa', 'брауни', 'brownie']),
   Flavor('cookie', 'печенье', FlavorFamily.dessert, ['печенье', 'печенья', 'орео', 'oreo', 'cookie', 'выпечка', 'пирог', 'пирожное', 'cake', 'cheesecake', 'чизкейк', 'тесто', 'dough', 'хлопья', 'cereal', 'вафли', 'вафля', 'waffle', 'пончик', 'donut']),
   Flavor('honey', 'мёд', FlavorFamily.dessert, ['мед', 'меда', 'медовый', 'honey']),
-  Flavor('candy', 'леденцы', FlavorFamily.dessert, ['леденцы', 'леденец', 'конфеты', 'candy', 'скитлз', 'skittles', 'мармелад', 'драже', 'жвачка', 'жвачки', 'жевательная резинка', 'bubble gum', 'bubblegum', 'бабл гам', 'баблгам', 'бабл-гам', 'бубльгум', 'бубль гум', 'бабблгам', 'тутси', 'фруктовая жвачка', 'сахарная вата', 'cotton candy']),
+  Flavor('candy', 'леденцы', FlavorFamily.dessert, ['леденцы', 'леденец', 'конфеты', 'candy', 'скитлз', 'skittles', 'мармелад', 'драже', 'жвачка', 'жвачки', 'жевательная резинка', 'bubble gum', 'bubblegum', 'бабл гам', 'баблгам', 'бабл-гам', 'бубльгум', 'бубль гум', 'бабблгам', 'тутси', 'фруктовая жвачка', 'tic tac', 'tictac', 'тик так', 'тиктак', 'сахарная вата', 'cotton candy']),
   Flavor('jam', 'варенье', FlavorFamily.dessert, ['варенье', 'джем', 'джема', 'jam', 'конфитюр']),
   Flavor('sugarcane', 'сахарный тростник', FlavorFamily.dessert, ['сахарный тростник', 'тростник', 'тростниковый', 'тростниковая', 'sugarcane', 'sugar cane']),
   Flavor('marshmallow', 'маршмеллоу', FlavorFamily.dessert, ['маршмеллоу', 'зефир', 'marshmallow']),

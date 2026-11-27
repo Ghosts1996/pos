@@ -73,7 +73,8 @@ PreparedPhoto? _prepare(_Job job) {
   }
   // Очень «пёстрая» картинка — тогда уже меньше по размеру.
   var cur = im;
-  for (var i = 0; i < 4; i++) {
+  // Несколько снимков одной банки делят лимит сервера — уменьшаем дальше.
+  for (var i = 0; i < 8; i++) {
     cur = img.copyResize(cur, width: (cur.width * 0.8).round(), interpolation: img.Interpolation.average);
     final b = base64Encode(img.encodeJpg(cur, quality: 60));
     if (b.length <= job.maxBase64) return PreparedPhoto(b, 'image/jpeg', brightened: brightened);

@@ -80,25 +80,37 @@ class TobaccoShelf {
 
   /// Фото полки → банки (через ИИ заведения на сервере). Снимок готовит
   /// касса (preparePhoto): осветляет тёмный и укладывает в лимит 0,9 МБ.
-  static Future<List<TobaccoCan>> scan(XFile photo) async {
-    final bytes = await photo.readAsBytes();
-    // Тёмное фото — светлее, большое — в лимит сервера без потери надписей.
-    final prepared = await preparePhoto(bytes).catchError((Object _) => null);
-    String data;
-    String type;
-    if (prepared != null) {
-      data = prepared.base64;
-      type = prepared.mediaType;
-    } else {
-      data = base64Encode(bytes);
-      final name = photo.name.toLowerCase();
-      type = name.endsWith('.png') ? 'image/png' : (name.endsWith('.webp') ? 'image/webp' : 'image/jpeg');
+  /// [photos] — 1–4 снимка одной банки или полки с разных сторон
+  /// (название на крышке, марка и «аромат …» сбоку): ИИ сводит их в одну
+  /// запись. Все снимки вместе — в лимит сервера 0,9 МБ.
+  static Future<List<TobaccoCan>> scan(List<XFile> photos) async {
+    if (photos.isEmpty) return const [];
+    final list = photos.take(4).toList();
+    final budget = 940000 ~/ list.length;
+    final pages = <Map<String, dynamic>>[];
+    for (final photo in list) {
+      final bytes = await photo.readAsBytes();
+      // Тёмное фото — светлее, большое — в лимит сервера без потери надписей.
+      final prepared = await preparePhoto(bytes, maxSide: list.length > 1 ? 1400 : 1700, maxBase64: budget)
+          .catchError((Object _) => null);
+      String data;
+      String type;
+      if (prepared != null) {
+        data = prepared.base64;
+        type = prepared.mediaType;
+      } else {
+        data = base64Encode(bytes);
+        final name = photo.name.toLowerCase();
+        type = name.endsWith('.png') ? 'image/png' : (name.endsWith('.webp') ? 'image/webp' : 'image/jpeg');
+      }
+      if (data.length > budget + 20000) {
+        throw GatewayException(list.length > 1
+            ? 'Снимки слишком подробные — сделайте меньше снимков или снимите ближе'
+            : 'Фото слишком подробное — снимите полку частями, по одной-две полки');
+      }
+      pages.add({'mediaType': type, 'data': data});
     }
-    if (data.length > 960000) {
-      throw GatewayException('Фото слишком подробное — снимите полку частями, по одной-две полки');
-    }
-    final page = {'mediaType': type, 'data': data};
-    final res = await _scanOnServer(page);
+    final res = await _scanOnServer(pages);
     return [
       for (final m in (res['items'] as List? ?? const []))
         if (m is Map) fromScan(Map<String, dynamic>.from(m)),
@@ -109,14 +121,16 @@ class TobaccoShelf {
   /// ни прокси сервера. Поэтому снимок уходит заданием (scanStart), а
   /// результат касса забирает раз в 3 с (scanResult), до 4 минут. Пропала
   /// связь на пару опросов — ждём дальше, а не пишем «нет связи».
-  static Future<Map<String, dynamic>> _scanOnServer(Map<String, dynamic> page) async {
+  static Future<Map<String, dynamic>> _scanOnServer(List<Map<String, dynamic>> pages) async {
+    // page — для сервера старой версии (он читает только первый снимок).
+    final body = {'page': pages.first, if (pages.length > 1) 'pages': pages};
     Map<String, dynamic> start;
     try {
-      start = await gatewayPost('tobaccoShelf', {'action': 'scanStart', 'page': page}, const Duration(seconds: 90));
+      start = await gatewayPost('tobaccoShelf', {'action': 'scanStart', ...body}, const Duration(seconds: 90));
     } on GatewayException catch (e) {
       // Сервер старой версии — по-старому, одним запросом.
       if (!e.message.contains('Неизвестное действие')) rethrow;
-      return gatewayPost('tobaccoShelf', {'action': 'scan', 'page': page}, const Duration(seconds: 90));
+      return gatewayPost('tobaccoShelf', {'action': 'scan', ...body}, const Duration(seconds: 90));
     }
     final job = start['job'];
     if (job is! String || job.isEmpty) throw GatewayException('Сервер не принял снимок — попробуйте ещё раз');
@@ -147,7 +161,7 @@ class TobaccoShelf {
       GatewayApi.post;
 
   /// Разбор снимка на сервере — для тестов без камеры.
-  static Future<Map<String, dynamic>> scanPageForTest(Map<String, dynamic> page) => _scanOnServer(page);
+  static Future<Map<String, dynamic>> scanPageForTest(Map<String, dynamic> page) => _scanOnServer([page]);
 
   /// Пауза между опросами результата (тесты ставят меньше).
   static Duration scanPollEvery = const Duration(seconds: 3);
