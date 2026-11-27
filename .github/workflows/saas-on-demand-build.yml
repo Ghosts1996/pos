@@ -549,7 +549,14 @@ jobs:
           # --build-number — versionCode: номер запуска растёт, и новая версия
           # ставится поверх (при той же подписи). IN_APP_UPDATES включает
           # плашку «Вышла новая версия» (lib/services/app_update_service.dart).
-          flutter build apk --release \
+          # Приложение гостя — меньше файл, быстрее скачивание: только
+          # телефонные процессоры ARM (без x86_64 эмуляторов) и служебные
+          # данные отладки — отдельно, не в APK. Касса собирается как раньше.
+          EXTRA=""
+          if [ "${{ matrix.app }}" = "kolibri" ]; then
+            EXTRA="--target-platform android-arm,android-arm64 --split-debug-info=build/app-symbols"
+          fi
+          flutter build apk --release $EXTRA \
             -t ${{ matrix.entrypoint }} \
             --build-number=${{ github.run_number }} \
             --dart-define=SAAS_MODE=true \
