@@ -136,8 +136,6 @@ const List<BrandProfile> kBrandProfiles = [
       'Крепкий тёмный лист с яркими вкусами. Новичку — в миксе со светлым листом, не больше трети.'),
   BrandProfile('WTO', Leaf.dark, 8, 5, Pack.edges, 14, 16, 7,
       'Табак с выраженным табачным вкусом (линейки по странам листа). Для ценителей крепкого; в миксе — основа.'),
-  BrandProfile('Terror', Leaf.dark, 8, 5, Pack.edges, 14, 16, 7,
-      'Крепкий тёмный лист. Греть дольше, не забивать плотно.'),
   BrandProfile('Dedushka', Leaf.dark, 8, 5, Pack.edges, 14, 16, 7,
       'Крепкий, «домашние» вкусы (земляника, варенье). Хорош акцентом к светлому листу.'),
   BrandProfile('Tangiers', Leaf.dark, 9, 5, Pack.edges, 12, 15, 8,
@@ -240,10 +238,23 @@ const Map<String, Map<String, int>> kLineStrength = {
   'Sebero': {'black': 7, 'classic': 5},
   'Duft': {'strong': 7, 'pheromone': 6, 'all-in': 5, 'all in': 5},
   'Хулиган': {'hard': 8},
-  'Trofimoff': {'burley': 7, 'classic': 5},
+  'Trofimoff': {'burley': 7, 'classic': 5, 'terror': 8, 'террор': 8},
   'Tangiers': {'birquq': 7, 'noir': 9, 'нуар': 9, 'f-line': 9},
   'Jent': {'cigar': 8},
 };
+
+/// Линейки марки для подсказки в окне правки банки: «Classic, Burley, Terror».
+List<String> linesOf(String brand) {
+  final map = kLineStrength[canonicalBrand(brand)];
+  if (map == null) return const [];
+  final out = <String>[];
+  for (final k in map.keys) {
+    if (RegExp(r'[а-я]').hasMatch(k) && map.keys.any((x) => x != k && map[x] == map[k] && !RegExp(r'[а-я]').hasMatch(x))) continue;
+    final title = RegExp(r'^[a-z]').hasMatch(k) ? '${k[0].toUpperCase()}${k.substring(1)}' : '${k[0].toUpperCase()}${k.substring(1)}';
+    if (!out.contains(title)) out.add(title);
+  }
+  return out;
+}
 
 /// Линейка из надписи марки: «Darkside Shot» → Shot, «Сарма 360» → 360,
 /// «Noir» (это Tangiers) → Noir. Пусто — линейки в надписи нет.
@@ -254,7 +265,9 @@ String lineFromBrandText(String raw) {
   final t = ' ${raw.toLowerCase().replaceAll('ё', 'е')} ';
   for (final k in map.keys) {
     if (RegExp('[^a-zа-я0-9]${RegExp.escape(k)}(?![a-zа-я0-9])').hasMatch(t)) {
-      return k == 'нуар' ? 'Noir' : (RegExp(r'^[a-z]').hasMatch(k) ? '${k[0].toUpperCase()}${k.substring(1)}' : k);
+      if (k == 'нуар') return 'Noir';
+      if (k == 'террор') return 'Terror';
+      return RegExp(r'^[a-z]').hasMatch(k) ? '${k[0].toUpperCase()}${k.substring(1)}' : k;
     }
   }
   return '';

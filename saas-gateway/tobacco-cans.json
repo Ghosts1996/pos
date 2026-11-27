@@ -2415,6 +2415,11 @@
    "aka": [
     "trofimoff",
     ", ",
+    ", ",
+    ", ",
+    ", ",
+    ", ",
+    ", ",
     ", "
    ],
    "kind": "medium"
@@ -2554,13 +2559,6 @@
     "ласточка"
    ],
    "kind": "medium"
-  },
-  {
-   "name": "Terror",
-   "aka": [
-    "террор"
-   ],
-   "kind": "strong"
   },
   {
    "name": "Timeline",
@@ -3599,6 +3597,14 @@
    {
     "line": "classic",
     "strength": 5
+   },
+   {
+    "line": "terror",
+    "strength": 8
+   },
+   {
+    "line": "террор",
+    "strength": 8
    }
   ],
   "Tangiers": [

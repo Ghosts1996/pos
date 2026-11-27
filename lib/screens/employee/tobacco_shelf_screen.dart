@@ -49,6 +49,7 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
   /// Банку прочитали неверно — исправить марку, название, вкусы или удалить.
   Future<void> _editCan(TobaccoCan c) async {
     final brand = TextEditingController(text: c.brand);
+    final line = TextEditingController(text: c.line);
     final name = TextEditingController(text: c.name);
     final words = TextEditingController(text: c.flavors.map((f) => kFlavorByKey[f]?.name ?? f).join(', '));
     final res = await showDialog<String>(
@@ -58,6 +59,8 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
         content: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             TextField(controller: brand, decoration: const InputDecoration(labelText: 'Марка')),
+            const SizedBox(height: 8),
+            _LineField(brand: brand, line: line),
             const SizedBox(height: 8),
             TextField(controller: name, decoration: const InputDecoration(labelText: 'Название, как на банке')),
             const SizedBox(height: 8),
@@ -86,7 +89,7 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
         return;
       }
       if (name.text.trim().isEmpty) return;
-      final saved = await TobaccoShelf.edit(c, brand: brand.text, name: name.text, flavorWords: words.text);
+      final saved = await TobaccoShelf.edit(c, brand: brand.text, name: name.text, flavorWords: words.text, line: line.text);
       if (saved.flavors.isEmpty && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Вкус не узнан — допишите его словами, например «малина, мята».')));
@@ -393,8 +396,9 @@ class _ScanReviewState extends State<_ScanReview> {
   String _flavorText(TobaccoCan c) => c.flavors.map((f) => kFlavorByKey[f]?.name ?? f).join(', ');
 
   /// Банка, собранная заново из исправленных полей.
-  TobaccoCan _rebuild(String brand, String name, String words) => TobaccoShelf.fromScan({
+  TobaccoCan _rebuild(String brand, String name, String words, [String line = '']) => TobaccoShelf.fromScan({
         'brand': brand,
+        'line': line,
         'name': name,
         'flavors': [for (final w in words.split(',')) if (w.trim().isNotEmpty) w.trim()],
       });
@@ -410,6 +414,7 @@ class _ScanReviewState extends State<_ScanReview> {
   /// Исправить банку до сохранения: марку, название, вкусы.
   Future<void> _edit(TobaccoCan c) async {
     final brand = TextEditingController(text: c.brand);
+    final line = TextEditingController(text: c.line);
     final name = TextEditingController(text: c.name);
     final words = TextEditingController(text: _flavorText(c));
     final ok = await showDialog<bool>(
@@ -419,6 +424,8 @@ class _ScanReviewState extends State<_ScanReview> {
         content: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             TextField(controller: brand, decoration: const InputDecoration(labelText: 'Марка')),
+            const SizedBox(height: 8),
+            _LineField(brand: brand, line: line),
             const SizedBox(height: 8),
             TextField(controller: name, decoration: const InputDecoration(labelText: 'Название, как на банке')),
             const SizedBox(height: 8),
@@ -432,7 +439,7 @@ class _ScanReviewState extends State<_ScanReview> {
       ),
     );
     if (ok != true || name.text.trim().isEmpty || !mounted) return;
-    setState(() => _replace(c, _rebuild(brand.text, name.text, words.text)));
+    setState(() => _replace(c, _rebuild(brand.text, name.text, words.text, line.text)));
   }
 
   /// Одна марка сразу всем отмеченным банкам без марки.
@@ -463,7 +470,7 @@ class _ScanReviewState extends State<_ScanReview> {
     if (picked == null || picked.trim().isEmpty || !mounted) return;
     setState(() {
       for (final c in List.of(_cans)) {
-        if (c.brand.isEmpty && _on.contains(c.id)) _replace(c, _rebuild(picked, c.name, _flavorText(c)));
+        if (c.brand.isEmpty && _on.contains(c.id)) _replace(c, _rebuild(picked, c.name, _flavorText(c), c.line));
       }
     });
   }
@@ -571,5 +578,53 @@ class _BrandHeader extends StatelessWidget {
         ]),
       ),
     );
+  }
+}
+
+/// Поле «Линейка» с подсказками линеек этой марки (Trofimoff: Classic,
+/// Burley, Terror…). Марку меняют — подсказки меняются.
+class _LineField extends StatefulWidget {
+  final TextEditingController brand;
+  final TextEditingController line;
+  const _LineField({required this.brand, required this.line});
+
+  @override
+  State<_LineField> createState() => _LineFieldState();
+}
+
+class _LineFieldState extends State<_LineField> {
+  @override
+  void initState() {
+    super.initState();
+    widget.brand.addListener(_changed);
+  }
+
+  @override
+  void dispose() {
+    widget.brand.removeListener(_changed);
+    super.dispose();
+  }
+
+  void _changed() => setState(() {});
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = linesOf(widget.brand.text);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+      TextField(
+        controller: widget.line,
+        decoration: const InputDecoration(labelText: 'Линейка', hintText: 'Например: Burley, Core, Hard'),
+      ),
+      if (lines.isNotEmpty) ...[
+        const SizedBox(height: 6),
+        Wrap(spacing: 6, runSpacing: 6, children: [
+          for (final l in lines)
+            ActionChip(
+              label: Text(l),
+              onPressed: () => setState(() => widget.line.text = l),
+            ),
+        ]),
+      ],
+    ]);
   }
 }

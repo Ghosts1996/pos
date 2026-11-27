@@ -39,7 +39,8 @@ const List<TobaccoBrand> kTobaccoBrands = [
   TobaccoBrand('Satyr', ['сатир', 'satyr aroma'], 'strong'),
   TobaccoBrand('Bonche', ['бонче', 'бонш', 'бонч'], 'strong'),
   TobaccoBrand('Jent', ['джент', 'jent cigar'], 'medium'),
-  TobaccoBrand('Trofimoff', ["trofimoff's", 'трофимов', 'трофимофф'], 'medium'),
+  // Terror — линейка Trofimoff's, а не марка (поправка владельца 28.11.2026).
+  TobaccoBrand('Trofimoff', ["trofimoff's", 'трофимов', 'трофимофф', 'trofimoffs', 'terror', 'террор', 'trofimoff terror', 'trofimoff burley'], 'medium'),
   TobaccoBrand('Deus', ['деус'], 'medium'),
   TobaccoBrand('Dogma', ['догма'], 'strong'),
   TobaccoBrand('Banger', ['бангер', 'бэнгер', 'бенгер'], 'medium'),
@@ -57,7 +58,6 @@ const List<TobaccoBrand> kTobaccoBrands = [
   TobaccoBrand('Starline', ['старлайн', 'star line'], 'medium'),
   TobaccoBrand('Morpheus', ['морфеус'], 'medium'),
   TobaccoBrand('Lastochka', ['ласточка'], 'medium'),
-  TobaccoBrand('Terror', ['террор'], 'strong'),
   TobaccoBrand('Timeline', ['таймлайн'], 'medium'),
   TobaccoBrand('Chabacco', ['чабакко', 'чабако'], 'light'),
   TobaccoBrand('Brusko', ['бруско', 'brusko bit'], 'light'),

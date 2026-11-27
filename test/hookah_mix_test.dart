@@ -227,6 +227,21 @@ void main() {
       expect(brandInText('второй стол просит кислое'), isNull);
     });
 
+    test('Terror — линейка Trofimoff, а не марка; линейку можно поправить', () {
+      final c = TobaccoShelf.fromScan({'brand': 'TERROR', 'name': 'Kriek', 'flavors': ['вишня']});
+      expect(c.brand, 'Trofimoff');
+      expect(c.line, 'Terror');
+      expect(c.label, 'Trofimoff Terror «Kriek»');
+      expect(canProfileLine(c.brand, line: c.line), contains('крепость 8/10'));
+      expect(TobaccoShelf.fromScan({'brand': "Trofimoff's", 'name': 'Apricot', 'line': 'Burley'}).line, 'Burley');
+      // Старая запись на полке с маркой «Terror» показывается как Trofimoff Terror.
+      final old = TobaccoCan.fromMap('x', {'brand': 'Terror', 'name': 'Dark Plum', 'flavors': ['plum']});
+      expect(old.brand, 'Trofimoff');
+      expect(old.line, 'Terror');
+      expect(linesOf('Trofimoff'), ['Burley', 'Classic', 'Terror']);
+      expect(linesOf('Tangiers'), containsAll(['Birquq', 'Noir', 'F-line']));
+    });
+
     test('линейка меняет крепость; строка «лист · крепость · жар» для банки', () {
       expect(lineStrength('Darkside', 'Base'), 8);
       expect(lineStrength('Spectrum', 'Hard Line'), 7);

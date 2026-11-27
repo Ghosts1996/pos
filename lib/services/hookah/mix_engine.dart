@@ -40,15 +40,21 @@ class TobaccoCan {
     final name = '${m['name'] ?? ''}'.trim();
     final raw = (m['flavors'] is List) ? [for (final f in m['flavors'] as List) '$f'] : const <String>[];
     final keys = [for (final f in raw) if (kFlavorByKey.containsKey(f)) f];
+    // Марка к одному написанию; старые записи с линейкой вместо марки
+    // («Terror» → Trofimoff, линейка Terror) показываются правильно.
+    final rawBrand = '${m['brand'] ?? ''}'.trim();
+    final brand = rawBrand.isEmpty ? '' : canonicalBrand(rawBrand);
+    var line = '${m['line'] ?? ''}'.trim();
+    if (line.isEmpty && brand != rawBrand) line = lineFromBrandText(rawBrand);
     return TobaccoCan(
       id: id,
-      brand: '${m['brand'] ?? ''}'.trim(),
+      brand: brand,
       name: name,
       // Вкусы не указаны — узнаём по названию на банке.
       flavors: keys.isNotEmpty ? keys : flavorsInText('$name ${m['note'] ?? ''}'),
       strength: '${m['strength'] ?? ''}',
       inStock: m['inStock'] != false,
-      line: '${m['line'] ?? ''}'.trim(),
+      line: line,
     );
   }
 

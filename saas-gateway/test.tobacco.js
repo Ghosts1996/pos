@@ -64,6 +64,12 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     assert.equal(db.canonicalBrand("NOIR"), "Tangiers");
     assert.equal(db.canonicalBrand("эндорфин"), "Endorphin");
     assert.equal(db.canonicalBrand("HLGN"), "Хулиган");
+    // Terror — линейка Trofimoff's, а не марка (поправка владельца).
+    const tr = itemsFromAi({ items: [{ brand: "TERROR", name: "Kriek", flavors: ["вишня"] }, { brand: "Trofimoff's", name: "Apricot", flavors: [], line: "Burley" }] });
+    assert.equal(tr[0].brand, "Trofimoff");
+    assert.equal(tr[0].line, "Terror");
+    assert.equal(tr[1].line, "Burley");
+    assert.ok(/МАРКА И ЛИНЕЙКА — РАЗНЫЕ ПОЛЯ/.test(prompt) && /красная банка — линейка Burley/i.test(prompt));
     assert.ok(/Darkside[^\n]*Линейки: Core/.test(prompt));
   });
 
@@ -103,7 +109,7 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
       { brand: "", name: "СМЕРТЬ", flavors: [] },
     ] });
     assert.deepEqual(items.map((i) => [i.brand, i.name, i.flavors.join("|")]), [
-      ["Terror", "Вишня", "вишня"],
+      ["Trofimoff", "Вишня", "вишня"],
       ["", "Kriek", "вишня"],
       ["Lastochka", "Ласточка вишня", "вишня"],
       ["Lastochka", "Бессмертник", "бессмертник|мёд"],

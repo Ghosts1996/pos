@@ -67,7 +67,8 @@ class TobaccoShelf {
 
   /// Исправить банку вручную: марка, название, вкусы словами. Поменялись
   /// марка или название — у банки новый номер, старая запись удаляется.
-  static Future<TobaccoCan> edit(TobaccoCan old, {required String brand, required String name, required String flavorWords}) async {
+  static Future<TobaccoCan> edit(TobaccoCan old,
+      {required String brand, required String name, required String flavorWords, String? line}) async {
     final b = canonicalBrand(brand);
     final n = name.trim();
     final words = flavorWords.trim();
@@ -75,9 +76,10 @@ class TobaccoShelf {
     if (flavors.isEmpty) flavors = flavorsOfCan(b, n, words);
     var strength = old.strength;
     if (b != old.brand) strength = brandOf(b)?.strength ?? '';
-    final can = TobaccoCan(id: idOf(b, n), brand: b, name: n, flavors: flavors, strength: strength, inStock: old.inStock, line: old.line);
+    final l = (line ?? old.line).trim();
+    final can = TobaccoCan(id: idOf(b, n), brand: b, name: n, flavors: flavors, strength: strength, inStock: old.inStock, line: l);
     final batch = AppDb.instance.batch();
-    batch.set(_col().doc(can.id), {...can.toMap(), 'manual': true, 'updatedAt': FieldValue.serverTimestamp()});
+    batch.set(_col().doc(can.id), {...can.toMap(), 'line': can.line, 'manual': true, 'updatedAt': FieldValue.serverTimestamp()});
     if (can.id != old.id) batch.delete(_col().doc(old.id));
     await batch.commit();
     return can;

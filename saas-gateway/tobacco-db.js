@@ -27,7 +27,7 @@ const BRANDS = [
   { name: "Timeline", aka: ["таймлайн", "timelime"], look: "белая банка, надпись TIMELINE, вкус на цветной ленте («лайм»)", lines: "" },
   { name: "Deus", aka: ["деус"], look: "серебристая лента с надписью DEUS, ниже «аромат …» мелко; название вкуса — на верхней наклейке крышки («ORANGE TIC TAC»)", lines: "" },
   { name: "Sarma", aka: ["сарма"], look: "надпись САРМА или SARMA на ленте, вкус по-русски", lines: "" },
-  { name: "Trofimoff", aka: ["trofimoff's", "трофимов", "трофимофф"], look: "надпись TROFIMOFF'S, строгая банка", lines: "Classic, Burley (крепче)" },
+  { name: "Trofimoff", aka: ["trofimoff's", "трофимов", "трофимофф", "terror", "террор"], look: "надпись TROFIMOFF'S; на ленте часто только название линейки. TERROR — это линейка Trofimoff's Terror (brand = Trofimoff, line = Terror), не отдельная марка. Красная банка — линейка Burley", lines: "Classic, Burley (красная банка, крепче), Terror (крепкая)" },
   { name: "Bonche", aka: ["бонче", "бонш", "бонч"], look: "крафтовая банка цвета бумаги, надпись BONCHE, вкус крупно латиницей (SALAMI, SESAME)", lines: "" },
   { name: "Dogma", aka: ["догма"], look: "надпись DOGMA, тёмная банка", lines: "" },
   { name: "Хулиган", aka: ["hooligan", "huligan"], look: "надпись ХУЛИГАН / HOOLIGAN, дерзкий рисунок", lines: "Hard (крепче)" },
@@ -47,7 +47,6 @@ const BRANDS = [
   { name: "Starline", aka: ["старлайн"], look: "надпись STARLINE со звездой", lines: "" },
   { name: "Morpheus", aka: ["морфеус"], look: "надпись MORPHEUS", lines: "" },
   { name: "Lastochka", aka: ["ласточка"], look: "надпись ЛАСТОЧКА с птицей-ласточкой", lines: "" },
-  { name: "Terror", aka: ["террор"], look: "чёрная банка, надпись TERROR", lines: "" },
   { name: "Dedushka", aka: ["дедушка"], look: "надпись ДЕДУШКА, ретро-оформление", lines: "" },
   { name: "Chabacco", aka: ["чабакко"], look: "надпись CHABACCO — чайная смесь без табака", lines: "" },
   { name: "Brusko", aka: ["бруско"], look: "надпись BRUSKO", lines: "" },
@@ -136,9 +135,30 @@ function kindOf(brand) {
 }
 
 /** Правка ответа ИИ по базе: марка к одному написанию, пустая марка — по известному вкусу. */
+/** Линейка из надписи марки: «TERROR» → Trofimoff, линейка Terror; «Darkside Shot» → Shot. */
+function lineFromBrand(raw, brand) {
+  const t = ` ${String(raw || "").toLowerCase().replace(/ё/g, "е")} `;
+  for (const l of ((db.lines || {})[brand] || [])) {
+    const k = l.line;
+    if (new RegExp(`[^a-zа-я0-9]${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-zа-я0-9])`).test(t)) {
+      if (k === "нуар") return "Noir";
+      if (k === "террор") return "Terror";
+      return k[0].toUpperCase() + k.slice(1);
+    }
+  }
+  return "";
+}
+
 function enrich(items) {
   for (const it of items) {
-    if (it.brand) it.brand = canonicalBrand(it.brand);
+    if (it.brand) {
+      const raw = it.brand;
+      it.brand = canonicalBrand(raw);
+      if (!it.line && it.brand !== raw) {
+        const l = lineFromBrand(raw, it.brand);
+        if (l) it.line = l;
+      }
+    }
     if (!it.brand) {
       const b = brandByName(it.name);
       if (b) it.brand = b;
