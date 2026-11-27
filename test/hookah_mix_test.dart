@@ -206,6 +206,13 @@ void main() {
       expect(byWords.flavors, containsAll(['orange', 'candy']));
     });
 
+    test('марку не видно: «Мощная мята» — Spectrum, а просто «Мята» — без марки', () {
+      expect(TobaccoShelf.fromScan({'brand': '', 'name': 'Мощная мята'}).brand, 'Spectrum');
+      expect(TobaccoShelf.fromScan({'brand': '', 'name': 'Мармелад с колой'}).brand, 'Burn');
+      expect(TobaccoShelf.fromScan({'brand': '', 'name': 'Мята'}).brand, '');
+      expect(TobaccoShelf.fromScan({'brand': 'Overdose', 'name': 'Мята'}).brand, 'Overdose');
+    });
+
     test('ошибка ИИ в букве: «Простниковая мята» → «Тростниковая мята»', () {
       expect(fixCanName('Black Burn', 'Простниковая мята'), 'Тростниковая мята');
       expect(fixCanName('Black Burn', 'Тросниковая мята'), 'Тростниковая мята');

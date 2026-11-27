@@ -8907,7 +8907,7 @@ async function venueAiCompleteOnce(vendor, fmt, model, { system, parts, maxToken
       ? { type: "image", source: { type: "base64", media_type: p.mediaType, data: p.data } } : { type: "text", text: p.text })) }] };
   } else {
     payload = { model, max_tokens: maxTokens, messages: [{ role: "system", content: system }, { role: "user", content: parts.map((p) => (p.type === "image"
-      ? { type: "image_url", image_url: { url: `data:${p.mediaType};base64,${p.data}` } } : { type: "text", text: p.text })) }] };
+      ? { type: "image_url", image_url: { url: `data:${p.mediaType};base64,${p.data}`, detail: "high" } } : { type: "text", text: p.text })) }] };
   }
   const headers = fmt === "anthropic"
     ? { "Content-Type": "application/json", "x-api-key": vendor.apiKey, "anthropic-version": "2023-06-01", Authorization: `Bearer ${vendor.apiKey}` }

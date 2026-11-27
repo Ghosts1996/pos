@@ -306,6 +306,13 @@ const List<String> kKnownCanLines = [
   'NАШ|Crazy Green|kiwi',
   'NАШ|Бубльгум; Bubblegum; Бабл гам|candy',
   'Deus|Orange Tic Tac; Апельсиновый Тик Так; Апельсиновое драже|orange, candy',
+  // Полка владельца 28.11.2026: банки, у которых марку часто не видно.
+  'Spectrum|Мощная мята|mint',
+  'Banger|Жвачка арбуз-клубника; Жвачка, арбуз-клубника|candy, watermelon, strawberry',
+  'Banger|Фейхоа-можжевельник|feijoa, juniper',
+  'Banger|Грейпфрут, клубника и малина|grapefruit, strawberry, raspberry',
+  'Burn|Мармелад с колой|candy, cola',
+  'NАШ|Черника ромашка; Черника и ромашка|blueberry, chamomile',
   'Overdose|Wintergreen; Винтергрин; Винтегрин|wintergreen',
   'Black Burn|Тростниковая мята; Sugarcane Mint; Простниковая мята|sugarcane, mint',
 ];
@@ -366,6 +373,16 @@ KnownCan? knownCan(String brand, String name) {
   }
   // Без марки — только если такое название у одной банки каталога.
   return sameName == 1 && b.isEmpty ? byNameOnly : null;
+}
+
+/// Марка по названию, когда на банке её не видно: только если такое
+/// название в каталоге у одной марки и оно не из одного короткого слова
+/// («Мята» бывает у всех марок, «Мощная мята» — у Spectrum).
+String brandByName(String name) {
+  final n = name.trim();
+  if (n.split(RegExp(r'\s+')).length < 2 && n.length < 10) return '';
+  final c = knownCan('', n);
+  return c?.brand ?? '';
 }
 
 /// Вкусы банки: из каталога, иначе из того, что прочитал ИИ и что видно в

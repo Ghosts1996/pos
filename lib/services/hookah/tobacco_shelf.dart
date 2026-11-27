@@ -48,7 +48,9 @@ class TobaccoShelf {
   /// (tobacco_catalog.dart), иначе по словам ИИ и названию; крепость — как
   /// прочитал ИИ, иначе обычная для марки.
   static TobaccoCan fromScan(Map<String, dynamic> m) {
-    final brand = canonicalBrand('${m['brand'] ?? ''}');
+    var brand = canonicalBrand('${m['brand'] ?? ''}');
+    // Марку не видно — по известному названию банки (Spectrum «Мощная мята»).
+    if (brand.isEmpty) brand = brandByName('${m['name'] ?? ''}');
     // Ошибка ИИ в букву-две у известной банки — правим по каталогу.
     final name = fixCanName(brand, '${m['name'] ?? ''}'.trim());
     var line = '${m['line'] ?? ''}'.trim();
@@ -91,7 +93,9 @@ class TobaccoShelf {
     for (final photo in list) {
       final bytes = await photo.readAsBytes();
       // Тёмное фото — светлее, большое — в лимит сервера без потери надписей.
-      final prepared = await preparePhoto(bytes, maxSide: list.length > 1 ? 1400 : 1700, maxBase64: budget)
+      // Один снимок полки — крупнее (до 2048 точек): на полке 15–25 банок и
+      // мелкие надписи; несколько снимков делят лимит — по 1400.
+      final prepared = await preparePhoto(bytes, maxSide: list.length > 1 ? 1400 : 2048, maxBase64: budget)
           .catchError((Object _) => null);
       String data;
       String type;

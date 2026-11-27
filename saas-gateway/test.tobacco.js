@@ -37,6 +37,17 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     assert.equal(items[1].strength, "");
   });
 
+  await ok("марку не видно — берётся у банки того же вида на снимке", async () => {
+    const items = itemsFromAi({ items: [
+      { brand: "Overdose", name: "Пако Рабан", flavors: [], look: "чёрная, фиолетовая лента, звёзды" },
+      { brand: "", name: "Мята", flavors: ["мята"], look: "чёрная банка, фиолетовая лента, звёзды" },
+      { brand: "", name: "Бузина", flavors: ["бузина"], look: "белая, зелёная узорная лента" },
+    ] });
+    assert.equal(items[1].brand, "Overdose");
+    assert.equal(items[2].brand, "", "непохожий вид — марку не выдумываем");
+    assert.ok(/ОДИНАКОВЫЙ ВИД — ОДНА МАРКА/.test(require("./tobacco").TOBACCO_AI_PROMPT || ""));
+  });
+
   await ok("банка с нескольких сторон: все снимки в одном запросе, лимит общий", async () => {
     aiAnswer = '{"items":[{"brand":"Deus","name":"Orange Tic Tac","flavors":["апельсин","драже"]}]}';
     const r = await tob.scan("t1", { pages: [page, page] });
@@ -129,6 +140,6 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     assert.equal(again.fresh().total, 3);
   });
 
-  console.log(`tobacco: ${n} из 7 проверок`);
+  console.log(`tobacco: ${n} из 8 проверок`);
   fs.rmSync(dir, { recursive: true, force: true });
 })().catch((e) => { console.error(e); process.exit(1); });

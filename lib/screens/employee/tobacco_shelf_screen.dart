@@ -384,10 +384,90 @@ class _ScanReview extends StatefulWidget {
 }
 
 class _ScanReviewState extends State<_ScanReview> {
+  late final List<TobaccoCan> _cans = List.of(widget.cans);
   late final Set<String> _on = {for (final c in widget.cans) c.id};
+
+  String _flavorText(TobaccoCan c) => c.flavors.map((f) => kFlavorByKey[f]?.name ?? f).join(', ');
+
+  /// Банка, собранная заново из исправленных полей.
+  TobaccoCan _rebuild(String brand, String name, String words) => TobaccoShelf.fromScan({
+        'brand': brand,
+        'name': name,
+        'flavors': [for (final w in words.split(',')) if (w.trim().isNotEmpty) w.trim()],
+      });
+
+  void _replace(TobaccoCan old, TobaccoCan now) {
+    final i = _cans.indexOf(old);
+    if (i < 0) return;
+    final wasOn = _on.remove(old.id);
+    _cans[i] = now;
+    if (wasOn) _on.add(now.id);
+  }
+
+  /// Исправить банку до сохранения: марку, название, вкусы.
+  Future<void> _edit(TobaccoCan c) async {
+    final brand = TextEditingController(text: c.brand);
+    final name = TextEditingController(text: c.name);
+    final words = TextEditingController(text: _flavorText(c));
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Исправить банку'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: brand, decoration: const InputDecoration(labelText: 'Марка')),
+            const SizedBox(height: 8),
+            TextField(controller: name, decoration: const InputDecoration(labelText: 'Название, как на банке')),
+            const SizedBox(height: 8),
+            TextField(controller: words, decoration: const InputDecoration(labelText: 'Вкусы словами', hintText: 'Например: мята, лёд')),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Готово')),
+        ],
+      ),
+    );
+    if (ok != true || name.text.trim().isEmpty || !mounted) return;
+    setState(() => _replace(c, _rebuild(brand.text, name.text, words.text)));
+  }
+
+  /// Одна марка сразу всем отмеченным банкам без марки.
+  Future<void> _brandForUnbranded() async {
+    final seen = {for (final c in _cans) if (c.brand.isNotEmpty) c.brand};
+    final brand = TextEditingController();
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Марка для банок без марки'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            TextField(controller: brand, autofocus: true, decoration: const InputDecoration(labelText: 'Марка')),
+            if (seen.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                for (final b in seen) ActionChip(label: Text(b), onPressed: () => Navigator.pop(ctx, b)),
+              ]),
+            ],
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, brand.text), child: const Text('Поставить')),
+        ],
+      ),
+    );
+    if (picked == null || picked.trim().isEmpty || !mounted) return;
+    setState(() {
+      for (final c in List.of(_cans)) {
+        if (c.brand.isEmpty && _on.contains(c.id)) _replace(c, _rebuild(picked, c.name, _flavorText(c)));
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    final unbranded = _cans.where((c) => c.brand.isEmpty && _on.contains(c.id)).length;
     return SafeArea(
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.85),
@@ -397,22 +477,38 @@ class _ScanReviewState extends State<_ScanReview> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-              child: Text('Найдено банок: ${widget.cans.length}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+              child: Text('Найдено банок: ${_cans.length}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Text('Снимите галочку с того, что прочитано неверно.', style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+              child: Text('Нажмите на банку, чтобы исправить марку, название или вкус. Лишнее — снимите галочку.',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
             ),
+            if (unbranded > 0)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: OutlinedButton.icon(
+                  onPressed: _brandForUnbranded,
+                  icon: const Icon(Icons.sell_outlined, size: 18),
+                  label: Text('Указать марку для банок без марки ($unbranded)'),
+                ),
+              ),
             Flexible(
               child: ListView(
                 shrinkWrap: true,
                 children: [
-                  for (final c in widget.cans)
-                    CheckboxListTile(
-                      value: _on.contains(c.id),
-                      onChanged: (v) => setState(() => v == true ? _on.add(c.id) : _on.remove(c.id)),
-                      title: Text(c.label),
-                      subtitle: Text(c.flavors.isEmpty ? 'вкус не узнан' : c.flavors.map((f) => kFlavorByKey[f]?.name ?? f).join(', ')),
+                  for (final c in _cans)
+                    ListTile(
+                      onTap: () => _edit(c),
+                      title: Text(c.brand.isEmpty ? '«${c.name}» · марка не видна' : c.label),
+                      subtitle: Text(
+                        c.flavors.isEmpty ? 'вкус не узнан — нажмите, чтобы исправить' : _flavorText(c),
+                        style: TextStyle(color: c.flavors.isEmpty || c.brand.isEmpty ? AppColors.warning : AppColors.textMuted),
+                      ),
+                      trailing: Checkbox(
+                        value: _on.contains(c.id),
+                        onChanged: (v) => setState(() => v == true ? _on.add(c.id) : _on.remove(c.id)),
+                      ),
                     ),
                 ],
               ),
@@ -420,7 +516,7 @@ class _ScanReviewState extends State<_ScanReview> {
             Padding(
               padding: const EdgeInsets.all(16),
               child: FilledButton(
-                onPressed: _on.isEmpty ? null : () => Navigator.pop(context, [for (final c in widget.cans) if (_on.contains(c.id)) c]),
+                onPressed: _on.isEmpty ? null : () => Navigator.pop(context, [for (final c in _cans) if (_on.contains(c.id)) c]),
                 child: Text('Сохранить на полку (${_on.length})'),
               ),
             ),
