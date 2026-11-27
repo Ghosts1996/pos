@@ -1,0 +1,2226 @@
+{
+ "Darkside": [
+  {
+   "names": [
+    "Supernova",
+    "Ultranova",
+    "Супернова"
+   ],
+   "flavors": [
+    "menthol",
+    "ice"
+   ]
+  },
+  {
+   "names": [
+    "Bounty Hunter",
+    "Баунти Хантер"
+   ],
+   "flavors": [
+    "coconut",
+    "chocolate"
+   ]
+  },
+  {
+   "names": [
+    "Kalee Grapefruit",
+    "Kalee Grap",
+    "Кали Грейпфрут"
+   ],
+   "flavors": [
+    "grapefruit"
+   ]
+  },
+  {
+   "names": [
+    "Falling Star",
+    "Фоллинг Стар"
+   ],
+   "flavors": [
+    "mango",
+    "passionfruit"
+   ]
+  },
+  {
+   "names": [
+    "Blueberry Blast",
+    "Blue Blast"
+   ],
+   "flavors": [
+    "blueberry"
+   ]
+  },
+  {
+   "names": [
+    "Breaking Red"
+   ],
+   "flavors": [
+    "pomegranate"
+   ]
+  },
+  {
+   "names": [
+    "Goal"
+   ],
+   "flavors": [
+    "energy"
+   ]
+  },
+  {
+   "names": [
+    "Sweet Comet",
+    "Swit Comet"
+   ],
+   "flavors": [
+    "cranberry",
+    "cream",
+    "vanilla"
+   ]
+  },
+  {
+   "names": [
+    "Wild Forest"
+   ],
+   "flavors": [
+    "strawberry",
+    "forestberries"
+   ]
+  },
+  {
+   "names": [
+    "Cosmo Flower"
+   ],
+   "flavors": [
+    "blueberry",
+    "rose",
+    "jasmine"
+   ]
+  },
+  {
+   "names": [
+    "Needles",
+    "Needls"
+   ],
+   "flavors": [
+    "pine"
+   ]
+  },
+  {
+   "names": [
+    "Cyber Kiwi"
+   ],
+   "flavors": [
+    "kiwi"
+   ]
+  },
+  {
+   "names": [
+    "Bananapapa",
+    "Bnpapa"
+   ],
+   "flavors": [
+    "banana",
+    "cream"
+   ]
+  },
+  {
+   "names": [
+    "Admiral Acbar"
+   ],
+   "flavors": [
+    "cookie",
+    "fruitmix"
+   ]
+  },
+  {
+   "names": [
+    "Acot"
+   ],
+   "flavors": [
+    "greenapple",
+    "apricot"
+   ]
+  },
+  {
+   "names": [
+    "Guava Rebel"
+   ],
+   "flavors": [
+    "guava"
+   ]
+  },
+  {
+   "names": [
+    "Redberry"
+   ],
+   "flavors": [
+    "redcurrant"
+   ]
+  },
+  {
+   "names": [
+    "Space Lychee"
+   ],
+   "flavors": [
+    "lychee"
+   ]
+  },
+  {
+   "names": [
+    "Blackberry",
+    "Black B"
+   ],
+   "flavors": [
+    "blackberry"
+   ]
+  },
+  {
+   "names": [
+    "Blacktorrent"
+   ],
+   "flavors": [
+    "blackcurrant"
+   ]
+  },
+  {
+   "names": [
+    "Mango Lassi"
+   ],
+   "flavors": [
+    "mango",
+    "cream"
+   ]
+  },
+  {
+   "names": [
+    "Nordberry"
+   ],
+   "flavors": [
+    "cranberry"
+   ]
+  },
+  {
+   "names": [
+    "Space Jam"
+   ],
+   "flavors": [
+    "strawberry",
+    "jam"
+   ]
+  },
+  {
+   "names": [
+    "Astro Tea"
+   ],
+   "flavors": [
+    "tea",
+    "lemon"
+   ]
+  },
+  {
+   "names": [
+    "Desert Eagle"
+   ],
+   "flavors": [
+    "cactus"
+   ]
+  },
+  {
+   "names": [
+    "Generis Raspberry"
+   ],
+   "flavors": [
+    "raspberry"
+   ]
+  },
+  {
+   "names": [
+    "Lemon Blast",
+    "LM Blast"
+   ],
+   "flavors": [
+    "lemon"
+   ]
+  },
+  {
+   "names": [
+    "Barvy Orange",
+    "Barvy O"
+   ],
+   "flavors": [
+    "orange"
+   ]
+  },
+  {
+   "names": [
+    "Killer Milk"
+   ],
+   "flavors": [
+    "cream"
+   ]
+  },
+  {
+   "names": [
+    "Cosmos"
+   ],
+   "flavors": [
+    "cocktail",
+    "lime",
+    "cranberry"
+   ]
+  },
+  {
+   "names": [
+    "Cherry Rocks"
+   ],
+   "flavors": [
+    "cherry"
+   ]
+  },
+  {
+   "names": [
+    "Dark Passion"
+   ],
+   "flavors": [
+    "passionfruit"
+   ]
+  },
+  {
+   "names": [
+    "Honey Dust",
+    "Hny Dust"
+   ],
+   "flavors": [
+    "honey"
+   ]
+  },
+  {
+   "names": [
+    "Red Rush"
+   ],
+   "flavors": [
+    "forestberries"
+   ]
+  }
+ ],
+ "Musthave": [
+  {
+   "names": [
+    "Pinkman",
+    "Pynkman",
+    "Пинкман"
+   ],
+   "flavors": [
+    "grapefruit",
+    "strawberry",
+    "raspberry"
+   ]
+  },
+  {
+   "names": [
+    "Cherry Cola"
+   ],
+   "flavors": [
+    "cherry",
+    "cola"
+   ]
+  },
+  {
+   "names": [
+    "Choco Mint"
+   ],
+   "flavors": [
+    "chocolate",
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Kiwi Smoothie",
+    "Kwi Smooth"
+   ],
+   "flavors": [
+    "kiwi",
+    "mint",
+    "apple"
+   ]
+  },
+  {
+   "names": [
+    "Pistachio Pie",
+    "Pistace Pie"
+   ],
+   "flavors": [
+    "pistachio",
+    "cookie"
+   ]
+  },
+  {
+   "names": [
+    "Amalfi Lemon",
+    "Amafy"
+   ],
+   "flavors": [
+    "lemon"
+   ]
+  },
+  {
+   "names": [
+    "Raspberry",
+    "Raspi"
+   ],
+   "flavors": [
+    "raspberry"
+   ]
+  },
+  {
+   "names": [
+    "Feijoa"
+   ],
+   "flavors": [
+    "feijoa"
+   ]
+  },
+  {
+   "names": [
+    "Banana Mama",
+    "BananaMama"
+   ],
+   "flavors": [
+    "banana"
+   ]
+  },
+  {
+   "names": [
+    "Candy Cow"
+   ],
+   "flavors": [
+    "caramel",
+    "cream"
+   ]
+  },
+  {
+   "names": [
+    "Cinnamon"
+   ],
+   "flavors": [
+    "cinnamon"
+   ]
+  },
+  {
+   "names": [
+    "Tarragon",
+    "Estragon"
+   ],
+   "flavors": [
+    "tarragon"
+   ]
+  },
+  {
+   "names": [
+    "Cucunade"
+   ],
+   "flavors": [
+    "cucumber",
+    "lemonade"
+   ]
+  },
+  {
+   "names": [
+    "Blackberry",
+    "Blarry"
+   ],
+   "flavors": [
+    "blackberry"
+   ]
+  },
+  {
+   "names": [
+    "Mad Pear"
+   ],
+   "flavors": [
+    "pear"
+   ]
+  },
+  {
+   "names": [
+    "Grapefruit"
+   ],
+   "flavors": [
+    "grapefruit"
+   ]
+  },
+  {
+   "names": [
+    "Lemon Pie"
+   ],
+   "flavors": [
+    "lemon",
+    "cookie"
+   ]
+  },
+  {
+   "names": [
+    "Berry Holls"
+   ],
+   "flavors": [
+    "forestberries",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Strawberry",
+    "Straw"
+   ],
+   "flavors": [
+    "strawberry"
+   ]
+  },
+  {
+   "names": [
+    "Cucu"
+   ],
+   "flavors": [
+    "cucumber",
+    "ginger",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Tropic Juice"
+   ],
+   "flavors": [
+    "fruitmix"
+   ]
+  },
+  {
+   "names": [
+    "Forest Berries",
+    "Forest Berri"
+   ],
+   "flavors": [
+    "forestberries"
+   ]
+  },
+  {
+   "names": [
+    "Elderberry",
+    "Eldery"
+   ],
+   "flavors": [
+    "elderberry"
+   ]
+  },
+  {
+   "names": [
+    "Black Currant"
+   ],
+   "flavors": [
+    "blackcurrant"
+   ]
+  },
+  {
+   "names": [
+    "Sea Buckthorn Tea"
+   ],
+   "flavors": [
+    "seabuckthorn",
+    "tea"
+   ]
+  },
+  {
+   "names": [
+    "Ruby Grape"
+   ],
+   "flavors": [
+    "grape"
+   ]
+  },
+  {
+   "names": [
+    "Caribbean Rum"
+   ],
+   "flavors": [
+    "cocktail"
+   ]
+  },
+  {
+   "names": [
+    "Apple Drops"
+   ],
+   "flavors": [
+    "greenapple",
+    "candy"
+   ]
+  },
+  {
+   "names": [
+    "Pineapple",
+    "Pynapl"
+   ],
+   "flavors": [
+    "pineapple"
+   ]
+  },
+  {
+   "names": [
+    "Barberry Candy"
+   ],
+   "flavors": [
+    "barberry",
+    "candy"
+   ]
+  },
+  {
+   "names": [
+    "Kiwi"
+   ],
+   "flavors": [
+    "kiwi"
+   ]
+  },
+  {
+   "names": [
+    "Mango Sling"
+   ],
+   "flavors": [
+    "mango",
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Peppermint"
+   ],
+   "flavors": [
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Pistachio",
+    "Pistace"
+   ],
+   "flavors": [
+    "pistachio"
+   ]
+  },
+  {
+   "names": [
+    "Lemon-Lime",
+    "Leime"
+   ],
+   "flavors": [
+    "lemon",
+    "lime"
+   ]
+  },
+  {
+   "names": [
+    "Cherry",
+    "Cheri"
+   ],
+   "flavors": [
+    "cherry"
+   ]
+  },
+  {
+   "names": [
+    "Vanilla Cream"
+   ],
+   "flavors": [
+    "vanilla",
+    "cream"
+   ]
+  },
+  {
+   "names": [
+    "Cookie"
+   ],
+   "flavors": [
+    "cookie",
+    "chocolate"
+   ]
+  },
+  {
+   "names": [
+    "Ice Mint"
+   ],
+   "flavors": [
+    "mint",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Masala Tea"
+   ],
+   "flavors": [
+    "tea",
+    "cardamom",
+    "cinnamon"
+   ]
+  },
+  {
+   "names": [
+    "Space Flavour",
+    "Space Flavor",
+    "Space Flvour"
+   ],
+   "flavors": [
+    "mango",
+    "rose",
+    "passionfruit",
+    "lychee"
+   ]
+  },
+  {
+   "names": [
+    "Violet"
+   ],
+   "flavors": [
+    "blueberry",
+    "melon",
+    "cream"
+   ]
+  },
+  {
+   "names": [
+    "Coconut Shake"
+   ],
+   "flavors": [
+    "coconut",
+    "cream"
+   ]
+  },
+  {
+   "names": [
+    "Frosty"
+   ],
+   "flavors": [
+    "menthol",
+    "ice"
+   ]
+  },
+  {
+   "names": [
+    "Red Bomb"
+   ],
+   "flavors": [
+    "strawberry",
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Blueberry"
+   ],
+   "flavors": [
+    "blueberry"
+   ]
+  },
+  {
+   "names": [
+    "Cranberry"
+   ],
+   "flavors": [
+    "cranberry"
+   ]
+  },
+  {
+   "names": [
+    "Mulled Wine"
+   ],
+   "flavors": [
+    "cocktail",
+    "orange",
+    "cinnamon"
+   ]
+  },
+  {
+   "names": [
+    "Quince"
+   ],
+   "flavors": [
+    "quince"
+   ]
+  },
+  {
+   "names": [
+    "Sweet Melon"
+   ],
+   "flavors": [
+    "melon"
+   ]
+  },
+  {
+   "names": [
+    "Unicorn Treats"
+   ],
+   "flavors": [
+    "candy"
+   ]
+  },
+  {
+   "names": [
+    "Rocketman"
+   ],
+   "flavors": [
+    "kiwi",
+    "strawberry",
+    "grapefruit"
+   ]
+  },
+  {
+   "names": [
+    "Cinnamon Rolls"
+   ],
+   "flavors": [
+    "cookie",
+    "cinnamon"
+   ]
+  },
+  {
+   "names": [
+    "Strawberry Lychee"
+   ],
+   "flavors": [
+    "strawberry",
+    "lychee"
+   ]
+  },
+  {
+   "names": [
+    "Berry Mors"
+   ],
+   "flavors": [
+    "cherry",
+    "raspberry",
+    "cranberry"
+   ]
+  },
+  {
+   "names": [
+    "Coconut Dream"
+   ],
+   "flavors": [
+    "coconut"
+   ]
+  },
+  {
+   "names": [
+    "Guanapapa"
+   ],
+   "flavors": [
+    "papaya",
+    "guava",
+    "banana"
+   ]
+  }
+ ],
+ "Black Burn": [
+  {
+   "names": [
+    "Summer Basket"
+   ],
+   "flavors": [
+    "blueberry",
+    "strawberry",
+    "raspberry",
+    "watermelon"
+   ]
+  },
+  {
+   "names": [
+    "Shock Pineapple",
+    "Shok Anans",
+    "Ананасовый шок"
+   ],
+   "flavors": [
+    "pineapple"
+   ]
+  },
+  {
+   "names": [
+    "Cupper Grupper"
+   ],
+   "flavors": [
+    "grape"
+   ]
+  },
+  {
+   "names": [
+    "Juicy Smoozy",
+    "Juzy Smoozy"
+   ],
+   "flavors": [
+    "papaya",
+    "coconut",
+    "strawberry"
+   ]
+  },
+  {
+   "names": [
+    "Something Berry",
+    "Smth Merry"
+   ],
+   "flavors": [
+    "forestberries"
+   ]
+  },
+  {
+   "names": [
+    "Ice Baby",
+    "Айс Бэйби"
+   ],
+   "flavors": [
+    "grapefruit",
+    "forestberries",
+    "ice"
+   ]
+  },
+  {
+   "names": [
+    "Mango",
+    "Mamgo"
+   ],
+   "flavors": [
+    "mango"
+   ]
+  },
+  {
+   "names": [
+    "Papaya Dinner",
+    "Bapai Dnner"
+   ],
+   "flavors": [
+    "papaya"
+   ]
+  },
+  {
+   "names": [
+    "Melon Halls"
+   ],
+   "flavors": [
+    "watermelon",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "It's not Black Currant",
+    "Its not Black Currant"
+   ],
+   "flavors": [
+    "blackcurrant"
+   ]
+  },
+  {
+   "names": [
+    "Kiwi Stoner",
+    "Kwi Stoner"
+   ],
+   "flavors": [
+    "kiwi"
+   ]
+  },
+  {
+   "names": [
+    "Lemon Shock",
+    "Shok",
+    "Шок"
+   ],
+   "flavors": [
+    "lemon"
+   ]
+  },
+  {
+   "names": [
+    "Real Passion Fruit",
+    "Real P.F."
+   ],
+   "flavors": [
+    "passionfruit"
+   ]
+  },
+  {
+   "names": [
+    "Shock Apple",
+    "Shok Apl"
+   ],
+   "flavors": [
+    "apple"
+   ]
+  },
+  {
+   "names": [
+    "Apple Strudel",
+    "Apl Strudl"
+   ],
+   "flavors": [
+    "apple",
+    "cookie",
+    "cinnamon"
+   ]
+  },
+  {
+   "names": [
+    "Raspberry",
+    "Raserry"
+   ],
+   "flavors": [
+    "raspberry"
+   ]
+  },
+  {
+   "names": [
+    "Rose Tea",
+    "Roze T"
+   ],
+   "flavors": [
+    "rose",
+    "tea"
+   ]
+  },
+  {
+   "names": [
+    "Barberry Shock"
+   ],
+   "flavors": [
+    "barberry"
+   ]
+  },
+  {
+   "names": [
+    "Cranberry Shock"
+   ],
+   "flavors": [
+    "cranberry"
+   ]
+  },
+  {
+   "names": [
+    "Peach Killer",
+    "Pinch Killer"
+   ],
+   "flavors": [
+    "peach"
+   ]
+  },
+  {
+   "names": [
+    "Yogurt Peach",
+    "Yoggi P"
+   ],
+   "flavors": [
+    "cream",
+    "peach"
+   ]
+  },
+  {
+   "names": [
+    "Yogurt Blueberry",
+    "Yoggi B"
+   ],
+   "flavors": [
+    "cream",
+    "blueberry"
+   ]
+  },
+  {
+   "names": [
+    "Blackberry Lemonade"
+   ],
+   "flavors": [
+    "blackberry",
+    "lemonade"
+   ]
+  },
+  {
+   "names": [
+    "Give Me Guava",
+    "Give me Guva"
+   ],
+   "flavors": [
+    "guava",
+    "kiwi",
+    "lime"
+   ]
+  },
+  {
+   "names": [
+    "Haribon"
+   ],
+   "flavors": [
+    "cola",
+    "candy"
+   ]
+  },
+  {
+   "names": [
+    "Malibu"
+   ],
+   "flavors": [
+    "strawberry",
+    "cream"
+   ]
+  },
+  {
+   "names": [
+    "Elderberry Shock",
+    "Eldgerry Shok"
+   ],
+   "flavors": [
+    "elderberry"
+   ]
+  },
+  {
+   "names": [
+    "Strawberry Jam",
+    "Strobery Jham"
+   ],
+   "flavors": [
+    "strawberry",
+    "jam"
+   ]
+  },
+  {
+   "names": [
+    "Pear Lemonade",
+    "Pir Lmnd"
+   ],
+   "flavors": [
+    "pear",
+    "lemonade",
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Currant Shock",
+    "Shok Kurant Shok"
+   ],
+   "flavors": [
+    "blackcurrant"
+   ]
+  },
+  {
+   "names": [
+    "Lemon Sweets",
+    "Lemn Swits"
+   ],
+   "flavors": [
+    "lemon",
+    "candy"
+   ]
+  },
+  {
+   "names": [
+    "Cherry Garden",
+    "Chr Garden"
+   ],
+   "flavors": [
+    "cherry"
+   ]
+  },
+  {
+   "names": [
+    "Famous Apple"
+   ],
+   "flavors": [
+    "apple",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Iceberg"
+   ],
+   "flavors": [
+    "menthol",
+    "ice"
+   ]
+  },
+  {
+   "names": [
+    "Тростниковая мята",
+    "Sugarcane Mint",
+    "Простниковая мята"
+   ],
+   "flavors": [
+    "sugarcane",
+    "mint"
+   ]
+  }
+ ],
+ "Al Fakher": [
+  {
+   "names": [
+    "Two Apples",
+    "The Double Crunch",
+    "Double Kick",
+    "Двойное яблоко"
+   ],
+   "flavors": [
+    "apple",
+    "anise"
+   ]
+  },
+  {
+   "names": [
+    "Big Blue"
+   ],
+   "flavors": [
+    "blueberry"
+   ]
+  },
+  {
+   "names": [
+    "White Pods"
+   ],
+   "flavors": [
+    "vanilla"
+   ]
+  },
+  {
+   "names": [
+    "Crystal Grapio"
+   ],
+   "flavors": [
+    "grape",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Crystal Double Crunch"
+   ],
+   "flavors": [
+    "apple",
+    "anise",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Crystal Yellow"
+   ],
+   "flavors": [
+    "lemon",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Yellow"
+   ],
+   "flavors": [
+    "lemon"
+   ]
+  },
+  {
+   "names": [
+    "Red Smash"
+   ],
+   "flavors": [
+    "watermelon"
+   ]
+  },
+  {
+   "names": [
+    "Grapio"
+   ],
+   "flavors": [
+    "grape"
+   ]
+  },
+  {
+   "names": [
+    "Ivory Gold"
+   ],
+   "flavors": [
+    "cream"
+   ]
+  },
+  {
+   "names": [
+    "Cloud 92"
+   ],
+   "flavors": [
+    "mint",
+    "passionfruit",
+    "melon",
+    "watermelon"
+   ]
+  },
+  {
+   "names": [
+    "Purple Passion"
+   ],
+   "flavors": [
+    "blackberry",
+    "grape",
+    "blackcurrant",
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Twiwi"
+   ],
+   "flavors": [
+    "kiwi"
+   ]
+  },
+  {
+   "names": [
+    "Crimson Crush"
+   ],
+   "flavors": [
+    "fruitmix"
+   ]
+  },
+  {
+   "names": [
+    "Doggs Delight"
+   ],
+   "flavors": [
+    "mango",
+    "passionfruit",
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Fresh Mist"
+   ],
+   "flavors": [
+    "blueberry",
+    "fruitmix"
+   ]
+  },
+  {
+   "names": [
+    "Arctic Cool"
+   ],
+   "flavors": [
+    "menthol",
+    "ice"
+   ]
+  },
+  {
+   "names": [
+    "White Flash"
+   ],
+   "flavors": [
+    "pineapple",
+    "orange",
+    "lemon",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Gum Mastic"
+   ],
+   "flavors": [
+    "candy",
+    "cardamom"
+   ]
+  },
+  {
+   "names": [
+    "Fun Time"
+   ],
+   "flavors": [
+    "kiwi",
+    "grape",
+    "watermelon"
+   ]
+  },
+  {
+   "names": [
+    "Ambrosia"
+   ],
+   "flavors": [
+    "peach",
+    "melon",
+    "watermelon",
+    "cream",
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Banana Montana"
+   ],
+   "flavors": [
+    "banana",
+    "coconut",
+    "cookie"
+   ]
+  },
+  {
+   "names": [
+    "Berry Blend"
+   ],
+   "flavors": [
+    "blackberry",
+    "blueberry",
+    "raspberry"
+   ]
+  },
+  {
+   "names": [
+    "Citrus Spirit"
+   ],
+   "flavors": [
+    "lime",
+    "orange",
+    "lemon"
+   ]
+  },
+  {
+   "names": [
+    "Diamond Dust"
+   ],
+   "flavors": [
+    "pineapple",
+    "lime",
+    "orange",
+    "raspberry"
+   ]
+  },
+  {
+   "names": [
+    "Flavour Paradise"
+   ],
+   "flavors": [
+    "grape",
+    "peach",
+    "strawberry",
+    "lemon"
+   ]
+  },
+  {
+   "names": [
+    "Hookah Matata"
+   ],
+   "flavors": [
+    "apple",
+    "honey"
+   ]
+  },
+  {
+   "names": [
+    "Kiwi Garden"
+   ],
+   "flavors": [
+    "kiwi",
+    "orange"
+   ]
+  },
+  {
+   "names": [
+    "Mango Madness"
+   ],
+   "flavors": [
+    "mango",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Rich Creme",
+    "Rich Crème"
+   ],
+   "flavors": [
+    "cream",
+    "vanilla"
+   ]
+  },
+  {
+   "names": [
+    "Seven Wings"
+   ],
+   "flavors": [
+    "blueberry",
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Sparkle"
+   ],
+   "flavors": [
+    "lemon",
+    "mint",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Strawberry Island"
+   ],
+   "flavors": [
+    "grape",
+    "strawberry"
+   ]
+  },
+  {
+   "names": [
+    "Sweet Drops"
+   ],
+   "flavors": [
+    "strawberry",
+    "watermelon"
+   ]
+  },
+  {
+   "names": [
+    "Lovely Cherry"
+   ],
+   "flavors": [
+    "apple",
+    "cherry"
+   ]
+  }
+ ],
+ "Adalya": [
+  {
+   "names": [
+    "Love 66",
+    "Лав 66"
+   ],
+   "flavors": [
+    "passionfruit",
+    "melon",
+    "watermelon",
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Lady Killer",
+    "Леди Киллер"
+   ],
+   "flavors": [
+    "mango",
+    "melon",
+    "forestberries",
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Punk Man"
+   ],
+   "flavors": [
+    "blueberry",
+    "strawberry",
+    "raspberry"
+   ]
+  },
+  {
+   "names": [
+    "The Two Apples",
+    "The Two App",
+    "Two Apples",
+    "Two App"
+   ],
+   "flavors": [
+    "apple",
+    "anise"
+   ]
+  },
+  {
+   "names": [
+    "Tynky Wynky",
+    "Tinky Winky"
+   ],
+   "flavors": [
+    "passionfruit",
+    "lime",
+    "grapefruit"
+   ]
+  },
+  {
+   "names": [
+    "Cindys"
+   ],
+   "flavors": [
+    "passionfruit",
+    "mango",
+    "melon",
+    "watermelon",
+    "forestberries",
+    "ice"
+   ]
+  },
+  {
+   "names": [
+    "Code Dragon"
+   ],
+   "flavors": [
+    "cola",
+    "energy"
+   ]
+  },
+  {
+   "names": [
+    "Skyfall"
+   ],
+   "flavors": [
+    "peach",
+    "watermelon",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Ice Kaktus",
+    "Ice Kaktü"
+   ],
+   "flavors": [
+    "cactus",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Mango Tango"
+   ],
+   "flavors": [
+    "mango",
+    "passionfruit"
+   ]
+  },
+  {
+   "names": [
+    "Blue Dragon"
+   ],
+   "flavors": [
+    "blueberry",
+    "dragonfruit"
+   ]
+  },
+  {
+   "names": [
+    "Berlin Nights"
+   ],
+   "flavors": [
+    "peach",
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Blue Ice"
+   ],
+   "flavors": [
+    "blueberry",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Double Yellow"
+   ],
+   "flavors": [
+    "melon",
+    "watermelon"
+   ]
+  },
+  {
+   "names": [
+    "Ice Peach",
+    "Ice Pyc"
+   ],
+   "flavors": [
+    "peach",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Ice Bonbon",
+    "Ice Boni"
+   ],
+   "flavors": [
+    "candy",
+    "ice"
+   ]
+  },
+  {
+   "names": [
+    "Sheik Money"
+   ],
+   "flavors": [
+    "pineapple",
+    "banana"
+   ]
+  },
+  {
+   "names": [
+    "Adalya Power"
+   ],
+   "flavors": [
+    "energy"
+   ]
+  },
+  {
+   "names": [
+    "English Lord",
+    "Englisch Lord"
+   ],
+   "flavors": [
+    "mango",
+    "peach",
+    "raspberry"
+   ]
+  },
+  {
+   "names": [
+    "Lie on the Rocks",
+    "Ice Lie on the Rocks"
+   ],
+   "flavors": [
+    "lime",
+    "mint",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Hawaii"
+   ],
+   "flavors": [
+    "pineapple",
+    "peach"
+   ]
+  },
+  {
+   "names": [
+    "Desperado"
+   ],
+   "flavors": [
+    "grape",
+    "lime",
+    "strawberry",
+    "orange"
+   ]
+  },
+  {
+   "names": [
+    "Three Angels",
+    "Three Angel's"
+   ],
+   "flavors": [
+    "passionfruit",
+    "lime",
+    "lemon",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Lemon Pie",
+    "Leon Pi",
+    "Lmn Pi"
+   ],
+   "flavors": [
+    "lemon",
+    "cookie"
+   ]
+  },
+  {
+   "names": [
+    "La Bonita"
+   ],
+   "flavors": [
+    "apple",
+    "passionfruit",
+    "grape",
+    "cherry",
+    "strawberry"
+   ]
+  },
+  {
+   "names": [
+    "Esmeralda"
+   ],
+   "flavors": [
+    "kiwi",
+    "cactus",
+    "dragonfruit"
+   ]
+  },
+  {
+   "names": [
+    "Capri"
+   ],
+   "flavors": [
+    "orange"
+   ]
+  },
+  {
+   "names": [
+    "Frisbie"
+   ],
+   "flavors": [
+    "forestberries",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Rhapsody"
+   ],
+   "flavors": [
+    "pineapple",
+    "peach",
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Black Voodoo"
+   ],
+   "flavors": [
+    "forestberries",
+    "cinnamon"
+   ]
+  },
+  {
+   "names": [
+    "Red Banana",
+    "Red Bana"
+   ],
+   "flavors": [
+    "cherry",
+    "banana"
+   ]
+  },
+  {
+   "names": [
+    "Bluemoon",
+    "Blue Moon"
+   ],
+   "flavors": [
+    "blueberry",
+    "forestberries"
+   ]
+  },
+  {
+   "names": [
+    "Ice Kyba",
+    "Ice Cuba"
+   ],
+   "flavors": [
+    "cherry",
+    "banana",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Berr's",
+    "Berrs"
+   ],
+   "flavors": [
+    "forestberries",
+    "mint",
+    "ice"
+   ]
+  },
+  {
+   "names": [
+    "Horchata"
+   ],
+   "flavors": [
+    "coffee",
+    "hazelnut",
+    "chocolate",
+    "caramel"
+   ]
+  },
+  {
+   "names": [
+    "Lychee Blue",
+    "Lyc Blue"
+   ],
+   "flavors": [
+    "lychee",
+    "blueberry",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Summer Nights"
+   ],
+   "flavors": [
+    "peach",
+    "orange",
+    "melon",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Eskimo Lemon",
+    "Eskimo Leon"
+   ],
+   "flavors": [
+    "lemon",
+    "lime",
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Marilyn Monroe",
+    "Merilyn M"
+   ],
+   "flavors": [
+    "rose",
+    "cinnamon"
+   ]
+  },
+  {
+   "names": [
+    "Endless Flirt"
+   ],
+   "flavors": [
+    "passionfruit",
+    "mango",
+    "blueberry",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Carmen"
+   ],
+   "flavors": [
+    "caramel"
+   ]
+  },
+  {
+   "names": [
+    "Dulcinea"
+   ],
+   "flavors": [
+    "apple",
+    "peach"
+   ]
+  },
+  {
+   "names": [
+    "Gugi Rasputin"
+   ],
+   "flavors": [
+    "guava",
+    "raspberry"
+   ]
+  },
+  {
+   "names": [
+    "Blue Orion"
+   ],
+   "flavors": [
+    "blueberry",
+    "orange"
+   ]
+  },
+  {
+   "names": [
+    "Desert Sweet"
+   ],
+   "flavors": [
+    "cactus"
+   ]
+  },
+  {
+   "names": [
+    "Gin Mint",
+    "Gyn Mnt"
+   ],
+   "flavors": [
+    "cocktail",
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Swiss Passion"
+   ],
+   "flavors": [
+    "passionfruit",
+    "mint",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Paradiso"
+   ],
+   "flavors": [
+    "grapefruit"
+   ]
+  },
+  {
+   "names": [
+    "Ipanema"
+   ],
+   "flavors": [
+    "pear",
+    "blueberry",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "London Fog"
+   ],
+   "flavors": [
+    "rose",
+    "grapefruit",
+    "elderberry"
+   ]
+  },
+  {
+   "names": [
+    "Pink Princess"
+   ],
+   "flavors": [
+    "rose",
+    "menthol"
+   ]
+  },
+  {
+   "names": [
+    "Red Wood"
+   ],
+   "flavors": [
+    "candy",
+    "cinnamon"
+   ]
+  },
+  {
+   "names": [
+    "Side Ruj"
+   ],
+   "flavors": [
+    "pomegranate"
+   ]
+  },
+  {
+   "names": [
+    "Sweet Bubble"
+   ],
+   "flavors": [
+    "candy"
+   ]
+  },
+  {
+   "names": [
+    "Tony's Destiny",
+    "Tonys Destiny"
+   ],
+   "flavors": [
+    "cactus",
+    "peach",
+    "lime"
+   ]
+  },
+  {
+   "names": [
+    "Turkish Boom"
+   ],
+   "flavors": [
+    "candy",
+    "cardamom"
+   ]
+  },
+  {
+   "names": [
+    "Yellow"
+   ],
+   "flavors": [
+    "melon",
+    "watermelon"
+   ]
+  },
+  {
+   "names": [
+    "Orion"
+   ],
+   "flavors": [
+    "orange"
+   ]
+  },
+  {
+   "names": [
+    "Code"
+   ],
+   "flavors": [
+    "cola"
+   ]
+  }
+ ],
+ "Sebero": [
+  {
+   "names": [
+    "Joyce"
+   ],
+   "flavors": [
+    "apricot"
+   ]
+  },
+  {
+   "names": [
+    "Mangolcrian"
+   ],
+   "flavors": [
+    "mango"
+   ]
+  }
+ ],
+ "NАШ": [
+  {
+   "names": [
+    "Pina"
+   ],
+   "flavors": [
+    "pineapple"
+   ]
+  },
+  {
+   "names": [
+    "Crazy Green"
+   ],
+   "flavors": [
+    "kiwi"
+   ]
+  },
+  {
+   "names": [
+    "Бубльгум",
+    "Bubblegum",
+    "Бабл гам"
+   ],
+   "flavors": [
+    "candy"
+   ]
+  },
+  {
+   "names": [
+    "Черника ромашка",
+    "Черника и ромашка"
+   ],
+   "flavors": [
+    "blueberry",
+    "chamomile"
+   ]
+  }
+ ],
+ "Deus": [
+  {
+   "names": [
+    "Orange Tic Tac",
+    "Апельсиновый Тик Так",
+    "Апельсиновое драже"
+   ],
+   "flavors": [
+    "orange",
+    "candy"
+   ]
+  }
+ ],
+ "Spectrum": [
+  {
+   "names": [
+    "Мощная мята"
+   ],
+   "flavors": [
+    "mint"
+   ]
+  }
+ ],
+ "Overdose": [
+  {
+   "names": [
+    "Мята"
+   ],
+   "flavors": [
+    "mint"
+   ]
+  },
+  {
+   "names": [
+    "Wintergreen",
+    "Винтергрин",
+    "Винтегрин"
+   ],
+   "flavors": [
+    "wintergreen"
+   ]
+  }
+ ],
+ "Timeline": [
+  {
+   "names": [
+    "Лайм"
+   ],
+   "flavors": [
+    "lime"
+   ]
+  }
+ ],
+ "Banger": [
+  {
+   "names": [
+    "Жвачка арбуз-клубника",
+    "Жвачка, арбуз-клубника"
+   ],
+   "flavors": [
+    "candy",
+    "watermelon",
+    "strawberry"
+   ]
+  },
+  {
+   "names": [
+    "Фейхоа-можжевельник"
+   ],
+   "flavors": [
+    "feijoa",
+    "juniper"
+   ]
+  },
+  {
+   "names": [
+    "Грейпфрут, клубника и малина"
+   ],
+   "flavors": [
+    "grapefruit",
+    "strawberry",
+    "raspberry"
+   ]
+  }
+ ],
+ "Burn": [
+  {
+   "names": [
+    "Мармелад с колой"
+   ],
+   "flavors": [
+    "candy",
+    "cola"
+   ]
+  }
+ ]
+}

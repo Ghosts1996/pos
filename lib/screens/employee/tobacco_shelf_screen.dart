@@ -356,7 +356,10 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
                           child: Text(
                             c.flavors.isEmpty
                                 ? 'вкус не узнан — нажмите, чтобы исправить'
-                                : c.flavors.map((f) => kFlavorByKey[f]?.name ?? f).join(', '),
+                                : [
+                                    c.flavors.map((f) => kFlavorByKey[f]?.name ?? f).join(', '),
+                                    if (lineStrength(c.brand, c.line) != null) 'крепость ${lineStrength(c.brand, c.line)}/10',
+                                  ].join(' · '),
                             style: TextStyle(fontSize: 12, color: c.flavors.isEmpty ? AppColors.warning : AppColors.textMuted),
                           ),
                         ),
@@ -501,10 +504,14 @@ class _ScanReviewState extends State<_ScanReview> {
                     ListTile(
                       onTap: () => _edit(c),
                       title: Text(c.brand.isEmpty ? '«${c.name}» · марка не видна' : c.label),
-                      subtitle: Text(
-                        c.flavors.isEmpty ? 'вкус не узнан — нажмите, чтобы исправить' : _flavorText(c),
-                        style: TextStyle(color: c.flavors.isEmpty || c.brand.isEmpty ? AppColors.warning : AppColors.textMuted),
-                      ),
+                      subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                        Text(
+                          c.flavors.isEmpty ? 'вкус не узнан — нажмите, чтобы исправить' : _flavorText(c),
+                          style: TextStyle(color: c.flavors.isEmpty || c.brand.isEmpty ? AppColors.warning : AppColors.textMuted),
+                        ),
+                        if (canProfileLine(c.brand, line: c.line).isNotEmpty)
+                          Text(canProfileLine(c.brand, line: c.line), style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                      ]),
                       trailing: Checkbox(
                         value: _on.contains(c.id),
                         onChanged: (v) => setState(() => v == true ? _on.add(c.id) : _on.remove(c.id)),

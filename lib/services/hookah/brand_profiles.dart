@@ -207,8 +207,46 @@ BrandProfile? profileOf(String brand) {
   return _byName[canonicalBrand(brand)];
 }
 
+/// Крепость линеек, у которых она заметно отличается от обычной у марки.
+const Map<String, Map<String, int>> kLineStrength = {
+  'Darkside': {'core': 7, 'base': 8, 'rare': 7, 'xperience': 7},
+  'Spectrum': {'classic': 4, 'hard': 7, 'kitchen': 5},
+  'Element': {'вода': 4, 'воздух': 4, 'земля': 6, 'огонь': 7},
+  'Sebero': {'black': 7, 'classic': 5},
+  'Duft': {'strong': 7, 'pheromone': 6},
+  'Хулиган': {'hard': 8},
+  'Trofimoff': {'burley': 7, 'classic': 5},
+  'Tangiers': {'birquq': 7, 'noir': 9, 'f-line': 9},
+  'Jent': {'cigar': 8},
+};
+
+/// Крепость линейки марки или null — линейка не известна.
+int? lineStrength(String brand, String line) {
+  final l = line.toLowerCase().replaceAll('ё', 'е').trim();
+  if (l.isEmpty) return null;
+  final map = kLineStrength[canonicalBrand(brand)];
+  if (map == null) return null;
+  for (final e in map.entries) {
+    if (l.contains(e.key)) return e.value;
+  }
+  return null;
+}
+
+/// Одна строка о банке для кальянщика: лист, крепость (с линейкой),
+/// жаростойкость, забивка. Пусто — марку не знаем.
+String canProfileLine(String brand, {String line = ''}) {
+  final p = profileOf(brand);
+  if (p == null) return '';
+  final s = lineStrength(brand, line) ?? p.strength;
+  if (p.booster) return 'сухой табак для крепости · ${p.strength}/10 · 1–2 из 10 в микс';
+  final pack = p.pack == Pack.edges ? 'внакидку' : (p.pack == Pack.overpack ? 'с горкой' : 'пушисто');
+  return '${p.leafLabel} · крепость $s/10 · жар ${p.heat}/5 · $pack';
+}
+
 /// Крепость банки 1–10: по марке, иначе по отметке на банке.
-int canStrength(String brand, String strengthTag) {
+int canStrength(String brand, String strengthTag, {String line = ''}) {
+  final byLine = lineStrength(brand, line);
+  if (byLine != null) return byLine;
   final p = profileOf(brand);
   if (p != null) return p.strength;
   return switch (strengthTag) {

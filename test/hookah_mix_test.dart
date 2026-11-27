@@ -206,6 +206,18 @@ void main() {
       expect(byWords.flavors, containsAll(['orange', 'candy']));
     });
 
+    test('линейка меняет крепость; строка «лист · крепость · жар» для банки', () {
+      expect(lineStrength('Darkside', 'Base'), 8);
+      expect(lineStrength('Spectrum', 'Hard Line'), 7);
+      expect(lineStrength('Element', 'Земля'), 6);
+      expect(lineStrength('Musthave', ''), isNull);
+      expect(canStrength('Spectrum', '', line: 'Classic'), 4);
+      expect(canProfileLine('Overdose'), contains('крепость 7/10'));
+      expect(canProfileLine('Spectrum', line: 'Hard'), contains('крепость 7/10'));
+      expect(canProfileLine('Frigate'), contains('сухой табак'));
+      expect(canProfileLine('Неизвестная'), isEmpty);
+    });
+
     test('марку не видно: «Мощная мята» — Spectrum, а просто «Мята» — без марки', () {
       expect(TobaccoShelf.fromScan({'brand': '', 'name': 'Мощная мята'}).brand, 'Spectrum');
       expect(TobaccoShelf.fromScan({'brand': '', 'name': 'Мармелад с колой'}).brand, 'Burn');

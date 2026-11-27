@@ -188,7 +188,7 @@ class MixEngine {
     int rank(TobaccoCan c) {
       var r = c.flavors.length;
       if (req?.brand != null && canonicalBrand(c.brand) == req!.brand) r -= 100;
-      final s = canStrength(c.brand, c.strength);
+      final s = canStrength(c.brand, c.strength, line: c.line);
       if (light) r += s * 3;
       if (strong) r -= s * 3;
       return r;
@@ -376,7 +376,7 @@ double? mixStrength(_Parts parts) {
     final c = x.can;
     if (c == null) continue;
     if (profileOf(c.brand) != null || c.strength.isNotEmpty) known = true;
-    sum += canStrength(c.brand, c.strength) * x.part.share;
+    sum += canStrength(c.brand, c.strength, line: c.line) * x.part.share;
     w += x.part.share;
   }
   if (!known || w == 0) return null;

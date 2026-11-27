@@ -37,6 +37,26 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     assert.equal(items[1].strength, "");
   });
 
+  await ok("база табаков: одна с кассой, в подсказке ИИ, марка по известному вкусу", async () => {
+    const { build } = require("./tools/tobacco-cans-from-dart");
+    const fresh = build(path.join(__dirname, ".."));
+    const saved = JSON.parse(fs.readFileSync(path.join(__dirname, "tobacco-cans.json"), "utf8"));
+    assert.deepEqual(saved, fresh, "tobacco-cans.json устарел — node tools/tobacco-cans-from-dart.js");
+    const db = require("./tobacco-db");
+    const prompt = require("./tobacco").TOBACCO_AI_PROMPT;
+    for (const b of ["Overdose", "Spectrum", "Musthave", "Banger", "Darkside"]) assert.ok(prompt.includes(`• ${b}`), b);
+    assert.ok(/Вкусы марки: .*Pinkman/.test(prompt));
+    const items = itemsFromAi({ items: [
+      { brand: "", name: "Мощная мята", flavors: ["мята"] },
+      { brand: "BLACKBURN", name: "Ice Baby", flavors: [] },
+      { brand: "", name: "Мята", flavors: ["мята"] },
+    ] });
+    assert.equal(items[0].brand, "Spectrum");
+    assert.equal(items[1].brand, "Black Burn");
+    assert.equal(items[2].brand, "", "«Мята» бывает у всех — марку не ставим");
+    assert.equal(db.canonicalBrand("овердоз"), "Overdose");
+  });
+
   await ok("марку не видно — берётся у банки того же вида на снимке", async () => {
     const items = itemsFromAi({ items: [
       { brand: "Overdose", name: "Пако Рабан", flavors: [], look: "чёрная, фиолетовая лента, звёзды" },
@@ -140,6 +160,6 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     assert.equal(again.fresh().total, 3);
   });
 
-  console.log(`tobacco: ${n} из 8 проверок`);
+  console.log(`tobacco: ${n} из 9 проверок`);
   fs.rmSync(dir, { recursive: true, force: true });
 })().catch((e) => { console.error(e); process.exit(1); });

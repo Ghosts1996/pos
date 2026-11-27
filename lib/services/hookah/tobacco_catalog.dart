@@ -73,6 +73,8 @@ const List<TobaccoBrand> kTobaccoBrands = [
 ];
 
 /// Известные банки: «Марка|Название; другое написание|вкусы (ключи flavors.dart)».
+/// Сервер берёт этот же список (saas-gateway/tobacco-cans.json — после
+/// правки запустить `node saas-gateway/tools/tobacco-cans-from-dart.js`).
 /// Названия — как на банках (латиница) и как их называют кальянщики.
 const List<String> kKnownCanLines = [
   // ---- Darkside
@@ -308,6 +310,8 @@ const List<String> kKnownCanLines = [
   'Deus|Orange Tic Tac; Апельсиновый Тик Так; Апельсиновое драже|orange, candy',
   // Полка владельца 28.11.2026: банки, у которых марку часто не видно.
   'Spectrum|Мощная мята|mint',
+  'Overdose|Мята|mint',
+  'Timeline|Лайм|lime',
   'Banger|Жвачка арбуз-клубника; Жвачка, арбуз-клубника|candy, watermelon, strawberry',
   'Banger|Фейхоа-можжевельник|feijoa, juniper',
   'Banger|Грейпфрут, клубника и малина|grapefruit, strawberry, raspberry',
