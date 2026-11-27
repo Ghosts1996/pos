@@ -383,10 +383,11 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
   @override
   Widget build(BuildContext context) {
     final profile = VenueService.instance.cached;
-    // Цвета разделов (SaaS): зал — медь, касса — латунь, склад — шалфей.
-    final hallTint = AppColors.primary;
+    // Значки всех разделов (SaaS) — одной латунью: спокойнее и дороже, чем
+    // разноцветные; разделы различаются подписями.
+    final hallTint = AppColors.brass;
     final cashTint = AppColors.brass;
-    final stockTint = AppColors.success;
+    final stockTint = AppColors.brass;
     final top = <Widget>[
       _StaffHeader(employee: widget.employee),
       if (kSaasMode) const SizedBox(height: 6),

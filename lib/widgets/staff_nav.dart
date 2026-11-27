@@ -33,8 +33,8 @@ class StaffNavIcon extends StatelessWidget {
         height: size,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: tint.withValues(alpha: AppColors.isLight ? 0.12 : 0.18),
-          borderRadius: BorderRadius.circular(size * 0.3),
+          color: tint.withValues(alpha: AppColors.isLight ? 0.10 : 0.13),
+          shape: BoxShape.circle,
         ),
         child: Icon(icon, size: size * 0.53, color: tint),
       );
@@ -176,10 +176,7 @@ class StaffStatusCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                if (busy)
-                  const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                else if (chevron)
-                  Icon(Icons.chevron_right, color: AppColors.textMuted),
+                if (busy) const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
               ]),
             ),
           ),
@@ -187,7 +184,7 @@ class StaffStatusCard extends StatelessWidget {
       );
 }
 
-/// Выделенная карточка — «Ассистент зала»: медная рамка и мягкий градиент.
+/// Выделенная карточка — «Ассистент зала»: латунная рамка и мягкий градиент.
 class StaffAccentCard extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -249,7 +246,6 @@ class StaffAccentCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                Icon(Icons.arrow_forward, size: 18, color: b),
               ]),
             ),
           ),

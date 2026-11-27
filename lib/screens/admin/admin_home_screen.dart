@@ -35,7 +35,6 @@ import '../login_screen.dart';
 import '../employee/receipts_history_screen.dart';
 import 'z_report_screen.dart';
 import '../../utils/adaptive.dart';
-import '../../widgets/staff_nav.dart';
 
 /// Главный экран администратора. Плитки сгруппированы по смыслу: сначала
 /// ежедневная работа (отчёты, меню, склад), затем ИИ, затем настройки —
@@ -48,41 +47,41 @@ class AdminHomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final groups = <String, List<_AdminTile>>{
       'Работа заведения': [
-        _AdminTile('Отчёты', Icons.bar_chart, (ctx) => const ReportsScreen()),
-        _AdminTile('Чеки', Icons.receipt_long, (ctx) => ReceiptsHistoryScreen(employee: employee, admin: true)),
-        _AdminTile('Z-отчёт', Icons.summarize_outlined, (ctx) => ZReportScreen(employee: employee)),
-        _AdminTile('Карта зала', Icons.table_bar, (ctx) => const FloorPlanEditorScreen()),
-        _AdminTile('Длительность сеанса', Icons.schedule, (ctx) => const SessionSettingsScreen()),
-        _AdminTile('Тайм-кафе', Icons.hourglass_bottom_rounded, (ctx) => const TimeCafeSettingsScreen()),
+        _AdminTile('Отчёты', hint: 'Выручка, продажи, сотрудники', Icons.bar_chart, (ctx) => const ReportsScreen()),
+        _AdminTile('Чеки', hint: 'Все чеки и возвраты', Icons.receipt_long, (ctx) => ReceiptsHistoryScreen(employee: employee, admin: true)),
+        _AdminTile('Z-отчёт', hint: 'Закрытие кассовой смены', Icons.summarize_outlined, (ctx) => ZReportScreen(employee: employee)),
+        _AdminTile('Карта зала', hint: 'Столы, зоны и стены', Icons.table_bar, (ctx) => const FloorPlanEditorScreen()),
+        _AdminTile('Длительность сеанса', hint: 'Время гостя за столом', Icons.schedule, (ctx) => const SessionSettingsScreen()),
+        _AdminTile('Тайм-кафе', hint: 'Оплата по минутам', Icons.hourglass_bottom_rounded, (ctx) => const TimeCafeSettingsScreen()),
         if (kSaasMode)
-          _AdminTile('Обслуживание', Icons.percent_rounded, (ctx) => const ServiceChargeSettingsScreen()),
-        _AdminTile('Меню', Icons.restaurant_menu, (ctx) => const MenuEditorScreen()),
-        _AdminTile('Склад', Icons.inventory_2_outlined,
+          _AdminTile('Обслуживание', hint: 'Процент к счёту', Icons.percent_rounded, (ctx) => const ServiceChargeSettingsScreen()),
+        _AdminTile('Меню', hint: 'Позиции, цены, техкарты', Icons.restaurant_menu, (ctx) => const MenuEditorScreen()),
+        _AdminTile('Склад', hint: 'Остатки, приход, списания', Icons.inventory_2_outlined,
             (ctx) => InventoryScreen(employee: employee)),
-        _AdminTile('Сотрудники', Icons.people, (ctx) => EmployeesScreen(employee: employee)),
-        _AdminTile('Смены сотрудников', Icons.timer_outlined, (ctx) => StaffShiftsScreen(employee: employee)),
-        _AdminTile('Зарплата', Icons.payments_outlined, (ctx) => PayrollScreen(actor: employee)),
+        _AdminTile('Сотрудники', hint: 'Доступ и PIN-коды', Icons.people, (ctx) => EmployeesScreen(employee: employee)),
+        _AdminTile('Смены сотрудников', hint: 'Кто и сколько работал', Icons.timer_outlined, (ctx) => StaffShiftsScreen(employee: employee)),
+        _AdminTile('Зарплата', hint: 'Ставки и выплаты', Icons.payments_outlined, (ctx) => PayrollScreen(actor: employee)),
       ],
       'Гости и лояльность': [
-        _AdminTile('Гости', Icons.people_alt, (ctx) => const GuestsScreen()),
-        _AdminTile('Программа лояльности', Icons.loyalty, (ctx) => const LoyaltySettingsScreen()),
-        _AdminTile('Скидочные карты', Icons.credit_card, (ctx) => const DiscountCardsScreen()),
-        _AdminTile('Сертификаты', Icons.card_giftcard,
+        _AdminTile('Гости', hint: 'База гостей и визиты', Icons.people_alt, (ctx) => const GuestsScreen()),
+        _AdminTile('Программа лояльности', hint: 'Бонусы и уровни', Icons.loyalty, (ctx) => const LoyaltySettingsScreen()),
+        _AdminTile('Скидочные карты', hint: 'Карты и проценты', Icons.credit_card, (ctx) => const DiscountCardsScreen()),
+        _AdminTile('Сертификаты', hint: 'Подарочные сертификаты', Icons.card_giftcard,
             (ctx) => GiftCardsScreen(employee: employee)),
-        _AdminTile('Отзывы', Icons.reviews_outlined, (ctx) => const ReviewsScreen()),
-        _AdminTile('Лента для гостей', Icons.dynamic_feed, (ctx) => const StoriesEditorScreen()),
-        _AdminTile('QR-коды столов', Icons.qr_code_2, (ctx) => const TableQrScreen(), needs: _Needs.guestApp),
-        _AdminTile('Профиль заведения', Icons.storefront, (ctx) => const VenueProfileScreen()),
+        _AdminTile('Отзывы', hint: 'Оценки гостей', Icons.reviews_outlined, (ctx) => const ReviewsScreen()),
+        _AdminTile('Лента для гостей', hint: 'Новости в приложении', Icons.dynamic_feed, (ctx) => const StoriesEditorScreen()),
+        _AdminTile('QR-коды столов', hint: 'Наклейки на столы', Icons.qr_code_2, (ctx) => const TableQrScreen(), needs: _Needs.guestApp),
+        _AdminTile('Профиль заведения', hint: 'Адрес, часы, функции', Icons.storefront, (ctx) => const VenueProfileScreen()),
       ],
       'Искусственный интеллект': [
-        _AdminTile('ИИ-разборы', Icons.insights, (ctx) => const AiInsightsScreen(), needs: _Needs.ai),
-        _AdminTile('Активность и журнал', Icons.fact_check, (ctx) => const ActivityLogScreen()),
-        _AdminTile('Настройки ИИ', Icons.auto_awesome, (ctx) => const AiSettingsScreen(), needs: _Needs.ai),
+        _AdminTile('ИИ-разборы', hint: 'Советы по продажам и смене', Icons.insights, (ctx) => const AiInsightsScreen(), needs: _Needs.ai),
+        _AdminTile('Активность и журнал', hint: 'Кто и что менял', Icons.fact_check, (ctx) => const ActivityLogScreen()),
+        _AdminTile('Настройки ИИ', hint: 'Ключ и помощники', Icons.auto_awesome, (ctx) => const AiSettingsScreen(), needs: _Needs.ai),
       ],
       'Настройки': [
-        _AdminTile('Интеграции', Icons.settings_input_antenna,
+        _AdminTile('Интеграции', hint: 'Онлайн-касса, принтеры, весы', Icons.settings_input_antenna,
             (ctx) => const IntegrationsSettingsScreen()),
-        _AdminTile('Звонки и сигналы', Icons.notifications_active_outlined,
+        _AdminTile('Звонки и сигналы', hint: 'Уведомления персоналу', Icons.notifications_active_outlined,
             (ctx) => const SignalsSettingsScreen()),
       ],
     };
@@ -100,7 +99,7 @@ class AdminHomeScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        title: Text('Админ · ${employee.name}'),
+        title: kSaasMode ? null : Text('Админ · ${employee.name}'),
         actions: [
           IconButton(
             icon: const Icon(Icons.system_update_alt),
@@ -121,7 +120,7 @@ class AdminHomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: ListView(
+      body: kSaasMode ? _saasAdminBody(context, employee, groups) : ListView(
         padding: const EdgeInsets.all(16),
         children: [
           // Секреты столов выпущены, а наклейки ещё старые — старые коды
@@ -133,13 +132,7 @@ class AdminHomeScreen extends StatelessWidget {
                 : const SizedBox.shrink(),
           ),
           for (final entry in groups.entries) ...[
-            if (kSaasMode)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10, top: 10, left: 2),
-                child: Text(entry.key.toUpperCase(), style: AppFonts.overline.copyWith(color: AppColors.textMuted)),
-              )
-            else
-              Padding(
+            Padding(
                 padding: const EdgeInsets.only(bottom: 10, top: 6),
                 child: Text(entry.key,
                     style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
@@ -162,16 +155,6 @@ class AdminHomeScreen extends StatelessWidget {
                 ),
                 children: entry.value.map((t) {
                   final locked = !t.allowedBy(caps);
-                  if (kSaasMode) {
-                    return _SaasAdminCard(
-                      tile: t,
-                      locked: locked,
-                      tint: _groupTint(entry.key),
-                      onTap: () => locked
-                          ? showPlanUpsell(context, title: t.title, text: t.lockedText)
-                          : Navigator.of(context).push(MaterialPageRoute(builder: t.builder)),
-                    );
-                  }
                   return Card(
                     child: InkWell(
                       borderRadius: BorderRadius.circular(12),
@@ -216,65 +199,140 @@ class AdminHomeScreen extends StatelessWidget {
   }
 }
 
-/// Цвет группы плиток (SaaS): работа — медь, гости — латунь, ИИ — шалфей,
-/// настройки — спокойный серый. Цвет помогает найти группу взглядом.
-Color _groupTint(String group) => switch (group) {
-      'Работа заведения' => AppColors.primary,
-      'Гости и лояльность' => AppColors.brass,
-      'Искусственный интеллект' => AppColors.success,
-      _ => AppColors.textMuted,
-    };
+/// Админка SaaS — как настройки дорогого приложения: крупный заголовок
+/// антиквой, группы — карточками-списками с тонкими разделителями, у пункта
+/// значок латунью, название и короткая подсказка. Без стрелок и цветной
+/// пестроты. На планшете группы встают в две-три колонки.
+Widget _saasAdminBody(BuildContext context, Employee employee, Map<String, List<_AdminTile>> all) {
+  // Длинную «Работу заведения» делим по смыслу — по 3–6 пунктов в группе.
+  const daily = {'Отчёты', 'Чеки', 'Z-отчёт'};
+  const team = {'Сотрудники', 'Смены сотрудников', 'Зарплата'};
+  final groups = <String, List<_AdminTile>>{};
+  for (final e in all.entries) {
+    if (e.key != 'Работа заведения') {
+      groups[e.key] = e.value;
+      continue;
+    }
+    groups['Каждый день'] = e.value.where((t) => daily.contains(t.title)).toList();
+    groups['Зал и меню'] = e.value.where((t) => !daily.contains(t.title) && !team.contains(t.title)).toList();
+    groups['Команда'] = e.value.where((t) => team.contains(t.title)).toList();
+  }
+  groups.removeWhere((_, v) => v.isEmpty);
+  return ValueListenableBuilder<PlanCapabilities>(
+    valueListenable: PlanCapabilitiesService.current,
+    builder: (context, caps, _) => LayoutBuilder(builder: (context, box) {
+      final cols = box.maxWidth >= 1100 ? 3 : (box.maxWidth >= 720 ? 2 : 1);
+      const gap = 20.0;
+      final pad = box.maxWidth >= 720 ? 28.0 : 16.0;
+      final cardW = (box.maxWidth - pad * 2 - gap * (cols - 1)) / cols;
+      final cards = [
+        for (final e in groups.entries)
+          SizedBox(
+            width: cardW,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
+                child: Text(e.key.toUpperCase(), style: AppFonts.overline.copyWith(color: AppColors.textMuted)),
+              ),
+              _AdminGroupCard(
+                tiles: e.value,
+                caps: caps,
+                onOpen: (t, locked) => locked
+                    ? showPlanUpsell(context, title: t.title, text: t.lockedText)
+                    : Navigator.of(context).push(MaterialPageRoute(builder: t.builder)),
+              ),
+            ]),
+          ),
+      ];
+      return ListView(
+        padding: EdgeInsets.fromLTRB(pad, 4, pad, 32),
+        children: [
+          Text('Управление', style: AppFonts.display(34)),
+          const SizedBox(height: 4),
+          Text('${employee.name} · администратор', style: TextStyle(fontSize: 14, color: AppColors.textMuted)),
+          const SizedBox(height: 20),
+          StreamBuilder<bool>(
+            stream: TableKeyService.instance.reprintNeededStream(),
+            builder: (context, snap) => snap.data == true && caps.guestApp
+                ? const _ReprintBanner()
+                : const SizedBox.shrink(),
+          ),
+          Wrap(spacing: gap, runSpacing: 28, children: cards),
+        ],
+      );
+    }),
+  );
+}
 
-/// Плитка админки в SaaS: значок в мягкой подложке цвета группы слева
-/// сверху, название — снизу, без центровки «значок посередине».
-class _SaasAdminCard extends StatelessWidget {
-  final _AdminTile tile;
-  final bool locked;
-  final Color tint;
-  final VoidCallback onTap;
-  const _SaasAdminCard({required this.tile, required this.locked, required this.tint, required this.onTap});
+class _AdminGroupCard extends StatelessWidget {
+  final List<_AdminTile> tiles;
+  final PlanCapabilities caps;
+  final void Function(_AdminTile tile, bool locked) onOpen;
+  const _AdminGroupCard({required this.tiles, required this.caps, required this.onOpen});
 
   @override
   Widget build(BuildContext context) {
-    final color = locked ? AppColors.textMuted : tint;
+    final rows = <Widget>[];
+    for (var i = 0; i < tiles.length; i++) {
+      final t = tiles[i];
+      final locked = !t.allowedBy(caps);
+      if (i > 0) {
+        rows.add(Padding(
+          padding: const EdgeInsets.only(left: 66),
+          child: Divider(height: 1, thickness: 0.6, color: AppColors.border),
+        ));
+      }
+      rows.add(InkWell(
+        onTap: () => onOpen(t, locked),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 13, 16, 13),
+          child: Row(children: [
+            Container(
+              width: 36,
+              height: 36,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: (locked ? AppColors.textMuted : AppColors.brass).withValues(alpha: AppColors.isLight ? 0.10 : 0.13),
+              ),
+              child: Icon(t.icon, size: 19, color: locked ? AppColors.textMuted : AppColors.brass),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                Text(t.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: locked ? AppColors.textMuted : AppColors.textPrimary,
+                    )),
+                if (t.hint.isNotEmpty || locked) ...[
+                  const SizedBox(height: 2),
+                  Text(locked ? 'Не входит в тариф' : t.hint,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12.5, color: AppColors.textMuted, height: 1.25)),
+                ],
+              ]),
+            ),
+            if (locked) ...[
+              const SizedBox(width: 8),
+              Icon(Icons.lock_outline, size: 16, color: AppColors.textMuted),
+            ],
+          ]),
+        ),
+      ));
+    }
     return Material(
       color: AppColors.surface,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: AppColors.border),
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: AppColors.border, width: 0.8),
       ),
       clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 14, 12, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                StaffNavIcon(tile.icon, tint: color, size: 40),
-                const Spacer(),
-                if (locked)
-                  Icon(Icons.lock_outline, size: 16, color: AppColors.textMuted)
-                else
-                  Icon(Icons.arrow_outward, size: 16, color: AppColors.textMuted.withValues(alpha: 0.6)),
-              ]),
-              const Spacer(),
-              Text(
-                tile.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  height: 1.2,
-                  color: locked ? AppColors.textMuted : AppColors.textPrimary,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      child: Column(children: rows),
     );
   }
 }
@@ -332,7 +390,8 @@ class _AdminTile {
   final IconData icon;
   final Widget Function(BuildContext) builder;
   final _Needs needs;
-  _AdminTile(this.title, this.icon, this.builder, {this.needs = _Needs.none});
+  final String hint;
+  _AdminTile(this.title, this.icon, this.builder, {this.needs = _Needs.none, this.hint = ''});
 
   bool allowedBy(PlanCapabilities caps) => switch (needs) {
         _Needs.none => true,
