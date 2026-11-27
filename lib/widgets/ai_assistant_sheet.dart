@@ -109,9 +109,15 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
     super.dispose();
   }
 
+  /// Данные зала/склада для ИИ — не дольше 15 с: без связи база отвечает
+  /// долго, и ассистент крутился бесконечно. Не успели — спрашиваем без них.
   Future<String> _buildContext() async {
-    if (widget.asyncContextBuilder != null) return widget.asyncContextBuilder!();
-    if (widget.contextBuilder != null) return widget.contextBuilder!();
+    try {
+      if (widget.asyncContextBuilder != null) {
+        return await widget.asyncContextBuilder!().timeout(const Duration(seconds: 15), onTimeout: () => '');
+      }
+      if (widget.contextBuilder != null) return widget.contextBuilder!();
+    } catch (_) {}
     return '';
   }
 
@@ -159,7 +165,10 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
     try {
       var ctx = await _buildContext();
       if (_brain) {
-        final cards = await StaffBrain.instance.cardsContext(question).catchError((Object _) => '');
+        final cards = await StaffBrain.instance
+            .cardsContext(question)
+            .timeout(const Duration(seconds: 8), onTimeout: () => '')
+            .catchError((Object _) => '');
         if (cards.isNotEmpty) ctx = '$ctx\n\n$cards';
       }
       final stream = AiService.instance.askStream(
@@ -172,6 +181,12 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
         if (!mounted) return;
         setState(() => reply.text += piece);
         _scrollToEnd();
+      }
+      if (reply.text.trim().isEmpty) {
+        // Модель вернула пустоту (часто — «думающая» модель исчерпала лимит).
+        if (mounted) setState(() => reply.text = 'ИИ прислал пустой ответ — переформулируйте вопрос или задайте его короче.');
+        if (mounted) setState(() => _busy = false);
+        return;
       }
       _history
         ..add(AiMessage.user(question))
@@ -281,7 +296,9 @@ class _AiAssistantSheetState extends State<AiAssistantSheet> {
         color: AppColors.warning.withValues(alpha: 0.15),
         padding: const EdgeInsets.all(12),
         child: Text(
-          'ИИ не подключён. Администратор → Настройки ИИ → ключ провайдера.',
+          _brain
+              ? 'ИИ не подключён — отвечаю из базы знаний кассы: миксы, состав блюд, что подать, склад. Остальное — после ключа в «Админ → Настройки ИИ».'
+              : 'ИИ не подключён. Администратор → Настройки ИИ → ключ провайдера.',
           style: TextStyle(color: AppColors.warning, fontSize: 13),
         ),
       );

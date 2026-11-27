@@ -48,11 +48,40 @@ const server = require("./server.js");
   passed++;
   // Сервер вызывает счётчик в /aiProxy только для гостей (не для кассы).
   const src = fs.readFileSync(path.join(__dirname, "server.js"), "utf8");
-  assert.ok(/await takeGuestAiQuota\(firestore, decoded\.uid\);\n  \}/.test(src));
+  assert.ok(/await takeGuestAiQuota\(firestore, decoded\.uid, Date\.now\(\), body\.turn\);\n  \}/.test(src));
   passed++;
   // Номер гостя — в справочнике в РФ, в профиле только phoneOnFile: такой
   // гость за столом тоже получает ИИ (раньше — «доступен гостю … с телефоном»).
   assert.ok(/c\.phoneOnFile === true/.test(src), "отметка phoneOnFile = телефон указан");
+  passed++;
+  // Перевод меню, фото полки, разборы: основной ключ пуст — берётся
+  // резервный, у основного есть резервные в запасе (venueAiComplete).
+  const st = server.localDataStore();
+  await st.collection("tenants").doc("tAi").set({ status: "active", demo: true });
+  await st.collection("tenants").doc("tAi").collection("meta").doc("aiSettings").set({
+    enabled: true, vendor: "tooken", fallbackVendor: "darkapi",
+    extraKeys: [{ id: "k1", vendor: "gemini", enabled: true }, { id: "k2", vendor: "gemini", enabled: false }],
+  });
+  await st.collection("tenants").doc("tAi").collection("meta").doc("aiSecrets").set({
+    vendors: { tooken: { apiKey: "a" }, darkapi: { apiKey: "b" } }, extraKeys: { k1: { apiKey: "c" }, k2: { apiKey: "d" } },
+  });
+  const v = await server.venueAiVendor("tAi");
+  assert.strictEqual(v.vendorId, "tooken");
+  assert.deepStrictEqual(v.backups.map((b) => b.vendorId), ["darkapi", "gemini"], "резервный и включённый дополнительный");
+  await st.collection("tenants").doc("tAi").collection("meta").doc("aiSecrets").set({ vendors: { darkapi: { apiKey: "b" } } });
+  assert.strictEqual((await server.venueAiVendor("tAi")).vendorId, "darkapi", "основной без ключа — резервный");
+  passed++;
+  // Один вопрос (turn) с инструментами — 5 запросов, но в счётчик — один раз.
+  for (let i = 0; i < 5; i++) await server.takeGuestAiQuota(db, "guestT", day, "q-abc123");
+  await server.takeGuestAiQuota(db, "guestT", day, "q-def456");
+  const td = (await db.collection("aiGuestDaily").doc("guestT_2026-11-14").get()).data();
+  assert.strictEqual(td.count, 2, "два вопроса, а не шесть запросов");
+  // Больше 8 запросов на один номер — уже новый вопрос (номером не обойти лимит).
+  for (let i = 0; i < 4; i++) await server.takeGuestAiQuota(db, "guestT", day, "q-abc123");
+  assert.strictEqual((await db.collection("aiGuestDaily").doc("guestT_2026-11-14").get()).data().count, 3);
+  passed++;
+  // Сбой провайдера на /aiProxy — не «отказ платформы»: касса пробует резервный ключ.
+  assert.ok(/sendJson\(res, 502, \{ error: `Провайдер ИИ не ответил/.test(src));
   passed++;
   console.log(`ai-guest-quota: ${passed} проверок`);
   process.exit(0);

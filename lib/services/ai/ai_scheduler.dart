@@ -124,7 +124,9 @@ class AiScheduler {
   }) async {
     if (!window) return;
     final ref = AppScope.col('aiJobs').doc(jobId);
-    final snap = await ref.get();
+    // Без связи база может не ответить вовсе — тогда задача «висела», и
+    // сводки ИИ на этой кассе больше не приходили до перезапуска.
+    final snap = await ref.get().timeout(const Duration(seconds: 20));
     final ts = snap.data()?['lastRunAt'];
     final last = ts is Timestamp ? ts.toDate() : DateTime(2000);
     if (DateTime.now().difference(last) < interval) return;
@@ -133,7 +135,12 @@ class AiScheduler {
     // не будет биться в неё каждые 15 минут.
     await ref.set({'lastRunAt': Timestamp.fromDate(DateTime.now())}, SetOptions(merge: true));
 
-    final text = await job();
+    String? text;
+    try {
+      text = await job().timeout(const Duration(minutes: 4));
+    } catch (_) {
+      return; // сбой одной сводки не мешает остальным
+    }
     if (text == null || text.trim().isEmpty) return;
 
     await AppScope.col('staffNotes').add({

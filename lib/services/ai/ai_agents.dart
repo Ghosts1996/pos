@@ -417,6 +417,11 @@ class AiService {
 
   String? _modelFor(AiAgent agent) => agent.heavy ? _settings.analyticsModel : _settings.model;
 
+  /// Данные для подсказки ИИ — не дольше [limit]: без связи база отвечает
+  /// долго, и ассистент «думал» бесконечно. Не успели — отвечаем без них.
+  static Future<String> _soon(Future<String> f, {Duration limit = const Duration(seconds: 10)}) =>
+      f.timeout(limit, onTimeout: () => '').catchError((Object _) => '');
+
   /// Запрос к агенту с инструментами: агент сам решает, какие данные ему
   /// нужны, и (если разрешено) выполняет действия.
   Future<AiToolRunResult> run(
@@ -441,7 +446,7 @@ class AiService {
     );
 
     final schemas = _registry.schemasFor(agent.scope, only: agent.tools);
-    final venue = await VenueService.instance.aiKnowledgeCached();
+    final venue = await _soon(VenueService.instance.aiKnowledgeCached());
     final messages = <AiMessage>[
       AiMessage.system(agent.prompt),
       if (venue.isNotEmpty) AiMessage.system('О ЗАВЕДЕНИИ:\n$venue'),
@@ -512,7 +517,10 @@ class AiService {
         question = 'Разбери брони на ближайшую смену.';
         data = await hallContext();
     }
-    final venue = await VenueService.instance.aiKnowledgeCached();
+    // Сервер принимает до 120 тыс. знаков данных: за длинный период
+    // выгрузка больше — обрезаем, а не падаем с «выберите период короче».
+    if (data.length > 100000) data = '${data.substring(0, 100000)}\n… (данные за период обрезаны)';
+    final venue = await _soon(VenueService.instance.aiKnowledgeCached());
     return AiReportPrompt(
       agentEnabled: agent.enabled,
       agentTitle: agent.title,
@@ -561,7 +569,7 @@ class AiService {
       yield 'Агент «${agent.title}» выключен в настройках ИИ.';
       return;
     }
-    final venue = await VenueService.instance.aiKnowledgeCached();
+    final venue = await _soon(VenueService.instance.aiKnowledgeCached());
     yield* _client.stream(
       messages: [
         AiMessage.system(agent.prompt),
@@ -582,9 +590,9 @@ class AiService {
   /// поддерживают вызов инструментов, и без этого агент отвечал «данных нет».
   Future<String> hallContext() async {
     final parts = await Future.wait([
-      _ctx.hallSnapshot(),
-      _ctx.reservationsSnapshot(),
-      _ctx.stockSnapshot(onlyProblems: true),
+      _soon(_ctx.hallSnapshot()),
+      _soon(_ctx.reservationsSnapshot()),
+      _soon(_ctx.stockSnapshot(onlyProblems: true)),
     ]);
     return 'ЗАЛ СЕЙЧАС:\n${parts[0]}\n\nБРОНИ:\n${parts[1]}\n\n'
         'ПРОБЛЕМЫ СКЛАДА:\n${parts[2]}';
@@ -599,8 +607,8 @@ class AiService {
     String guestUid = '',
     List<AiMessage> history = const [],
   }) async {
-    final menu = await _ctx.menuSnapshot();
-    final guest = guestUid.isEmpty ? '' : await _ctx.guestSnapshot(guestUid);
+    final menu = await _soon(_ctx.menuSnapshot());
+    final guest = guestUid.isEmpty ? '' : await _soon(_ctx.guestSnapshot(guestUid));
     return ask(
       AiAgents.concierge,
       message,

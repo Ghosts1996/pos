@@ -518,6 +518,9 @@ class AiSettingsStore {
   AiSettings _current = const AiSettings();
   AiSettings get current => _current;
 
+  /// Только для тестов: подставить настройки без базы.
+  set debugCurrent(AiSettings s) => _current = s;
+
   // Документы сети и (для совместимости) самой точки.
   Map<String, dynamic>? _chainData;
   Map<String, dynamic>? _chainSecrets;

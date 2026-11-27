@@ -107,7 +107,11 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
       _error = null;
     });
     try {
-      final p = await _ai.reportPrompt(kind.id, from: _range.start, to: _range.end);
+      // Сбор данных за период — не дольше минуты (без связи база отвечала
+      // долго, и плитка «готовится» крутилась вечно).
+      final p = await _ai.reportPrompt(kind.id, from: _range.start, to: _range.end).timeout(
+          const Duration(seconds: 60),
+          onTimeout: () => throw StateError('Данные за период собираются слишком долго — проверьте связь и попробуйте ещё раз'));
       if (!p.agentEnabled) throw StateError('Агент «${p.agentTitle}» выключен в «Настройках ИИ»');
       if (_server) {
         await GatewayApi.post('aiReport', {

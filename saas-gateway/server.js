@@ -8463,15 +8463,32 @@ function mskDay(now = Date.now()) {
 }
 
 /** Счётчик вопросов гостя за сутки (aiGuestDaily — клиентам закрыт правилами). */
-async function takeGuestAiQuota(firestore, uid, now = Date.now()) {
+// Один вопрос гостя — это несколько запросов к ИИ (вызов инструментов,
+// повтор, резервный ключ). Считаем вопросы, а не запросы: приложение шлёт
+// номер вопроса (turn), до AI_TURN_REQUESTS запросов на номер — один вопрос.
+const AI_TURN_REQUESTS = 8;
+async function takeGuestAiQuota(firestore, uid, now = Date.now(), turn = "") {
   const ref = firestore.collection("aiGuestDaily").doc(`${uid}_${mskDay(now)}`);
+  const t = /^[A-Za-z0-9_-]{6,40}$/.test(String(turn || "")) ? String(turn) : "";
   await firestore.runTransaction(async (tx) => {
     const cur = await tx.get(ref);
-    const n = cur.exists ? Number(cur.data().count) || 0 : 0;
+    const data = cur.exists ? cur.data() : {};
+    const n = Number(data.count) || 0;
+    const turns = data.turns && typeof data.turns === "object" ? { ...data.turns } : {};
+    if (t && turns[t] > 0 && turns[t] < AI_TURN_REQUESTS) {
+      turns[t] += 1;
+      tx.set(ref, { turns }, { merge: true });
+      return;
+    }
     if (n >= AI_GUEST_DAILY_LIMIT) {
       throw new HttpError(429, `ИИ-помощник отвечает гостю до ${AI_GUEST_DAILY_LIMIT} раз в сутки — лимит на сегодня исчерпан, спросите официанта`);
     }
-    tx.set(ref, { uid, day: mskDay(now), count: n + 1, expireAt: admin.firestore.Timestamp.fromMillis(now + 3 * 86400000) }, { merge: true });
+    if (t) {
+      turns[t] = 1;
+      const keys = Object.keys(turns);
+      for (const k of keys.slice(0, Math.max(0, keys.length - 30))) delete turns[k];
+    }
+    tx.set(ref, { uid, day: mskDay(now), count: n + 1, ...(t ? { turns } : {}), expireAt: admin.firestore.Timestamp.fromMillis(now + 3 * 86400000) }, { merge: true });
   });
 }
 const AI_PROXY_STAFF_LIMIT = 400; // запросов кассы (сотрудник, агенты)
@@ -8604,7 +8621,9 @@ async function handleAiProxy(req, res) {
     lim.count += 1;
   }
 
-  const body = await parseJsonBody(req);
+  // Данные зала, меню и продаж в подсказке — по-русски это 2 байта на
+  // букву: 256 КБ по умолчанию не хватало аналитику за месяц.
+  const body = await parseJsonBody(req, 900 * 1024);
   const { tenantId, slot, path: apiPath, format } = body;
   const payload = body.body && typeof body.body === "object" ? { ...body.body } : null;
   if (typeof tenantId !== "string" || !tenantId) throw new HttpError(400, "Не указано заведение");
@@ -8667,7 +8686,7 @@ async function handleAiProxy(req, res) {
     }
     // Не больше AI_GUEST_DAILY_LIMIT вопросов гостя в сутки (по Москве) —
     // счётчик на сервере, переживает перезапуск; ИИ оплачивает заведение.
-    await takeGuestAiQuota(firestore, decoded.uid);
+    await takeGuestAiQuota(firestore, decoded.uid, Date.now(), body.turn);
   }
   const useChain = !!(chainSettingsDoc && chainSettingsDoc.exists);
   const [settingsDoc, secretsDoc] = useChain
@@ -8709,11 +8728,15 @@ async function handleAiProxy(req, res) {
     method: "POST", headers, body: JSON.stringify(scrubAiPayload(payload)), timeoutMs: 60000,
   });
   let upstream;
+  const startedAt = Date.now();
+  // Касса ждёт ответа ~90 с (tooken_client.dart: 60 + 30): повторы — только
+  // пока успеваем, иначе платим за ответ, который никто не увидит.
+  const inTime = (ms) => Date.now() - startedAt < ms;
   try {
     upstream = await send();
     // Провайдер перегружен (503/429) — ещё две попытки с паузой, прежде чем
     // показывать ошибку кассе.
-    for (let i = 0; i < 2 && isBusy(upstream.status); i++) {
+    for (let i = 0; i < 2 && isBusy(upstream.status) && inTime(25000); i++) {
       await new Promise((r) => setTimeout(r, (i + 1) * 3000));
       upstream = await send();
     }
@@ -8728,7 +8751,7 @@ async function handleAiProxy(req, res) {
       }
       const tier = payload.model === vendor.models[1] && vendor.models[1] !== vendor.models[0] ? "heavy" : "light";
       const repl = ids && ids.length ? aiKeys.replacementModel(payload.model, ids, tier) : "";
-      if (repl && repl !== payload.model) {
+      if (repl && repl !== payload.model && inTime(40000)) {
         console.log(`saas-gateway: ИИ ${tenantId}: модели «${payload.model}» у провайдера нет — беру «${repl}»`);
         aiModelFix.set(`${cacheKey}|${payload.model}`, repl);
         payload.model = repl;
@@ -8736,7 +8759,10 @@ async function handleAiProxy(req, res) {
       }
     }
   } catch (e) {
-    throw new HttpError(502, `Провайдер ИИ не ответил: ${e.message || e}`);
+    // Не «gateway»: это сбой провайдера, а не отказ платформы — касса
+    // попробует резервный ключ заведения.
+    sendJson(res, 502, { error: `Провайдер ИИ не ответил: ${String(e.message || e).slice(0, 200)}` });
+    return;
   }
   const text = upstream.text;
   res.writeHead(upstream.status, {
@@ -8775,8 +8801,20 @@ async function venueAiVendor(tenantId) {
   }
   const settings = settingsDoc.data() || {};
   if (settings.enabled !== true) return null;
-  const vendor = resolveAiVendor(settings, secretsDoc.data() || {}, "primary");
-  if (!vendor || !vendor.apiKey || !vendor.baseUrl) return null;
+  const secrets = secretsDoc.data() || {};
+  const usable = (v) => v && v.apiKey && v.baseUrl;
+  // Резервный и дополнительные ключи заведения: кончились деньги или
+  // провайдер лёг — перевод меню, фото полки и разборы идут через них.
+  const backups = [
+    resolveAiVendor(settings, secrets, "fallback"),
+    ...(Array.isArray(settings.extraKeys) ? settings.extraKeys.slice(0, 8) : [])
+      .filter((k) => k && typeof k === "object" && typeof k.id === "string" && k.enabled !== false)
+      .map((k) => resolveAiVendor(settings, secrets, `extra:${k.id}`)),
+  ].filter(usable);
+  const primary = resolveAiVendor(settings, secrets, "primary");
+  const vendor = usable(primary) ? primary : backups.shift();
+  if (!vendor) return null;
+  Object.defineProperty(vendor, "backups", { value: backups, enumerable: false });
   return vendor;
 }
 
@@ -8805,7 +8843,25 @@ const isBusy = (status) => status === 429 || status === 500 || status === 502 ||
 /** Один ответ ИИ: content — строка или массив частей (в т.ч. картинка data:URL).
  *  Провайдер занят (503/429) — ещё две попытки с паузой; модель не умеет
  *  смотреть фото — берём из моделей ключа ту, что умеет (и запоминаем). */
-async function venueAiComplete(vendor, { system, content, maxTokens = 4000, heavy = false }) {
+async function venueAiComplete(vendor, opts) {
+  try {
+    return await venueAiCompleteVia(vendor, opts);
+  } catch (e) {
+    const backups = (vendor && vendor.backups) || [];
+    let last = e;
+    for (const b of backups) {
+      try {
+        console.log(`saas-gateway: ИИ: основной ключ не ответил (${String(last.message || last).slice(0, 80)}) — пробую резервный`);
+        return await venueAiCompleteVia(b, opts);
+      } catch (e2) {
+        last = e2;
+      }
+    }
+    throw last;
+  }
+}
+
+async function venueAiCompleteVia(vendor, { system, content, maxTokens = 4000, heavy = false }) {
   await assertPublicAiUrl(vendor.baseUrl);
   const fmt = vendor.format === "anthropic" ? "anthropic" : "openai";
   const parts = Array.isArray(content) ? content : [{ type: "text", text: String(content) }];

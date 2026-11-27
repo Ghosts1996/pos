@@ -104,7 +104,8 @@ function createAiReports(deps) {
 
   async function handle(req, res) {
     const decoded = await verifyAuth(req);
-    const body = await parseJsonBody(req);
+    // До 120 тыс. знаков данных по-русски — это ~240 КБ, больше лимита по умолчанию.
+    const body = await parseJsonBody(req, 600 * 1024);
     const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(tenantId)) throw new HttpError(400, "Не указано заведение");
     await requireTenantRole(tenantId, decoded.uid, ["owner", "admin", "manager", "employee"]);

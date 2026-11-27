@@ -181,6 +181,7 @@ class _KolibriAiChatState extends State<KolibriAiChat> {
       return;
     }
 
+    TookenClient.instance.newTurn();
     try {
       final reply = await AiService.instance.conciergeReply(
         text,

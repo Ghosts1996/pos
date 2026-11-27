@@ -110,6 +110,13 @@ class TookenClient {
 
   bool get _viaProxy => (_proxyUrl ?? '').isNotEmpty;
 
+  /// Номер текущего вопроса гостя: все запросы к ИИ одного вопроса
+  /// (инструменты, повторы, резервный ключ) сервер считает за один.
+  String? turn;
+
+  /// Начать новый вопрос (приложение гостя — перед каждым вопросом).
+  String newTurn() => turn = 'q${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
+
   String _detectKey(AiEndpoint ep) => '${ep.slot}|${ep.vendor.id}|${ep.baseUrl}';
 
   String _formatOf(AiEndpoint ep) {
@@ -143,10 +150,20 @@ class TookenClient {
   /// документов вычищаются ещё на устройстве (и повторно на сервере).
   static Object? _scrub(Object? body) => kSaasMode ? PiiScrub.payload(body) : body;
 
+  /// Через сервер платформы ждём дольше: он сам повторяет запрос к
+  /// провайдеру, если тот занят, — обрывать его раньше значит заплатить
+  /// за ответ, который никто не увидит.
+  static const proxyExtra = Duration(seconds: 30);
+
   Future<http.Response> _post(AiEndpoint ep, String path, Map<String, dynamic> raw, Duration timeout) async {
     final body = _scrub(raw);
     if (_viaProxy) {
-      final token = await AppAuth.instance.currentUser?.getIdToken();
+      String? token;
+      try {
+        token = await AppAuth.instance.currentUser?.getIdToken();
+      } catch (_) {
+        // Нет входа — сервер ответит понятным «нет доступа», а не «нет связи».
+      }
       return _http
           .post(
             Uri.parse('$_proxyUrl/aiProxy'),
@@ -160,9 +177,10 @@ class TookenClient {
               'format': _formatOf(ep),
               'path': path,
               'body': body,
+              if (turn != null) 'turn': turn,
             }),
           )
-          .timeout(timeout);
+          .timeout(timeout + proxyExtra);
     }
     return _http
         .post(Uri.parse('${ep.baseUrl}/$path'), headers: _headersFor(ep), body: jsonEncode(body))
@@ -186,6 +204,10 @@ class TookenClient {
           statusCode: resp.statusCode, fromGateway: true);
     }
     final name = ep.vendor.title;
+    // Сервер платформы объяснил сбой провайдера своими словами — их и покажем.
+    if (_viaProxy && resp.statusCode >= 500 && json != null && json['error'] is String && '${json['error']}'.isNotEmpty) {
+      return AiException('${json['error']}', statusCode: resp.statusCode);
+    }
     if (body.contains('location is not supported') || body.contains('User location')) {
       return AiException(
           '$name недоступен из вашего региона (Google не пускает к Gemini API из России). '
@@ -503,8 +525,9 @@ class TookenClient {
 
         if (resp.statusCode == 429 || resp.statusCode >= 500) {
           lastError = _errorFor(ep, resp);
-          // Лимит сервера платформы на гостя повторять бессмысленно.
-          if (_viaProxy && resp.statusCode == 429) throw lastError;
+          // Через сервер платформы не повторяем: он уже повторял запрос к
+          // провайдеру. Дальше — следующий ключ заведения (complete).
+          if (_viaProxy) throw lastError;
           await Future.delayed(Duration(milliseconds: 600 * (attempt + 1)));
           continue;
         }
@@ -548,7 +571,12 @@ class TookenClient {
         unawaited(_log(agentId, ep, useModel, result));
         return result;
       } on TimeoutException {
-        lastError = AiException('${ep.vendor.title} не ответил за ${timeout.inSeconds} c.');
+        lastError = AiException(_viaProxy
+            ? 'ИИ не ответил за ${(timeout + proxyExtra).inSeconds} c — провайдер перегружен, попробуйте чуть позже.'
+            : '${ep.vendor.title} не ответил за ${timeout.inSeconds} c.');
+        // Повтор после долгого ожидания — ещё минута тишины для кассира и
+        // второй оплаченный запрос; сразу пробуем следующий ключ.
+        throw lastError;
       } on AiException {
         rethrow;
       } catch (e) {

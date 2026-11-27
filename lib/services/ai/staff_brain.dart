@@ -291,9 +291,18 @@ class StaffBrain {
 
   /// Совместные продажи за 30 дней: что берут вместе с чем. Считается на
   /// кассе раз в час, без ИИ.
-  Future<void> _loadPairs() async {
-    if (_pairs != null && DateTime.now().difference(_pairsAt) < const Duration(hours: 1)) return;
+  Future<void>? _pairsLoading;
+
+  /// Один расчёт на всех: несколько столов, открытых подряд, раньше каждый
+  /// заново грузили чеки за 30 дней — касса подтормаживала.
+  Future<void> _loadPairs() {
+    if (_pairs != null && DateTime.now().difference(_pairsAt) < const Duration(hours: 1)) return Future.value();
+    return _pairsLoading ??= _loadPairsNow().whenComplete(() => _pairsLoading = null);
+  }
+
+  Future<void> _loadPairsNow() async {
     final pairs = <String, Map<String, int>>{};
+    var ok = false;
     final counts = <String, int>{};
     try {
       final to = DateTime.now();
@@ -310,10 +319,17 @@ class StaffBrain {
           }
         }
       }
+      ok = true;
     } catch (_) {}
+    if (!ok && _pairs != null) {
+      // Не загрузилось (нет связи) — оставляем прежние пары, повтор через 5 мин.
+      _pairsAt = DateTime.now().subtract(const Duration(minutes: 55));
+      return;
+    }
     _pairs = pairs;
     _counts = counts;
-    _pairsAt = DateTime.now();
+    // Пустой результат из-за сбоя — повторим через 5 минут, а не через час.
+    _pairsAt = ok ? DateTime.now() : DateTime.now().subtract(const Duration(minutes: 55));
   }
 
   /// Что предложить к позициям чека: часто берут вместе, в наличии, не
