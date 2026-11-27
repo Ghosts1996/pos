@@ -1,8 +1,8 @@
 "use strict";
 // Обновление «как у Google» (apk-delta.js): патч по записям ZIP + bsdiff,
-// сборка нового файла байт в байт, и весь путь на сервере — прошлая сборка
-// остаётся базой, сервер строит патч, /appUpdate отдаёт его устройству с
-// прошлой версией, после патча база удаляется.
+// сборка нового файла байт в байт, и весь путь на сервере — прошлые сборки
+// (до трёх) остаются базами, сервер строит патч от каждой к новой,
+// /appUpdate отдаёт его устройству с любой из этих версий.
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -156,10 +156,11 @@ async function main() {
     body: { jobId: "j2", status: "success", buildNumber: 101 },
   });
   check("сборка отчиталась", cb.status === 200, JSON.stringify(cb.json));
-  const built = await waitFor(() => fs.existsSync(path.join(tdir, "j2.from100.json")) && !fs.existsSync(path.join(tdir, "j1.apk")));
-  check("сервер построил патч и убрал прошлую сборку", built, fs.readdirSync(tdir).join(","));
+  const built = await waitFor(() => fs.existsSync(path.join(tdir, "j2.from100.json")));
+  check("сервер построил патч", built, fs.readdirSync(tdir).join(","));
   const j1 = await get("buildJobs/j1");
-  check("прошлая сборка — superseded, не база", j1.status === "superseded" && j1.deltaBase === false, JSON.stringify(j1));
+  check("прошлая сборка — superseded и остаётся базой", j1.status === "superseded" && j1.deltaBase === true
+    && fs.existsSync(path.join(tdir, "j1.apk")), JSON.stringify(j1));
 
   const up = await request("POST", "/appUpdate", { body: { tenantId: "tA", app: "guest", platform: "android", current: 100 } });
   const p = (up.json || {}).patch;
@@ -175,14 +176,33 @@ async function main() {
   const bad = await request("GET", `${up.json.url}&from=99`);
   check("чужой патч — 404", bad.status === 404);
 
-  // Третья сборка: база — вторая, старые патчи убираются.
-  await set("buildJobs/j3", { tenantId: "tA", type: "guest", platform: "android", status: "queued", createdAt: T(now + 1000) });
-  const v3 = Buffer.from(v2);
-  fs.writeFileSync(path.join(tdir, "j3.apk"), v3);
-  await request("POST", "/completeBuildJob", { headers: { "x-callback-secret": "cb-secret-apkdelta" }, body: { jobId: "j3", status: "success", buildNumber: 102 } });
-  const third = await waitFor(() => fs.existsSync(path.join(tdir, "j3.from101.json")) && !fs.existsSync(path.join(tdir, "j2.apk")));
-  check("следующая сборка: патч от предыдущей", third, fs.readdirSync(tdir).join(","));
-  check("старые патчи убраны", !fs.existsSync(path.join(tdir, "j2.from100.zpatch")), fs.readdirSync(tdir).join(","));
+  // Следующие сборки: патчи от трёх прошлых версий, старше — файл удаляется.
+  const variant = (n) => {
+    const b = Buffer.from(v2);
+    for (let i = 600000 + n * 1000; i < 600000 + n * 1000 + 300; i++) b[i] ^= 0x33; // внутри libapp.so (без сжатия)
+    return b;
+  };
+  const vs = { 100: v1, 101: v2 };
+  for (const [id, n] of [["j3", 102], ["j4", 103], ["j5", 104]]) {
+    await set(`buildJobs/${id}`, { tenantId: "tA", type: "guest", platform: "android", status: "queued", createdAt: T(now + n * 1000) });
+    vs[n] = variant(n);
+    fs.writeFileSync(path.join(tdir, `${id}.apk`), vs[n]);
+    await request("POST", "/completeBuildJob", { headers: { "x-callback-secret": "cb-secret-apkdelta" }, body: { jobId: id, status: "success", buildNumber: n } });
+  }
+  const many = await waitFor(() => ["j5.from103", "j5.from102", "j5.from101"].every((x) => fs.existsSync(path.join(tdir, `${x}.json`))));
+  check("патчи к новой сборке от трёх прошлых версий", many, fs.readdirSync(tdir).join(","));
+  check("старше трёх версий — файл удалён, патча нет",
+    !fs.existsSync(path.join(tdir, "j1.apk")) && !fs.existsSync(path.join(tdir, "j5.from100.json")), fs.readdirSync(tdir).join(","));
+  check("патчи к прошлым сборкам убраны",
+    !fs.readdirSync(tdir).some((n) => /^j[234]\.from/.test(n)), fs.readdirSync(tdir).join(","));
+  for (const from of [101, 102, 103]) {
+    const r = await request("POST", "/appUpdate", { body: { tenantId: "tA", app: "guest", platform: "android", current: from } });
+    const pt = r.json && r.json.patch;
+    const ok = pt && applyPatch(vs[from], fs.readFileSync(path.join(tdir, `j5.from${from}.zpatch`))).equals(vs[104]);
+    check(`устройство с версией ${from} получает патч до 104`, !!ok, JSON.stringify(r.json));
+  }
+  const skipped = await request("POST", "/appUpdate", { body: { tenantId: "tA", app: "guest", platform: "android", current: 100 } });
+  check("пропустило больше трёх версий — целиком", skipped.json && skipped.json.update === true && !skipped.json.patch);
 
   console.log(`apk-delta: ${passed} passed, ${failed} failed`);
   fs.rmSync(dir, { recursive: true, force: true });

@@ -3387,10 +3387,10 @@ async function handleCompleteBuildJob(req, res) {
  * заведения: устройства обновляются до неё сами, а каждое обновление
  * платформы пересобирает всех. Старые помечаются superseded, файлы удаляются.
  *
- * Обновление «как у Google» (apk-delta.js): у Android-сборок предыдущая
- * сборка остаётся на диске (deltaBase), пока сервер не построит патч от неё к
- * новой, — устройства с прошлой версией качают только разницу. После
- * патча файл прошлой сборки удаляется (apkDeltaDone).
+ * Обновление «как у Google» (apk-delta.js): у Android-сборок несколько
+ * прошлых сборок (до APK_DELTA_KEEP, меньше при нехватке места) остаются на
+ * диске (deltaBase), сервер строит патч от каждой к новой — устройства,
+ * пропустившие одно-два обновления, тоже качают только разницу.
  */
 async function supersedeOldBuilds(tenantId) {
   const snap = await db()
@@ -3415,26 +3415,37 @@ async function supersedeOldBuilds(tenantId) {
     if (newestIdx < 0) continue;
     const newest = list[newestIdx];
     const android = key.endsWith("/android");
-    let base = null;
+    // Базы для патчей — несколько прошлых сборок (с разными номерами), чьи
+    // файлы ещё на диске.
+    const bases = [];
     if (android) {
-      base = list.find((d, i) => i !== newestIdx && rank(d.data()) < rank(newest.data()) && rank(d.data()) > 0) || null;
-      if (base && !fs.existsSync(path.join(TENANT_BUILDS_DIR, tenantId, `${base.id}.apk`))) base = null;
+      const keep = apkDeltaKeep();
+      for (const d of list) {
+        if (bases.length >= keep) break;
+        const r = rank(d.data());
+        if (d.id === newest.id || r <= 0 || r >= rank(newest.data())) continue;
+        if (bases.some((b) => rank(b.data()) === r)) continue;
+        if (fs.existsSync(path.join(TENANT_BUILDS_DIR, tenantId, `${d.id}.apk`))) bases.push(d);
+      }
     }
+    const baseIds = new Set(bases.map((d) => d.id));
     for (const d of list) {
       if (d.id === newest.id) continue;
-      if (base && d.id === base.id) {
+      if (baseIds.has(d.id)) {
         if (d.data().status !== "superseded" || d.data().deltaBase !== true) {
           await d.ref.update({ status: "superseded", downloadPath: null, deltaBase: true });
           changed++;
         }
+        // Патчи нужны только к самой новой сборке.
+        await removeBuildPatches(tenantId, d.id, []);
         continue;
       }
       await d.ref.update({ status: "superseded", downloadPath: null, deltaBase: false });
       await removeBuildFiles(tenantId, d.id);
       changed++;
     }
-    // Патчи к новой сборке — только от текущей базы.
-    await removeBuildPatches(tenantId, newest.id, base ? rank(base.data()) : null);
+    // Патчи к новой сборке — только от текущих баз.
+    await removeBuildPatches(tenantId, newest.id, bases.map((d) => rank(d.data())));
   }
   if (changed) forgetAppUpdates(tenantId);
   if (changed) queueApkDeltas(tenantId);
@@ -3443,15 +3454,15 @@ async function supersedeOldBuilds(tenantId) {
 
 async function removeBuildFiles(tenantId, jobId) {
   await fs.promises.rm(path.join(TENANT_BUILDS_DIR, tenantId, `${jobId}.apk`), { force: true }).catch(() => {});
-  await removeBuildPatches(tenantId, jobId, null);
+  await removeBuildPatches(tenantId, jobId, []);
 }
 
-/** Патчи «<сборка>.fromN» — кроме патча от keepFrom. */
+/** Патчи «<сборка>.fromN» — кроме патчей от номеров keepFrom. */
 async function removeBuildPatches(tenantId, jobId, keepFrom) {
   const dir = path.join(TENANT_BUILDS_DIR, tenantId);
   for (const name of await fs.promises.readdir(dir).catch(() => [])) {
     const m = /^([A-Za-z0-9]+)\.from(\d+)\.(zpatch|json)(\.tmp)?$/.exec(name);
-    if (!m || m[1] !== jobId || (keepFrom !== null && Number(m[2]) === keepFrom && !m[4])) continue;
+    if (!m || m[1] !== jobId || (keepFrom.includes(Number(m[2])) && !m[4])) continue;
     await fs.promises.rm(path.join(dir, name), { force: true }).catch(() => {});
   }
 }
@@ -3460,6 +3471,18 @@ async function removeBuildPatches(tenantId, jobId, keepFrom) {
 
 const APK_DELTA_TIMEOUT_MS = 20 * 60 * 1000;
 const APK_DELTA_MIN_FREE_MEM = 500 * 1048576;
+// Сколько прошлых версий держать базами патчей: 3, а при нехватке места на
+// диске (<4 ГБ свободно) — одну, <1,5 ГБ — ни одной (только полный файл).
+const APK_DELTA_KEEP = Math.max(0, Math.min(5, Number(process.env.APK_DELTA_KEEP || 3)));
+function apkDeltaKeep() {
+  try {
+    const st = fs.statfsSync(TENANT_BUILDS_DIR);
+    const free = st.bavail * st.bsize;
+    if (free < 1.5 * 1073741824) return 0;
+    if (free < 4 * 1073741824) return Math.min(1, APK_DELTA_KEEP);
+  } catch (_) {}
+  return APK_DELTA_KEEP;
+}
 const apkDeltaQueue = []; // tenantId
 let apkDeltaBusy = false;
 
@@ -3505,14 +3528,14 @@ async function buildApkDeltas(tenantId) {
     if (!fs.existsSync(`${prefix}.json`) && fs.existsSync(basePath) && fs.existsSync(path.join(dir, `${newest.id}.apk`))) {
       const result = await runApkDeltaWorker(basePath, path.join(dir, `${newest.id}.apk`), prefix);
       console.log(`saas-gateway: патч обновления ${tenantId} ${base.type} ${base.buildNumber}→${newest.buildNumber}: ${result}`);
-    }
-    // Патч готов (или не получился) — прошлая сборка больше не нужна.
-    if (fs.existsSync(`${prefix}.json`)) {
-      await base.ref.update({ deltaBase: false }).catch(() => {});
-      await removeBuildFiles(tenantId, base.id);
       forgetAppUpdates(tenantId);
     }
+    // Файл прошлой сборки остаётся базой для следующих патчей, пока она
+    // среди последних APK_DELTA_KEEP (supersedeOldBuilds).
   }
+  // Пока строился патч, могла прийти ещё более новая сборка — лишние патчи
+  // и базы убираем, недостающие поставит в очередь supersedeOldBuilds.
+  await supersedeOldBuilds(tenantId);
 }
 
 function runApkDeltaWorker(oldPath, newPath, prefix) {
