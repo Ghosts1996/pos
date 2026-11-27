@@ -45,10 +45,10 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
   }
 
   Future<void> _scan(ImageSource source) async {
+    // Берём крупно и почти без сжатия: осветление тёмного снимка и подгонка
+    // под лимит сервера — на кассе (photo_prep.dart).
     final photo = await AppLock.instance.whileAway(
-        () => // Мелкие надписи на банках читаются только на крупном снимке; 1700 px
-        // при качестве 68 укладываются в 0,9 МБ даже на «пёстрой» полке.
-        ImagePicker().pickImage(source: source, maxWidth: 1700, maxHeight: 1700, imageQuality: 68));
+        () => ImagePicker().pickImage(source: source, maxWidth: 2400, maxHeight: 2400, imageQuality: 92));
     if (photo == null || !mounted) return;
     setState(() => _scanning = true);
     try {

@@ -25,6 +25,9 @@ const TOBACCO_AI_PROMPT = `На фото — полка с банками таб
 Банки бывают стопками, разной высоты, стеклянными с наклейкой, частично закрыты соседними; свет бывает тусклым — читай внимательно каждую стопку сверху вниз, слева направо.
 Частая подпись «с ароматом …», «аромат …» — это и есть вкус банки. Марка обычно крупно на крышке или на ленте сбоку.
 НЕ бери банки с обоев, плакатов, наклеек, фотографий и рекламы на стене — только настоящие банки на полке.
+Крупные слова на банках вроде «СЛЕПОТА», «ИМПОТЕНЦИЯ», «ИНФАРКТ», «ИНСУЛЬТ», «ГАНГРЕНА», «МУЧИТЕЛЬНАЯ СМЕРТЬ», «БЕСПЛОДИЕ», «КУРЕНИЕ УБИВАЕТ», «СОДЕРЖИТ СИСТЕМНЫЕ ЯДЫ» и фото болезней — обязательные предупреждения о вреде. Это НЕ вкус и НЕ марка: никогда не пиши их в name.
+Часто предупреждение закрывает лицевую сторону, а вкус написан от руки маркером на ленте или наклейке («Kriek», «Finlandia vanilla») — рукописная надпись и есть название вкуса. Ищи и мелкий текст состава: «с ароматом вишни» → вкус вишня. Марку ищи на ленте, крышке, боковой полосе (например TERROR, BONCHE, DARKSIDE, DEDUSHKA, ЛАСТОЧКА), а если её не видно — оставь brand пустым, не выдумывай.
+Фото может быть тёмным или смазанным — всё равно разбери каждую надпись, которую можно прочитать хотя бы частично; не пропускай банку, если читается вкус.
 Для каждой банки верни:
 - brand — марку, как написано (частые: Darkside, Musthave, Black Burn, Element, Blanch, Timeless, Sapphire Crown, Original Virginia, Tangiers, Al Fakher, Adalya, Serbetli, Fumari, Starbuzz, Spectrum, Sebero, Duft, Satyr, Bonche, Jent, Trofimoff, Deus, Dogma, Banger, Overdose, Хулиган, MattPear, Palitra, NАШ, Северный, Kraken, Daily Hookah, Burn, Sarma, Craftium, Starline, Morpheus, Lastochka, Terror, Timeline, Chabacco, Brusko, Zomo, Dedushka и др.);
 - name — название вкуса так, как написано на банке, без перевода (например «Pinkman», «Supernova», «Ice Baby», «Love 66», «Спелая лесная малина»);
@@ -37,6 +40,13 @@ function cleanText(v, max) {
   return String(v == null ? "" : v).replace(/[\u0000-\u001f<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+// Обязательные предупреждения о вреде на банках («СЛЕПОТА», «ИНФАРКТ»…) —
+// не вкус. ИИ иногда берёт их за название, поэтому проверяем сами.
+const WARNING_RE = /(слепот|импотенц|инфаркт|инсульт|гангрен|бесплод|мучительн|(?:^|[^а-яё])смерть(?:$|[^а-яё])|курение убива|системн\S* яд|канцероген|рак (горла|л[её]гких|полости)|выкидыш|пародонт|преждевременн|вред(ит)? здоров)/i;
+function isWarning(text) {
+  return WARNING_RE.test(String(text || ""));
+}
+
 /** Ответ ИИ → аккуратный список банок (без повторов). */
 function itemsFromAi(parsed) {
   const raw = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.items) ? parsed.items : []);
@@ -44,11 +54,14 @@ function itemsFromAi(parsed) {
   const seen = new Set();
   for (const it of raw.slice(0, 200)) {
     if (!it || typeof it !== "object") continue;
-    const brand = cleanText(it.brand, 40);
-    const name = cleanText(it.name || it.flavor, 60);
-    if (!name) continue;
+    const rawBrand = cleanText(it.brand, 40);
+    const brand = isWarning(rawBrand) ? "" : rawBrand;
     const flavors = (Array.isArray(it.flavors) ? it.flavors : String(it.flavors || "").split(","))
-      .map((f) => cleanText(f, 30).toLowerCase()).filter(Boolean).slice(0, 6);
+      .map((f) => cleanText(f, 30).toLowerCase()).filter((f) => f && !isWarning(f)).slice(0, 6);
+    let name = cleanText(it.name || it.flavor, 60);
+    // Название — предупреждение о вреде: берём вкус из состава, иначе банку пропускаем.
+    if (isWarning(name)) name = flavors.length ? flavors[0][0].toUpperCase() + flavors[0].slice(1) : "";
+    if (!name) continue;
     const strength = ["light", "medium", "strong"].includes(it.strength) ? it.strength : "";
     const key = `${brand.toLowerCase()}|${name.toLowerCase()}`;
     if (seen.has(key)) continue;
@@ -194,4 +207,4 @@ function createTobacco(deps) {
   return { handle, scan, scanStart, scanResult, learn, fresh, jobs };
 }
 
-module.exports = { createTobacco, itemsFromAi, TOBACCO_AI_PROMPT };
+module.exports = { createTobacco, itemsFromAi, isWarning, TOBACCO_AI_PROMPT };

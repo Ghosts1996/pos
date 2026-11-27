@@ -36,6 +36,23 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     assert.equal(items[1].strength, "");
   });
 
+  await ok("предупреждения о вреде («СЛЕПОТА», «ИНФАРКТ») — не вкус и не марка", async () => {
+    const items = itemsFromAi({ items: [
+      { brand: "Terror", name: "СЛЕПОТА", flavors: ["вишня"] },
+      { brand: "", name: "Мучительная смерть", flavors: [] },
+      { brand: "ИНФАРКТ", name: "Kriek", flavors: ["вишня", "курение убивает"] },
+      { brand: "Lastochka", name: "Ласточка вишня", flavors: ["вишня"] },
+      { brand: "Lastochka", name: "Бессмертник", flavors: ["бессмертник", "мёд"] },
+      { brand: "", name: "СМЕРТЬ", flavors: [] },
+    ] });
+    assert.deepEqual(items.map((i) => [i.brand, i.name, i.flavors.join("|")]), [
+      ["Terror", "Вишня", "вишня"],
+      ["", "Kriek", "вишня"],
+      ["Lastochka", "Ласточка вишня", "вишня"],
+      ["Lastochka", "Бессмертник", "бессмертник|мёд"],
+    ]);
+  });
+
   await ok("распознавание: ключ ИИ, картинка, лимит 60 снимков в час", async () => {
     aiAnswer = '```json {"items":[{"brand":"Deus","name":"Strawberry","flavors":["клубника"]}]} ```';
     const res = {};
@@ -96,6 +113,6 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     assert.equal(again.fresh().total, 3);
   });
 
-  console.log(`tobacco: ${n} из 5 проверок`);
+  console.log(`tobacco: ${n} из 6 проверок`);
   fs.rmSync(dir, { recursive: true, force: true });
 })().catch((e) => { console.error(e); process.exit(1); });

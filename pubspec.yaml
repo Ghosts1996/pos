@@ -22,6 +22,8 @@ dependencies:
   shared_preferences: ^2.3.2
   ffi: ^2.1.0                 # печать на принтер Windows (winspool), см. lib/services/printers
   image_picker: ^1.1.2
+  # Осветление тёмного фото полки табака перед ИИ (lib/services/hookah/photo_prep.dart).
+  image: ^4.9.2
   cached_network_image: ^3.4.1
   supabase_flutter: ^2.8.0
   intl: ^0.20.2                     # 0.20.2 — версия из flutter_localizations у Flutter 3.41

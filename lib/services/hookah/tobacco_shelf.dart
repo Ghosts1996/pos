@@ -9,6 +9,7 @@ import '../../data/app_db.dart';
 import '../gateway_api.dart';
 import 'flavors.dart';
 import 'mix_engine.dart';
+import 'photo_prep.dart';
 import 'tobacco_catalog.dart';
 
 /// Полка табака заведения: tenants/{t}/tobaccoShelf/{id}. Пишет персонал
@@ -56,16 +57,25 @@ class TobaccoShelf {
     return TobaccoCan(id: idOf(brand, name), brand: brand, name: name, flavors: flavors, strength: strength);
   }
 
-  /// Фото полки → банки (через ИИ заведения на сервере). Снимок ужат
-  /// камерой до ~1400 точек, чтобы уложиться в лимит 0,9 МБ.
+  /// Фото полки → банки (через ИИ заведения на сервере). Снимок готовит
+  /// касса (preparePhoto): осветляет тёмный и укладывает в лимит 0,9 МБ.
   static Future<List<TobaccoCan>> scan(XFile photo) async {
     final bytes = await photo.readAsBytes();
-    final data = base64Encode(bytes);
+    // Тёмное фото — светлее, большое — в лимит сервера без потери надписей.
+    final prepared = await preparePhoto(bytes).catchError((Object _) => null);
+    String data;
+    String type;
+    if (prepared != null) {
+      data = prepared.base64;
+      type = prepared.mediaType;
+    } else {
+      data = base64Encode(bytes);
+      final name = photo.name.toLowerCase();
+      type = name.endsWith('.png') ? 'image/png' : (name.endsWith('.webp') ? 'image/webp' : 'image/jpeg');
+    }
     if (data.length > 960000) {
       throw GatewayException('Фото слишком подробное — снимите полку частями, по одной-две полки');
     }
-    final name = photo.name.toLowerCase();
-    final type = name.endsWith('.png') ? 'image/png' : (name.endsWith('.webp') ? 'image/webp' : 'image/jpeg');
     final page = {'mediaType': type, 'data': data};
     final res = await _scanOnServer(page);
     return [
