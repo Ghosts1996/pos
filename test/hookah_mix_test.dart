@@ -2,6 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hookah_pos/services/hookah/flavors.dart';
 import 'package:hookah_pos/services/hookah/mix_base.dart';
 import 'package:hookah_pos/services/hookah/mix_engine.dart';
+import 'package:hookah_pos/services/hookah/tobacco_catalog.dart';
+import 'package:hookah_pos/services/hookah/tobacco_shelf.dart';
 
 void main() {
   test('вкусы с банок понимаются по-русски и по-английски', () {
@@ -80,5 +82,32 @@ void main() {
     final picks = e.pick(MixRequest.parse('кислое с фейхоа'));
     expect(picks, isNotEmpty);
     expect(picks.first.parts.first.flavor, 'feijoa');
+  });
+
+  test('каталог: марка к одному написанию, «придуманные» банки — по каталогу', () {
+    expect(canonicalBrand('BLACKBURN'), 'Black Burn');
+    expect(canonicalBrand('блэк берн'), 'Black Burn');
+    expect(canonicalBrand('Дарксайд'), 'Darkside');
+    expect(canonicalBrand('Неизвестная марка'), 'Неизвестная марка');
+    expect(knownCan('Musthave', 'Pinkman')?.flavors, ['grapefruit', 'strawberry', 'raspberry']);
+    expect(flavorsOfCan('Darkside', 'Supernova', ''), containsAll(['menthol', 'ice']));
+    expect(flavorsOfCan('Adalya', 'Love 66', ''), containsAll(['passionfruit', 'melon', 'watermelon', 'mint']));
+    // Неизвестная банка — по словам ИИ и названию.
+    expect(flavorsOfCan('Black Burn', 'Спелая лесная малина', 'малина'), ['raspberry']);
+    final can = TobaccoShelf.fromScan({'brand': 'blackburn', 'name': 'Ice Baby', 'flavors': ['что-то']});
+    expect(can.brand, 'Black Burn');
+    expect(can.flavors, containsAll(['grapefruit', 'ice']));
+    expect(can.strength, 'strong');
+  });
+
+  test('каталог: все вкусы банок есть в словаре', () {
+    for (final c in kKnownCans) {
+      for (final f in c.flavors) {
+        expect(kFlavorByKey.containsKey(f), isTrue, reason: '${c.brand} ${c.names.first}: $f');
+      }
+      expect(kTobaccoBrands.any((b) => b.name == c.brand), isTrue, reason: c.brand);
+    }
+    expect(kMixes.length, greaterThan(300));
+    expect(kMixes.map((m) => m.name).toSet().length, kMixes.length, reason: 'названия миксов не повторяются');
   });
 }

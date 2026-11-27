@@ -13,8 +13,8 @@ import 'package:http/testing.dart';
 /// построены серверным кодом (test.apk-delta.js проверяет, что они сходятся).
 void main() {
   const fx = 'test/fixtures/apk_delta';
-  final oldApk = File('$fx/old.apk');
-  final newApk = File('$fx/new.apk');
+  final oldApk = File('$fx/old.bin');
+  final newApk = File('$fx/new.bin');
   final patch = File('$fx/update.zpatch');
   late Directory dir;
   setUp(() async => dir = await Directory.systemTemp.createTemp('apk_patch_test'));

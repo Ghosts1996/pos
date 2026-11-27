@@ -133,7 +133,7 @@ async function main() {
   // Образец для теста кассы (test/apk_patch_test.dart) — тот же формат.
   const fx = path.join(__dirname, "..", "test", "fixtures", "apk_delta");
   check("образец для кассы собирается этим же кодом",
-    applyPatch(fs.readFileSync(path.join(fx, "old.apk")), fs.readFileSync(path.join(fx, "update.zpatch"))).equals(fs.readFileSync(path.join(fx, "new.apk"))));
+    applyPatch(fs.readFileSync(path.join(fx, "old.bin")), fs.readFileSync(path.join(fx, "update.zpatch"))).equals(fs.readFileSync(path.join(fx, "new.bin"))));
 
   // --- весь путь на сервере
   const server = require("./server.js");

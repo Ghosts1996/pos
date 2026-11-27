@@ -8645,6 +8645,12 @@ async function handleAiProxy(req, res) {
   let upstream;
   try {
     upstream = await send();
+    // Провайдер перегружен (503/429) — ещё две попытки с паузой, прежде чем
+    // показывать ошибку кассе.
+    for (let i = 0; i < 2 && isBusy(upstream.status); i++) {
+      await new Promise((r) => setTimeout(r, (i + 1) * 3000));
+      upstream = await send();
+    }
     // Провайдер убрал модель — берём ближайшую из списка ключа и повторяем
     // (и запоминаем замену): владельцу не нужно ничего менять в настройках.
     if ((upstream.status === 400 || upstream.status === 404) && /model/i.test(upstream.text)
@@ -8708,12 +8714,71 @@ async function venueAiVendor(tenantId) {
   return vendor;
 }
 
-/** Один ответ ИИ: content — строка или массив частей (в т.ч. картинка data:URL). */
+// Модели, которые умеют смотреть фото (для фото полки, меню, схемы зала):
+// если у заведения выбрана модель без зрения, берём такую из моделей ключа.
+const VISION_PREFER = [/gpt-4o-mini/i, /gpt-4\.1-mini/i, /gemini-2\.5-flash(?!.*(image|tts|audio|live))/i, /gemini-2\.0-flash(?!.*(image|tts|audio|live))/i,
+  /gemini-.*flash(?!.*(image|tts|audio|live))/i, /gpt-4o(?!.*(audio|realtime|search|transcribe|tts))/i, /gpt-4\.1(?!.*nano)/i, /gpt-5(?!.*(nano|audio|realtime))/i,
+  /claude.*(haiku|sonnet)/i, /qwen.*vl/i, /pixtral/i, /llama-4/i, /grok-4/i, /gemini-.*pro/i];
+const VISION_BAD = /(embed|whisper|tts|audio|speech|transcri|dall-?e|imagen|moderation|realtime|search|rerank|instruct)/i;
+const aiVisionModel = new Map(); // ключ+адрес → модель со зрением
+
+function pickVisionModels(ids, exclude) {
+  const out = [];
+  for (const re of VISION_PREFER) {
+    for (const id of ids) {
+      if (re.test(id) && !VISION_BAD.test(id) && !exclude.includes(id) && !out.includes(id)) out.push(id);
+    }
+  }
+  return out;
+}
+
+const isVisionRefusal = (status, text) => status >= 400 && status < 500
+  && /(vision|image|multimodal|multi-modal|unsupported_feature|does not support (images|image input)|image_url)/i.test(String(text || ""));
+const isBusy = (status) => status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || status === 529;
+
+/** Один ответ ИИ: content — строка или массив частей (в т.ч. картинка data:URL).
+ *  Провайдер занят (503/429) — ещё две попытки с паузой; модель не умеет
+ *  смотреть фото — берём из моделей ключа ту, что умеет (и запоминаем). */
 async function venueAiComplete(vendor, { system, content, maxTokens = 4000, heavy = false }) {
   await assertPublicAiUrl(vendor.baseUrl);
   const fmt = vendor.format === "anthropic" ? "anthropic" : "openai";
-  const model = (heavy ? vendor.models[1] : vendor.models[0]) || vendor.models[0];
   const parts = Array.isArray(content) ? content : [{ type: "text", text: String(content) }];
+  const hasImage = parts.some((p) => p.type === "image");
+  const cacheKey = `${vendor.baseUrl}|${crypto.createHash("sha256").update(vendor.apiKey).digest("hex").slice(0, 16)}`;
+  let model = (heavy ? vendor.models[1] : vendor.models[0]) || vendor.models[0];
+  if (hasImage && aiVisionModel.get(cacheKey)) model = aiVisionModel.get(cacheKey);
+  const tried = [];
+  let visionList = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    tried.push(model);
+    try {
+      return await venueAiCompleteOnce(vendor, fmt, model, { system, parts, maxTokens });
+    } catch (e) {
+      const status = e.upstreamStatus || 0;
+      if (hasImage && isVisionRefusal(status, e.upstreamText)) {
+        if (!visionList) {
+          const ids = (await aiKeys.listModels({ baseUrl: vendor.baseUrl, format: fmt }, vendor.apiKey).catch(() => ({ ids: [] }))).ids || [];
+          visionList = pickVisionModels([...vendor.models.filter(Boolean), ...ids], tried);
+        }
+        const next = visionList.find((m) => !tried.includes(m));
+        if (!next) throw new HttpError(502, "Модели вашего ключа ИИ не умеют читать фото. В «Настройки ИИ» выберите модель с поддержкой изображений (например, GPT-4o mini или Gemini Flash).");
+        console.log(`saas-gateway: ИИ: модель «${model}» не читает фото — пробую «${next}»`);
+        model = next;
+        continue;
+      }
+      if (isBusy(status) && attempt < 2) {
+        await new Promise((r) => setTimeout(r, (attempt + 1) * 4000));
+        tried.pop();
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new HttpError(502, "Провайдер ИИ не ответил");
+}
+
+async function venueAiCompleteOnce(vendor, fmt, model, { system, parts, maxTokens }) {
+  const hasImage = parts.some((p) => p.type === "image");
   let payload;
   if (fmt === "anthropic") {
     payload = { model, max_tokens: maxTokens, system, messages: [{ role: "user", content: parts.map((p) => (p.type === "image"
@@ -8729,7 +8794,15 @@ async function venueAiComplete(vendor, { system, content, maxTokens = 4000, heav
   const r = await aiKeys.aiFetch(`${vendor.baseUrl}/${upstreamPath}`, {
     method: "POST", headers, body: JSON.stringify(scrubAiPayload(payload)), timeoutMs: 120000,
   });
-  if (r.status < 200 || r.status >= 300) throw new HttpError(502, `Провайдер ИИ ответил ${r.status}: ${String(r.text || "").slice(0, 160)}`);
+  if (r.status < 200 || r.status >= 300) {
+    const err = new HttpError(502, isBusy(r.status)
+      ? `Провайдер ИИ сейчас перегружен (${r.status}) — попробуйте через минуту`
+      : `Провайдер ИИ ответил ${r.status}: ${String(r.text || "").slice(0, 160)}`);
+    err.upstreamStatus = r.status;
+    err.upstreamText = r.text;
+    throw err;
+  }
+  if (hasImage) aiVisionModel.set(`${vendor.baseUrl}|${crypto.createHash("sha256").update(vendor.apiKey).digest("hex").slice(0, 16)}`, model);
   let j;
   try { j = JSON.parse(r.text); } catch (_) { throw new HttpError(502, "Провайдер ИИ прислал не JSON"); }
   const text = fmt === "anthropic"

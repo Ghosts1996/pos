@@ -9,6 +9,7 @@ import '../../data/app_db.dart';
 import '../gateway_api.dart';
 import 'flavors.dart';
 import 'mix_engine.dart';
+import 'tobacco_catalog.dart';
 
 /// Полка табака заведения: tenants/{t}/tobaccoShelf/{id}. Пишет персонал
 /// (фото полки или вручную), читают касса и приложение гостя — по ней
@@ -41,13 +42,18 @@ class TobaccoShelf {
     }
   }
 
-  /// Банка из ответа распознавания: вкусы — по словам ИИ и по названию.
+  /// Банка из ответа распознавания: марка — к одному написанию по каталогу
+  /// («блэк берн» → «Black Burn»), вкусы известной банки — из каталога
+  /// (tobacco_catalog.dart), иначе по словам ИИ и названию; крепость — как
+  /// прочитал ИИ, иначе обычная для марки.
   static TobaccoCan fromScan(Map<String, dynamic> m) {
-    final brand = '${m['brand'] ?? ''}'.trim();
+    final brand = canonicalBrand('${m['brand'] ?? ''}');
     final name = '${m['name'] ?? ''}'.trim();
     final words = (m['flavors'] is List) ? (m['flavors'] as List).join(', ') : '${m['flavors'] ?? ''}';
-    final flavors = flavorsInText('$words, $name');
-    return TobaccoCan(id: idOf(brand, name), brand: brand, name: name, flavors: flavors, strength: '${m['strength'] ?? ''}');
+    final flavors = flavorsOfCan(brand, name, words);
+    var strength = '${m['strength'] ?? ''}';
+    if (!const {'light', 'medium', 'strong'}.contains(strength)) strength = brandOf(brand)?.strength ?? '';
+    return TobaccoCan(id: idOf(brand, name), brand: brand, name: name, flavors: flavors, strength: strength);
   }
 
   /// Фото полки → банки (через ИИ заведения на сервере). Снимок ужат

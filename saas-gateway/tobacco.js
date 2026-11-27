@@ -20,10 +20,14 @@
 const fs = require("fs");
 const path = require("path");
 
-const TOBACCO_AI_PROMPT = `На фото — полка с банками табака для кальяна. Прочитай надписи на КАЖДОЙ видимой банке.
-Для каждой банки верни марку (Black Burn, Musthave, Darkside, Banger, Deus, Bonche, Spectrum, Sebero, Duft, Element, Satyr, Trofimoff, Хулиган, Dogma, Северный, Brusko, Nash, Lastochka, Terror, Sapphire, Chabacco, Jent, Starline, Overdose, Morpheus, Timeline, Frigate, ДГМ, Dedushka и др. — как написано), название вкуса так, как написано на банке, и сам вкус простыми русскими словами (например «Пинкман» → клубника, малина, грейпфрут; «Strawberry» → клубника).
-Одинаковые банки (одна марка и вкус) — один раз. Нечитаемые — пропусти, не выдумывай.
-Ответь только JSON: {"items":[{"brand":"Black Burn","name":"Спелая лесная малина","flavors":["малина"],"strength":"light|medium|strong|"}]}`;
+const TOBACCO_AI_PROMPT = `На фото — полка с банками табака для кальяна. Прочитай надписи на КАЖДОЙ видимой банке (и на крышках, и сбоку).
+Для каждой банки верни:
+- brand — марку, как написано (частые: Darkside, Musthave, Black Burn, Element, Tangiers, Al Fakher, Adalya, Serbetli, Fumari, Starbuzz, Spectrum, Sebero, Duft, Satyr, Bonche, Jent, Trofimoff, Deus, Dogma, Banger, Overdose, Хулиган, MattPear, Palitra, NАШ, Северный, Kraken, Daily Hookah, Burn, Sarma, Craftium, Starline, Morpheus, Lastochka, Terror, Timeline, Chabacco, Brusko, Zomo, Dedushka и др.);
+- name — название вкуса так, как написано на банке, без перевода (например «Pinkman», «Supernova», «Ice Baby», «Love 66», «Спелая лесная малина»);
+- flavors — из чего вкус, простыми русскими словами. Если название «придуманное», напиши, что знаешь об этой банке (Pinkman — грейпфрут, клубника, малина; Supernova — ментол, холодок; Love 66 — маракуйя, дыня, арбуз, мята). Не знаешь вкус и по надписи не понять — оставь пустым, не выдумывай;
+- strength — крепость, если написана или известна линейка (light|medium|strong), иначе пусто.
+Одинаковые банки (одна марка и вкус) — один раз. Нечитаемые — пропусти.
+Ответь только JSON: {"items":[{"brand":"Black Burn","name":"Ice Baby","flavors":["грейпфрут","ягоды","холодок"],"strength":"strong"}]}`;
 
 function cleanText(v, max) {
   return String(v == null ? "" : v).replace(/[\u0000-\u001f<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
