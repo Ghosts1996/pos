@@ -6,6 +6,7 @@ import '../../utils/human_error.dart';
 import '../../utils/money.dart';
 import '../../utils/phone_utils.dart';
 import '../../utils/adaptive.dart';
+import '../../build_info.dart';
 
 /// Справочник гостей приложения для администратора: уровень
 /// лояльности, кешбэк, число визитов, сумма трат и бонусный баланс —
@@ -91,6 +92,31 @@ class _GuestsScreenState extends State<GuestsScreen> {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('Не удалось удалить: ${humanError(e, lower: true)}')));
       }
+    }
+  }
+
+  /// Начислить или списать бонусы вручную (SaaS): за жалобу, акцию,
+  /// ошибку кассира. Причина попадает в историю бонусов гостя.
+  Future<void> _adjustBonuses(ClientProfile profile) async {
+    final res = await showDialog<_BonusAdjust>(
+      context: context,
+      builder: (ctx) => _BonusAdjustDialog(profile: profile),
+    );
+    if (res == null || !mounted) return;
+    void say(String text) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    try {
+      final applied = await _link.adjustBonuses(
+        clientUid: profile.uid,
+        delta: res.add ? res.amount : -res.amount,
+        note: res.note,
+      );
+      if (!mounted) return;
+      if (applied == 0) return say('Бонусы не изменились: на счёте гостя 0');
+      say(applied > 0
+          ? 'Начислено ${applied.round()} бонусов'
+          : 'Списано ${(-applied).round()} бонусов${-applied < res.amount ? ' (больше на счёте не было)' : ''}');
+    } catch (e) {
+      if (mounted) say('Не удалось изменить бонусы: ${humanError(e, lower: true)}');
     }
   }
 
@@ -273,9 +299,19 @@ class _GuestsScreenState extends State<GuestsScreen> {
                           icon: const Icon(Icons.more_vert),
                           onSelected: (v) {
                             if (v == 'phone') _changePhone(g);
+                            if (v == 'bonus') _adjustBonuses(g);
                             if (v == 'delete') _deleteGuest(g);
                           },
                           itemBuilder: (_) => [
+                            if (kSaasMode)
+                              const PopupMenuItem(
+                                value: 'bonus',
+                                child: ListTile(
+                                  leading: Icon(Icons.stars_outlined),
+                                  title: Text('Начислить или списать бонусы'),
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
                             const PopupMenuItem(
                               value: 'phone',
                               child: ListTile(
@@ -304,6 +340,107 @@ class _GuestsScreenState extends State<GuestsScreen> {
         ),
       ),
       backgroundColor: AppColors.background,
+    );
+  }
+}
+
+class _BonusAdjust {
+  final bool add;
+  final double amount;
+  final String note;
+  const _BonusAdjust(this.add, this.amount, this.note);
+}
+
+/// Окно «Бонусы гостя»: начислить / списать, сколько и за что.
+class _BonusAdjustDialog extends StatefulWidget {
+  final ClientProfile profile;
+  const _BonusAdjustDialog({required this.profile});
+
+  @override
+  State<_BonusAdjustDialog> createState() => _BonusAdjustDialogState();
+}
+
+class _BonusAdjustDialogState extends State<_BonusAdjustDialog> {
+  bool _add = true;
+  final _amount = TextEditingController();
+  final _note = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _amount.dispose();
+    _note.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final n = double.tryParse(_amount.text.trim().replaceAll(',', '.').replaceAll(' ', ''));
+    if (n == null || n <= 0 || n != n.roundToDouble()) {
+      setState(() => _error = 'Укажите целое число бонусов больше нуля');
+      return;
+    }
+    if (n > 100000) {
+      setState(() => _error = 'Не больше 100 000 за раз');
+      return;
+    }
+    if (!_add && n > widget.profile.bonusBalance) {
+      setState(() => _error = 'На счёте гостя ${widget.profile.bonusBalance.round()} бонусов');
+      return;
+    }
+    Navigator.pop(context, _BonusAdjust(_add, n, _note.text));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.profile;
+    return AlertDialog(
+      scrollable: true,
+      title: Text('Бонусы · ${p.name.isEmpty ? 'Гость' : p.name}'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Сейчас на счёте: ${p.bonusBalance.round()} бонусов',
+              style: TextStyle(color: AppColors.textMuted)),
+          const SizedBox(height: 14),
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(value: true, label: Text('Начислить'), icon: Icon(Icons.add)),
+              ButtonSegment(value: false, label: Text('Списать'), icon: Icon(Icons.remove)),
+            ],
+            selected: {_add},
+            onSelectionChanged: (v) => setState(() {
+              _add = v.first;
+              _error = null;
+            }),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            key: const Key('bonus-amount'),
+            controller: _amount,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(labelText: 'Сколько бонусов', errorText: _error),
+            onChanged: (_) {
+              if (_error != null) setState(() => _error = null);
+            },
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            key: const Key('bonus-note'),
+            controller: _note,
+            maxLength: 120,
+            decoration: const InputDecoration(
+              labelText: 'За что (видно гостю в истории)',
+              hintText: 'Например: извинение за ожидание',
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+        FilledButton(onPressed: _submit, child: Text(_add ? 'Начислить' : 'Списать')),
+      ],
     );
   }
 }

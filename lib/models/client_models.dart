@@ -324,7 +324,9 @@ class BonusOpView {
     final reason = asTextOrNull(m['reason']) ?? '';
     final plus = type == 'accrual' || type == 'redeem_cancelled';
     final bonuses = ((m['bonus'] ?? m['amount'] ?? 0) as num).toDouble();
-    return BonusOpView(plus, bonuses, _title(type, reason, plus));
+    final note = asTextOrNull(m['note']) ?? '';
+    final title = _title(type, reason, plus);
+    return BonusOpView(plus, bonuses, reason == 'manual' && note.isNotEmpty ? '$title: $note' : title);
   }
 
   static String _title(String type, String reason, bool plus) {
@@ -339,6 +341,8 @@ class BonusOpView {
         return 'Подарок ко дню рождения';
       case 'winback':
         return 'Подарок: ждём вас снова';
+      case 'manual':
+        return plus ? 'Начислено заведением' : 'Списано заведением';
       case 'refund':
         return plus ? 'Возврат чека: бонусы вернулись' : 'Возврат чека: бонусы за визит отменены';
       case 'refund_undone':

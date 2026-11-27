@@ -1156,6 +1156,41 @@ class GuestLinkService {
     return applied;
   }
 
+  /// Начислить (delta > 0) или списать (delta < 0) бонусы вручную —
+  /// администратор из «Гостей». Списать больше баланса нельзя: берётся
+  /// остаток. Причина видна гостю в истории бонусов. Возвращает, сколько
+  /// бонусов изменилось на самом деле (со знаком).
+  Future<double> adjustBonuses({
+    required String clientUid,
+    required double delta,
+    String note = '',
+    String by = '',
+  }) async {
+    if (clientUid.isEmpty || delta == 0 || delta.isNaN) return 0;
+    final ref = _clients.doc(clientUid);
+    final clean = note.trim().replaceAll(RegExp(r'\s+'), ' ');
+    final reason = clean.length > 120 ? clean.substring(0, 120) : clean;
+    double applied = 0;
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      if (!snap.exists) return;
+      final balance = ((snap.data()?['bonusBalance'] ?? 0) as num).toDouble();
+      applied = delta < 0 ? -(-delta > balance ? balance : -delta) : delta;
+      if (applied == 0) return;
+      tx.update(ref, {'bonusBalance': balance + applied});
+      tx.set(AppScope.loyaltyCol('bonusOperations').doc(), {
+        'clientUid': clientUid,
+        'type': applied > 0 ? 'accrual' : 'redeem',
+        'amount': applied.abs(),
+        'reason': 'manual',
+        if (reason.isNotEmpty) 'note': reason,
+        if (by.isNotEmpty) 'by': by,
+        'createdAt': Timestamp.fromDate(DateTime.now()),
+      });
+    });
+    return applied;
+  }
+
   /// Вернуть гостю бонусы, списанные на экране оплаты, если оплата так и
   /// не была проведена (кассир вышел с экрана, оплату отменили).
   ///

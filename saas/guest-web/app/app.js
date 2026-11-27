@@ -4342,7 +4342,7 @@ function watchBonusOps() {
             <span style="color:${plus ? 'var(--primary)' : 'var(--warning)'}">
               ${plus ? '⊕' : '⊖'}</span>
             <div class="grow">
-              <div>${esc(bonusReason(v.reason, plus, v.type))}</div>
+              <div>${esc(bonusReason(v.reason, plus, v.type))}${v.reason === 'manual' && v.note ? `: ${esc(String(v.note).slice(0, 120))}` : ''}</div>
               <div class="small muted">${when ? dmyy(when) : ''}</div>
             </div>
             <div style="font-weight:700;color:${plus ? 'var(--primary)' : 'var(--warning)'}">
@@ -4367,6 +4367,7 @@ function bonusReason(reason, plus, type) {
     case 'refund': return plus ? 'Возврат чека: бонусы вернулись' : 'Возврат чека: бонусы за визит отменены';
     case 'refund_undone': return plus ? 'Возврат отменён: бонусы за визит' : 'Возврат отменён: бонусы списаны снова';
     case 'visit': return 'Начисление за визит';
+    case 'manual': return plus ? 'Начислено заведением' : 'Списано заведением';
   }
   if (type === 'redeem_cancelled') return 'Оплата бонусами отменена';
   return plus ? 'Начисление за визит' : 'Списание бонусов';
