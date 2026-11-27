@@ -62,19 +62,64 @@ class TobaccoShelf {
     final bytes = await photo.readAsBytes();
     final data = base64Encode(bytes);
     if (data.length > 960000) {
-      throw GatewayException('Фото слишком большое — снимите полку ещё раз (ближе, без зума)');
+      throw GatewayException('Фото слишком подробное — снимите полку частями, по одной-две полки');
     }
     final name = photo.name.toLowerCase();
     final type = name.endsWith('.png') ? 'image/png' : (name.endsWith('.webp') ? 'image/webp' : 'image/jpeg');
-    final res = await GatewayApi.post('tobaccoShelf', {
-      'action': 'scan',
-      'page': {'mediaType': type, 'data': data},
-    });
+    final page = {'mediaType': type, 'data': data};
+    final res = await _scanOnServer(page);
     return [
       for (final m in (res['items'] as List? ?? const []))
         if (m is Map) fromScan(Map<String, dynamic>.from(m)),
     ];
   }
+
+  /// Большая полка читается ИИ дольше минуты — столько не ждут ни касса,
+  /// ни прокси сервера. Поэтому снимок уходит заданием (scanStart), а
+  /// результат касса забирает раз в 3 с (scanResult), до 4 минут. Пропала
+  /// связь на пару опросов — ждём дальше, а не пишем «нет связи».
+  static Future<Map<String, dynamic>> _scanOnServer(Map<String, dynamic> page) async {
+    Map<String, dynamic> start;
+    try {
+      start = await gatewayPost('tobaccoShelf', {'action': 'scanStart', 'page': page}, const Duration(seconds: 90));
+    } on GatewayException catch (e) {
+      // Сервер старой версии — по-старому, одним запросом.
+      if (!e.message.contains('Неизвестное действие')) rethrow;
+      return gatewayPost('tobaccoShelf', {'action': 'scan', 'page': page}, const Duration(seconds: 90));
+    }
+    final job = start['job'];
+    if (job is! String || job.isEmpty) throw GatewayException('Сервер не принял снимок — попробуйте ещё раз');
+    final until = DateTime.now().add(const Duration(minutes: 4));
+    var misses = 0;
+    while (DateTime.now().isBefore(until)) {
+      await Future<void>.delayed(scanPollEvery);
+      Map<String, dynamic> r;
+      try {
+        r = await gatewayPost('tobaccoShelf', {'action': 'scanResult', 'job': job}, const Duration(seconds: 25));
+      } on GatewayException catch (e) {
+        if (!e.message.startsWith('Нет связи') || ++misses > 10) rethrow;
+        continue;
+      }
+      misses = 0;
+      switch (r['status']) {
+        case 'done':
+          return r;
+        case 'failed':
+          throw GatewayException((r['error'] ?? 'ИИ не прочитал полку').toString());
+      }
+    }
+    throw GatewayException('ИИ читает полку дольше 4 минут — снимите полку частями, по одной-две полки');
+  }
+
+  /// Запрос к серверу (тесты подменяют).
+  static Future<Map<String, dynamic>> Function(String path, Map<String, dynamic> body, Duration timeout) gatewayPost =
+      GatewayApi.post;
+
+  /// Разбор снимка на сервере — для тестов без камеры.
+  static Future<Map<String, dynamic>> scanPageForTest(Map<String, dynamic> page) => _scanOnServer(page);
+
+  /// Пауза между опросами результата (тесты ставят меньше).
+  static Duration scanPollEvery = const Duration(seconds: 3);
 
   /// Сохранить банки на полку (повторы обновляются, «в наличии» включается)
   /// и пополнить общий каталог вкусов — так база узнаёт о новинках.

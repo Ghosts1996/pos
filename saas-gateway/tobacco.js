@@ -19,10 +19,14 @@
  */
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const TOBACCO_AI_PROMPT = `На фото — полка с банками табака для кальяна. Прочитай надписи на КАЖДОЙ видимой банке (и на крышках, и сбоку).
+Банки бывают стопками, разной высоты, стеклянными с наклейкой, частично закрыты соседними; свет бывает тусклым — читай внимательно каждую стопку сверху вниз, слева направо.
+Частая подпись «с ароматом …», «аромат …» — это и есть вкус банки. Марка обычно крупно на крышке или на ленте сбоку.
+НЕ бери банки с обоев, плакатов, наклеек, фотографий и рекламы на стене — только настоящие банки на полке.
 Для каждой банки верни:
-- brand — марку, как написано (частые: Darkside, Musthave, Black Burn, Element, Tangiers, Al Fakher, Adalya, Serbetli, Fumari, Starbuzz, Spectrum, Sebero, Duft, Satyr, Bonche, Jent, Trofimoff, Deus, Dogma, Banger, Overdose, Хулиган, MattPear, Palitra, NАШ, Северный, Kraken, Daily Hookah, Burn, Sarma, Craftium, Starline, Morpheus, Lastochka, Terror, Timeline, Chabacco, Brusko, Zomo, Dedushka и др.);
+- brand — марку, как написано (частые: Darkside, Musthave, Black Burn, Element, Blanch, Timeless, Sapphire Crown, Original Virginia, Tangiers, Al Fakher, Adalya, Serbetli, Fumari, Starbuzz, Spectrum, Sebero, Duft, Satyr, Bonche, Jent, Trofimoff, Deus, Dogma, Banger, Overdose, Хулиган, MattPear, Palitra, NАШ, Северный, Kraken, Daily Hookah, Burn, Sarma, Craftium, Starline, Morpheus, Lastochka, Terror, Timeline, Chabacco, Brusko, Zomo, Dedushka и др.);
 - name — название вкуса так, как написано на банке, без перевода (например «Pinkman», «Supernova», «Ice Baby», «Love 66», «Спелая лесная малина»);
 - flavors — из чего вкус, простыми русскими словами. Если название «придуманное», напиши, что знаешь об этой банке (Pinkman — грейпфрут, клубника, малина; Supernova — ментол, холодок; Love 66 — маракуйя, дыня, арбуз, мята). Не знаешь вкус и по надписи не понять — оставь пустым, не выдумывай;
 - strength — крепость, если написана или известна линейка (light|medium|strong), иначе пусто.
@@ -73,6 +77,38 @@ function createTobacco(deps) {
     } catch (e) {
       console.error(`tobacco: каталог не сохранён: ${e.message}`);
     }
+  }
+
+  // Большая полка читается ИИ дольше минуты: и касса, и nginx столько не
+  // ждут одного ответа. Поэтому разбор — заданием: scanStart отдаёт номер,
+  // касса спрашивает scanResult раз в несколько секунд.
+  const jobs = new Map(); // id → {tid, status, items, error, at}
+  const JOB_TTL_MS = 15 * 60 * 1000;
+  function sweepJobs() {
+    const t = now();
+    for (const [id, j] of jobs) if (t - j.at > JOB_TTL_MS) jobs.delete(id);
+  }
+  function scanStart(tid, body) {
+    sweepJobs();
+    if ([...jobs.values()].filter((j) => j.tid === tid && j.status === "running").length >= 3) {
+      throw new HttpError(429, "Уже читаются три снимка — дождитесь результата");
+    }
+    const id = crypto.randomBytes(12).toString("hex");
+    const job = { tid, status: "running", items: null, error: "", at: now() };
+    jobs.set(id, job);
+    // Проверки (размер, лимит, ИИ подключён) — сразу, ошибка уйдёт в ответ.
+    const run = scan(tid, body);
+    run.then((r) => { job.status = "done"; job.items = r.items; job.at = now(); },
+      (e) => { job.status = "failed"; job.error = String((e && e.message) || e).slice(0, 300); job.code = e && e.status; job.at = now(); });
+    return { job: id };
+  }
+  function scanResult(tid, body) {
+    const j = jobs.get(String(body.job || ""));
+    if (!j || j.tid !== tid) throw new HttpError(404, "Снимок не найден — сфотографируйте полку ещё раз");
+    if (j.status === "running") return { status: "running" };
+    jobs.delete(String(body.job));
+    if (j.status === "failed") return { status: "failed", error: j.error };
+    return { status: "done", items: j.items };
   }
 
   async function scan(tid, body) {
@@ -148,12 +184,14 @@ function createTobacco(deps) {
     await requireTenantRole(tid, decoded.uid, ["owner", "admin", "manager", "employee"]);
     const action = String(body.action || "scan");
     if (action === "scan") return sendJson(res, 200, await scan(tid, body));
+    if (action === "scanStart") return sendJson(res, 200, scanStart(tid, body));
+    if (action === "scanResult") return sendJson(res, 200, scanResult(tid, body));
     if (action === "learn") return sendJson(res, 200, learn(Array.isArray(body.items) ? body.items : []));
     if (action === "catalog") return sendJson(res, 200, fresh(Number(body.limit) || 60));
     throw new HttpError(400, "Неизвестное действие");
   }
 
-  return { handle, scan, learn, fresh };
+  return { handle, scan, scanStart, scanResult, learn, fresh, jobs };
 }
 
 module.exports = { createTobacco, itemsFromAi, TOBACCO_AI_PROMPT };

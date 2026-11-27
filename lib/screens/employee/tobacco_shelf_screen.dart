@@ -46,7 +46,9 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
 
   Future<void> _scan(ImageSource source) async {
     final photo = await AppLock.instance.whileAway(
-        () => ImagePicker().pickImage(source: source, maxWidth: 1400, maxHeight: 1400, imageQuality: 72));
+        () => // Мелкие надписи на банках читаются только на крупном снимке; 1700 px
+        // при качестве 68 укладываются в 0,9 МБ даже на «пёстрой» полке.
+        ImagePicker().pickImage(source: source, maxWidth: 1700, maxHeight: 1700, imageQuality: 68));
     if (photo == null || !mounted) return;
     setState(() => _scanning = true);
     try {
@@ -218,7 +220,7 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
                       icon: _scanning
                           ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                           : const Icon(Icons.photo_camera_outlined),
-                      label: Text(_scanning ? 'Читаю банки…' : 'Сфотографировать полку'),
+                      label: Text(_scanning ? 'Читаю банки… до минуты' : 'Сфотографировать полку'),
                     ),
                   ),
                   const SizedBox(width: 8),

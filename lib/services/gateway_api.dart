@@ -45,7 +45,8 @@ class GatewayApi {
     return json;
   }
 
-  static Future<Map<String, dynamic>> post(String path, [Map<String, dynamic> body = const {}]) async {
+  static Future<Map<String, dynamic>> post(String path,
+      [Map<String, dynamic> body = const {}, Duration timeout = const Duration(seconds: 25)]) async {
     final token = await AppAuth.instance.currentUser?.getIdToken();
     if (kSaasGatewayUrl.isEmpty || token == null) {
       throw GatewayException('Сервер сейчас недоступен — проверьте интернет');
@@ -58,7 +59,7 @@ class GatewayApi {
             headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
             body: jsonEncode({'tenantId': AppScope.tenantId, ...body}),
           )
-          .timeout(const Duration(seconds: 25));
+          .timeout(timeout);
     } catch (_) {
       throw GatewayException('Нет связи с сервером — проверьте интернет и попробуйте ещё раз');
     }

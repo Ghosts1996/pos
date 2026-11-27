@@ -49,6 +49,36 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     await assert.rejects(tob.scan("t3", { page }), (e) => e.status === 422);
   });
 
+  await ok("большая полка — заданием: старт сразу, результат потом", async () => {
+    let release;
+    const slow = new Promise((r) => { release = r; });
+    const tob2 = createTobacco({
+      verifyAuth: async (req) => ({ uid: req.uid }), parseJsonBody: async (req) => req.body, sendJson: (res, code, body) => { res.code = code; res.body = body; },
+      HttpError, requireTenantRole: async () => {}, aiVendor: async () => ({ id: "x" }),
+      aiComplete: async () => { await slow; return '{"items":[{"brand":"Blanch","name":"Мангомания","flavors":["манго"]}]}'; },
+      extractJson: (s) => JSON.parse(s.slice(s.indexOf("{"), s.lastIndexOf("}") + 1)), limiter: new Map(), stateDir: dir, now: () => t,
+    });
+    const res = {};
+    await tob2.handle({ uid: "u-emp", body: { tenantId: "t9", action: "scanStart", page } }, res);
+    const job = res.body.job;
+    assert.match(job, /^[0-9a-f]{24}$/);
+    assert.equal(tob2.scanResult("t9", { job }).status, "running");
+    assert.throws(() => tob2.scanResult("чужое", { job }), (e) => e.status === 404);
+    release();
+    await new Promise((r) => setImmediate(r));
+    const done = tob2.scanResult("t9", { job });
+    assert.equal(done.status, "done");
+    assert.equal(done.items[0].name, "Мангомания");
+    assert.throws(() => tob2.scanResult("t9", { job }), (e) => e.status === 404); // выдаётся один раз
+    // Ошибка ИИ — честный «failed» с текстом, а не «нет связи».
+    const r2 = {};
+    await tob2.handle({ uid: "u-emp", body: { tenantId: "t9", action: "scanStart", page: { mediaType: "image/gif", data: "QUJD" } } }, r2);
+    await new Promise((r) => setImmediate(r));
+    const f = tob2.scanResult("t9", { job: r2.body.job });
+    assert.equal(f.status, "failed");
+    assert.match(f.error, /JPEG/);
+  });
+
   await ok("гость не может распознавать полку", async () => {
     await assert.rejects(tob.handle({ uid: "u-guest", body: { tenantId: "t1", action: "scan", page } }, {}), (e) => e.status === 403);
   });
@@ -66,6 +96,6 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     assert.equal(again.fresh().total, 3);
   });
 
-  console.log(`tobacco: ${n} из 4 проверок`);
+  console.log(`tobacco: ${n} из 5 проверок`);
   fs.rmSync(dir, { recursive: true, force: true });
 })().catch((e) => { console.error(e); process.exit(1); });

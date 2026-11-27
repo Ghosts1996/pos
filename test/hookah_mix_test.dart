@@ -88,6 +88,7 @@ void main() {
     expect(canonicalBrand('BLACKBURN'), 'Black Burn');
     expect(canonicalBrand('блэк берн'), 'Black Burn');
     expect(canonicalBrand('Дарксайд'), 'Darkside');
+    expect(canonicalBrand('БЛАНШ'), 'Blanch');
     expect(canonicalBrand('Неизвестная марка'), 'Неизвестная марка');
     expect(knownCan('Musthave', 'Pinkman')?.flavors, ['grapefruit', 'strawberry', 'raspberry']);
     expect(flavorsOfCan('Darkside', 'Supernova', ''), containsAll(['menthol', 'ice']));

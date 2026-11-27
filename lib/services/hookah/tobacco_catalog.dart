@@ -63,6 +63,10 @@ const List<TobaccoBrand> kTobaccoBrands = [
   TobaccoBrand('Brusko', ['бруско'], 'light'),
   TobaccoBrand('Zomo', ['зомо'], 'light'),
   TobaccoBrand('Dedushka', ['дедушка'], 'strong'),
+  TobaccoBrand('Blanch', ['бланш', 'blansh', 'бланч'], 'medium'),
+  TobaccoBrand('Timeless', ['таймлесс', 'таймлес'], 'medium'),
+  TobaccoBrand('Sapphire Crown', ['сапфир кроун', 'sapphire'], 'light'),
+  TobaccoBrand('Original Virginia', ['ориджинал вирджиния', 'original virginia', 'ov'], 'strong'),
 ];
 
 /// Известные банки: «Марка|Название; другое написание|вкусы (ключи flavors.dart)».
