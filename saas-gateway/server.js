@@ -32,7 +32,7 @@ for (const level of ["error", "warn"]) {
   };
 }
 const admin = require("firebase-admin");
-const { execFile } = require("child_process");
+const { execFile, spawn } = require("child_process");
 const tls = require("tls");
 const dns = require("dns");
 const net = require("net");
@@ -107,7 +107,7 @@ const GITHUB_REF = process.env.GITHUB_REF || "production";
 
 // Личные APK заведений: сборка кладёт их сюда по SSH (Storage у проекта
 // без Blaze недоступен). Отдаёт handleDownloadBuild после проверки роли.
-const TENANT_BUILDS_DIR = path.join(__dirname, "tenant-builds");
+const TENANT_BUILDS_DIR = process.env.TENANT_BUILDS_DIR || path.join(__dirname, "tenant-builds");
 
 // Логотипы заведений. Читаются публично (nginx, location /branding/),
 // запись — только через handleUploadBrandingLogo.
@@ -3385,6 +3385,11 @@ async function handleCompleteBuildJob(req, res) {
  * На сервере храним только последнюю готовую сборку каждого приложения
  * заведения: устройства обновляются до неё сами, а каждое обновление
  * платформы пересобирает всех. Старые помечаются superseded, файлы удаляются.
+ *
+ * Обновление «как у Google» (apk-delta.js): у Android-сборок предыдущая
+ * сборка остаётся на диске (deltaBase), пока сервер не построит патч от неё к
+ * новой, — устройства с прошлой версией качают только разницу. После
+ * патча файл прошлой сборки удаляется (apkDeltaDone).
  */
 async function supersedeOldBuilds(tenantId) {
   const snap = await db()
@@ -3393,22 +3398,160 @@ async function supersedeOldBuilds(tenantId) {
     .orderBy("createdAt", "desc")
     .limit(60)
     .get();
-  const newest = new Map(); // "type/platform" -> самая свежая готовая
   const rank = (j) => (Number.isInteger(j.buildNumber) ? j.buildNumber : 0);
-  const done = snap.docs.filter((d) => d.data().status === "success");
-  for (const d of done) {
-    const key = `${d.data().type}/${d.data().platform || "android"}`;
-    const cur = newest.get(key);
-    if (!cur || rank(d.data()) > rank(cur.data())) newest.set(key, d);
+  const groups = new Map(); // "type/platform" -> сборки по убыванию номера
+  for (const d of snap.docs) {
+    const j = d.data();
+    if (j.status !== "success" && !(j.status === "superseded" && j.deltaBase === true)) continue;
+    const key = `${j.type}/${j.platform || "android"}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(d);
   }
-  const keep = new Set([...newest.values()].map((d) => d.id));
-  const old = done.filter((d) => !keep.has(d.id));
-  for (const d of old) {
-    await d.ref.update({ status: "superseded", downloadPath: null });
-    await fs.promises.rm(path.join(TENANT_BUILDS_DIR, tenantId, `${d.id}.apk`), { force: true }).catch(() => {});
+  let changed = 0;
+  for (const [key, list] of groups) {
+    list.sort((a, b) => rank(b.data()) - rank(a.data()));
+    const newestIdx = list.findIndex((d) => d.data().status === "success");
+    if (newestIdx < 0) continue;
+    const newest = list[newestIdx];
+    const android = key.endsWith("/android");
+    let base = null;
+    if (android) {
+      base = list.find((d, i) => i !== newestIdx && rank(d.data()) < rank(newest.data()) && rank(d.data()) > 0) || null;
+      if (base && !fs.existsSync(path.join(TENANT_BUILDS_DIR, tenantId, `${base.id}.apk`))) base = null;
+    }
+    for (const d of list) {
+      if (d.id === newest.id) continue;
+      if (base && d.id === base.id) {
+        if (d.data().status !== "superseded" || d.data().deltaBase !== true) {
+          await d.ref.update({ status: "superseded", downloadPath: null, deltaBase: true });
+          changed++;
+        }
+        continue;
+      }
+      await d.ref.update({ status: "superseded", downloadPath: null, deltaBase: false });
+      await removeBuildFiles(tenantId, d.id);
+      changed++;
+    }
+    // Патчи к новой сборке — только от текущей базы.
+    await removeBuildPatches(tenantId, newest.id, base ? rank(base.data()) : null);
   }
-  if (old.length) forgetAppUpdates(tenantId);
-  return old.length;
+  if (changed) forgetAppUpdates(tenantId);
+  if (changed) queueApkDeltas(tenantId);
+  return changed;
+}
+
+async function removeBuildFiles(tenantId, jobId) {
+  await fs.promises.rm(path.join(TENANT_BUILDS_DIR, tenantId, `${jobId}.apk`), { force: true }).catch(() => {});
+  await removeBuildPatches(tenantId, jobId, null);
+}
+
+/** Патчи «<сборка>.fromN» — кроме патча от keepFrom. */
+async function removeBuildPatches(tenantId, jobId, keepFrom) {
+  const dir = path.join(TENANT_BUILDS_DIR, tenantId);
+  for (const name of await fs.promises.readdir(dir).catch(() => [])) {
+    const m = /^([A-Za-z0-9]+)\.from(\d+)\.(zpatch|json)(\.tmp)?$/.exec(name);
+    if (!m || m[1] !== jobId || (keepFrom !== null && Number(m[2]) === keepFrom && !m[4])) continue;
+    await fs.promises.rm(path.join(dir, name), { force: true }).catch(() => {});
+  }
+}
+
+// ------------------------------------------- патчи обновлений (как у Google)
+
+const APK_DELTA_TIMEOUT_MS = 20 * 60 * 1000;
+const APK_DELTA_MIN_FREE_MEM = 500 * 1048576;
+const apkDeltaQueue = []; // tenantId
+let apkDeltaBusy = false;
+
+/** Построить недостающие патчи заведения (по очереди, в отдельном процессе). */
+function queueApkDeltas(tenantId) {
+  if (!APK_DELTAS_ON) return;
+  if (!apkDeltaQueue.includes(tenantId)) apkDeltaQueue.push(tenantId);
+  setImmediate(runApkDeltaQueue);
+}
+
+const APK_DELTAS_ON = require.main === module || process.env.APK_DELTAS === "1";
+
+async function runApkDeltaQueue() {
+  if (apkDeltaBusy) return;
+  apkDeltaBusy = true;
+  try {
+    while (apkDeltaQueue.length) {
+      if (os.freemem() < APK_DELTA_MIN_FREE_MEM && !process.env.APK_DELTAS) {
+        // Мало памяти (идёт сборка карты) — попробуем при следующем обходе.
+        apkDeltaQueue.length = 0;
+        break;
+      }
+      const tenantId = apkDeltaQueue.shift();
+      await buildApkDeltas(tenantId).catch((e) => console.error(`saas-gateway: патч обновления ${tenantId}:`, e.message || e));
+    }
+  } finally {
+    apkDeltaBusy = false;
+  }
+}
+
+async function buildApkDeltas(tenantId) {
+  const snap = await db().collection("buildJobs").where("tenantId", "==", tenantId)
+    .orderBy("createdAt", "desc").limit(60).get();
+  const jobs = snap.docs.map((d) => ({ id: d.id, ref: d.ref, ...d.data() }))
+    .filter((j) => (j.platform || "android") === "android" && Number.isInteger(j.buildNumber));
+  const dir = path.join(TENANT_BUILDS_DIR, tenantId);
+  for (const base of jobs.filter((j) => j.status === "superseded" && j.deltaBase === true)) {
+    const newest = jobs.filter((j) => j.status === "success" && j.type === base.type && j.buildNumber > base.buildNumber)
+      .sort((a, b) => b.buildNumber - a.buildNumber)[0];
+    const basePath = path.join(dir, `${base.id}.apk`);
+    if (!newest) continue;
+    const prefix = path.join(dir, `${newest.id}.from${base.buildNumber}`);
+    if (!fs.existsSync(`${prefix}.json`) && fs.existsSync(basePath) && fs.existsSync(path.join(dir, `${newest.id}.apk`))) {
+      const result = await runApkDeltaWorker(basePath, path.join(dir, `${newest.id}.apk`), prefix);
+      console.log(`saas-gateway: патч обновления ${tenantId} ${base.type} ${base.buildNumber}→${newest.buildNumber}: ${result}`);
+    }
+    // Патч готов (или не получился) — прошлая сборка больше не нужна.
+    if (fs.existsSync(`${prefix}.json`)) {
+      await base.ref.update({ deltaBase: false }).catch(() => {});
+      await removeBuildFiles(tenantId, base.id);
+      forgetAppUpdates(tenantId);
+    }
+  }
+}
+
+function runApkDeltaWorker(oldPath, newPath, prefix) {
+  return new Promise((resolve) => {
+    const script = path.join(__dirname, "apk-delta-worker.js");
+    const args = ["--stack-size=4000", script, oldPath, newPath, prefix];
+    // Низкий приоритет: касса и гости важнее патча.
+    const useNice = fs.existsSync("/usr/bin/nice");
+    const child = useNice
+      ? spawn("/usr/bin/nice", ["-n", "19", process.execPath, ...args], { stdio: ["ignore", "pipe", "pipe"] })
+      : spawn(process.execPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (c) => { out += c; });
+    child.stderr.on("data", (c) => { err += c; });
+    const timer = setTimeout(() => child.kill("SIGKILL"), APK_DELTA_TIMEOUT_MS);
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) return resolve(out.slice(0, 400));
+      // Не вышло — отметка «патча нет», чтобы не пытаться снова и освободить место.
+      try {
+        fs.writeFileSync(`${prefix}.json`, JSON.stringify({ useful: false, error: (err || `код ${code}`).slice(0, 300), at: new Date().toISOString() }));
+      } catch (_) {}
+      resolve(`ошибка: ${(err || `код ${code}`).slice(0, 300)}`);
+    });
+  });
+}
+
+/** Готовый патч от сборки fromBuild к сборке job (null — нет). */
+function apkPatchFor(tenantId, jobId, fromBuild) {
+  if (!Number.isInteger(fromBuild) || fromBuild <= 0) return null;
+  const prefix = path.join(TENANT_BUILDS_DIR, tenantId, `${jobId}.from${fromBuild}`);
+  try {
+    const meta = JSON.parse(fs.readFileSync(`${prefix}.json`, "utf8"));
+    if (!meta.useful || !fs.existsSync(`${prefix}.zpatch`)) return null;
+    if (!/^[0-9a-f]{64}$/.test(meta.sha256) || !/^[0-9a-f]{64}$/.test(meta.fromSha256)) return null;
+    return meta;
+  } catch (_) {
+    return null;
+  }
 }
 
 /**
@@ -3443,9 +3586,10 @@ async function sweepTenantBuilds() {
       .orderBy("createdAt", "desc")
       .limit(60)
       .get();
-    const keep = new Set(snap.docs.filter((d) => ["success", "queued"].includes(d.data().status)).map((d) => d.id));
+    const keep = new Set(snap.docs.filter((d) => ["success", "queued"].includes(d.data().status)
+      || (d.data().status === "superseded" && d.data().deltaBase === true)).map((d) => d.id));
     for (const name of await fs.promises.readdir(dir).catch(() => [])) {
-      const m = /^([A-Za-z0-9]+)\.apk$/.exec(name);
+      const m = /^([A-Za-z0-9]+)(\.apk|\.from\d+\.(zpatch|json))$/.exec(name);
       if (m && keep.has(m[1])) continue;
       const file = path.join(dir, name);
       const st = await fs.promises.stat(file).catch(() => null);
@@ -3539,6 +3683,17 @@ function scheduleMenuPopularity() {
 
 function scheduleBuildsSweep() {
   scheduleDailyJob("buildsSweep", 24 * 3600 * 1000, sweepTenantBuilds, 25 * 60 * 1000);
+  // Патчи, которые не успели построить (перезапуск сервера, мало памяти).
+  if (APK_DELTAS_ON) {
+    const tick = async () => {
+      const dirs = await fs.promises.readdir(TENANT_BUILDS_DIR, { withFileTypes: true }).catch(() => []);
+      for (const d of dirs) {
+        if (d.isDirectory() && /^[A-Za-z0-9_-]+$/.test(d.name) && d.name !== PUBLIC_DEMO_DIR) queueApkDeltas(d.name);
+      }
+    };
+    setTimeout(tick, 4 * 60 * 1000).unref();
+    setInterval(tick, 30 * 60 * 1000).unref();
+  }
 }
 
 // ------------------------------------------------- автообновление
@@ -3757,6 +3912,25 @@ async function handleDownloadBuild(req, res) {
 
   // На диске файл всегда "{jobId}.apk" (так пишет deploy-tenant-apk.sh),
   // что внутри — определяют Content-Type и имя в Content-Disposition.
+  // Патч обновления (apk-delta.js) — от сборки from к этой.
+  const from = requestUrl.searchParams.get("from");
+  if (from !== null) {
+    if (!/^\d{1,9}$/.test(from)) throw new HttpError(400, "некорректный from");
+    const name = `${jobId}.from${from}.zpatch`;
+    try {
+      await fs.promises.access(path.join(TENANT_BUILDS_DIR, job.tenantId, name), fs.constants.R_OK);
+    } catch (_) {
+      throw new HttpError(404, "патча нет — скачайте обновление целиком");
+    }
+    res.writeHead(200, {
+      "Content-Type": "application/octet-stream",
+      "Content-Disposition": `attachment; filename="update-${jobId}-from${from}.zpatch"`,
+      "Access-Control-Allow-Origin": "*",
+      "X-Accel-Redirect": `/internal-tenant-builds/${job.tenantId}/${name}`,
+    });
+    return res.end();
+  }
+
   const filePath = path.join(TENANT_BUILDS_DIR, job.tenantId, `${jobId}.apk`);
   try {
     await fs.promises.access(filePath, fs.constants.R_OK);
@@ -3913,13 +4087,25 @@ async function handleAppUpdate(req, res) {
   }
   const expiresAt = Date.now() + DOWNLOAD_TOKEN_TTL_MS;
   const token = signDownloadToken(latest.id, expiresAt);
+  const url = `/downloadBuild?jobId=${encodeURIComponent(latest.id)}&token=${encodeURIComponent(`${expiresAt}.${token}`)}`;
+  // Обновление «как у Google»: у устройства прошлая сборка — только разница.
+  const meta = platform === "android" ? apkPatchFor(latest.tenantId || tenantId, latest.id, current) : null;
   sendJson(res, 200, {
     update: true,
     buildNumber,
     jobId: latest.id,
     sizeBytes,
     builtAt: latest.completedAt,
-    url: `/downloadBuild?jobId=${encodeURIComponent(latest.id)}&token=${encodeURIComponent(`${expiresAt}.${token}`)}`,
+    url,
+    ...(meta && meta.newSize === sizeBytes ? {
+      patch: {
+        url: `${url}&from=${current}`,
+        sizeBytes: meta.size,
+        sha256: meta.sha256,
+        fromSize: meta.fromSize,
+        fromSha256: meta.fromSha256,
+      },
+    } : {}),
   });
 }
 

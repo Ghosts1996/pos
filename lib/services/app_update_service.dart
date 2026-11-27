@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -10,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../build_info.dart';
+import 'apk_patch.dart';
 import 'app_lock.dart';
 import 'app_scope.dart';
 import '../data/app_db.dart';
@@ -46,7 +48,10 @@ class AppUpdateInfo {
   /// берётся свежая.
   final String url;
 
-  const AppUpdateInfo({required this.buildNumber, required this.sizeBytes, required this.url});
+  /// Обновление «как у Google»: разница с установленной версией (Android).
+  final AppUpdatePatch? patch;
+
+  const AppUpdateInfo({required this.buildNumber, required this.sizeBytes, required this.url, this.patch});
 
   /// null — обновления нет или ответ не похож на правду (номер не больше
   /// нашего, ссылка не на файл сборки).
@@ -57,7 +62,40 @@ class AppUpdateInfo {
     if (n is! int || n <= current) return null;
     if (url is! String || !url.startsWith('/downloadBuild?')) return null;
     final size = json['sizeBytes'];
-    return AppUpdateInfo(buildNumber: n, sizeBytes: size is int && size > 0 ? size : 0, url: url);
+    return AppUpdateInfo(
+      buildNumber: n,
+      sizeBytes: size is int && size > 0 ? size : 0,
+      url: url,
+      patch: AppUpdatePatch.fromJson(json['patch']),
+    );
+  }
+}
+
+/// Патч от установленной версии к новой (saas-gateway/apk-delta.js).
+class AppUpdatePatch {
+  final String url;
+  final int sizeBytes;
+  final String sha256;
+  final int fromSize;
+  final String fromSha256;
+
+  const AppUpdatePatch({
+    required this.url,
+    required this.sizeBytes,
+    required this.sha256,
+    required this.fromSize,
+    required this.fromSha256,
+  });
+
+  static AppUpdatePatch? fromJson(Object? json) {
+    if (json is! Map) return null;
+    final url = json['url'], size = json['sizeBytes'], sha = json['sha256'];
+    final fromSize = json['fromSize'], fromSha = json['fromSha256'];
+    final hex = RegExp(r'^[0-9a-f]{64}$');
+    if (url is! String || !url.startsWith('/downloadBuild?')) return null;
+    if (size is! int || size <= 0 || fromSize is! int || fromSize <= 0) return null;
+    if (sha is! String || !hex.hasMatch(sha) || fromSha is! String || !hex.hasMatch(fromSha)) return null;
+    return AppUpdatePatch(url: url, sizeBytes: size, sha256: sha, fromSize: fromSize, fromSha256: fromSha);
   }
 }
 
@@ -384,6 +422,22 @@ class AppUpdateService {
       }
       final target = await _fileFor(info.buildNumber);
       part = File('${target.path}.part');
+      // Как у Google: сначала пробуем собрать новую версию из установленной и
+      // маленького патча. Не вышло — качаем файл целиком, как раньше.
+      if (info.patch != null && platform == 'android' && await _viaPatch(info, target)) {
+        state.value = AppUpdateState(AppUpdatePhase.ready, info: info);
+        if (!openInstaller) return;
+        if (_isForeground()) {
+          await install();
+        } else {
+          _autoInstallPending = true;
+        }
+        return;
+      }
+      if (_cancelled) {
+        state.value = AppUpdateState(AppUpdatePhase.available, info: info);
+        return;
+      }
       final client = _downloadClient = _clientFactory();
       final resp = await client
           .send(http.Request('GET', Uri.parse('$gatewayUrl${info.url}')))
@@ -452,6 +506,56 @@ class AppUpdateService {
       _downloadClient = null;
     }
   }
+
+  /// Скачать патч и собрать из него новую версию в [target]. false — патч
+  /// не подошёл (другая версия установлена, обрыв, не сошлась сверка):
+  /// тогда качаем целиком.
+  Future<bool> _viaPatch(AppUpdateInfo info, File target) async {
+    final patch = info.patch!;
+    final patchFile = File('${target.path}.zpatch');
+    final out = File('${target.path}.part');
+    try {
+      final installed = await (debugInstalledApk ?? ApkPatch.installedApk)(patch.fromSize);
+      if (installed == null) return false;
+      final sha = await Isolate.run(() => ApkPatch.fileSha256(installed));
+      if (sha != patch.fromSha256) return false;
+      final client = _downloadClient = _clientFactory();
+      final resp = await client
+          .send(http.Request('GET', Uri.parse('$gatewayUrl${patch.url}')))
+          .timeout(const Duration(seconds: 30));
+      if (resp.statusCode != 200) return false;
+      final total = patch.sizeBytes;
+      state.value = AppUpdateState(AppUpdatePhase.downloading, info: info, total: total);
+      final sink = patchFile.openWrite();
+      var received = 0;
+      try {
+        await for (final chunk in resp.stream.timeout(const Duration(seconds: 30))) {
+          if (_cancelled) break;
+          sink.add(chunk);
+          received += chunk.length;
+          state.value = AppUpdateState(AppUpdatePhase.downloading, info: info, received: received, total: total);
+        }
+      } finally {
+        await sink.close();
+      }
+      if (_cancelled || received != total) return false;
+      await ApkPatch.apply(oldPath: installed, patchPath: patchFile.path, outPath: out.path);
+      if (await target.exists()) await target.delete();
+      await out.rename(target.path);
+      return true;
+    } catch (_) {
+      await _deleteQuietly(out);
+      return false;
+    } finally {
+      await _deleteQuietly(patchFile);
+      _downloadClient?.close();
+      _downloadClient = null;
+    }
+  }
+
+  /// Тесты подставляют «установленный APK».
+  @visibleForTesting
+  static Future<String?> Function(int size)? debugInstalledApk;
 
   /// «Отмена» во время загрузки.
   void cancel() {
