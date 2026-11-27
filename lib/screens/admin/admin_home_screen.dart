@@ -35,6 +35,7 @@ import '../login_screen.dart';
 import '../employee/receipts_history_screen.dart';
 import 'z_report_screen.dart';
 import '../../utils/adaptive.dart';
+import '../../widgets/staff_nav.dart';
 
 /// Главный экран администратора. Плитки сгруппированы по смыслу: сначала
 /// ежедневная работа (отчёты, меню, склад), затем ИИ, затем настройки —
@@ -132,11 +133,17 @@ class AdminHomeScreen extends StatelessWidget {
                 : const SizedBox.shrink(),
           ),
           for (final entry in groups.entries) ...[
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10, top: 6),
-              child: Text(entry.key,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-            ),
+            if (kSaasMode)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10, top: 10, left: 2),
+                child: Text(entry.key.toUpperCase(), style: AppFonts.overline.copyWith(color: AppColors.textMuted)),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10, top: 6),
+                child: Text(entry.key,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              ),
             // Задаём ширину плитки, а не число колонок: на телефоне 2, на
             // планшете 5–6.
             // Что не входит в тариф — с замком: по нажатию объясняем, где
@@ -155,6 +162,16 @@ class AdminHomeScreen extends StatelessWidget {
                 ),
                 children: entry.value.map((t) {
                   final locked = !t.allowedBy(caps);
+                  if (kSaasMode) {
+                    return _SaasAdminCard(
+                      tile: t,
+                      locked: locked,
+                      tint: _groupTint(entry.key),
+                      onTap: () => locked
+                          ? showPlanUpsell(context, title: t.title, text: t.lockedText)
+                          : Navigator.of(context).push(MaterialPageRoute(builder: t.builder)),
+                    );
+                  }
                   return Card(
                     child: InkWell(
                       borderRadius: BorderRadius.circular(12),
@@ -194,6 +211,69 @@ class AdminHomeScreen extends StatelessWidget {
             const SizedBox(height: 20),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Цвет группы плиток (SaaS): работа — медь, гости — латунь, ИИ — шалфей,
+/// настройки — спокойный серый. Цвет помогает найти группу взглядом.
+Color _groupTint(String group) => switch (group) {
+      'Работа заведения' => AppColors.primary,
+      'Гости и лояльность' => AppColors.brass,
+      'Искусственный интеллект' => AppColors.success,
+      _ => AppColors.textMuted,
+    };
+
+/// Плитка админки в SaaS: значок в мягкой подложке цвета группы слева
+/// сверху, название — снизу, без центровки «значок посередине».
+class _SaasAdminCard extends StatelessWidget {
+  final _AdminTile tile;
+  final bool locked;
+  final Color tint;
+  final VoidCallback onTap;
+  const _SaasAdminCard({required this.tile, required this.locked, required this.tint, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = locked ? AppColors.textMuted : tint;
+    return Material(
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: AppColors.border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 14, 12, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                StaffNavIcon(tile.icon, tint: color, size: 40),
+                const Spacer(),
+                if (locked)
+                  Icon(Icons.lock_outline, size: 16, color: AppColors.textMuted)
+                else
+                  Icon(Icons.arrow_outward, size: 16, color: AppColors.textMuted.withValues(alpha: 0.6)),
+              ]),
+              const Spacer(),
+              Text(
+                tile.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
+                  color: locked ? AppColors.textMuted : AppColors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

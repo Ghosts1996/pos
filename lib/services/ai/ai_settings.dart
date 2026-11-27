@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -610,7 +611,14 @@ class AiSettingsStore {
     // в SaaS ключ больше не должен лежать в документе, который читают гости.
     const legacy = ['apiKey', 'baseUrl', 'provider', 'model', 'analyticsModel', 'vendorKeys'];
     if (_split) {
-      await _target(_secretsPath).set(settings.toSecretsMap(), SetOptions(merge: true));
+      // Ключи пишем, только если их правда поменяли: касса работает под
+      // учёткой сотрудника, а ключи меняют владелец и администратор. Без
+      // этого любое переключение агента падало с «нет доступа».
+      final current = isChainShared ? _chainSecrets : _secrets;
+      final secrets = settings.toSecretsMap();
+      if (jsonEncode(secrets['vendors']) != jsonEncode(current?['vendors'])) {
+        await _target(_secretsPath).set(secrets, SetOptions(merge: true));
+      }
       await _target(_path).set({
         ...pub,
         for (final f in legacy) f: FieldValue.delete(),

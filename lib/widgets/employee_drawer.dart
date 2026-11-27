@@ -35,6 +35,7 @@ import '../utils/constants.dart';
 import '../utils/shift_crew.dart';
 import 'shift_flow.dart';
 import 'about_app_dialog.dart';
+import 'staff_nav.dart';
 
 /// Меню сотрудника — боковая панель: зал, брони, очередь заказов, лист
 /// ожидания, смена, X-отчёт, история чеков, склад и ассистент зала.
@@ -179,10 +180,216 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
 
   String _formatTime(DateTime dt) => '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 
+  /// Пункт меню: в SaaS — новый вид (StaffNavItem), в hookah-pos — прежний ListTile.
+  Widget _item({
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    Color? tint,
+    int badge = 0,
+    Color? badgeColor,
+    Color? badgeText,
+    required VoidCallback onTap,
+  }) {
+    if (kSaasMode) {
+      return StaffNavItem(
+        icon: icon,
+        title: title,
+        subtitle: subtitle,
+        tint: tint,
+        trailing: badge == 0 ? null : StaffNavBadge(badge, color: badgeColor ?? AppColors.danger),
+        onTap: onTap,
+      );
+    }
+    return ListTile(
+      leading: Icon(icon, color: tint == AppColors.brass ? tint : null),
+      title: Text(title),
+      subtitle: subtitle == null ? null : Text(subtitle, style: const TextStyle(fontSize: 11)),
+      trailing: badge == 0
+          ? null
+          : CircleAvatar(
+              radius: 12,
+              backgroundColor: badgeColor ?? AppColors.danger,
+              child: Text('$badge', style: TextStyle(fontSize: 12, color: badgeText ?? AppColors.onAccent)),
+            ),
+      onTap: onTap,
+    );
+  }
+
+  /// Начало группы пунктов: в SaaS — подпись раздела, в hookah-pos — черта.
+  Widget _section(String label) => kSaasMode ? StaffNavSection(label) : const Divider(height: 1);
+
+  /// Строка смены: в SaaS — карточка состояния, в hookah-pos — ListTile.
+  Widget _shiftTile({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String subtitle,
+    required bool busy,
+    required bool stale,
+    bool chevron = false,
+    required VoidCallback onTap,
+  }) {
+    if (kSaasMode) {
+      return StaffStatusCard(
+        icon: icon,
+        color: color,
+        title: title,
+        subtitle: subtitle,
+        busy: busy,
+        chevron: chevron,
+        onTap: onTap,
+      );
+    }
+    return ListTile(
+      enabled: !busy,
+      leading: Icon(icon, color: color),
+      title: Text(title),
+      subtitle: Text(subtitle, style: TextStyle(fontSize: 11, color: stale ? AppColors.warning : null)),
+      trailing: busy
+          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+          : (chevron ? const Icon(Icons.chevron_right) : null),
+      onTap: busy ? null : onTap,
+    );
+  }
+
+  void _openAssistant() {
+    Navigator.pop(context);
+    AiAssistantSheet.show(
+      context,
+      agent: AiAgents.hall,
+      // Данные зала кладём в промпт заранее: иначе ассистент
+      // отвечает «данных нет», если шлюз не умеет инструменты.
+      asyncContextBuilder: AiService.instance.hallContext,
+      quickPrompts: const [
+        'Какие столы освободятся через час?',
+        'Что предложить гостям сегодня?',
+        'Что заканчивается на складе?',
+      ],
+    );
+  }
+
+  Future<void> _switchEmployee() async {
+    // Забываем сохранённый вход: вызовы гостей больше не адресуются
+    // ушедшему сотруднику, а вход спросит PIN следующего.
+    await StaffSessionStore.instance.forget();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (_) => false,
+    );
+  }
+
+  /// Подвал меню hookah-pos — как было.
+  List<Widget> _classicFooter() => [
+        const Divider(height: 1),
+        // Тема этого устройства: тёмная, светлая или как в системе.
+        ValueListenableBuilder<AppThemeMode>(
+          valueListenable: ThemeController.instance.mode,
+          builder: (context, mode, _) => ListTile(
+            dense: true,
+            leading: Icon(AppColors.isLight ? Icons.light_mode_outlined : Icons.dark_mode_outlined),
+            title: const Text('Тема'),
+            subtitle: Text(mode.title, style: const TextStyle(fontSize: 11)),
+            onTap: () => showThemePicker(context),
+          ),
+        ),
+        ListTile(
+          dense: true,
+          leading: const Icon(Icons.system_update_alt),
+          title: const Text('Обновления'),
+          subtitle: Text('$appBuildLabel · проверить', style: const TextStyle(fontSize: 11)),
+          onTap: () => showAboutAppDialog(context),
+        ),
+        // Касса на Windows: на весь экран без рамки или обычным окном (F11).
+        if (WindowMode.supported)
+          ValueListenableBuilder<bool>(
+            valueListenable: WindowMode.fullscreen,
+            builder: (context, full, _) => ListTile(
+              dense: true,
+              leading: Icon(full ? Icons.fullscreen_exit : Icons.fullscreen),
+              title: Text(full ? 'Обычное окно' : 'Во весь экран'),
+              subtitle: const Text('или клавиша F11', style: TextStyle(fontSize: 11)),
+              onTap: WindowMode.toggle,
+            ),
+          ),
+        ListTile(
+          leading: const Icon(Icons.logout),
+          title: const Text('Сменить сотрудника'),
+          onTap: _switchEmployee,
+        ),
+        const SizedBox(height: 8),
+      ];
+
+  /// Подвал SaaS: тема, обновления и окно — тремя маленькими кнопками в
+  /// ряд, «Сменить сотрудника» — отдельной кнопкой, номер версии — мелко.
+  List<Widget> _saasFooter() => [
+        Divider(height: 1, color: AppColors.border),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
+          child: Row(children: [
+            Expanded(
+              child: ValueListenableBuilder<AppThemeMode>(
+                valueListenable: ThemeController.instance.mode,
+                builder: (context, mode, _) => StaffFooterButton(
+                  icon: AppColors.isLight ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+                  label: 'Тема',
+                  onTap: () => showThemePicker(context),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: StaffFooterButton(
+                icon: Icons.system_update_alt,
+                label: 'Обновления',
+                onTap: () => showAboutAppDialog(context),
+              ),
+            ),
+            if (WindowMode.supported) ...[
+              const SizedBox(width: 8),
+              Expanded(
+                child: ValueListenableBuilder<bool>(
+                  valueListenable: WindowMode.fullscreen,
+                  builder: (context, full, _) => StaffFooterButton(
+                    icon: full ? Icons.fullscreen_exit : Icons.fullscreen,
+                    label: full ? 'Окно' : 'Весь экран',
+                    onTap: WindowMode.toggle,
+                  ),
+                ),
+              ),
+            ],
+          ]),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+          child: OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(44),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            onPressed: _switchEmployee,
+            icon: const Icon(Icons.logout, size: 18),
+            label: const Text('Сменить сотрудника'),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
+          child: Text(appBuildLabel,
+              textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+        ),
+      ];
+
   @override
   Widget build(BuildContext context) {
+    final profile = VenueService.instance.cached;
+    // Цвета разделов (SaaS): зал — медь, касса — латунь, склад — шалфей.
+    final hallTint = AppColors.primary;
+    final cashTint = AppColors.brass;
+    final stockTint = AppColors.success;
     final top = <Widget>[
       _StaffHeader(employee: widget.employee),
+      if (kSaasMode) const SizedBox(height: 6),
 
       // «Моя смена» — первой: это то, что нужно каждому сотруднику
       // (пришёл — начал, уходит домой — закончил).
@@ -197,16 +404,14 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
               : stale
                   ? 'Идёт ${shiftTimeLabel(mine.startedAt)} — вы не закончили прошлую смену'
                   : 'С ${_formatTime(mine.startedAt)} · нажмите, когда уходите';
-          return ListTile(
-            enabled: !_myShiftBusy,
-            leading: Icon(isOpen ? Icons.timer_outlined : Icons.timer_off_outlined,
-                color: stale ? AppColors.warning : (isOpen ? AppColors.success : Colors.grey)),
-            title: Text(isOpen ? 'Моя смена идёт' : 'Моя смена не начата'),
-            subtitle: Text(subtitle, style: TextStyle(fontSize: 11, color: stale ? AppColors.warning : null)),
-            trailing: _myShiftBusy
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : null,
-            onTap: _myShiftBusy ? null : () => isOpen ? _endMine(mine) : _startMine(),
+          return _shiftTile(
+            icon: isOpen ? Icons.timer_outlined : Icons.timer_off_outlined,
+            color: stale ? AppColors.warning : (isOpen ? AppColors.success : (kSaasMode ? AppColors.textMuted : Colors.grey)),
+            title: isOpen ? 'Моя смена идёт' : 'Моя смена не начата',
+            subtitle: subtitle,
+            busy: _myShiftBusy,
+            stale: stale,
+            onTap: () => isOpen ? _endMine(mine) : _startMine(),
           );
         },
       ),
@@ -228,25 +433,26 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
                         : 'С ${_formatTime(shift.openedAt)}',
                     if (crew != null) _lowerFirst(crew.summary()),
                   ].join(' · ');
-            return ListTile(
-              enabled: !_busy,
-              leading: Icon(isOpen ? Icons.storefront_outlined : Icons.lock_outline,
-                  color: stale ? AppColors.warning : (isOpen ? AppColors.success : AppColors.danger)),
-              title: Text(isOpen ? 'Смена заведения открыта' : 'Смена заведения закрыта'),
-              subtitle: Text(subtitle, style: TextStyle(fontSize: 11, color: stale ? AppColors.warning : null)),
-              trailing: _busy
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.chevron_right),
-              onTap: _busy ? null : () => isOpen ? _venueSheet(shift) : _openShift(),
+            return _shiftTile(
+              icon: isOpen ? Icons.storefront_outlined : Icons.lock_outline,
+              color: stale ? AppColors.warning : (isOpen ? AppColors.success : AppColors.danger),
+              title: isOpen ? 'Смена заведения открыта' : 'Смена заведения закрыта',
+              subtitle: subtitle,
+              busy: _busy,
+              stale: stale,
+              chevron: true,
+              onTap: () => isOpen ? _venueSheet(shift) : _openShift(),
             );
           });
         },
       ),
-      const Divider(height: 1),
+      _section('Зал'),
 
-      ListTile(
-        leading: const Icon(Icons.table_bar_outlined),
-        title: const Text('Зал'),
+      _item(
+        icon: Icons.table_bar_outlined,
+        title: 'Зал',
+        subtitle: kSaasMode ? 'Столы и счета' : null,
+        tint: hallTint,
         onTap: () {
           Navigator.pop(context);
           Navigator.of(context).pushAndRemoveUntil(
@@ -263,17 +469,13 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
           stream: _link.openCallsStream(),
           builder: (context, calls) {
             final count = (orders.data?.length ?? 0) + (calls.data?.length ?? 0);
-            return ListTile(
-              leading: const Icon(Icons.room_service_outlined),
-              title: const Text('Очередь заказов'),
-              subtitle: const Text('Заказы и вызовы из приложения гостей', style: TextStyle(fontSize: 11)),
-              trailing: count == 0
-                  ? null
-                  : CircleAvatar(
-                      radius: 12,
-                      backgroundColor: AppColors.danger,
-                      child: Text('$count', style: const TextStyle(fontSize: 12, color: AppColors.onAccent)),
-                    ),
+            return _item(
+              icon: Icons.room_service_outlined,
+              title: 'Очередь заказов',
+              subtitle: 'Заказы и вызовы из приложения гостей',
+              tint: hallTint,
+              badge: count,
+              badgeColor: AppColors.danger,
               onTap: () => _go(KdsScreen(employee: widget.employee)),
             );
           },
@@ -290,155 +492,111 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
           final cooks = const [AppConstants.positionCook, AppConstants.positionBartender, AppConstants.positionHookahMaster]
               .contains(AppConstants.normalizePosition(widget.employee.position));
           final count = cooks ? KitchenScreen.ticketsFor(snap.data ?? const [], station).length : 0;
-          return ListTile(
-            leading: const Icon(Icons.soup_kitchen_outlined),
-            title: const Text('Кухня и бар'),
-            subtitle: const Text('Что готовить по всем столам', style: TextStyle(fontSize: 11)),
-            trailing: count == 0
-                ? null
-                : CircleAvatar(
-                    radius: 12,
-                    backgroundColor: AppColors.warning,
-                    child: Text('$count',
-                        style: TextStyle(fontSize: 12, color: AppColors.isLight ? AppColors.onAccent : AppColors.background)),
-                  ),
+          return _item(
+            icon: Icons.soup_kitchen_outlined,
+            title: 'Кухня и бар',
+            subtitle: 'Что готовить по всем столам',
+            tint: hallTint,
+            badge: count,
+            badgeColor: AppColors.warning,
+            badgeText: AppColors.isLight ? AppColors.onAccent : AppColors.background,
             onTap: () => _go(KitchenScreen(employee: widget.employee)),
           );
         },
       ),
 
-      ListTile(
-        leading: const Icon(Icons.event_seat_outlined),
-        title: const Text('Брони'),
-        subtitle: const Text('Подтверждение и посадка гостей', style: TextStyle(fontSize: 11)),
+      _item(
+        icon: Icons.event_seat_outlined,
+        title: 'Брони',
+        subtitle: 'Подтверждение и посадка гостей',
+        tint: hallTint,
         onTap: () => _go(ReservationsScreen(employee: widget.employee)),
       ),
-      ListTile(
-        leading: const Icon(Icons.hourglass_bottom),
-        title: const Text('Лист ожидания'),
-        subtitle: const Text('Когда все столы заняты', style: TextStyle(fontSize: 11)),
+      _item(
+        icon: Icons.hourglass_bottom,
+        title: 'Лист ожидания',
+        subtitle: 'Когда все столы заняты',
+        tint: hallTint,
         onTap: () => _go(WaitlistScreen(employee: widget.employee)),
       ),
-      const Divider(height: 1),
+      _section('Касса'),
 
-      ListTile(
-        leading: const Icon(Icons.receipt_long_outlined),
-        title: const Text('X-отчёт (текущая смена)'),
-        subtitle: const Text('Продажи и оплаты без закрытия смены', style: TextStyle(fontSize: 11)),
+      _item(
+        icon: Icons.receipt_long_outlined,
+        title: kSaasMode ? 'X-отчёт' : 'X-отчёт (текущая смена)',
+        subtitle: 'Продажи и оплаты без закрытия смены',
+        tint: cashTint,
         onTap: () => _go(XReportScreen(employee: widget.employee)),
       ),
-      ListTile(
-        leading: const Icon(Icons.point_of_sale_outlined),
-        title: const Text('Касса'),
-        subtitle: const Text('Наличные, инкассация, внесение и выплата', style: TextStyle(fontSize: 11)),
+      _item(
+        icon: Icons.point_of_sale_outlined,
+        title: 'Касса',
+        subtitle: 'Наличные, инкассация, внесение и выплата',
+        tint: cashTint,
         onTap: () => _go(CashScreen(employee: widget.employee)),
       ),
-      ListTile(
-        leading: const Icon(Icons.history),
-        title: const Text('История чеков'),
-        subtitle: const Text('Просмотр и возврат закрытых чеков', style: TextStyle(fontSize: 11)),
+      _item(
+        icon: Icons.history,
+        title: 'История чеков',
+        subtitle: 'Просмотр и возврат закрытых чеков',
+        tint: cashTint,
         onTap: () => _go(ReceiptsHistoryScreen(employee: widget.employee)),
       ),
-      const Divider(height: 1),
+      _section('Склад'),
 
-      ListTile(
-        leading: const Icon(Icons.inventory_2_outlined),
-        title: const Text('Остатки склада'),
-        subtitle: const Text('Просмотр текущих количеств', style: TextStyle(fontSize: 11)),
+      _item(
+        icon: Icons.inventory_2_outlined,
+        title: 'Остатки склада',
+        subtitle: 'Просмотр текущих количеств',
+        tint: stockTint,
         onTap: () => _go(const StockViewScreen()),
       ),
-      ListTile(
-        leading: const Icon(Icons.fact_check_outlined),
-        title: const Text('Инвентаризация'),
-        subtitle: const Text('Пересчёт фактических остатков склада', style: TextStyle(fontSize: 11)),
+      _item(
+        icon: Icons.fact_check_outlined,
+        title: 'Инвентаризация',
+        subtitle: 'Пересчёт фактических остатков склада',
+        tint: stockTint,
         onTap: () => _go(InventoryCountEntryScreen(employee: widget.employee)),
       ),
-      // Кальянная: табак на полке и подбор миксов (без ИИ).
-      if (kSaasMode && VenueService.instance.cached.terms.isHookah)
-        ListTile(
-          leading: const Icon(Icons.local_fire_department_outlined),
-          title: const Text('Табак и миксы'),
-          subtitle: const Text('Полка табака по фото, подбор микса под гостя', style: TextStyle(fontSize: 11)),
+      // Кальянная: табак на полке и подбор миксов (без ИИ). Выключается в
+      // «Профиле заведения».
+      if (kSaasMode && profile.showTobaccoShelf)
+        _item(
+          icon: Icons.local_fire_department_outlined,
+          title: 'Табак и миксы',
+          subtitle: 'Полка табака по фото, подбор микса под гостя',
+          tint: stockTint,
           onTap: () => _go(const TobaccoShelfScreen()),
         ),
-      if (kSaasMode)
-        ListTile(
-          leading: const Icon(Icons.sports_bar_outlined),
-          title: const Text('Кеги на кране'),
-          subtitle: const Text('Разливное пиво: код кеги в чеке, остаток литров', style: TextStyle(fontSize: 11)),
+      // Разливное пиво — только если владелец включил в «Профиле заведения»
+      // (у бара — по умолчанию).
+      if (kSaasMode && profile.showKegs)
+        _item(
+          icon: Icons.sports_bar_outlined,
+          title: 'Кеги на кране',
+          subtitle: 'Разливное пиво: код кеги в чеке, остаток литров',
+          tint: stockTint,
           onTap: () => _go(KegsScreen(employee: widget.employee)),
         ),
-      const Divider(height: 1),
 
-      ListTile(
-        leading: Icon(Icons.auto_awesome, color: AppColors.brass),
-        title: const Text('Ассистент зала'),
-        subtitle: const Text('Спросить про столы, брони и остатки', style: TextStyle(fontSize: 11)),
-        onTap: () {
-          Navigator.pop(context);
-          AiAssistantSheet.show(
-            context,
-            agent: AiAgents.hall,
-            // Данные зала кладём в промпт заранее: иначе ассистент
-            // отвечает «данных нет», если шлюз не умеет инструменты.
-            asyncContextBuilder: AiService.instance.hallContext,
-            quickPrompts: const [
-              'Какие столы освободятся через час?',
-              'Что предложить гостям сегодня?',
-              'Что заканчивается на складе?',
-            ],
-          );
-        },
-      ),
-    ];
-    final bottom = <Widget>[
-      const Divider(height: 1),
-      // Тема этого устройства: тёмная, светлая или как в системе.
-      ValueListenableBuilder<AppThemeMode>(
-        valueListenable: ThemeController.instance.mode,
-        builder: (context, mode, _) => ListTile(
-          dense: true,
-          leading: Icon(AppColors.isLight ? Icons.light_mode_outlined : Icons.dark_mode_outlined),
-          title: const Text('Тема'),
-          subtitle: Text(mode.title, style: const TextStyle(fontSize: 11)),
-          onTap: () => showThemePicker(context),
+      if (kSaasMode)
+        StaffAccentCard(
+          icon: Icons.auto_awesome,
+          title: 'Ассистент зала',
+          subtitle: 'Спросить про столы, брони, остатки и миксы',
+          onTap: _openAssistant,
+        )
+      else ...[
+        const Divider(height: 1),
+        ListTile(
+          leading: Icon(Icons.auto_awesome, color: AppColors.brass),
+          title: const Text('Ассистент зала'),
+          subtitle: const Text('Спросить про столы, брони и остатки', style: TextStyle(fontSize: 11)),
+          onTap: _openAssistant,
         ),
-      ),
-      ListTile(
-        dense: true,
-        leading: const Icon(Icons.system_update_alt),
-        title: const Text('Обновления'),
-        subtitle: Text('$appBuildLabel · проверить', style: const TextStyle(fontSize: 11)),
-        onTap: () => showAboutAppDialog(context),
-      ),
-      // Касса на Windows: на весь экран без рамки или обычным окном (F11).
-      if (WindowMode.supported)
-        ValueListenableBuilder<bool>(
-          valueListenable: WindowMode.fullscreen,
-          builder: (context, full, _) => ListTile(
-            dense: true,
-            leading: Icon(full ? Icons.fullscreen_exit : Icons.fullscreen),
-            title: Text(full ? 'Обычное окно' : 'Во весь экран'),
-            subtitle: const Text('или клавиша F11', style: TextStyle(fontSize: 11)),
-            onTap: WindowMode.toggle,
-          ),
-        ),
-      ListTile(
-        leading: const Icon(Icons.logout),
-        title: const Text('Сменить сотрудника'),
-        // Забываем сохранённый вход: вызовы гостей больше не адресуются
-        // ушедшему сотруднику, а вход спросит PIN следующего.
-        onTap: () async {
-          await StaffSessionStore.instance.forget();
-          if (!context.mounted) return;
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const LoginScreen()),
-            (_) => false,
-          );
-        },
-      ),
-      const SizedBox(height: 8),
+      ],
     ];
+    final bottom = kSaasMode ? _saasFooter() : _classicFooter();
 
     return Drawer(
       child: SafeArea(

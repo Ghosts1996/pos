@@ -360,7 +360,7 @@ service cloud.firestore {
     //      публичная часть без ключей видна гостям, ключи — только персоналу. ----
     match /chains/{chainId}/meta/aiSettings {
       allow read: if isChainStaff(chainId) || isChainGuest(chainId) || isSuperAdmin();
-      allow write: if hasChainRole(chainId, ['owner', 'admin']) &&
+      allow write: if isChainStaff(chainId) &&
         !('apiKey' in request.resource.data) &&
         !('vendorKeys' in request.resource.data) &&
         (!('vendors' in request.resource.data) ||
@@ -966,9 +966,12 @@ service cloud.firestore {
     }
     // Публичная часть настроек ИИ — её читает и приложение гостя, поэтому
     // ключей здесь быть не может. Ключи — в meta/aiSecrets.
+    // Пишет персонал: касса — устройство сотрудника, а «Настройки ИИ» в ней
+    // открывает администратор по PIN. Ключей здесь нет (проверка ниже);
+    // сами ключи (aiSecrets) меняют только владелец и администратор.
     match /tenants/{tenantId}/meta/aiSettings {
       allow read: if isStaff(tenantId) || isTenantGuest(tenantId);
-      allow write: if hasRole(tenantId, ['owner', 'admin']) &&
+      allow write: if isStaff(tenantId) &&
         !('apiKey' in request.resource.data) &&
         !('vendorKeys' in request.resource.data) &&
         (!('vendors' in request.resource.data) ||
@@ -980,6 +983,11 @@ service cloud.firestore {
     match /tenants/{tenantId}/meta/aiSecrets {
       allow read: if isStaff(tenantId);
       allow write: if hasRole(tenantId, ['owner', 'admin']);
+    }
+    // ИИ-разборы в фоне: пишет только сервер (ai-reports.js), персонал
+    // читает и может удалить старый разбор.
+    match /tenants/{tenantId}/aiReports/{reportId} {
+      allow read, delete: if isStaff(tenantId);
     }
     // Остальные meta/* — поимённо: общий meta/{doc} открыл бы и aiSettings.
     match /tenants/{tenantId}/meta/jobsLock {

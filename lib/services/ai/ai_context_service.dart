@@ -464,6 +464,19 @@ class AiPseudonyms {
 
   static final _alias = RegExp(r'([Сс]отрудник([а-яё]*))\s*№\s*(\d+)');
 
+  /// «Сотрудник №1» → «Анна»: соответствие для разбора, который считает
+  /// сервер, — имена подставляются уже на кассе ([restoreWith]).
+  Map<String, String> get aliases => {for (final e in _byName.entries) 'Сотрудник №${e.value}': e.key};
+
+  static String restoreWith(String text, Map<String, String> aliases) {
+    if (aliases.isEmpty) return text;
+    return text.replaceAllMapped(_alias, (m) {
+      final name = aliases['Сотрудник №${m[3]}'];
+      if (name == null) return m[0]!;
+      return m[2]!.isEmpty ? name : '${m[1]} $name';
+    });
+  }
+
   /// «Сотрудник №1» → «Анна»; в косвенном падеже слово остаётся, чтобы
   /// фраза читалась: «Сотруднику №1 помочь» → «Сотруднику Анна помочь».
   String restore(String text) {

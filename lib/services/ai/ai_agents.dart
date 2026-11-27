@@ -472,6 +472,63 @@ class AiService {
     );
   }
 
+  /// Задание для разбора на сервере (ai-reports.js): те же подсказки и
+  /// данные, что у [run], но ИИ спрашивает сервер — разбор доделается, даже
+  /// если кассу закрыть.
+  Future<AiReportPrompt> reportPrompt(String kind, {required DateTime from, required DateTime to}) async {
+    final staff = AiPseudonyms();
+    late AiAgent agent;
+    late String question;
+    var data = '';
+    switch (kind) {
+      case 'sales':
+        agent = AiAgents.analyst;
+        question = 'Проанализируй период и дай план действий.\n$_keepAliases';
+        data = await _ctx.venueDigest(from: from, to: to, staff: staff);
+      case 'restock':
+        agent = AiAgents.inventory;
+        final now = DateTime.now();
+        final parts = await Future.wait([
+          _ctx.stockSnapshot(),
+          _ctx.salesSnapshot(from: now.subtract(const Duration(days: 14)), to: now),
+        ]);
+        question = 'Составь заявку на закупку на 7 дней вперёд по расходу за 14 дней.';
+        data = 'ОСТАТКИ:\n${parts[0]}\n\nПРОДАЖИ ЗА 14 ДНЕЙ:\n${parts[1]}';
+      case 'reviews':
+        agent = AiAgents.quality;
+        question = 'Собери сводку по отзывам и что чинить в первую очередь.';
+        data = 'ПОСЛЕДНИЕ ОТЗЫВЫ:\n${await _ctx.reviewsSnapshot()}';
+      case 'marketing':
+        agent = AiAgents.marketing;
+        final now = DateTime.now();
+        final parts = await Future.wait([
+          _ctx.salesSnapshot(from: now.subtract(const Duration(days: 14)), to: now),
+          _ctx.stockSnapshot(),
+        ]);
+        question = 'Предложи акции на следующую неделю по данным за 14 дней.';
+        data = 'ПРОДАЖИ ЗА 14 ДНЕЙ:\n${parts[0]}\n\nОСТАТКИ:\n${parts[1]}';
+      default:
+        agent = AiAgents.hostess;
+        question = 'Разбери брони на ближайшую смену.';
+        data = await hallContext();
+    }
+    final venue = await VenueService.instance.aiKnowledgeCached();
+    return AiReportPrompt(
+      agentEnabled: agent.enabled,
+      agentTitle: agent.title,
+      heavy: agent.heavy,
+      system: [
+        agent.prompt,
+        if (venue.isNotEmpty) 'О ЗАВЕДЕНИИ:\n$venue',
+        if (AiOwnerNotes.forAgent(agent).isNotEmpty) 'УКАЗАНИЯ ВЛАДЕЛЬЦА:\n${AiOwnerNotes.forAgent(agent)}',
+        'Текущее время: ${DateTime.now().toIso8601String()} (${_weekdayRu(DateTime.now())})',
+        if (data.isNotEmpty) 'ДАННЫЕ:\n$data',
+      ],
+      user: question,
+      aliases: staff.aliases,
+    );
+  }
+
   /// Простой текстовый ответ (совместимо со старым кодом экранов).
   Future<String> ask(
     AiAgent agent,
@@ -919,4 +976,22 @@ class AiOwnerNotes {
     await AppScope.col('settings').doc('aiNotes').set({'text': v.length > 2000 ? v.substring(0, 2000) : v});
     text = v;
   }
+}
+
+/// Что уходит на сервер для разбора в фоне (см. [AiService.reportPrompt]).
+class AiReportPrompt {
+  final bool agentEnabled;
+  final String agentTitle;
+  final bool heavy;
+  final List<String> system;
+  final String user;
+  final Map<String, String> aliases;
+  const AiReportPrompt({
+    required this.agentEnabled,
+    required this.agentTitle,
+    required this.heavy,
+    required this.system,
+    required this.user,
+    required this.aliases,
+  });
 }

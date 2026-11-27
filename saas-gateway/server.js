@@ -66,6 +66,7 @@ const { createFoodcost } = require("./foodcost");
 const { createStaffSchedule } = require("./staff-schedule");
 const { createHallImport } = require("./hall-import");
 const { createTobacco } = require("./tobacco");
+const { createAiReports } = require("./ai-reports");
 const { createMercury } = require("./mercury");
 const { createBoard } = require("./board");
 const { createKiosk } = require("./kiosk");
@@ -10884,6 +10885,21 @@ const tobacco = createTobacco({
   stateDir: process.env.TOBACCO_STATE_DIR || path.join(__dirname, "state"),
 });
 
+// ИИ-разборы в фоне: касса отдаёт задание, сервер доводит его до конца (ai-reports.js).
+const aiReports = createAiReports({
+  db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole,
+  aiVendor: (tid) => venueAiVendor(tid), aiComplete: (v, o) => venueAiComplete(v, o),
+});
+if (require.main === module) {
+  // Разборы, прерванные перезапуском, — «не удался, создайте заново».
+  const sweepReports = async () => {
+    const snap = await db().collection("tenants").where("status", "in", ["active", "trial"]).get().catch(() => null);
+    if (snap) await aiReports.sweep(snap.docs.map((d) => d.id)).catch(() => {});
+  };
+  setTimeout(sweepReports, 16 * 60 * 1000).unref();
+  setInterval(sweepReports, 60 * 60 * 1000).unref();
+}
+
 // ФГИС «Меркурий»: входящие ВСД и гашение из кабинета (mercury.js).
 const mercury = createMercury({
   db, admin, verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole,
@@ -11238,6 +11254,7 @@ const ROUTES = {
   "/foodcost": (req, res) => foodcost.handle(req, res),
   "/hallImport": (req, res) => hallImport.handle(req, res),
   "/tobaccoShelf": (req, res) => tobacco.handle(req, res),
+  "/aiReport": (req, res) => aiReports.handle(req, res),
   "/mercury": (req, res) => mercury.handle(req, res),
   "/edo": (req, res) => edo.handle(req, res),
   "/accountingMail": (req, res) => accountingMail.handle(req, res),

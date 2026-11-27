@@ -71,6 +71,12 @@ class VenueProfile {
   final double referralInviterBonus;
   final double referralInviteeBonus;
 
+  /// Разделы меню персонала (SaaS), которые нужны не каждому заведению:
+  /// «Кеги на кране» и «Табак и миксы». null — владелец не трогал:
+  /// кеги показываем бару, табак — заведению с кальянами.
+  final bool? kegsEnabled;
+  final bool? tobaccoShelfEnabled;
+
   /// Кроме конкретного сотрудника, гостю доступен вариант «Всей смене» —
   /// сумма делится поровну между теми, кто был на смене в этот момент.
   final bool tipsTeamEnabled;
@@ -164,6 +170,8 @@ class VenueProfile {
     this.referralEnabled = true,
     this.referralInviterBonus = 300,
     this.referralInviteeBonus = 200,
+    this.kegsEnabled,
+    this.tobaccoShelfEnabled,
     this.guestSbpPay = false,
     this.onlinePay = '',
     this.deliveryEnabled = false,
@@ -205,6 +213,8 @@ class VenueProfile {
       referralEnabled: data['referralEnabled'] != false,
       referralInviterBonus: _bonusOr(data['referralInviterBonus'], 300),
       referralInviteeBonus: _bonusOr(data['referralInviteeBonus'], 200),
+      kegsEnabled: data['kegsEnabled'] is bool ? data['kegsEnabled'] as bool : null,
+      tobaccoShelfEnabled: data['tobaccoShelfEnabled'] is bool ? data['tobaccoShelfEnabled'] as bool : null,
       guestSbpPay: data['guestSbpPay'] == true,
       onlinePay: asText(data['onlinePay']),
       piiMode: asText(data['piiMode']),
@@ -244,6 +254,8 @@ class VenueProfile {
           'referralEnabled': referralEnabled,
           'referralInviterBonus': referralInviterBonus,
           'referralInviteeBonus': referralInviteeBonus,
+          if (kegsEnabled != null) 'kegsEnabled': kegsEnabled,
+          if (tobaccoShelfEnabled != null) 'tobaccoShelfEnabled': tobaccoShelfEnabled,
         },
         'guestSbpPay': guestSbpPay,
         'deliveryEnabled': deliveryEnabled,
@@ -254,6 +266,12 @@ class VenueProfile {
       };
 
   VenueTerms get terms => VenueTerms(venueType, withHookah: hookahEnabled);
+
+  /// «Кеги на кране» в меню персонала: по выбору владельца, иначе — у бара.
+  bool get showKegs => kegsEnabled ?? venueType == VenueTerms.bar;
+
+  /// «Табак и миксы»: только где подают кальяны, и если владелец не выключил.
+  bool get showTobaccoShelf => terms.isHookah && (tobaccoShelfEnabled ?? true);
 
   /// Бонус «Пригласить друга»: число 0…100000, иначе — по умолчанию.
   static double _bonusOr(Object? v, double fallback) {
@@ -285,6 +303,8 @@ class VenueProfile {
     bool? referralEnabled,
     double? referralInviterBonus,
     double? referralInviteeBonus,
+    bool? kegsEnabled,
+    bool? tobaccoShelfEnabled,
     bool? guestSbpPay,
     bool? deliveryEnabled,
     String? sellerName,
@@ -312,6 +332,8 @@ class VenueProfile {
         referralEnabled: referralEnabled ?? this.referralEnabled,
         referralInviterBonus: referralInviterBonus ?? this.referralInviterBonus,
         referralInviteeBonus: referralInviteeBonus ?? this.referralInviteeBonus,
+        kegsEnabled: kegsEnabled ?? this.kegsEnabled,
+        tobaccoShelfEnabled: tobaccoShelfEnabled ?? this.tobaccoShelfEnabled,
         guestSbpPay: guestSbpPay ?? this.guestSbpPay,
         onlinePay: onlinePay,
         piiMode: piiMode,

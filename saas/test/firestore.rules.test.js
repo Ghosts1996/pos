@@ -1380,6 +1380,24 @@ describe("Настройки ИИ: ключи провайдеров не вид
     await assertFails(setDoc(doc(db, "tenants/tenantA/meta/aiSecrets"), { vendors: {} }));
   });
 
+  it("касса (сотрудник, админ по PIN) переключает агентов, но ключи не кладёт", async () => {
+    const db = ctxFor("empA");
+    await assertSucceeds(setDoc(doc(db, "tenants/tenantA/meta/aiSettings"), { agents: { upsell: false } }, { merge: true }));
+    await assertFails(setDoc(doc(db, "tenants/tenantA/meta/aiSettings"), { apiKey: "k" }, { merge: true }));
+    await assertFails(setDoc(doc(db, "tenants/tenantA/meta/aiSettings"), { vendors: { gemini: { apiKey: "k" } } }, { merge: true }));
+    await assertFails(setDoc(doc(ctxFor("guestA"), "tenants/tenantA/meta/aiSettings"), { agents: { upsell: false } }, { merge: true }));
+  });
+
+  it("ИИ-разборы: персонал читает, пишет только сервер, гость не видит", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tenants/tenantA/aiReports/r1"), { kind: "sales", status: "done", text: "x" });
+    });
+    await assertSucceeds(getDoc(doc(ctxFor("empA"), "tenants/tenantA/aiReports/r1")));
+    await assertFails(setDoc(doc(ctxFor("empA"), "tenants/tenantA/aiReports/r2"), { kind: "sales", status: "done", text: "fake" }));
+    await assertFails(getDoc(doc(ctxFor("guestA"), "tenants/tenantA/aiReports/r1")));
+    await assertFails(getDoc(doc(ctxFor("ownerB"), "tenants/tenantA/aiReports/r1")));
+  });
+
   it("чужой владелец не читает ключи заведения A", async () => {
     await assertFails(getDoc(doc(ctxFor("ownerB"), "tenants/tenantA/meta/aiSecrets")));
   });

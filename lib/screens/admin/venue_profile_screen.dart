@@ -32,6 +32,8 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
   final _refInviter = TextEditingController();
   final _refInvitee = TextEditingController();
   bool _referralEnabled = true;
+  bool _kegs = false;
+  bool _tobaccoShelf = true;
   final _lon = TextEditingController();
   final _sellerName = TextEditingController();
   final _sellerInn = TextEditingController();
@@ -89,6 +91,8 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
     _tipsEnabled = p.tipsEnabled;
     _tipsTeamEnabled = p.tipsTeamEnabled;
     _referralEnabled = p.referralEnabled;
+    _kegs = p.showKegs;
+    _tobaccoShelf = p.tobaccoShelfEnabled ?? true;
     _refInviter.text = p.referralInviterBonus.toStringAsFixed(0);
     _refInvitee.text = p.referralInviteeBonus.toStringAsFixed(0);
     _guestSbpPay = p.guestSbpPay;
@@ -169,6 +173,8 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
       tipsEnabled: _tipsEnabled,
       tipsTeamEnabled: _tipsTeamEnabled,
       referralEnabled: _referralEnabled,
+      kegsEnabled: kSaasMode ? _kegs : null,
+      tobaccoShelfEnabled: kSaasMode ? _tobaccoShelf : null,
       referralInviterBonus: _bonusField(_refInviter, _profile.referralInviterBonus),
       referralInviteeBonus: _bonusField(_refInvitee, _profile.referralInviteeBonus),
       guestSbpPay: _guestSbpPay,
@@ -257,6 +263,34 @@ class _VenueProfileScreenState extends State<VenueProfileScreen> {
                   : 'Кальянных кнопок у гостя нет: только «Позвать официанта» и «Счёт». '
                       'Включите, если подаёте кальяны.'),
             ),
+            // Разделы меню персонала, нужные не каждому заведению: выключены —
+            // их нет в меню кассы, чтобы не мешали.
+            if (kSaasMode && _hookah)
+              SwitchListTile(
+                key: const Key('tobacco-shelf-enabled'),
+                contentPadding: EdgeInsets.zero,
+                value: _tobaccoShelf,
+                onChanged: (v) => setState(() => _tobaccoShelf = v),
+                title: const Text('Табак и миксы'),
+                subtitle: Text(
+                  'Раздел в меню персонала: банки на полке по фото и подбор миксов из того, что есть. '
+                  'Выключите — раздела не будет в меню кассы.',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                ),
+              ),
+            if (kSaasMode)
+              SwitchListTile(
+                key: const Key('kegs-enabled'),
+                contentPadding: EdgeInsets.zero,
+                value: _kegs,
+                onChanged: (v) => setState(() => _kegs = v),
+                title: const Text('Разливное пиво (кеги на кране)'),
+                subtitle: Text(
+                  'Раздел «Кеги на кране» в меню персонала: подключение кеги по коду «Честного знака» '
+                  'и остаток. Нет разливного — оставьте выключенным.',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                ),
+              ),
             const SizedBox(height: 12),
             TextField(controller: _address, decoration: const InputDecoration(labelText: 'Адрес')),
             const SizedBox(height: 12),
