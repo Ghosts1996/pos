@@ -444,9 +444,21 @@ function imgUrl(u) {
   return '';
 }
 
+/** Текст со ссылками: «[слово](https://…)» — слово-ссылка (так ставит
+ *  ссылку редактор ленты в кассе, как в Telegram), обычные адреса —
+ *  ссылками как есть. Только http/https: «javascript:» ссылкой не станет. */
 function linkify(s) {
-  const escaped = esc(s);
-  return escaped.replace(/(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi, (url) => {
+  const named = [];
+  const escaped = esc(s).replace(/\[([^\[\]\n]{1,120})\]\((https?:\/\/[^\s()<]+|www\.[^\s()<]+)\)/gi, (m, label, url) => {
+    const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    named.push(`<a href="${href}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${label}</a>`);
+    return `\u0000${named.length - 1}\u0000`;
+  });
+  return linkifyBare(escaped).replace(/\u0000(\d+)\u0000/g, (m, i) => named[Number(i)] || '');
+}
+
+function linkifyBare(escaped) {
+  return escaped.replace(/(https?:\/\/[^\s<\u0000]+|www\.[^\s<\u0000]+)/gi, (url) => {
     let trail = '';
     const trailMatch = url.match(/[.,!?;:)\]}"'”»]+$/);
     if (trailMatch) {
@@ -1308,20 +1320,52 @@ function renderStories() {
     // Карточка афиши: фото из меню на всю карточку с вуалью, заголовок
     // антиквой, кнопка-пилюля; без фото — мягкий фон цвета заведения.
     const go = (s) => (s.action === 'menu' ? '#/menu' : s.action === 'booking' ? '#/booking' : '');
-    const safeImg = imgUrl;
-    box.innerHTML = `<h2>Афиша</h2><div class="story-row${list.length === 1 ? ' one' : ''}">` + list.map((s) => {
-      const img = safeImg(s.imageUrl);
+    // Нажатие на карточку — карточка целиком (весь текст, ссылки, кнопка):
+    // в ленте помещается только начало текста.
+    box.innerHTML = `<h2>Афиша</h2><div class="story-row${list.length === 1 ? ' one' : ''}">` + list.map((s, i) => {
+      const img = imgUrl(s.imageUrl);
       const href = go(s);
-      return `<div class="story${img ? ' has-img' : ''}" ${href ? `role="button" tabindex="0" onclick="location.hash='${href}'"` : ''}>
+      return `<div class="story${img ? ' has-img' : ''}" role="button" tabindex="0" data-story="${i}">
         ${img ? `<img src="${esc(img)}" alt="" loading="lazy" onerror="this.closest('.story').classList.remove('has-img');this.remove()">` : ''}
         <div class="story-body">
           <div class="story-title">${esc(s.title)}</div>
           <div class="story-text">${linkify(s.text)}</div>
-          ${s.actionLabel && href ? `<span class="story-cta">${esc(s.actionLabel)} ${ic('next')}</span>` : ''}
+          <span class="story-cta">${esc(s.actionLabel && href ? s.actionLabel : 'Подробнее')} ${ic('next')}</span>
         </div>
       </div>`;
     }).join('') + `</div>`;
+    const open = (e) => {
+      if (e.target.closest('a')) return;
+      const card = e.target.closest('[data-story]');
+      if (card) openStory(list[Number(card.dataset.story)], go);
+    };
+    box.onclick = open;
+    box.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(e); } };
   }, () => { box.innerHTML = ''; }));
+}
+
+/** Карточка афиши целиком: фото, заголовок, весь текст с рабочими ссылками
+ *  и кнопка перехода (меню/бронь). */
+function openStory(s, go) {
+  if (!s) return;
+  const img = imgUrl(s.imageUrl);
+  const href = go(s);
+  const el = document.createElement('div');
+  el.className = 'sheet-backdrop';
+  el.innerHTML = `<div class="sheet story-sheet" role="dialog" aria-modal="true" aria-label="${esc(s.title || 'Афиша')}">
+    <div class="sheet-grip"></div>
+    ${img ? `<img class="story-sheet-img" src="${esc(img)}" alt="" onerror="this.remove()">` : ''}
+    <div class="story-sheet-title">${esc(s.title)}</div>
+    <div class="story-sheet-text">${linkify(s.text)}</div>
+    ${href ? `<button class="btn-primary" data-go style="margin-top:16px">${esc(s.actionLabel || (s.action === 'menu' ? 'Смотреть меню' : 'Забронировать'))}</button>` : ''}
+    <button class="btn-link" data-close style="width:100%;margin-top:8px">Закрыть</button>
+  </div>`;
+  const close = () => el.remove();
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-go]')) { close(); location.hash = href; return; }
+    if (e.target === el || e.target.closest('[data-close]')) close();
+  });
+  document.body.appendChild(el);
 }
 
 // ---------- МЕНЮ ----------

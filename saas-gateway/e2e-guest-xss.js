@@ -74,7 +74,7 @@ http.createServer((req, res) => {
     title: X("st"), text: X("stt") + " https://a.ru/\"onmouseover=\"window.__pwn='lnk'", imageUrl: "https://x.ru/a.jpg\" onerror=\"window.__pwn='simg'",
     action: "menu", actionLabel: X("cta"), published: true, order: 0, createdAt: T(now),
   });
-  await set("tenants/tx/stories/s2", { title: "Без фото", text: "текст", imageUrl: "javascript:alert(1)", action: "booking", actionLabel: "Бронь", published: true, order: 1, createdAt: T(now) });
+  await set("tenants/tx/stories/s2", { title: "Без фото", text: "Подпишитесь на [наш канал](https://t.me/k_l) и [зло](javascript:alert(1)) [x\"onmouseover=\"window.__pwn='md'](https://a.ru/\"onmouseover=\"window.__pwn='md2')\nИтоги — 5 декабря.", imageUrl: "javascript:alert(1)", action: "booking", actionLabel: "Бронь", published: true, order: 1, createdAt: T(now) });
   await set("tenants/tx/tables/t1", { name: X("table"), zone: X("zone"), seats: 4, status: "free", x: 100, y: 100, maxOpenSessions: 2 });
   await set("tenants/tx/settings/serviceCharge", { enabled: true, percent: 10, title: X("svc") });
 
@@ -94,7 +94,22 @@ http.createServer((req, res) => {
       for (const el of els.slice(0, 4)) { try { await el.hover({ timeout: 500 }); } catch (_) {} }
     }
   }
-  
+    // Афиша: нажатие на карточку — карточка целиком, слово-ссылка, кнопка.
+  await page.evaluate(() => { location.hash = "#/"; });
+  await page.waitForTimeout(2500);
+  await page.click('.story[data-story="1"] .story-title');
+  await page.waitForSelector(".story-sheet", { timeout: 5000 });
+  const sheet = await page.evaluate(() => {
+    const el = document.querySelector(".story-sheet");
+    const a = el.querySelector('a[href="https://t.me/k_l"]');
+    return { text: el.innerText, link: a ? a.textContent : null, js: !!el.querySelector('a[href^="javascript"]') };
+  });
+  for (const a of await page.$$(".story-sheet a")) { try { await a.hover({ timeout: 500 }); } catch (_) {} }
+  if (sheet.link !== "наш канал" || !/Итоги.{1,3}5.декабря/.test(sheet.text) || sheet.js) errors.push("АФИША " + JSON.stringify(sheet));
+  await page.click(".story-sheet [data-go]");
+  await page.waitForTimeout(800);
+  if (!/#\/booking/.test(page.url())) errors.push("АФИША: кнопка не ведёт на бронь " + page.url());
+
   const pwn = await page.evaluate(() => window.__pwn || null);
   const text = (await page.evaluate(() => document.body.innerText)).slice(0, 500);
   const bad = errors.filter((e) => !/favicon/.test(e));

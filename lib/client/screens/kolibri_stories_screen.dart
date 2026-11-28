@@ -55,7 +55,11 @@ class KolibriStoriesScreen extends StatelessWidget {
                 height: 228,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
-                  physics: single ? const NeverScrollableScrollPhysics() : null,
+                  // Листается по одной карточке: карточка встаёт к краю
+                  // целиком, а не обрезанной на полуслове.
+                  physics: single
+                      ? const NeverScrollableScrollPhysics()
+                      : _SnapPhysics(itemExtent: w + 12, parent: const BouncingScrollPhysics()),
                   itemCount: stories.length,
                   separatorBuilder: (_, __) => const SizedBox(width: 12),
                   itemBuilder: (_, i) => _card(context, stories[i], w),
@@ -83,19 +87,16 @@ class KolibriStoriesScreen extends StatelessWidget {
     final titleColor = photo ? onPhoto : KolibriColors.textPrimary;
     final textColor = photo ? onPhoto.withValues(alpha: 0.86) : KolibriColors.textMuted;
     final tappable = s.action == 'menu' || s.action == 'booking';
+    // Нажатие на карточку — карточка целиком: в ленте помещается только
+    // начало текста, а гостю нужно прочитать всё и открыть ссылки.
     return Semantics(
-      button: tappable,
+      button: true,
       label: s.title,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(22),
-          onTap: tappable
-              ? () {
-                  if (s.action == 'menu') onOpenTab?.call(1);
-                  if (s.action == 'booking') onOpenTab?.call(2);
-                }
-              : null,
+          onTap: () => _openStory(context, s),
           child: Ink(
             width: width,
             decoration: BoxDecoration(
@@ -165,11 +166,11 @@ class KolibriStoriesScreen extends StatelessWidget {
                                 style: TextStyle(color: textColor, fontSize: 13.5, height: 1.3),
                               ),
                             ),
-                            maxLines: 2,
+                            maxLines: 3,
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        if (s.actionLabel.isNotEmpty && tappable) ...[
+                        ...[
                           const SizedBox(height: 12),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
@@ -179,7 +180,7 @@ class KolibriStoriesScreen extends StatelessWidget {
                             ),
                             child: Row(mainAxisSize: MainAxisSize.min, children: [
                               Flexible(
-                                child: Text(s.actionLabel,
+                                child: Text(tappable && s.actionLabel.isNotEmpty ? s.actionLabel : 'Подробнее',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
@@ -199,6 +200,23 @@ class KolibriStoriesScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  void _go(StoryCard s) {
+    if (s.action == 'menu') onOpenTab?.call(1);
+    if (s.action == 'booking') onOpenTab?.call(2);
+  }
+
+  /// Карточка целиком — в нижнем листе.
+  void _openStory(BuildContext context, StoryCard s) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: KolibriColors.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => StoryDetailSheet(story: s, onGo: () => _go(s)),
     );
   }
 
@@ -299,4 +317,122 @@ class KolibriStoriesScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Карточка афиши целиком: фото, заголовок, весь текст с рабочими ссылками
+/// и кнопка перехода (меню/бронь).
+class StoryDetailSheet extends StatelessWidget {
+  final StoryCard story;
+  final VoidCallback onGo;
+  const StoryDetailSheet({super.key, required this.story, required this.onGo});
+
+  @override
+  Widget build(BuildContext ctx) {
+    final s = story;
+    final tappable = s.action == 'menu' || s.action == 'booking';
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.88),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(color: KolibriColors.border, borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            if (s.imageUrl.isNotEmpty) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: AspectRatio(
+                  aspectRatio: 16 / 10,
+                  child: CachedNetworkImage(
+                    imageUrl: s.imageUrl,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => ColoredBox(color: KolibriColors.surfaceElevated),
+                    errorWidget: (_, __, ___) => ColoredBox(color: KolibriColors.surfaceElevated),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+            ],
+            Text(s.title, style: KolibriFonts.display(28, color: KolibriColors.textPrimary).copyWith(height: 1.1)),
+            const SizedBox(height: 10),
+            Text.rich(TextSpan(
+              children: linkifySpans(
+                s.text,
+                style: TextStyle(color: KolibriColors.textPrimary, fontSize: 16, height: 1.5),
+                linkStyle: TextStyle(
+                  color: KolibriColors.primary,
+                  fontSize: 16,
+                  height: 1.5,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.underline,
+                  decorationColor: KolibriColors.primary,
+                ),
+              ),
+            )),
+            if (tappable) ...[
+              const SizedBox(height: 18),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: KolibriColors.primary,
+                  foregroundColor: KolibriColors.onPrimary,
+                  minimumSize: const Size.fromHeight(50),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(40)),
+                ),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  onGo();
+                },
+                child: Text(s.actionLabel.isNotEmpty
+                    ? s.actionLabel
+                    : (s.action == 'menu' ? 'Смотреть меню' : 'Забронировать')),
+              ),
+            ],
+            const SizedBox(height: 6),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Закрыть')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Лента листается по одной карточке: после жеста карточка встаёт к левому
+/// краю целиком. Последняя — к правому краю (дальше листать некуда).
+class _SnapPhysics extends ScrollPhysics {
+  final double itemExtent;
+  const _SnapPhysics({required this.itemExtent, super.parent});
+
+  @override
+  _SnapPhysics applyTo(ScrollPhysics? ancestor) => _SnapPhysics(itemExtent: itemExtent, parent: buildParent(ancestor));
+
+  @override
+  Simulation? createBallisticSimulation(ScrollMetrics position, double velocity) {
+    if ((velocity <= 0 && position.pixels <= position.minScrollExtent) ||
+        (velocity >= 0 && position.pixels >= position.maxScrollExtent)) {
+      return super.createBallisticSimulation(position, velocity);
+    }
+    final tolerance = toleranceFor(position);
+    var page = position.pixels / itemExtent;
+    if (velocity < -tolerance.velocity) {
+      page = page.floorToDouble();
+    } else if (velocity > tolerance.velocity) {
+      page = page.ceilToDouble();
+    } else {
+      page = page.roundToDouble();
+    }
+    final target = (page * itemExtent).clamp(position.minScrollExtent, position.maxScrollExtent);
+    if ((target - position.pixels).abs() < tolerance.distance) return null;
+    return ScrollSpringSimulation(spring, position.pixels, target, velocity, tolerance: tolerance);
+  }
+
+  @override
+  bool get allowImplicitScrolling => false;
 }

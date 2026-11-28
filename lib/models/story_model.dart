@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../build_info.dart';
 import '../services/ai/ai_agents.dart' show cleanAiText;
 
 /// Карточка ленты в приложении гостя: новый микс, ивент, акция.
@@ -56,7 +57,10 @@ class StoryCard {
       // бы удалять вручную. Заодно страховка на будущее: модель может
       // прислать markdown вопреки указанию, а гость не должен его видеть.
       title: cleanAiText(data['title'], maxLength: 80),
-      text: cleanAiText(data['text'], maxLength: 400),
+      // ZalPOS: ссылки и абзацы сохраняются, гость читает текст целиком.
+      text: kSaasMode
+          ? cleanAiText(data['text'], maxLength: 2000, keepLinks: true, keepLines: true)
+          : cleanAiText(data['text'], maxLength: 400),
       imageUrl: data['imageUrl'] ?? '',
       action: data['action'] ?? 'none',
       actionLabel: data['actionLabel'] ?? '',

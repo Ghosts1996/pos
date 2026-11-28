@@ -12,6 +12,8 @@ import '../../utils/remote_sale.dart';
 import '../../models/menu_models.dart';
 import '../../build_info.dart';
 import '../../data/app_db.dart';
+import '../../utils/story_links.dart';
+import '../../widgets/story_link_field.dart';
 
 /// Лента заведения: карточки, которые видит гость в своём приложении.
 ///
@@ -154,7 +156,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
               ),
               const SizedBox(height: 8),
             ],
-            Text(s.text, maxLines: 4, overflow: TextOverflow.ellipsis, style: TextStyle(color: AppColors.textMuted)),
+            Text(kSaasMode ? storyPlainText(s.text) : s.text, maxLines: 4, overflow: TextOverflow.ellipsis, style: TextStyle(color: AppColors.textMuted)),
             if (s.actionLabel.isNotEmpty) ...[
               const SizedBox(height: 8),
               Row(
@@ -322,7 +324,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
 
   Future<void> _edit(StoryCard? story) async {
     final title = TextEditingController(text: story?.title ?? '');
-    final body = TextEditingController(text: story?.text ?? '');
+    final body = kSaasMode ? StoryTextController(text: story?.text ?? '') : TextEditingController(text: story?.text ?? '');
     final image = TextEditingController(text: story?.imageUrl ?? '');
     final label = TextEditingController(text: story?.actionLabel ?? '');
     var action = story?.action ?? 'none';
@@ -352,9 +354,25 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: body,
-                  maxLines: 3,
-                  decoration: const InputDecoration(labelText: 'Текст'),
+                  maxLines: kSaasMode ? 6 : 3,
+                  minLines: kSaasMode ? 3 : null,
+                  // Как в Telegram: выделить слово → «Ссылка» в меню выделения.
+                  contextMenuBuilder: kSaasMode ? (c, st) => storyTextContextMenu(c, st, body) : null,
+                  decoration: InputDecoration(
+                    labelText: 'Текст',
+                    helperText: kSaasMode ? 'Выделите слово и нажмите «Ссылка» — гость откроет её нажатием' : null,
+                    helperMaxLines: 2,
+                  ),
                 ),
+                if (kSaasMode)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () => addStoryLink(ctx, body),
+                      icon: const Icon(Icons.link, size: 18),
+                      label: const Text('Добавить ссылку'),
+                    ),
+                  ),
                 const SizedBox(height: 12),
                 TextField(controller: image, decoration: const InputDecoration(labelText: 'Ссылка на фото')),
                 if (kSaasMode)

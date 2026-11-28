@@ -622,3 +622,10 @@ a.order-link .ic-wrap .i { width: 28px; height: 28px; }
 .story.has-img .story-text { color: rgba(255,255,255,.86); }
 .story-cta { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; padding: 7px 14px; border-radius: 40px; background: var(--primary); color: var(--on-primary); font-weight: 700; font-size: 13px; }
 .story-cta svg { width: 16px; height: 16px; }
+.story-text { -webkit-line-clamp: 3; }
+.story-text a, .story-sheet-text a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.story-sheet { max-height: 88vh; overflow-y: auto; }
+.story-sheet-img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 18px; margin: 0 0 14px; }
+.story-sheet-title { font-family: var(--serif, "Cormorant Garamond", Georgia, serif); font-size: 28px; line-height: 1.1; font-weight: 600; margin: 0 0 10px; }
+.story-sheet-text { font-size: 16px; line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; }
+.story-sheet-text a { color: var(--primary); }

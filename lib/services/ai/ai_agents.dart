@@ -1041,9 +1041,20 @@ class StoryDraft {
 /// подписи «Заголовок:» и переводы строк посреди фразы. Одна такая
 /// оплошность — и гость видит в ленте «**Сторис 3 — Ночной формат**».
 /// Просить вежливее бесполезно, поэтому чистим на своей стороне.
-String cleanAiText(Object? raw, {int maxLength = 200}) {
+String cleanAiText(Object? raw, {int maxLength = 200, bool keepLinks = false, bool keepLines = false}) {
   var v = (raw?.toString() ?? '').trim();
   if (v.isEmpty) return '';
+  // Ссылки (и «[слово](адрес)») — как есть: «_» в адресе канала — часть
+  // адреса, а не разметка.
+  final saved = <String>[];
+  if (keepLinks) {
+    v = v.replaceAllMapped(
+        RegExp(r'\[[^\[\]\n]{1,120}\]\((?:https?://|www\.)[^\s()]+\)|(?:https?://|www\.)\S+', caseSensitive: false),
+        (m) {
+      saved.add(m[0]!);
+      return '\u0000${saved.length - 1}\u0000';
+    });
+  }
   v = v.replaceAll(RegExp(r'[*#`_]+'), '');
   v = v.replaceAll(RegExp(r'^\s*(сторис|история)\s*\d*\s*[—\-:.]\s*',
       caseSensitive: false), '');
@@ -1052,13 +1063,28 @@ String cleanAiText(Object? raw, {int maxLength = 200}) {
           caseSensitive: false),
       '');
   v = v.replaceAll(RegExp(r'^\s*\d+\s*[.)]\s*'), '');
-  v = v.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (keepLines) {
+    // Абзацы остаются: гость читает карточку целиком.
+    v = v.replaceAll(RegExp(r'[ \t\r\f\v]+'), ' ').replaceAll(RegExp(r' ?\n ?'), '\n').replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
+  } else {
+    v = v.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
   v = v.replaceAll(RegExp(r'^["«»\s]+|["«»\s]+$'), '');
+  if (saved.isNotEmpty) {
+    v = v.replaceAllMapped(RegExp('\u0000(\\d+)\u0000'), (m) => saved[int.parse(m[1]!)]);
+  }
   if (v.length > maxLength) {
+    var cutAt = maxLength;
+    // Не режем посреди ссылки — лучше перед ней.
+    if (keepLinks) {
+      for (final m in RegExp(r'\[[^\[\]\n]{1,120}\]\([^\s()]+\)|(?:https?://|www\.)\S+').allMatches(v)) {
+        if (m.start < cutAt && m.end > cutAt) cutAt = m.start;
+      }
+    }
     // Режем по границе слова, чтобы не обрывать на половине буквы.
-    final cut = v.substring(0, maxLength);
-    final space = cut.lastIndexOf(' ');
-    v = '${space > maxLength ~/ 2 ? cut.substring(0, space) : cut}…';
+    final cut = v.substring(0, cutAt);
+    final space = cut.lastIndexOf(RegExp(r'\s'));
+    v = '${(space > cutAt ~/ 2 ? cut.substring(0, space) : cut).trimRight()}…';
   }
   return v;
 }
