@@ -53,6 +53,8 @@ class _SaasSubscriptionBlockedScreenState extends State<SaasSubscriptionBlockedS
   Widget build(BuildContext context) {
     final appName = AppScope.branding?.appName ?? 'ZalPOS';
     final deadline = SubscriptionGate.dataPurgeAt;
+    // Закрыта «арендой без связи»: не «не оплатили», а «нет связи».
+    final lease = SubscriptionGate.leaseReason.value;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -75,7 +77,8 @@ class _SaasSubscriptionBlockedScreenState extends State<SaasSubscriptionBlockedS
                         color: AppColors.danger.withValues(alpha: 0.14),
                         border: Border.all(color: AppColors.danger.withValues(alpha: 0.45)),
                       ),
-                      child: Icon(Icons.credit_card_off_outlined, color: AppColors.danger, size: 34),
+                      child: Icon(lease != null ? Icons.wifi_off_rounded : Icons.credit_card_off_outlined,
+                          color: AppColors.danger, size: 34),
                     ),
                   ),
                   const SizedBox(height: 14),
@@ -84,7 +87,7 @@ class _SaasSubscriptionBlockedScreenState extends State<SaasSubscriptionBlockedS
                       style: TextStyle(color: AppColors.brass, fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 2)),
                   const SizedBox(height: 10),
                   Text(
-                    'Вы не оплатили подписку',
+                    lease != null ? 'Нужна связь с сервером' : 'Вы не оплатили подписку',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontFamily: AppFonts.serif,
@@ -96,12 +99,15 @@ class _SaasSubscriptionBlockedScreenState extends State<SaasSubscriptionBlockedS
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'Оплатите подписку, и касса снова заработает. После оплаты экран исчезнет сам, перезапускать ничего не нужно.',
+                    lease ??
+                        'Оплатите подписку, и касса снова заработает. После оплаты экран исчезнет сам, перезапускать ничего не нужно.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: AppColors.textMuted, fontSize: 15, height: 1.45),
                   ),
                   const SizedBox(height: 22),
-                  if (deadline != null) _PurgeCountdown(deadline: deadline) else const _BlockedNote(),
+                  if (lease == null) ...[
+                    if (deadline != null) _PurgeCountdown(deadline: deadline) else const _BlockedNote(),
+                  ],
                   const SizedBox(height: 22),
                   SizedBox(
                     height: 56,

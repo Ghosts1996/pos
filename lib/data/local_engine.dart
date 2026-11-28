@@ -498,6 +498,10 @@ class FirebaseEngineAuth implements EngineAuth {
   Stream<String> get uidChanges => AppAuth.instance.uidChanges;
 }
 
+/// Вызывается на каждый ответ своего сервера (связь есть) — «аренда без
+/// связи» кассы (SubscriptionGate.onServerContact, только SaaS).
+void Function()? onServerContact;
+
 class LocalEngine {
   LocalEngine({required this.baseUrl, required this.storageDir, http.Client? client, this.auth = const FirebaseEngineAuth()})
       : _http = client ?? http.Client();
@@ -882,6 +886,7 @@ class LocalEngine {
     if (resp.statusCode < 500) {
       _lastSuccess = DateTime.now();
       ServerClock.syncFromHeader(resp.headers['date']);
+      onServerContact?.call();
     }
     Map<String, dynamic> j;
     try {

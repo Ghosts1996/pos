@@ -7066,6 +7066,12 @@ async function handleRecordAdminLogin(req, res) {
       { lastLoginAt: now, lastLoginIp: ip, lastLoginUserAgent: userAgent },
       { merge: true }
     );
+    // Каждый новый вход в панель платформы — сразу админам в бот: чужой
+    // вход (украденный пароль) виден в ту же минуту.
+    try {
+      const clean = (v) => String(v || "").replace(/[<>&]/g, "").slice(0, 160);
+      supportBot.notifyAdmins(`🔐 <b>Вход в панель платформы</b>\n${clean(decoded.email || decoded.uid)}\nАдрес: ${clean(ip)}\nУстройство: ${clean(userAgent)}\nЕсли это не вы — смените пароль («Забыли пароль?») и напишите в поддержку хостинга.`);
+    } catch (_) { /* бот ещё не запущен */ }
   }
   sendJson(res, 200, { ok: true, newSession });
 }

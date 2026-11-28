@@ -114,6 +114,9 @@ case "$MODE" in
     s3 PUT "check/ping.txt" -T "$t" -o /dev/null && echo "ok: запись" || exit 1
     s3 GET "check/ping.txt" -o "$t.got" && cmp -s "$t" "$t.got" && echo "ok: чтение" || exit 1
     s3 DELETE "check/ping.txt" -o /dev/null && echo "ok: удаление" || exit 1
+    code="$(curl -s -o /dev/null -m 20 -w '%{http_code}' "$BASE/?list-type=2&max-keys=1" 2>/dev/null || echo 000)"
+    if [[ "$code" == "200" ]]; then echo "ОПАСНО: бакет читается без ключа — сделайте его приватным"; exit 1; fi
+    echo "ok: без ключа хранилище закрыто ($code)"
     rm -f "$t" "$t.got"
     exit 0 ;;
   list)
@@ -267,6 +270,20 @@ for pfx in hourly/ daily/ weekly/; do s3 GET "?list-type=2&prefix=$pfx" >> "$lis
   const removable = items.slice(0, Math.max(0, items.length - 3));
   for (const x of removable) { if (total <= max) break; console.log(x.key); total -= x.size; }
 ' "$listing" "$MAX_MB" | while read -r k; do s3 DELETE "$k" -o /dev/null && echo "объём выше ${MAX_MB} МБ — удалена старая копия $k"; done
+
+# Хранилище не должно отдавать ничего без ключа: одна галочка «публичный
+# бакет» в панели хостинга — и копии (хоть и зашифрованные) видны всем.
+# Проверяем без подписи: список бакета и только что загруженный файл.
+open_to_all=""
+for probe in "$BASE/?list-type=2&max-keys=1" "$BASE/$key"; do
+  code="$(curl -s -o /dev/null -m 20 -w '%{http_code}' "$probe" 2>/dev/null || echo 000)"
+  [[ "$code" == "200" ]] && open_to_all="$probe"
+done
+if [[ -n "$open_to_all" ]]; then
+  status error "ХРАНИЛИЩЕ ОТКРЫТО ВСЕМ: без ключа отдаёт ${open_to_all#"$BASE"} — сделайте бакет приватным в панели хостинга" "$key" "$bytes"
+  echo "$(date '+%F %T') ОПАСНО: бакет $OFFSITE_S3_BUCKET читается без ключа" >&2
+  exit 1
+fi
 
 status ok "загружено: $key" "$key" "$bytes"
 echo "$(date '+%F %T') ok: $key ($bytes байт)"

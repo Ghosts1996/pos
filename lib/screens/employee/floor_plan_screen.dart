@@ -22,6 +22,7 @@ import '../../widgets/plan_upsell.dart';
 import '../../widgets/employee_drawer.dart';
 import '../../build_info.dart';
 import '../../widgets/guest_requests_banner.dart';
+import '../../widgets/lease_warning_banner.dart';
 import '../../widgets/shift_age_banner.dart';
 import '../../widgets/hall_drawing_builder.dart';
 import '../../widgets/hall_plan_view.dart';
@@ -203,6 +204,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
       body: Column(
         children: [
           if (kSaasMode) const ShiftAgeBanner(),
+          if (kSaasMode) const LeaseWarningBanner(),
           if (kSaasMode) IncomingCallBanner(employee: widget.employee),
           GuestRequestsBanner(
             employee: widget.employee,
