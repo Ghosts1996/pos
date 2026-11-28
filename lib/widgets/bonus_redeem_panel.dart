@@ -1,8 +1,13 @@
+import 'dart:async';
+
 import '../services/app_scope.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/client_models.dart';
 import '../services/guest_link_service.dart';
+import '../services/people_directory.dart';
+import '../utils/phone_suggest.dart';
+import '../utils/phone_utils.dart';
 import '../theme/app_colors.dart';
 import '../utils/human_error.dart';
 import '../utils/money.dart';
@@ -43,6 +48,12 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
 
   ClientProfile? _profile;
   double _applied = 0;
+
+  /// Подсказки при вводе номера (SaaS): гости из справочника, чей номер
+  /// содержит набранные цифры, — кончается на них первыми.
+  List<PdGuest> _suggest = const [];
+  Timer? _debounce;
+  int _seq = 0;
   bool _busy = false;
   String? _error;
 
@@ -54,6 +65,7 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _phone.dispose();
     _amount.dispose();
     super.dispose();
@@ -80,6 +92,101 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
     } catch (_) {
       // Не нашли автоматически — кассир найдёт гостя по телефону.
     }
+  }
+
+  void _onPhoneChanged(String text) {
+    if (!AppScope.isSaasMode) return;
+    _debounce?.cancel();
+    final q = text.trim();
+    final digits = suggestDigits(q);
+    final letters = q.replaceAll(RegExp(r'[\d\s()+\-]'), '');
+    if (digits.length < 3 && letters.length < 2) {
+      if (_suggest.isNotEmpty) setState(() => _suggest = const []);
+      return;
+    }
+    final seq = ++_seq;
+    _debounce = Timer(const Duration(milliseconds: 250), () async {
+      List<PdGuest> found;
+      try {
+        found = await People.instance.searchGuests(q);
+      } catch (_) {
+        found = const [];
+      }
+      if (!mounted || seq != _seq) return;
+      setState(() => _suggest = rankByPhone(found, q, (g) => g.phone).take(6).toList());
+    });
+  }
+
+  /// Гость выбран из подсказок: профиль — по его uid (точнее, чем по номеру).
+  Future<void> _pickGuest(PdGuest g) async {
+    _seq++;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _suggest = const [];
+    });
+    try {
+      ClientProfile? found;
+      final doc = await AppScope.loyaltyCol('clients').doc(g.uid).get();
+      if (doc.exists) found = ClientProfile.fromDoc(doc);
+      found ??= g.phone.isEmpty ? null : await _link.findByPhone(g.phone);
+      if (!mounted) return;
+      setState(() {
+        _profile = found;
+        if (found == null) _error = 'Профиль гостя не найден — попробуйте «Найти»';
+      });
+    } catch (e) {
+      if (mounted) setState(() => _error = humanError(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Widget _suggestTile(PdGuest g) {
+    final q = _phone.text.trim();
+    final shown = g.phone.isEmpty ? '' : formatPhone(g.phone);
+    final range = matchedDigits(g.phone, suggestDigits(q));
+    final spans = <TextSpan>[];
+    var digitIndex = 0;
+    for (final ch in shown.split('')) {
+      final isDigit = RegExp(r'\d').hasMatch(ch);
+      final hit = isDigit && range != null && digitIndex >= range.$1 && digitIndex < range.$2;
+      if (isDigit) digitIndex++;
+      spans.add(TextSpan(
+        text: ch,
+        style: hit ? TextStyle(color: AppColors.primary, fontWeight: FontWeight.w800) : null,
+      ));
+    }
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: _busy ? null : () => _pickGuest(g),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        child: Row(children: [
+          CircleAvatar(
+            radius: 15,
+            backgroundColor: AppColors.primary.withValues(alpha: 0.14),
+            child: Text(
+              (g.name.trim().isEmpty ? 'Г' : g.name.trim().characters.first).toUpperCase(),
+              style: TextStyle(color: AppColors.primary, fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              Text(g.name.trim().isEmpty ? 'Гость без имени' : g.name.trim(),
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: AppColors.textPrimary, fontSize: 13.5, fontWeight: FontWeight.w600)),
+              if (shown.isNotEmpty)
+                Text.rich(TextSpan(children: spans),
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 13, fontFeatures: const [FontFeature.tabularFigures()])),
+            ]),
+          ),
+          Icon(Icons.chevron_right, size: 18, color: AppColors.textMuted),
+        ]),
+      ),
+    );
   }
 
   Future<void> _findByPhone() async {
@@ -238,8 +345,13 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
                     controller: _phone,
                     keyboardType: TextInputType.phone,
                     style: TextStyle(color: AppColors.textPrimary),
-                    decoration: const InputDecoration(
+                    onChanged: _onPhoneChanged,
+                    onSubmitted: (_) {
+                      if (!_busy) _findByPhone();
+                    },
+                    decoration: InputDecoration(
                       labelText: 'Телефон гостя',
+                      helperText: AppScope.isSaasMode ? 'Можно последние 4 цифры' : null,
                       isDense: true,
                     ),
                   ),
@@ -252,6 +364,18 @@ class _BonusRedeemPanelState extends State<BonusRedeemPanel> {
                 ),
               ],
             ),
+            if (_suggest.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceElevated,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.border),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [for (final g in _suggest) _suggestTile(g)]),
+              ),
+            ],
           ] else ...[
             // Кнопке задана явная небольшая ширина, а текст режем
             // многоточием — иначе длинное имя гостя выдавило бы кнопку.

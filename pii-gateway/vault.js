@@ -322,8 +322,10 @@ function createVault({ query, firestore, verifyToken, internalToken = "", cacheM
     if (digits.length >= 3 && digits.length >= q.replace(/[\s()+-]/g, "").length) {
       const d = digits.length >= 10 ? phoneDigits(digits) : digits;
       r = await query(
+        // Номер, который кончается на введённые цифры («последние 4»), —
+        // первым: кассир набирает хвост номера, и нужный гость сверху.
         `SELECT ${GUEST_COLS} FROM guest_profiles WHERE tenant_id = $1 AND phone LIKE '%' || $2 || '%'
-         ORDER BY updated_at DESC LIMIT 30`,
+         ORDER BY (phone LIKE '%' || $2) DESC, updated_at DESC LIMIT 30`,
         [a.storeKey, d]
       );
     } else {

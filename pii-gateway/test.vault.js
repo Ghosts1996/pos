@@ -262,6 +262,16 @@ const test = (name, fn) => tests.push([name, fn]);
     assert.equal(r.json.guests.length, 0);
   });
 
+  test("поиск по последним цифрам: номер, который на них кончается, — первым", async () => {
+    // У «g8» 4433 в середине номера и он новее, у «g9» номер кончается на 4433.
+    assert.equal((await as("g9")({ tenantId: "t2", kind: "pii_put", k: "guest", id: "g9", fields: { name: "Олег", phone: "79001114433" } })).status, 200);
+    assert.equal((await as("g8")({ tenantId: "t2", kind: "pii_put", k: "guest", id: "g8", fields: { name: "Ира", phone: "79443312345" } })).status, 200);
+    const r = await as("staff2")({ tenantId: "t2", kind: "pii_search", q: "4433" });
+    const ids = r.json.guests.map((x) => x.id);
+    assert.ok(ids.includes("g8"), "совпадение в середине тоже в списке");
+    assert.ok(ids.indexOf("g8") > ids.indexOf("g9") && ids.indexOf("g8") > ids.indexOf("g7"), JSON.stringify(ids));
+  });
+
   test("чей номер: персоналу uid, гостю — только занят ли другим", async () => {
     const s2 = as("staff2");
     assert.equal((await s2({ tenantId: "t2", kind: "pii_phone", phone: "8 900 555-44-33" })).json.uid, "g7");
