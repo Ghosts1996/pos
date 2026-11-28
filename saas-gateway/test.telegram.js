@@ -897,6 +897,9 @@ const tick = () => new Promise((r) => setTimeout(r, 30));
   assert.equal(tgmod.staleCashText(new Date(Date.now() - 2 * H), TZ), null);
   assert.match(tgmod.staleCashText(new Date(Date.now() - 30 * H), TZ), /^смена кассы не закрыта с \d\d\.\d\d \d\d:\d\d/);
   assert.equal(tgmod.menuKeyboard().keyboard[0][0].text, "💰 Выручка сегодня", "у одиночного заведения — без кнопки точки");
+  // Меню отчётов не закреплено: в Telegram у поля ввода значок-клавиатура —
+  // меню можно свернуть и открыть снова (как у других ботов).
+  assert.equal(tgmod.menuKeyboard().is_persistent, false);
   assert.equal(tgmod.menuKeyboard("Арбат").keyboard[0][0].text, "📍 Арбат");
 
   // Перезапуск сервера: прошедшие сутки берутся из файла, не из Firestore.

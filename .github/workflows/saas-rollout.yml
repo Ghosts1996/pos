@@ -31,7 +31,12 @@ jobs:
       - name: Сообщить серверу о новой версии
         env:
           SECRET: ${{ secrets.BUILD_CALLBACK_SECRET }}
+          MSG: ${{ github.event.head_commit.message }}
+        # Обычные изменения сервер соберёт одной ночной сборкой (03:20 МСК);
+        # «[rollout now]» в описании коммита — сразу (срочное исправление).
         run: |
+          NOW=false
+          if printf '%s' "$MSG" | grep -q '\[rollout now\]'; then NOW=true; fi
           if [ -z "$SECRET" ]; then
             echo "::error::Нет секрета BUILD_CALLBACK_SECRET — тот же, что у сборок (saas-on-demand-build.yml)."
             exit 1
@@ -39,7 +44,7 @@ jobs:
           code=$(curl -sS -o resp.json -w '%{http_code}' -X POST "https://pii.zalpos.ru/saas/rolloutApps" \
             -H "Content-Type: application/json" \
             -H "x-callback-secret: $SECRET" \
-            -d "{\"sha\":\"${GITHUB_SHA}\"}")
+            -d "{\"sha\":\"${GITHUB_SHA}\",\"now\":${NOW}}")
           cat resp.json; echo
           if [ "$code" = "404" ]; then
             echo "::warning::На сервере старая версия saas-gateway без /rolloutApps — обновите её (saas-gateway/README.md)."

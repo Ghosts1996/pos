@@ -104,7 +104,13 @@ function createOwnAuth({
     return {
       uid: u.uid, email: u.email || undefined, emailVerified: !!u.emailVerified, disabled: !!u.disabled,
       displayName: u.displayName || undefined,
-      metadata: { creationTime: new Date(u.createdAt || now()).toUTCString(), lastSignInTime: u.lastSignInAt ? new Date(u.lastSignInAt).toUTCString() : null },
+      metadata: {
+        creationTime: new Date(u.createdAt || now()).toUTCString(),
+        lastSignInTime: u.lastSignInAt ? new Date(u.lastSignInAt).toUTCString() : null,
+        // Как у Firebase: продление входа, то есть «устройство работает»
+        // (по нему автообновление понимает, что кассой пользуются).
+        lastRefreshTime: u.lastRefreshAt ? new Date(u.lastRefreshAt).toUTCString() : null,
+      },
       providerData: u.email ? [{ providerId: "password", uid: u.email, email: u.email }] : [],
       tokensValidAfterTime: u.validAfter ? new Date(u.validAfter * 1000).toUTCString() : null,
       customClaims: u.claims || undefined,
@@ -193,6 +199,11 @@ function createOwnAuth({
     if (u.disabled) throw authError("user-disabled", "Вход отключён");
     if (u.validAfter && r.authTime < u.validAfter) throw authError("user-token-expired", "Сеанс завершён — войдите заново");
     await ref.delete(); // одноразовый: новый выдаётся взамен
+    // Отметка «был онлайн» — не чаще раза в 6 часов на аккаунт (вход
+    // продлевается примерно раз в час, лишние записи не нужны).
+    if (!u.lastRefreshAt || now() - u.lastRefreshAt > 6 * 3600000) {
+      await users().doc(u.uid).set({ lastRefreshAt: now() }, { merge: true }).catch(() => {});
+    }
     return issue(u, { provider: r.provider, authTime: r.authTime, claims: r.claims || {} });
   }
 

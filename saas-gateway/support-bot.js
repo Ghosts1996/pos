@@ -117,7 +117,7 @@ const BTN = {
 };
 const CLIENT_KB = {
   keyboard: [[{ text: BTN.ask }, { text: BTN.human }], [{ text: BTN.list }, { text: BTN.venue }], [{ text: BTN.docs }, { text: BTN.data }]],
-  resize_keyboard: true, is_persistent: true, input_field_placeholder: "Опишите вопрос…",
+  resize_keyboard: true, is_persistent: false, input_field_placeholder: "Опишите вопрос…",
 };
 // У админов бота (ID — в панели супер-админа) сверху кнопка админки.
 const ADMIN_BTN = "⚙️ Админка";
@@ -125,7 +125,7 @@ const ADMIN_KB = { ...CLIENT_KB, keyboard: [[{ text: ADMIN_BTN }], ...CLIENT_KB.
 const STAFF_BTN = { stats: "📊 Сводка", waiting: "🔴 Ждут ответа", client: "↩️ Меню клиента", open: "📂 Открытые", platform: "📈 Клиенты и оплаты", server: "🖥 Сервер" };
 const STAFF_KB = {
   keyboard: [[{ text: STAFF_BTN.stats }, { text: STAFF_BTN.waiting }], [{ text: STAFF_BTN.client }]],
-  resize_keyboard: true, is_persistent: true,
+  resize_keyboard: true, is_persistent: false,
 };
 // Режим «данные только в России»: клиенты в Telegram не пишут — в личке
 // бота только команда поддержки, и кнопки — для работы, а не клиентские.
@@ -137,7 +137,7 @@ const TEAM_KB = (admin) => ({
     [{ text: STAFF_BTN.stats }, { text: STAFF_HEALTH }],
     ...(admin ? [[{ text: STAFF_BTN.platform }, { text: STAFF_BTN.server }]] : []),
   ],
-  resize_keyboard: true, is_persistent: true, input_field_placeholder: "Команда поддержки ZalPOS",
+  resize_keyboard: true, is_persistent: false, input_field_placeholder: "Команда поддержки ZalPOS",
 });
 // Описание бота в Telegram: что это и куда писать клиентам.
 const BOT_PROFILE = {

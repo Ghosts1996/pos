@@ -1719,10 +1719,10 @@ async function githubDispatchBuild({ tenantId, jobIdPos, jobIdKolibri, jobIdPosW
   // Один запуск workflow, три job_id: касса и гость под Android, касса под
   // Windows. Каждая сборка отчитывается в свой buildJobs-документ.
   // Без job_id_kolibri workflow не собирает приложение гостя (нет в тарифе).
-  const inputs = {
-    tenant_id: tenantId, job_id_pos: jobIdPos,
-    job_id_pos_windows: jobIdPosWindows, app_label: appLabel,
-  };
+  const inputs = { tenant_id: tenantId, job_id_pos: jobIdPos, app_label: appLabel };
+  // Без job_id_pos_windows workflow не собирает кассу под Windows (её нет
+  // в заведении — экономия минут сборки: Windows считается вдвое).
+  if (jobIdPosWindows) inputs.job_id_pos_windows = jobIdPosWindows;
   if (jobIdKolibri) inputs.job_id_kolibri = jobIdKolibri;
   if (logoUrl) inputs.logo_url = logoUrl;
   if (tenantSlug) inputs.tenant_slug = tenantSlug;
@@ -1786,7 +1786,7 @@ async function startTenantBuild(tenantId, opts) {
     buildStarting.delete(tenantId);
   }
 }
-async function startTenantBuildLocked(tenantId, { requestedBy, rolloutSha = null }) {
+async function startTenantBuildLocked(tenantId, { requestedBy, rolloutSha = null, windows = true }) {
   const firestore = db();
   // У точки сети подписка общая — subscriptions/{chainId}.
   const tenantDoc = await firestore.collection("tenants").doc(tenantId).get();
@@ -1828,10 +1828,10 @@ async function startTenantBuildLocked(tenantId, { requestedBy, rolloutSha = null
   const firestoreNow = admin.firestore.FieldValue.serverTimestamp();
   const jobRefPos = firestore.collection("buildJobs").doc();
   const jobRefKolibri = withGuest ? firestore.collection("buildJobs").doc() : null;
-  const jobRefPosWindows = firestore.collection("buildJobs").doc();
+  const jobRefPosWindows = windows ? firestore.collection("buildJobs").doc() : null;
   const jobIdPos = jobRefPos.id;
   const jobIdKolibri = jobRefKolibri ? jobRefKolibri.id : "";
-  const jobIdPosWindows = jobRefPosWindows.id;
+  const jobIdPosWindows = jobRefPosWindows ? jobRefPosWindows.id : "";
   const baseJob = {
     tenantId,
     status: "queued",
@@ -1846,7 +1846,7 @@ async function startTenantBuildLocked(tenantId, { requestedBy, rolloutSha = null
   const createBatch = firestore.batch();
   createBatch.set(jobRefPos, { ...baseJob, type: "pos", platform: "android" });
   if (jobRefKolibri) createBatch.set(jobRefKolibri, { ...baseJob, type: "guest", platform: "android" });
-  createBatch.set(jobRefPosWindows, { ...baseJob, type: "pos", platform: "windows" });
+  if (jobRefPosWindows) createBatch.set(jobRefPosWindows, { ...baseJob, type: "pos", platform: "windows" });
   await createBatch.commit();
 
   // Название и логотип нужны только гостевому приложению: касса всегда
@@ -3797,7 +3797,9 @@ async function handleRolloutApps(req, res) {
     if (!expected || !secretsEqual(req.headers["x-callback-secret"], expected)) throw new HttpError(403, "forbidden");
     sha = typeof body.sha === "string" && /^[0-9a-f]{7,40}$/.test(body.sha) ? body.sha : "";
     if (!sha) throw new HttpError(400, "bad request");
-    by = "github";
+    // Обычные изменения — одной ночной сборкой; «[rollout now]» в описании
+    // коммита — срочно (через паузу, вдруг следом ещё push).
+    by = body.now === true ? "github-now" : "github";
   } else {
     // Кнопка «Обновить приложения всем» в панели платформы.
     const decoded = await verifyAuth(req);
@@ -3812,7 +3814,8 @@ async function handleRolloutApps(req, res) {
     requestedBy: by,
     requestedAt: admin.firestore.Timestamp.fromMillis(now),
     // Из панели — сразу, из GitHub — после паузы: вдруг следом ещё push.
-    startAfter: admin.firestore.Timestamp.fromMillis(by === "github" ? now + APP_ROLLOUT_DELAY_MS : now),
+    startAfter: admin.firestore.Timestamp.fromMillis(by === "github" ? nextRolloutNight(now)
+      : by === "github-now" ? now + APP_ROLLOUT_DELAY_MS : now),
     state: "waiting",
     pausedReason: null,
     finishedAt: null,
@@ -3832,6 +3835,56 @@ async function backfillAppBuildMarks() {
     const t = await ref.get();
     if (t.exists && !t.data().appBuild) await ref.set({ appBuild: { sha: "legacy" } }, { merge: true });
   }
+}
+
+/**
+ * Пользуются ли кассами заведения и есть ли среди них Windows — для
+ * ночного автообновления: заведению, где за 30 дней не работала ни одна
+ * касса, приложения не пересобираем (соберутся, когда снова начнут
+ * работать), Windows-кассу — только если она есть (её сборка вдвое дороже).
+ * Активность — как в «Устройствах» панели: вход устройства обновляется
+ * сам, пока касса работает. Не узнали — собираем всё, как раньше.
+ */
+const DEVICE_IDLE_MS = 30 * 86400000;
+async function tenantDeviceUsage(tenantId) {
+  try {
+    const snap = await db().collection("tenants").doc(tenantId).collection("devices").get();
+    const devices = snap.docs
+      .map((d) => ({ uid: d.id, data: d.data() || {} }))
+      .filter((d) => d.data.status !== "removed" && d.data.status !== "disabled");
+    if (!devices.length) return { active: false, windows: false, devices: 0 };
+    const info = new Map();
+    for (let i = 0; i < devices.length; i += 100) {
+      const r = await authApi().getUsers(devices.slice(i, i + 100).map((x) => ({ uid: x.uid })));
+      r.users.forEach((u) => info.set(u.uid, u));
+    }
+    const ms = (v) => (v && typeof v.toMillis === "function" ? v.toMillis() : 0);
+    const parse = (v) => (v ? Date.parse(v) || 0 : 0);
+    const now = Date.now();
+    let active = false;
+    let windows = false;
+    for (const d of devices) {
+      const u = info.get(d.uid);
+      const seen = Math.max(ms(d.data.lastSeenAt), ms(d.data.createdAt),
+        parse(u && u.metadata && u.metadata.lastRefreshTime), parse(u && u.metadata && u.metadata.lastSignInTime));
+      if (now - seen > DEVICE_IDLE_MS) continue;
+      active = true;
+      if (String(d.data.platform || "").toLowerCase() === "windows") windows = true;
+    }
+    return { active, windows, devices: devices.length };
+  } catch (e) {
+    console.error(`автообновление: устройства ${tenantId}: ${e.message || e}`);
+    return { active: true, windows: true, devices: -1 };
+  }
+}
+
+/** Следующие 03:20 по Москве — ночью кассы свободны, а все изменения
+ *  дня уходят одной сборкой. */
+function nextRolloutNight(now = Date.now()) {
+  const d = new Date(now);
+  let at = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 20); // 03:20 МСК = 00:20 UTC
+  if (at <= now) at += 86400000;
+  return at;
 }
 
 let appRolloutRunning = false;
@@ -3891,8 +3944,15 @@ async function runAppRolloutTick() {
         await doc.ref.set({ appBuild: { sha: r.sha, skipped: "deleted" } }, { merge: true });
         continue;
       }
+      const use = await tenantDeviceUsage(doc.id);
+      if (!use.active) {
+        // Кассами месяц не пользовались — не тратим сборку; в следующую
+        // раскатку проверим снова, «Собрать приложения» в кабинете работает всегда.
+        await doc.ref.set({ appBuild: { sha: r.sha, skipped: "idle" } }, { merge: true });
+        continue;
+      }
       try {
-        await startTenantBuild(doc.id, { requestedBy: "platform", rolloutSha: r.sha });
+        await startTenantBuild(doc.id, { requestedBy: "platform", rolloutSha: r.sha, windows: use.windows });
         slots--;
       } catch (e) {
         if (e.status === 412) {
@@ -11806,4 +11866,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, takeAiSessionQuota, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, runChargeRecurringSubscriptions, runRenewalReminders, dataWriteGate, localDataStore, applySubscriptionPayment, venueReferral, switchedPeriod, planSwitchQuote, webhooks, foodcost, board, kiosk });
+Object.assign(module.exports, { tenantDeviceUsage, nextRolloutNight, supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, takeAiSessionQuota, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, runChargeRecurringSubscriptions, runRenewalReminders, dataWriteGate, localDataStore, applySubscriptionPayment, venueReferral, switchedPeriod, planSwitchQuote, webhooks, foodcost, board, kiosk });

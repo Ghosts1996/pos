@@ -13,8 +13,8 @@ on:
         description: 'ID документа buildJobs/{jobId} для сборки гостевого приложения (matrix.app == kolibri); пусто — приложения гостя нет в тарифе заведения, собираются только кассы'
         required: false
       job_id_pos_windows:
-        description: 'ID документа buildJobs/{jobId} для Windows-сборки кассы (job build-windows ниже, отдельно от матрицы Android)'
-        required: true
+        description: 'ID документа buildJobs/{jobId} для Windows-сборки кассы (job build-windows ниже, отдельно от матрицы Android); пусто — у заведения нет Windows-кассы, Windows не собирается (минуты Windows считаются вдвое)'
+        required: false
       app_label:
         description: 'Имя гостевого приложения заведения (branding.appName, раздел «Брендинг») — касса его игнорирует, у неё фиксированное имя "ZalPOS"; пусто = название заведения'
         required: false
@@ -662,6 +662,7 @@ jobs:
   # resolveWindowsOptions в lib/firebase_options.dart), поэтому
   # google-services.json и секреты *_APP_ID здесь не нужны.
   build-windows:
+    if: ${{ inputs.job_id_pos_windows != '' }}
     runs-on: windows-latest
     name: Касса (Windows)
 

@@ -2,9 +2,10 @@ name: Публичный APK (демо-сборка для сайта)
 
 on:
   workflow_dispatch: {}
-  # Демо-сборка на сайте должна совпадать с текущей кассой — собираем при
-  # каждом изменении кода приложения в рабочей ветке. workflow_dispatch с
-  # не основной ветки GitHub не даёт, пока файла нет в main.
+  # Демо-сборка на сайте должна совпадать с текущей кассой — проверяем при
+  # каждом изменении кода приложения, но собираем не чаще раза в сутки
+  # (job gate). workflow_dispatch с не основной ветки GitHub не даёт, пока
+  # файла нет в main.
   push:
     branches: [production]
     paths:
@@ -32,9 +33,38 @@ concurrency:
 # файле, проверьте и остальные.
 permissions:
   contents: write
+  actions: read
 
 jobs:
+  # Минуты сборок: демо для сайта собираем не чаще раза в сутки (первое
+  # изменение кода за день), а не на каждый push. Вручную (Run workflow) или
+  # с «[demo]» в описании коммита — сразу.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          MSG: ${{ github.event.head_commit.message }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$EVENT" != "push" ] || printf '%s' "$MSG" | grep -q '\[demo\]'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "собираем: $EVENT"; exit 0
+          fi
+          last=$(gh api "repos/$REPO/actions/workflows/public-apk-release.yml/runs?status=success&branch=production&per_page=1" \
+            --jq '.workflow_runs[0].created_at // ""' 2>/dev/null || true)
+          if [ -n "$last" ] && [ $(( $(date -u +%s) - $(date -u -d "$last" +%s) )) -lt $((20*3600)) ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "демо собиралось $last — сегодня уже было, пропускаем"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "последняя демо-сборка: ${last:-нет} — собираем"
+          fi
+
   build:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     # Две демо-сборки для сайта: касса (выбор «Демо» или код заведения) и
     # приложение гостя (код демо-сети из кассы или новое демо, см.
@@ -508,6 +538,8 @@ jobs:
   # job build-windows): правя одну, проверьте и другую. Установщик тот же
   # (AppId общий), поэтому касса заведения потом ставится поверх демо.
   build-windows:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: windows-latest
     name: Build public demo (Windows)
 

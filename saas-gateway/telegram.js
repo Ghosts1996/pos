@@ -175,7 +175,7 @@ function menuKeyboard(pointLabel = "") {
     [{ text: MENU.shift }, { text: MENU.delivery }],
     [{ text: MENU.cash }, { text: MENU.more }],
   );
-  return { keyboard, resize_keyboard: true, is_persistent: true };
+  return { keyboard, resize_keyboard: true, is_persistent: false };
 }
 
 function moreKeyboard() {

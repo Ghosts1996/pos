@@ -1298,7 +1298,7 @@ function createPartners(deps) {
       [{ text: BTN.invites }, { text: BTN.payouts }],
       [{ text: BTN.support }, { text: BTN.help }],
     ],
-    resize_keyboard: true, is_persistent: true, input_field_placeholder: "Выберите действие",
+    resize_keyboard: true, is_persistent: false, input_field_placeholder: "Выберите действие",
   };
   const cabinetUrl = () => `${site}#/partner`;
   const cabinetBtn = (text = "🖥 Открыть кабинет") => ({ text, web_app: { url: appUrl() } });

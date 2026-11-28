@@ -368,7 +368,8 @@ test("бот: кнопки меню, приглашение в два шага, 
   await msg(`/start pl_${url.match(/pl_([a-f0-9]+)/)[1]}`);
   const kb = last().reply_markup.keyboard.flat().map((b) => b.text);
   assert.deepStrictEqual(kb, ["🖥 Личный кабинет", "💼 Мой доход", "👥 Клиенты", "📨 Пригласить заведение", "🔗 Моя ссылка", "✍️ Текст для клиента", "📋 Приглашения", "💸 Выплаты", "🆘 Поддержка", "❓ Помощь"]);
-  assert.ok(last().reply_markup.is_persistent);
+  // Меню не закреплено: в Telegram у поля ввода значок-клавиатура — открыть и свернуть меню.
+  assert.ok(Array.isArray(last().reply_markup.keyboard) && last().reply_markup.is_persistent === false);
   await msg("💼 Мой доход");
   assert.match(last().text, /Ваш доход/);
   await msg("👥 Клиенты");
