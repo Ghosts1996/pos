@@ -253,7 +253,23 @@ async function parseJsonBody(req, maxBytes) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new HttpError(400, "ожидается JSON-объект");
   }
+  // Вложенность глубже 48 уровней — не данные, а попытка уронить разбор
+  // (рекурсивные проверки и JSON.stringify дальше по коду).
+  if (jsonTooDeep(body, 48)) throw new HttpError(400, "Слишком глубокая вложенность данных");
   return body;
+}
+
+/** Глубже max уровней или больше 200 000 узлов — без рекурсии. */
+function jsonTooDeep(v, max) {
+  const stack = [[v, 0]];
+  let seen = 0;
+  while (stack.length) {
+    const [x, d] = stack.pop();
+    if (!x || typeof x !== "object") continue;
+    if (d > max || ++seen > 200000) return true;
+    for (const k in x) if (Object.prototype.hasOwnProperty.call(x, k)) stack.push([x[k], d + 1]);
+  }
+  return false;
 }
 
 /** Код заведения: латиница, цифры и дефис — он же поддомен. */
@@ -8497,6 +8513,22 @@ const aiModelsCache = new Map();
 const aiModelFix = new Map(); // ключ+адрес+модель → замена
 const AI_PROXY_WINDOW_MS = 10 * 60 * 1000; // за 10 минут
 const aiProxyLimiter = new Map(); // uid -> { count, resetAt }
+// Общий потолок ИИ на один открытый счёт: сев за стол, можно завести сколько
+// угодно анонимных гостей на тот же счёт, и у каждого был бы свой суточный
+// лимит. Не больше AI_SESSION_LIMIT запросов за 6 часов на счёт.
+const AI_SESSION_LIMIT = 160;
+const aiSessionLimiter = new Map(); // "<точка>/<счёт>" -> { n, resetAt }
+function takeAiSessionQuota(key, now = Date.now()) {
+  const cur = aiSessionLimiter.get(key);
+  if (!cur || cur.resetAt <= now) {
+    if (aiSessionLimiter.size > 50000) for (const [k, v] of aiSessionLimiter) if (v.resetAt <= now) aiSessionLimiter.delete(k);
+    aiSessionLimiter.set(key, { n: 1, resetAt: now + 6 * 3600000 });
+    return true;
+  }
+  if (cur.n >= AI_SESSION_LIMIT) return false;
+  cur.n += 1;
+  return true;
+}
 
 function inferAiVendor(baseUrl) {
   const u = String(baseUrl || "").toLowerCase();
@@ -8683,6 +8715,9 @@ async function handleAiProxy(req, res) {
     const ses = await firestore.collection("tenants").doc(sessionTenant).collection("sessions").doc(sid).get();
     if (!ses.exists || ses.data().status !== "active") {
       throw new HttpError(403, "ИИ-помощник доступен, пока за столом открыт счёт");
+    }
+    if (!takeAiSessionQuota(`${sessionTenant}/${sid}`)) {
+      throw new HttpError(429, "За этим столом сегодня уже много вопросов ИИ-помощнику — спросите официанта");
     }
     // Не больше AI_GUEST_DAILY_LIMIT вопросов гостя в сутки (по Москве) —
     // счётчик на сервере, переживает перезапуск; ИИ оплачивает заведение.
@@ -11004,6 +11039,16 @@ const tobacco = createTobacco({
   verifyAuth, parseJsonBody, sendJson, HttpError, requireTenantRole,
   aiVendor: (tid) => venueAiVendor(tid), aiComplete: (v, o) => venueAiComplete(v, o), extractJson, limiter: menuAiLimiter,
   stateDir: process.env.TOBACCO_STATE_DIR || path.join(__dirname, "state"),
+  // Общий каталог табака пополняют только настоящие заведения (не демо и не удалённые).
+  tenantTrusted: async (tid) => {
+    const t = (await db().collection("tenants").doc(tid).get()).data() || {};
+    if (t.demo === true || t.isDemo === true || t.status === "deleted" || t.deletedAt) return false;
+    if (t.chainId) {
+      const c = (await db().collection("chains").doc(String(t.chainId)).get()).data() || {};
+      if (c.demo === true) return false;
+    }
+    return true;
+  },
 });
 
 // ИИ-разборы в фоне: касса отдаёт задание, сервер доводит его до конца (ai-reports.js).
@@ -11755,4 +11800,4 @@ function scheduleAutoDataMigration() {
 
 module.exports = server;
 // Для test.smoke.js — чистые функции счёта для ИП и организаций.
-Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, runChargeRecurringSubscriptions, runRenewalReminders, dataWriteGate, localDataStore, applySubscriptionPayment, venueReferral, switchedPeriod, planSwitchQuote, webhooks, foodcost, board, kiosk });
+Object.assign(module.exports, { supportPlanLines, PLAN_CATALOG, deviceMergeUpdate, deviceExpired, DEVICE_RESTORE_DAYS, runFirestorePurge, firestorePurgeState, saveFirestorePurge, runFirebaseExit, ownAuth, translateMenu, menuAiRows, handleMenuImportAi, extractJson, venueAiVendor, rushHour, takeGuestAiQuota, AI_GUEST_DAILY_LIMIT, takeAiSessionQuota, RUSH_ESSENTIAL_JOBS, isQuotaExhausted, periodCarry, paidDaysLeft, innValid, receiptDeadline, pinHashFor, stripGuestPii, maskPhone, seedDemoData, resolveAiVendor, shield, securityDigestLines, robokassaSelfCheck, runExpireSubscriptions, runChargeRecurringSubscriptions, runRenewalReminders, dataWriteGate, localDataStore, applySubscriptionPayment, venueReferral, switchedPeriod, planSwitchQuote, webhooks, foodcost, board, kiosk });

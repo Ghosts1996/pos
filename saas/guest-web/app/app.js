@@ -433,6 +433,17 @@ function esc(s) {
 
 // Экранирует текст и превращает ссылки внутри него в кликабельные <a>.
 // Хвостовая пунктуация («...канал.», «(сайт)») в ссылку не включается.
+/** Адрес картинки из данных заведения: только https, картинка data: или свой
+ *  путь «/…». Остальное («javascript:», «http:», мусор) — без картинки:
+ *  не полагаемся только на политику безопасности страницы. */
+function imgUrl(u) {
+  const v = String(u || '').trim();
+  if (/^https:\/\/[^\s"'<>()]+$/i.test(v)) return v;
+  if (/^\/(?!\/)[^\s"'<>()]*$/.test(v)) return v;
+  if (/^data:image\/(png|jpe?g|webp|gif);base64,[a-z0-9+/=]+$/i.test(v)) return v;
+  return '';
+}
+
 function linkify(s) {
   const escaped = esc(s);
   return escaped.replace(/(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi, (url) => {
@@ -1297,7 +1308,7 @@ function renderStories() {
     // Карточка афиши: фото из меню на всю карточку с вуалью, заголовок
     // антиквой, кнопка-пилюля; без фото — мягкий фон цвета заведения.
     const go = (s) => (s.action === 'menu' ? '#/menu' : s.action === 'booking' ? '#/booking' : '');
-    const safeImg = (u) => (/^https:\/\/[^\s"'()<>]+$/.test(String(u || '')) ? String(u) : '');
+    const safeImg = imgUrl;
     box.innerHTML = `<h2>Афиша</h2><div class="story-row${list.length === 1 ? ' one' : ''}">` + list.map((s) => {
       const img = safeImg(s.imageUrl);
       const href = go(s);
@@ -1581,7 +1592,7 @@ function screenMenu() {
               </div>`;
     const itemCard = (i) => `
       <div class="mcard${cartQty(i.id) ? ' on' : ''}">
-        <div class="mphoto">${i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
+        <div class="mphoto">${imgUrl(i.imageUrl) ? `<img src="${esc(imgUrl(i.imageUrl))}" alt="" loading="lazy">` : ''}
           ${isHit(i) ? '<span class="hit">Хит</span>' : ''}</div>
         <div class="mbody">
           <div class="mname">${esc(trMenu(i.name))}</div>
@@ -1639,7 +1650,7 @@ function screenMenu() {
         ${hits.length ? `<h2 class="mh">Популярное</h2><div class="mstrip">${hits.map(itemCard).join('')}</div>` : ''}
         ${sections.length ? '<h2 class="mh">Категории</h2>' : ''}
         <div class="cgrid">${sections.map((s) => {
-          const img = s.imageUrl || (s.items.find((i) => i.imageUrl) || {}).imageUrl || '';
+          const img = imgUrl(s.imageUrl) || imgUrl((s.items.find((i) => imgUrl(i.imageUrl)) || {}).imageUrl);
           return `<button class="ctile" data-cat="${esc(s.id)}">
             ${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : `<span class="cinitial" aria-hidden="true">${esc((s.name || '').trim().charAt(0))}</span>`}
             <span class="cname">${esc(trMenu(s.name))}<small>${s.items.length} ${plural(s.items.length, 'позиция', 'позиции', 'позиций')}</small></span>
@@ -1737,7 +1748,7 @@ function upsellBlock(list) {
       <div class="upsell-title">Отлично подойдёт к вашему заказу</div>
       <div class="upsell-row">${list.map((i) => `
         <div class="upsell-card">
-          ${i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy">` : ''}
+          ${imgUrl(i.imageUrl) ? `<img src="${esc(imgUrl(i.imageUrl))}" alt="" loading="lazy">` : ''}
           <div class="upsell-name">${esc(trMenu(i.name))}</div>
           <div class="upsell-foot"><b>${money(i.price)}</b><button data-plus="${esc(i.id)}" aria-label="Добавить: ${esc(i.name)}">+</button></div>
         </div>`).join('')}</div>

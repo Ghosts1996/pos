@@ -31,6 +31,14 @@ const server = require("./server.js");
   const res = await Promise.allSettled(Array.from({ length: 30 }, () => server.takeGuestAiQuota(db, "guestC", day)));
   assert.strictEqual(res.filter((r) => r.status === "fulfilled").length, 20);
   passed++;
+  // Один счёт — общий потолок: сто анонимных гостей на одном столе не
+  // получают по 20 вопросов каждый.
+  let okN = 0;
+  for (let i = 0; i < 200; i++) if (server.takeAiSessionQuota("tA/s1", day + i)) okN++;
+  assert.strictEqual(okN, 160);
+  assert.ok(server.takeAiSessionQuota("tA/s2", day), "другой счёт — свой потолок");
+  assert.ok(server.takeAiSessionQuota("tA/s1", day + 7 * 3600000), "через 6 часов — снова можно");
+  passed++;
   // Правила базы: гость не читает и не пишет счётчики (иначе обнулил бы себе лимит).
   const rules = fs.readFileSync(path.join(__dirname, "..", "saas", "firestore.rules"), "utf8");
   assert.ok(!/aiGuestDaily/.test(rules), "коллекции нет в правилах — для клиентов закрыта по умолчанию");

@@ -80,6 +80,25 @@ function createDataStore({ admin, file = null, now }) {
 // ------------------------------------------------------------ значения по сети
 
 /** Значение из сети → значение хранилища (метки времени, служебные). */
+/**
+ * Вложенность глубже max уровней (без рекурсии — сама проверка не падает).
+ * Firestore допускает 20 уровней; глубже — не документ, а попытка уронить
+ * разбор (JSON.stringify, правила, преобразования рекурсивны).
+ */
+const MAX_DEPTH = 32;
+function tooDeep(v, max = MAX_DEPTH) {
+  const stack = [[v, 0]];
+  let seen = 0;
+  while (stack.length) {
+    const [x, d] = stack.pop();
+    if (!x || typeof x !== "object") continue;
+    if (d > max) return true;
+    if (++seen > 200000) return true;
+    for (const k in x) if (Object.prototype.hasOwnProperty.call(x, k)) stack.push([x[k], d + 1]);
+  }
+  return false;
+}
+
 function fromWire(v, admin) {
   if (v === null || typeof v !== "object") return v;
   if (Array.isArray(v)) return v.map((x) => fromWire(x, admin));
@@ -223,6 +242,7 @@ function createSecureDb({ store, rulesSource, admin, now = () => Date.now() }) {
         method = "delete";
       } else if (w.op === "set" || w.op === "update") {
         if (!w.data || typeof w.data !== "object" || Array.isArray(w.data)) throw new DataError("invalid-argument", "Данные документа — объект", 400);
+        if (tooDeep(w.data)) throw new DataError("invalid-argument", "Слишком глубокая вложенность данных", 400);
         if (JSON.stringify(w.data).length > MAX_DOC_BYTES) throw new DataError("invalid-argument", "Документ больше 1 МБ", 400);
         if (w.op === "update" && Object.keys(w.data).some((k) => k.split(".").includes("__proto__"))) {
           throw new DataError("invalid-argument", "Недопустимое имя поля", 400);
@@ -333,6 +353,8 @@ function createDataApi({ store, secure, verifyAuth, parseJsonBody, sendJson, Htt
   async function handleCommit(req, res) {
     const auth = await authOf(req);
     const body = await parseJsonBody(req);
+    // Слишком глубокая вложенность — отказ сразу (и без карантина: это не чек).
+    if (tooDeep(body.writes, MAX_DEPTH + 4)) return sendJson(res, 400, { error: "Слишком глубокая вложенность данных", code: "invalid-argument" });
     // Заведение не оплачено или устройство сверх тарифа — записи не
     // принимаются (касса показывает это и сама, но старую версию или
     // изменённый клиент держит только сервер).

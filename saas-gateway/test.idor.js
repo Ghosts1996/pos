@@ -141,6 +141,31 @@ async function main() {
   check("гость: 50 000 символов в вызове официанта — отказ", r.status === 400 && /длинн/i.test(r.raw), `${r.status} ${r.raw.slice(0, 120)}`);
   check("гость: мегабайтный вызов не сохранён", !(await store.collection("tenants/tenA/waiterCalls").doc("w1").get()).exists);
 
+  // ---- 4б. Тела, которые роняют разборщики: вложенность 5000 и 100 000,
+  // 30 МБ мусора, __proto__ в пути и в поле — отказ, сервер жив, прототип чист.
+  const rawReq = (p, raw) => new Promise((resolve) => {
+    const req = http.request({ hostname: "127.0.0.1", port: 8097, path: p, method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(raw), Authorization: `Bearer ${a.idToken}` } }, (res) => {
+      res.resume(); res.on("end", () => resolve(res.statusCode));
+    });
+    req.on("error", () => resolve("ERR"));
+    req.end(raw);
+  });
+  const D = (n) => '{"a":'.repeat(n) + '"x"' + "}".repeat(n);
+  for (const [name, p, raw] of [
+    ["вложенность 5000", "/db/commit", `{"writes":[{"op":"set","path":"tenants/tenA/sessions/deep","data":${D(5000)}}]}`],
+    ["массив вложенностью 100 000", "/db/commit", "[".repeat(100000) + "]".repeat(100000)],
+    ["30 МБ", "/db/commit", `{"writes":[],"pad":"${"x".repeat(30 * 1048576)}"}`],
+    ["__proto__ в пути", "/db/commit", JSON.stringify({ writes: [{ op: "set", path: "tenants/tenA/__proto__/x", data: { a: 1 } }] })],
+    ["__proto__ в поле", "/db/commit", '{"writes":[{"op":"update","path":"tenants/tenA/sessions/s1","data":{"__proto__":{"polluted":1}}}]}'],
+    ["вложенность в киоске", "/kiosk/order", `{"items":${D(3000)}}`],
+  ]) {
+    const st = await rawReq(p, raw);
+    const alive = (await request("GET", "/health")).status;
+    check(`мусор: ${name} — отказ, сервер жив`, typeof st === "number" && st >= 400 && st < 500 && alive === 200, `${st} / ${alive}`);
+  }
+  check("мусор: Object.prototype не загрязнён", ({}).polluted === undefined);
+
   // ---- 5. Два «Собрать APK» в одну секунду — запускается одна сборка.
   const [b1, b2] = await Promise.all([
     request("POST", "/createBuildJob", { token: a.idToken, body: { tenantId: "tenA" } }),
