@@ -29,7 +29,9 @@ const TOBACCO_AI_PROMPT = `На фото — полка с банками таб
 НЕ бери банки с обоев, плакатов, наклеек, фотографий и рекламы на стене — только настоящие банки на полке.
 Крупные слова на банках вроде «СЛЕПОТА», «ИМПОТЕНЦИЯ», «ИНФАРКТ», «ИНСУЛЬТ», «ГАНГРЕНА», «МУЧИТЕЛЬНАЯ СМЕРТЬ», «БЕСПЛОДИЕ», «КУРЕНИЕ УБИВАЕТ», «СОДЕРЖИТ СИСТЕМНЫЕ ЯДЫ» и фото болезней — обязательные предупреждения о вреде. Это НЕ вкус и НЕ марка: никогда не пиши их в name.
 Часто предупреждение закрывает лицевую сторону, а вкус написан от руки маркером на ленте или наклейке («Kriek», «Finlandia vanilla») — рукописная надпись и есть название вкуса. Ищи и мелкий текст состава: «с ароматом вишни» → вкус вишня. Марку ищи на ленте, крышке, боковой полосе (например TROFIMOFF'S, BONCHE, DARKSIDE, DEDUSHKA, ЛАСТОЧКА), а если её не видно — оставь brand пустым, не выдумывай.
-МАРКА И ЛИНЕЙКА — РАЗНЫЕ ПОЛЯ. На ленте часто крупно написана линейка, а не марка: TERROR — линейка Trofimoff's (brand Trofimoff, line Terror), Shot — линейка Darkside, Shock — Black Burn, Hard Line — Spectrum, Земля/Огонь — Element. Линейку определяй и по цвету банки, как сказано в базе марок (например, красная банка Trofimoff's — Burley). В line пиши линейку, в brand — марку.
+МАРКА И ЛИНЕЙКА — РАЗНЫЕ ПОЛЯ, у КАЖДОЙ банки определяй оба. На ленте часто крупно написана линейка, а не марка: TERROR — линейка марки Trofimoff's (brand "Trofimoff's", line "Terror"), Shot — линейка Darkside, Shock — Black Burn, Hard Line — Spectrum, Земля/Огонь — Element, Noir — Tangiers. В line пиши линейку, в brand — марку (как в базе, например Trofimoff's — с апострофом).
+КАК УЗНАТЬ ЛИНЕЙКУ: (1) надпись линейки на ленте, крышке или донышке; (2) цвет банки, ленты и крышки — у одной марки банки разного цвета почти всегда разные линейки (красная банка Trofimoff's — Burley); (3) форма и размер — жестянка, стеклянная банка, пластик, высокая или низкая, широкая или узкая, пакет; (4) известные вкусы линейки. Если у марки линейка одна или по виду не понять — line пустой, не выдумывай.
+В look коротко опиши вид банки: цвет банки и ленты, материал и форму («чёрная жестянка, красная лента», «белая пластиковая, низкая») — по нему узнаются банки без надписи.
 У ОДНОЙ банки надписи часто разнесены: название вкуса — на крышке или верхней наклейке (например «ORANGE TIC TAC»), а марка и «аромат …» — на боковой ленте (например «DEUS», «аромат апельсинового драже»), рядом может быть предупреждение («ИМПОТЕНЦИЯ»). Собери всё, что видно на одной банке, в ОДНУ запись: name — название вкуса, brand — марка с ленты, flavors — из «аромат …» (апельсиновое драже → апельсин, драже). Текст, обрезанный краем или повёрнутый, всё равно дочитывай по видимой части. Известные слова: Tic Tac — драже-конфеты, Bubble gum/Бубльгум — жвачка.
 Фото может быть тёмным или смазанным — всё равно разбери каждую надпись, которую можно прочитать хотя бы частично; не пропускай банку, если читается вкус.
 БАЗА МАРОК. Марку часто не видно (лента повёрнута, банку закрывает соседняя) — тогда определяй её по оформлению банки и по известным вкусам марки. Если прочитанное название вкуса есть в списке вкусов марки — это банка этой марки, пиши название так, как в списке:
@@ -40,7 +42,7 @@ Frigate — сухой табак (без глицерина, для крепо�
 Бывают необычные «гастрономические» вкусы (салями, плов, сыр, бекон, кунжут) — пиши их как есть, это не ошибка.
 Читай название по буквам и не исправляй на похожее слово: «Тростниковая мята», а не «Простниковая»; «Бубльгум» — это жвачка (bubble gum); «Wintergreen» / «Винтергрин» — грушанка, мятно-холодный вкус.
 Для каждой банки верни:
-- brand — марку, как написано (частые: Darkside, Musthave, Black Burn, Element, Blanch, Timeless, WTO, Frigate, Sapphire Crown, Original Virginia, Tangiers, Al Fakher, Adalya, Serbetli, Fumari, Starbuzz, Spectrum, Sebero, Duft, Satyr, Bonche, Jent, Trofimoff, Deus, Dogma, Banger, Overdose, Хулиган, MattPear, Palitra, NАШ, Северный, Kraken, Daily Hookah, Burn, Sarma, Craftium, Starline, Morpheus, Lastochka, Timeline, Chabacco, Brusko, Zomo, Dedushka и др.);
+- brand — марку, как написано (частые: Darkside, Musthave, Black Burn, Element, Blanch, Timeless, WTO, Frigate, Sapphire Crown, Original Virginia, Tangiers, Al Fakher, Adalya, Serbetli, Fumari, Starbuzz, Spectrum, Sebero, Duft, Satyr, Bonche, Jent, Trofimoff's, Deus, Dogma, Banger, Overdose, Хулиган, MattPear, Palitra, NАШ, Северный, Kraken, Daily Hookah, Burn, Sarma, Craftium, Starline, Morpheus, Lastochka, Timeline, Chabacco, Brusko, Zomo, Dedushka и др.);
 - name — название вкуса так, как написано на банке, без перевода (например «Pinkman», «Supernova», «Ice Baby», «Love 66», «Спелая лесная малина»);
 - flavors — из чего вкус, простыми русскими словами. Если название «придуманное», напиши, что знаешь об этой банке (Pinkman — грейпфрут, клубника, малина; Supernova — ментол, холодок; Love 66 — маракуйя, дыня, арбуз, мята). Не знаешь вкус и по надписи не понять — оставь пустым, не выдумывай;
 - strength — крепость, если написана или известна линейка (light|medium|strong), иначе пусто;
@@ -187,7 +189,7 @@ function createTobacco(deps) {
       const text = await aiComplete(vendor, {
         system: "Ты внимательно читаешь надписи на банках табака. Отвечай только JSON.",
         content: [
-          { type: "text", text: pages.length > 1 ? `${TOBACCO_AI_PROMPT}\n\n${MULTI_NOTE}` : TOBACCO_AI_PROMPT },
+          { type: "text", text: [TOBACCO_AI_PROMPT, learnedLooks(), pages.length > 1 ? MULTI_NOTE : ""].filter(Boolean).join("\n\n") },
           ...pages.map((page) => ({ type: "image", mediaType: page.mediaType, data: page.data })),
         ],
         maxTokens: 4000, heavy: true,
@@ -213,8 +215,16 @@ function createTobacco(deps) {
         cur.count = (cur.count || 1) + 1;
         cur.last = t;
         if (!cur.flavors?.length && it.flavors.length) cur.flavors = it.flavors;
+        // Линейку и вид банки поправило заведение — берём последнее подтверждённое.
+        if (it.line) cur.line = it.line;
+        if (it.look) {
+          cur.looks = cur.looks || {};
+          cur.looks[it.look] = (cur.looks[it.look] || 0) + 1;
+          trimLooks(cur);
+        }
       } else {
-        cat[key] = { brand: it.brand, name: it.name, flavors: it.flavors, strength: it.strength, count: 1, first: t, last: t };
+        cat[key] = { brand: it.brand, name: it.name, flavors: it.flavors, strength: it.strength, count: 1, first: t, last: t,
+          ...(it.line ? { line: it.line } : {}), ...(it.look ? { looks: { [it.look]: 1 } } : {}) };
         added++;
       }
     }
@@ -225,7 +235,40 @@ function createTobacco(deps) {
       for (const k of keys.slice(0, keys.length - 20000)) delete cat[k];
     }
     saveCatalog();
+    learnedCache = null;
     return { added, total: Object.keys(cat).length };
+  }
+
+  function trimLooks(c) {
+    const ks = Object.keys(c.looks || {});
+    if (ks.length <= 5) return;
+    ks.sort((a, b) => c.looks[b] - c.looks[a]);
+    for (const k of ks.slice(5)) delete c.looks[k];
+  }
+
+  /**
+   * Вид банок, который заведения проверили и сохранили на полку: марка + линейка →
+   * самые частые описания вида. Добавляется к подсказке ИИ — так он учится узнавать
+   * линейку и марку по цвету и форме банки на любых полках.
+   */
+  let learnedCache = null;
+  function learnedLooks(limit = 80) {
+    if (learnedCache && learnedCache.at > now() - 600000) return learnedCache.text;
+    const groups = new Map();
+    for (const c of Object.values(loadCatalog())) {
+      if (!c.brand || !c.looks) continue;
+      const g = `${c.brand}${c.line ? ` ${c.line}` : ""}`;
+      const cur = groups.get(g) || { looks: {}, n: 0 };
+      for (const [l, n] of Object.entries(c.looks)) { cur.looks[l] = (cur.looks[l] || 0) + n; cur.n += n; }
+      groups.set(g, cur);
+    }
+    const rows = [...groups.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, limit).map(([g, v]) => {
+      const top = Object.entries(v.looks).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([l]) => l);
+      return `• ${g} — ${top.join("; ")}`;
+    });
+    const text = rows.length ? `ВИД БАНОК, ПРОВЕРЕННЫЙ ЗАВЕДЕНИЯМИ (марка и линейка — как выглядит банка):\n${rows.join("\n")}` : "";
+    learnedCache = { at: now(), text };
+    return text;
   }
 
   /** Новинки: впервые встретились за последние 60 дней (сначала новые). */
@@ -252,7 +295,7 @@ function createTobacco(deps) {
     throw new HttpError(400, "Неизвестное действие");
   }
 
-  return { handle, scan, scanStart, scanResult, learn, fresh, jobs };
+  return { handle, scan, scanStart, scanResult, learn, fresh, jobs, learnedLooks };
 }
 
 module.exports = { createTobacco, itemsFromAi, isWarning, TOBACCO_AI_PROMPT };

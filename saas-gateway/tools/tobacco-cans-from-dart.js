@@ -25,9 +25,9 @@ function parseDart(src) {
 function parseBrands(src) {
   const out = [];
   const main = src.slice(src.indexOf("const List<TobaccoBrand> kTobaccoBrands = ["), src.indexOf("];", src.indexOf("const List<TobaccoBrand> kTobaccoBrands = [")));
-  for (const m of main.matchAll(/TobaccoBrand\('((?:[^'\\]|\\.)+)', \[([^\]]*)\], '(\w+)'\)/g)) {
-    const aka = [...m[2].matchAll(/["']((?:[^"'\\]|\\.)+)["']/g)].map((x) => x[1].replace(/\\'/g, "'"));
-    out.push({ name: m[1].replace(/\\'/g, "'"), aka, kind: m[3] });
+  for (const m of main.matchAll(/TobaccoBrand\((?:'((?:[^'\\]|\\.)+)'|"([^"]+)"), \[([^\]]*)\], '(\w+)'\)/g)) {
+    const aka = [...m[3].matchAll(/'((?:[^'\\]|\\.)+)'|"([^"]+)"/g)].map((x) => (x[1] || x[2]).replace(/\\'/g, "'"));
+    out.push({ name: (m[1] || m[2]).replace(/\\'/g, "'"), aka, kind: m[4] });
   }
   const more = src.slice(src.indexOf("const List<String> kMoreBrandLines = ["), src.indexOf("];", src.indexOf("const List<String> kMoreBrandLines = [")));
   for (const m of more.matchAll(/'((?:[^'\\]|\\.)+)'/g)) {
@@ -43,8 +43,8 @@ function parseLines(src) {
   const start = src.indexOf("const Map<String, Map<String, int>> kLineStrength = {");
   const body = src.slice(start, src.indexOf("};", start));
   const out = {};
-  for (const m of body.matchAll(/'([^']+)': \{([^}]*)\}/g)) {
-    out[m[1]] = [...m[2].matchAll(/'([^']+)': (\d+)/g)].map((x) => ({ line: x[1], strength: Number(x[2]) }));
+  for (const m of body.matchAll(/(?:'([^']+)'|"([^"]+)"): \{([^}]*)\}/g)) {
+    out[m[1] || m[2]] = [...m[3].matchAll(/'([^']+)': (\d+)/g)].map((x) => ({ line: x[1], strength: Number(x[2]) }));
   }
   return out;
 }

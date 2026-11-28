@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/app_scope.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +8,9 @@ import '../../theme/app_colors.dart';
 import '../../utils/human_error.dart';
 import '../../utils/adaptive.dart';
 import '../../utils/promo_policy.dart';
+import '../../utils/remote_sale.dart';
+import '../../models/menu_models.dart';
+import '../../build_info.dart';
 import '../../data/app_db.dart';
 
 /// Лента заведения: карточки, которые видит гость в своём приложении.
@@ -98,8 +102,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-              color: s.isLive ? AppColors.success.withValues(alpha: 0.5) : AppColors.border),
+          border: Border.all(color: s.isLive ? AppColors.success.withValues(alpha: 0.5) : AppColors.border),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -110,8 +113,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
                   child: Text(s.title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 16)),
+                      style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 16)),
                 ),
                 if (s.byAi)
                   Padding(
@@ -128,22 +130,31 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
                   tooltip: 'Ниже в ленте',
                   icon: const Icon(Icons.keyboard_arrow_down),
                   visualDensity: VisualDensity.compact,
-                  onPressed: index == all.length - 1
-                      ? null
-                      : () => _move(all, index, index + 1),
+                  onPressed: index == all.length - 1 ? null : () => _move(all, index, index + 1),
                 ),
                 Switch(
                   value: s.published,
-                  onChanged: (v) =>
-                      AppScope.col('stories').doc(s.id).update({'published': v}),
+                  onChanged: (v) => AppScope.col('stories').doc(s.id).update({'published': v}),
                 ),
               ],
             ),
             const SizedBox(height: 6),
-            Text(s.text,
-                maxLines: 4,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: AppColors.textMuted)),
+            if (kSaasMode && s.imageUrl.isNotEmpty) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: AspectRatio(
+                  aspectRatio: 16 / 7,
+                  child: CachedNetworkImage(
+                    imageUrl: s.imageUrl,
+                    fit: BoxFit.cover,
+                    memCacheWidth: 900,
+                    errorWidget: (_, __, ___) => Container(color: AppColors.surfaceElevated),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            Text(s.text, maxLines: 4, overflow: TextOverflow.ellipsis, style: TextStyle(color: AppColors.textMuted)),
             if (s.actionLabel.isNotEmpty) ...[
               const SizedBox(height: 8),
               Row(
@@ -174,6 +185,12 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
             Row(
               children: [
                 TextButton(onPressed: () => _edit(s), child: const Text('Изменить')),
+                if (kSaasMode && s.imageUrl.isEmpty)
+                  TextButton.icon(
+                    onPressed: () => _photoFromMenu(s),
+                    icon: const Icon(Icons.image_outlined, size: 18),
+                    label: const Text('Фото из меню'),
+                  ),
                 TextButton(
                   onPressed: () => AppScope.col('stories').doc(s.id).delete(),
                   child: Text('Удалить', style: TextStyle(color: AppColors.danger)),
@@ -190,20 +207,25 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
       // Агент отдаёт готовые поля: заголовок, текст, призыв и переход.
       // Черновик про кальян или табак — реклама табака (ст. 16 № 15-ФЗ),
       // такие не сохраняем, даже если модель нарушила инструкцию.
+      // Черновик про кальян или табак — реклама табака (ст. 16 № 15-ФЗ),
+      // такие не сохраняем, даже если модель нарушила инструкцию. В SaaS
+      // storyDrafts ещё отсеивает алкоголь и подбирает фото из меню.
       final drafts = (await AiService.instance.storyDrafts(count: 3))
           .where((d) => !PromoPolicy.looksTobacco('${d.title} ${d.text} ${d.cta}'))
           .toList();
       for (final d in drafts) {
         await AppScope.col('stories').add(StoryCard(
-              id: '',
-              title: d.title,
-              text: d.text,
-              action: d.action,
-              actionLabel: d.cta,
-              byAi: true,
-              published: false,
-              createdAt: DateTime.now(),
-            ).toMap());
+          id: '',
+          title: d.title,
+          text: d.text,
+          action: d.action,
+          actionLabel: d.cta,
+          imageUrl: d.imageUrl,
+          menuItemId: d.menuItemId,
+          byAi: true,
+          published: false,
+          createdAt: DateTime.now(),
+        ).toMap());
       }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -222,12 +244,89 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
     if (mounted) setState(() => _busy = false);
   }
 
+  /// Позиции меню с фото (без табака и алкоголя) — для выбора фото карточки.
+  Future<List<({MenuItem item, String category, String categoryImage})>> _menuWithPhotos() async {
+    final menu = await AiService.instance.storyMenu();
+    return [
+      for (final m in menu)
+        if (m.item.imageUrl.isNotEmpty || m.categoryImage.isNotEmpty) m
+    ];
+  }
+
+  /// Выбор фото из меню: сначала — позиция, названная в карточке.
+  Future<({String url, String itemId})?> _pickMenuPhoto(String hint) async {
+    final list = await _menuWithPhotos();
+    if (!mounted) return null;
+    if (list.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('В меню нет фото. Добавьте фото позициям в «Меню» — и они появятся здесь')));
+      return null;
+    }
+    final h = hint.toLowerCase();
+    list.sort(
+        (a, b) => (h.contains(b.item.name.toLowerCase()) ? 1 : 0) - (h.contains(a.item.name.toLowerCase()) ? 1 : 0));
+    return showModalBottomSheet<({String url, String itemId})>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.of(ctx).size.height * 0.7,
+          child: Column(children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text('Фото из меню', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            ),
+            Expanded(
+              child: GridView.builder(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 180, mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 0.85),
+                itemCount: list.length,
+                itemBuilder: (_, i) {
+                  final m = list[i];
+                  final url = m.item.imageUrl.isNotEmpty ? m.item.imageUrl : m.categoryImage;
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () => Navigator.pop(ctx, (url: url, itemId: m.item.id)),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: CachedNetworkImage(imageUrl: url, fit: BoxFit.cover, memCacheWidth: 400),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(m.item.name,
+                          maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5)),
+                    ]),
+                  );
+                },
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _photoFromMenu(StoryCard s) async {
+    try {
+      final picked = await _pickMenuPhoto('${s.title} ${s.text}');
+      if (picked == null) return;
+      await AppScope.col('stories').doc(s.id).update({'imageUrl': picked.url, 'menuItemId': picked.itemId});
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(humanError(e))));
+    }
+  }
+
   Future<void> _edit(StoryCard? story) async {
     final title = TextEditingController(text: story?.title ?? '');
     final body = TextEditingController(text: story?.text ?? '');
     final image = TextEditingController(text: story?.imageUrl ?? '');
     final label = TextEditingController(text: story?.actionLabel ?? '');
     var action = story?.action ?? 'none';
+    var menuItemId = story?.menuItemId ?? '';
 
     // Подпись по умолчанию — та, что подходит выбранному переходу. Если
     // администратор ничего своего не написал, при смене перехода она
@@ -237,8 +336,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
           'booking' => 'Забронировать',
           _ => '',
         };
-    var labelIsDefault = label.text.isEmpty ||
-        label.text == defaultLabel(action);
+    var labelIsDefault = label.text.isEmpty || label.text == defaultLabel(action);
     if (label.text.isEmpty) label.text = defaultLabel(action);
 
     final ok = await showDialog<bool>(
@@ -259,6 +357,22 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
                 ),
                 const SizedBox(height: 12),
                 TextField(controller: image, decoration: const InputDecoration(labelText: 'Ссылка на фото')),
+                if (kSaasMode)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () async {
+                        final picked = await _pickMenuPhoto('${title.text} ${body.text}');
+                        if (picked == null) return;
+                        setLocal(() {
+                          image.text = picked.url;
+                          menuItemId = picked.itemId;
+                        });
+                      },
+                      icon: const Icon(Icons.image_outlined, size: 18),
+                      label: const Text('Выбрать фото из меню'),
+                    ),
+                  ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: action,
@@ -278,8 +392,7 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
                   TextField(
                     controller: label,
                     maxLength: 24,
-                    onChanged: (v) =>
-                        labelIsDefault = v.trim() == defaultLabel(action),
+                    onChanged: (v) => labelIsDefault = v.trim() == defaultLabel(action),
                     decoration: InputDecoration(
                       labelText: 'Надпись на кнопке',
                       hintText: defaultLabel(action),
@@ -298,14 +411,16 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
     );
 
     if (ok != true) return;
-    if (PromoPolicy.looksTobacco('${title.text} ${body.text} ${label.text}') && mounted) {
+    final adText = '${title.text} ${body.text} ${label.text}';
+    if ((PromoPolicy.looksTobacco(adText) || (kSaasMode && RemoteSale.looksAlcohol(adText))) && mounted) {
       final keep = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Похоже на рекламу табака'),
-          content: const Text('В карточке упоминаются кальян, табак или никотин. Реклама '
-              'табачной продукции запрещена (ст. 16 закона № 15-ФЗ), за неё штрафуют '
-              'заведение. Лучше рассказать о кухне, напитках, атмосфере или событии.'),
+          title: const Text('Похоже на рекламу табака или алкоголя'),
+          content: const Text('В карточке упоминаются кальян, табак, никотин или алкоголь. Реклама '
+              'табака запрещена (ст. 16 закона № 15-ФЗ), реклама алкоголя в интернете ограничена '
+              '(ст. 21 закона № 38-ФЗ) — за это штрафуют заведение. Лучше рассказать о кухне, '
+              'безалкогольных напитках, атмосфере или событии.'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Не сохранять')),
             TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Всё равно сохранить')),
@@ -318,10 +433,10 @@ class _StoriesEditorScreenState extends State<StoriesEditorScreen> {
       'title': title.text.trim(),
       'text': body.text.trim(),
       'imageUrl': image.text.trim(),
+      'menuItemId': image.text.trim().isEmpty ? '' : menuItemId,
       'action': action,
       // Подпись кнопки по переходу — только если своей нет (например, от ИИ).
-      'actionLabel':
-          action == 'none' ? '' : (label.text.trim().isEmpty ? defaultLabel(action) : label.text.trim()),
+      'actionLabel': action == 'none' ? '' : (label.text.trim().isEmpty ? defaultLabel(action) : label.text.trim()),
     };
     if (story == null) {
       await AppScope.col('stories').add({

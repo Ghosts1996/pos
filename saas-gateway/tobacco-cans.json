@@ -2139,6 +2139,93 @@
      "orange",
      "candy"
     ]
+   },
+   {
+    "names": [
+     "Balenciaga 100%",
+     "Balenciaga",
+     "Баленсиага"
+    ],
+    "flavors": [
+     "perfume",
+     "rose"
+    ]
+   },
+   {
+    "names": [
+     "Varanasi",
+     "Варанаси"
+    ],
+    "flavors": [
+     "perfume",
+     "cinnamon"
+    ]
+   },
+   {
+    "names": [
+     "Buio",
+     "Буио"
+    ],
+    "flavors": [
+     "perfume"
+    ]
+   },
+   {
+    "names": [
+     "Ganymede",
+     "Ганимед"
+    ],
+    "flavors": [
+     "perfume"
+    ]
+   },
+   {
+    "names": [
+     "Black Afgano",
+     "Блэк Афгано"
+    ],
+    "flavors": [
+     "perfume"
+    ]
+   },
+   {
+    "names": [
+     "But Not Today",
+     "Бат Нот Тудей"
+    ],
+    "flavors": [
+     "perfume",
+     "bergamot"
+    ]
+   },
+   {
+    "names": [
+     "Last Season",
+     "Ласт Сизон"
+    ],
+    "flavors": [
+     "perfume",
+     "vanilla"
+    ]
+   },
+   {
+    "names": [
+     "Vanilla Blend",
+     "Ванилла Бленд"
+    ],
+    "flavors": [
+     "vanilla",
+     "perfume"
+    ]
+   },
+   {
+    "names": [
+     "Oud for Happiness",
+     "Уд фор Хэппинесс"
+    ],
+    "flavors": [
+     "perfume"
+    ]
    }
   ],
   "Spectrum": [
@@ -2411,16 +2498,17 @@
    "kind": "medium"
   },
   {
-   "name": "Trofimoff",
+   "name": "Trofimoff's",
    "aka": [
     "trofimoff",
-    ", ",
-    ", ",
-    ", ",
-    ", ",
-    ", ",
-    ", ",
-    ", "
+    "trofimoff`s",
+    "трофимов",
+    "трофимофф",
+    "trofimoffs",
+    "terror",
+    "террор",
+    "trofimoff terror",
+    "trofimoff burley"
    ],
    "kind": "medium"
   },
@@ -3589,7 +3677,7 @@
     "strength": 8
    }
   ],
-  "Trofimoff": [
+  "Trofimoff's": [
    {
     "line": "burley",
     "strength": 7
@@ -3629,6 +3717,16 @@
    {
     "line": "cigar",
     "strength": 8
+   }
+  ],
+  "Deus": [
+   {
+    "line": "classic",
+    "strength": 5
+   },
+   {
+    "line": "perfume",
+    "strength": 5
    }
   ]
  }

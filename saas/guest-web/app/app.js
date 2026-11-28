@@ -1294,15 +1294,22 @@ function renderStories() {
       .sort((a, b) => (a.order || 0) - (b.order || 0));
     if (!list.length) { box.innerHTML = ''; return; }
 
-    box.innerHTML = `<h2>Афиша</h2>` + list.map((s) => `
-      <div class="card" ${s.action === 'menu' ? 'onclick="location.hash=\'#/menu\'"'
-        : s.action === 'booking' ? 'onclick="location.hash=\'#/booking\'"' : ''}
-        style="${s.action && s.action !== 'none' ? 'cursor:pointer' : ''}">
-        <div style="font-weight:600;margin-bottom:6px">${esc(s.title)}</div>
-        <div class="small muted">${linkify(s.text)}</div>
-        ${s.actionLabel ? `<div class="small link-more">${esc(s.actionLabel)} ${ic('next')}</div>` : ''}
-      </div>
-    `).join('');
+    // Карточка афиши: фото из меню на всю карточку с вуалью, заголовок
+    // антиквой, кнопка-пилюля; без фото — мягкий фон цвета заведения.
+    const go = (s) => (s.action === 'menu' ? '#/menu' : s.action === 'booking' ? '#/booking' : '');
+    const safeImg = (u) => (/^https:\/\/[^\s"'()<>]+$/.test(String(u || '')) ? String(u) : '');
+    box.innerHTML = `<h2>Афиша</h2><div class="story-row${list.length === 1 ? ' one' : ''}">` + list.map((s) => {
+      const img = safeImg(s.imageUrl);
+      const href = go(s);
+      return `<div class="story${img ? ' has-img' : ''}" ${href ? `role="button" tabindex="0" onclick="location.hash='${href}'"` : ''}>
+        ${img ? `<img src="${esc(img)}" alt="" loading="lazy" onerror="this.closest('.story').classList.remove('has-img');this.remove()">` : ''}
+        <div class="story-body">
+          <div class="story-title">${esc(s.title)}</div>
+          <div class="story-text">${linkify(s.text)}</div>
+          ${s.actionLabel && href ? `<span class="story-cta">${esc(s.actionLabel)} ${ic('next')}</span>` : ''}
+        </div>
+      </div>`;
+    }).join('') + `</div>`;
   }, () => { box.innerHTML = ''; }));
 }
 

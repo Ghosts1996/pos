@@ -140,17 +140,26 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
     if (photos.isEmpty || !mounted) return;
     setState(() => _scanning = true);
     try {
-      final cans = await TobaccoShelf.scan(photos);
+      // Одна банка на нескольких снимках и банки, что уже на полке, —
+      // без повторов.
+      final cans = TobaccoShelf.dedupe(await TobaccoShelf.scan(photos), shelf: _shelf);
       if (!mounted) return;
       final chosen = await showModalBottomSheet<List<TobaccoCan>>(
         context: context,
         isScrollControlled: true,
-        builder: (_) => _ScanReview(cans: cans),
+        builder: (_) => _ScanReview(cans: cans, onShelf: {for (final c in _shelf) c.id}),
       );
       if (chosen != null && chosen.isNotEmpty) {
         await TobaccoShelf.saveAll(chosen);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('На полку добавлено: ${chosen.length}')));
+          final had = {for (final c in _shelf) c.id};
+          final fresh = chosen.where((c) => !had.contains(c.id)).length;
+          final again = chosen.length - fresh;
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text([
+            if (fresh > 0) 'На полку добавлено: $fresh',
+            if (again > 0) 'Уже были на полке: $again — обновлены',
+          ].join(' · '))));
         }
       }
     } catch (e) {
@@ -383,7 +392,9 @@ class _TobaccoShelfScreenState extends State<TobaccoShelfScreen> {
 /// Проверка распознанного: галочки, «Сохранить на полку».
 class _ScanReview extends StatefulWidget {
   final List<TobaccoCan> cans;
-  const _ScanReview({required this.cans});
+  /// Номера банок, которые уже стоят на полке («уже на полке»).
+  final Set<String> onShelf;
+  const _ScanReview({required this.cans, this.onShelf = const {}});
 
   @override
   State<_ScanReview> createState() => _ScanReviewState();
@@ -396,9 +407,10 @@ class _ScanReviewState extends State<_ScanReview> {
   String _flavorText(TobaccoCan c) => c.flavors.map((f) => kFlavorByKey[f]?.name ?? f).join(', ');
 
   /// Банка, собранная заново из исправленных полей.
-  TobaccoCan _rebuild(String brand, String name, String words, [String line = '']) => TobaccoShelf.fromScan({
+  TobaccoCan _rebuild(String brand, String name, String words, [String line = '', String look = '']) => TobaccoShelf.fromScan({
         'brand': brand,
         'line': line,
+        'look': look,
         'name': name,
         'flavors': [for (final w in words.split(',')) if (w.trim().isNotEmpty) w.trim()],
       });
@@ -439,7 +451,7 @@ class _ScanReviewState extends State<_ScanReview> {
       ),
     );
     if (ok != true || name.text.trim().isEmpty || !mounted) return;
-    setState(() => _replace(c, _rebuild(brand.text, name.text, words.text, line.text)));
+    setState(() => _replace(c, _rebuild(brand.text, name.text, words.text, line.text, c.look)));
   }
 
   /// Одна марка сразу всем отмеченным банкам без марки.
@@ -470,7 +482,7 @@ class _ScanReviewState extends State<_ScanReview> {
     if (picked == null || picked.trim().isEmpty || !mounted) return;
     setState(() {
       for (final c in List.of(_cans)) {
-        if (c.brand.isEmpty && _on.contains(c.id)) _replace(c, _rebuild(picked, c.name, _flavorText(c), c.line));
+        if (c.brand.isEmpty && _on.contains(c.id)) _replace(c, _rebuild(picked, c.name, _flavorText(c), c.line, c.look));
       }
     });
   }
@@ -518,6 +530,8 @@ class _ScanReviewState extends State<_ScanReview> {
                         ),
                         if (canProfileLine(c.brand, line: c.line).isNotEmpty)
                           Text(canProfileLine(c.brand, line: c.line), style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                        if (widget.onShelf.contains(c.id))
+                          Text('уже на полке — обновится, копии не будет', style: TextStyle(fontSize: 12, color: AppColors.success)),
                       ]),
                       trailing: Checkbox(
                         value: _on.contains(c.id),
@@ -581,7 +595,7 @@ class _BrandHeader extends StatelessWidget {
   }
 }
 
-/// Поле «Линейка» с подсказками линеек этой марки (Trofimoff: Classic,
+/// Поле «Линейка» с подсказками линеек этой марки (Trofimoff's: Classic,
 /// Burley, Terror…). Марку меняют — подсказки меняются.
 class _LineField extends StatefulWidget {
   final TextEditingController brand;

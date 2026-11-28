@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../build_info.dart';
 import '../app_scope.dart';
 import '../venue_service.dart';
 import '../../models/client_models.dart';
+import '../../models/menu_models.dart';
+import '../../utils/promo_policy.dart';
+import '../../utils/remote_sale.dart';
 import '../../models/session_model.dart';
 import 'ai_context_service.dart';
 import 'ai_settings.dart';
@@ -43,6 +47,39 @@ class AiAgent {
       ? systemPrompt.replaceAll(_tiersPlaceholder, loyaltyTiersText())
       : systemPrompt;
 }
+
+/// Карточки ленты для гостя (SaaS): фото из меню, без рейтингов продаж,
+/// без табака и алкоголя — см. AiService.storyDrafts.
+const _storyCardsPrompt = '''$_brandRules
+Роль: редактор ленты в приложении гостя — красивые карточки, как в журнале
+о ресторане. Пишешь ГОСТЮ, а не владельцу.
+$_noTobaccoAds
+- Не рекламируй алкоголь (пиво, вино, коктейли с алкоголем) — реклама
+  алкоголя в интернете ограничена законом № 38-ФЗ. Напитки — только
+  безалкогольные: кофе, чай, лимонады, смузи, морсы.
+
+Отвечай ОДНИМ JSON-объектом:
+{"stories":[{"title":"","text":"","cta":"","action":"booking|menu|none","menuItemId":""}]}
+
+Правила для каждой карточки:
+- выбирай позицию из МЕНЮ и ставь её id в menuItemId (id в квадратных
+  скобках). Позиции с пометкой [есть фото] — первыми: у карточки будет
+  её фотография;
+- title: 2–4 слова, до 30 символов, вкусно и по-человечески
+  («Сырники к утреннему кофе», «Тёплый вечер с пастой»), без кавычек,
+  без точки, без слова «Сторис» и нумерации;
+- text: одно-два живых предложения до 120 символов: вкус, повод, момент;
+  цену можно упомянуть естественно («всего 290 ₽»);
+- НИКОГДА не пиши о продажах и рейтингах: «хит продаж», «третий по
+  популярности», «чаще всего берут» — это внутренняя статистика, гостю
+  она неинтересна;
+- карточки разные: блюдо, безалкогольный напиток или десерт, и одна —
+  зовёт забронировать стол (action booking, menuItemId пустой);
+- cta: 1–3 слова на кнопку («Смотреть меню», «Забронировать»);
+- action: menu — если карточка про позицию меню, booking — про бронь.
+
+Ничего, кроме JSON. Без markdown, без ** и #, без слов «Заголовок»,
+«Текст», «Призыв» внутри значений. Без восклицательных знаков и штампов.''';
 
 const _brandRules = '''
 Ты — часть цифровой команды заведения (кафе, ресторан, бар или лаунж). Название, адрес, часы работы
@@ -755,6 +792,103 @@ class AiService {
   /// без разметки и служебных подписей из ответа модели.
   Future<List<StoryDraft>> storyDrafts({int count = 3}) async {
     if (!AiAgents.storyteller.enabled || !_settings.isReady) return const [];
+    if (!kSaasMode) return _storyDraftsClassic(count);
+    final menu = await storyMenu();
+    final json = await _client.completeJson(
+      messages: [
+        AiMessage.system(_storyCardsPrompt),
+        AiMessage.user('Придумай $count карточки для ленты приложения гостя на эту '
+            'неделю — красиво, коротко, с фото из меню.\n\n'
+            'МЕНЮ:\n${storyMenuText(menu)}'),
+      ],
+      model: _settings.model,
+      agentId: AiAgents.storyteller.id,
+      maxTokens: 900,
+    );
+    final drafts = ((json['stories'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => StoryDraft.fromMap(Map<String, dynamic>.from(e)))
+        .where((d) => d.title.isNotEmpty && d.text.isNotEmpty)
+        .toList();
+    return attachMenuPhotos(drafts, menu).take(count).toList();
+  }
+
+  /// Позиции, о которых можно писать в ленте: в продаже, не табак и не
+  /// алкоголь, не весовые. С категорией — для фото категории, если у
+  /// позиции своего нет.
+  Future<List<({MenuItem item, String category, String categoryImage})>> storyMenu() async {
+    final cats = await AppScope.col('menuCategories').get();
+    final items = await AppScope.col('menuItems').get();
+    final byId = {for (final d in cats.docs) d.id: MenuCategory.fromDoc(d)};
+    final out = <({MenuItem item, String category, String categoryImage})>[];
+    for (final d in items.docs) {
+      final i = MenuItem.fromDoc(d);
+      final c = byId[i.categoryId];
+      if (!i.available || i.byWeight) continue;
+      if (RemoteSale.banned(i, categoryName: c?.name ?? '', categoryKind: c?.kind ?? '')) continue;
+      out.add((item: i, category: c?.name ?? '', categoryImage: c?.imageUrl ?? ''));
+    }
+    return out;
+  }
+
+  /// Меню для подсказки: сначала позиции с фото и популярные (без слов о
+  /// рейтинге — порядок и так подскажет).
+  static String storyMenuText(List<({MenuItem item, String category, String categoryImage})> menu, {int limit = 120}) {
+    final list = [...menu]..sort((a, b) {
+        final pa = a.item.imageUrl.isNotEmpty ? 0 : 1, pb = b.item.imageUrl.isNotEmpty ? 0 : 1;
+        if (pa != pb) return pa - pb;
+        final ra = a.item.popularRank > 0 ? a.item.popularRank : 999, rb = b.item.popularRank > 0 ? b.item.popularRank : 999;
+        return ra - rb;
+      });
+    return [
+      for (final m in list.take(limit))
+        '- ${m.item.name} (${m.category}) — ${m.item.price.toStringAsFixed(0)} ₽'
+            '${m.item.imageUrl.isNotEmpty ? ' [есть фото]' : ''} [id:${m.item.id}]'
+            '${m.item.description.isNotEmpty ? '. ${m.item.description.length > 120 ? m.item.description.substring(0, 120) : m.item.description}' : ''}',
+    ].join('\n');
+  }
+
+  /// Фото к карточке — из меню: по id, который выбрал ИИ, иначе по
+  /// названию позиции в тексте; нет фото у позиции — фото её категории.
+  /// Карточки про табак и алкоголь выбрасываются, даже если модель
+  /// нарушила указание.
+  static List<StoryDraft> attachMenuPhotos(
+      List<StoryDraft> drafts, List<({MenuItem item, String category, String categoryImage})> menu) {
+    String low(String s) => s.toLowerCase().replaceAll('ё', 'е');
+    final out = <StoryDraft>[];
+    final used = <String>{};
+    for (final d in drafts) {
+      final all = '${d.title} ${d.text} ${d.cta}';
+      if (PromoPolicy.looksTobacco(all) || RemoteSale.looksAlcohol(all)) continue;
+      ({MenuItem item, String category, String categoryImage})? hit;
+      for (final m in menu) {
+        if (m.item.id == d.menuItemId) hit = m;
+      }
+      if (hit == null && d.menuItemId.isNotEmpty) {
+        // ИИ сослался на позицию, которой нет среди разрешённых (табак,
+        // алкоголь, стоп-лист) — такую карточку не берём.
+        continue;
+      }
+      if (hit == null && d.action != 'booking') {
+        final text = low(all);
+        final byLen = [...menu]..sort((a, b) => b.item.name.length - a.item.name.length);
+        for (final m in byLen) {
+          final n = low(m.item.name).trim();
+          if (n.length >= 4 && text.contains(n)) {
+            hit = m;
+            break;
+          }
+        }
+      }
+      final img = hit == null ? '' : (hit.item.imageUrl.isNotEmpty ? hit.item.imageUrl : hit.categoryImage);
+      if (hit != null && !used.add(hit.item.id)) continue;
+      out.add(d.copyWith(menuItemId: hit?.item.id ?? '', imageUrl: img));
+    }
+    return out;
+  }
+
+  /// hookah-pos — как было.
+  Future<List<StoryDraft>> _storyDraftsClassic(int count) async {
     final json = await _client.completeJson(
       messages: [
         AiMessage.system(AiAgents.storyteller.prompt),
@@ -865,12 +999,27 @@ class StoryDraft {
   final String cta;
   final String action;
 
+  /// Позиция меню, о которой карточка, и её фото (из меню).
+  final String menuItemId;
+  final String imageUrl;
+
   const StoryDraft({
     required this.title,
     required this.text,
     this.cta = '',
     this.action = 'none',
+    this.menuItemId = '',
+    this.imageUrl = '',
   });
+
+  StoryDraft copyWith({String? menuItemId, String? imageUrl}) => StoryDraft(
+        title: title,
+        text: text,
+        cta: cta,
+        action: action,
+        menuItemId: menuItemId ?? this.menuItemId,
+        imageUrl: imageUrl ?? this.imageUrl,
+      );
 
   factory StoryDraft.fromMap(Map<String, dynamic> m) => StoryDraft(
         title: cleanAiText(m['title'], maxLength: 40),
@@ -881,6 +1030,7 @@ class StoryDraft {
           'menu' => 'menu',
           _ => 'none',
         },
+        menuItemId: '${m['menuItemId'] ?? ''}'.replaceAll(RegExp(r'^\[?id:|\]$'), '').trim(),
       );
 }
 

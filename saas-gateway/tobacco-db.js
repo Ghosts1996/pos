@@ -14,27 +14,27 @@ const path = require("path");
 
 /** name — как пишем; aka — как ещё пишут на банках и говорят; look — вид; lines — линейки. */
 const BRANDS = [
-  { name: "Darkside", aka: ["dark side", "дарксайд", "дарк сайд"], look: "чёрная матовая банка, крупный белый логотип DARKSIDE, цветная наклейка вкуса латиницей", lines: "Core, Base (крепче), Rare, Xperience" },
+  { name: "Darkside", aka: ["dark side", "дарксайд", "дарк сайд"], look: "чёрная матовая банка, крупный белый логотип DARKSIDE, цветная наклейка вкуса латиницей; линейка подписана на банке (CORE, BASE, RARE, XPERIENCE, SHOT)", lines: "Core, Base (крепче), Rare, Xperience, Shot" },
   { name: "Musthave", aka: ["must have", "маст хэв", "мастхэв", "мастхев"], look: "чёрная банка, крупный белый рукописный логотип MUSTHAVE, подпись «Undercoal» и «табак, каким он должен быть», вкус белыми буквами «с ароматом …»", lines: "" },
-  { name: "Black Burn", aka: ["blackburn", "блэк бёрн", "блэк берн", "блек берн"], look: "чёрная банка, логотип BLACK BURN, яркая рисованная этикетка вкуса, название вкуса по-русски", lines: "" },
+  { name: "Black Burn", aka: ["blackburn", "блэк бёрн", "блэк берн", "блек берн"], look: "чёрная банка, логотип BLACK BURN, яркая рисованная этикетка вкуса, название вкуса по-русски; линейка Shock подписана SHOCK", lines: "обычная, Shock (крепче)" },
   { name: "Burn", aka: ["бёрн", "берн"], look: "чёрная банка, красная лента, белый логотип BURN, вкус белыми буквами («Мармелад с колой»)", lines: "" },
   { name: "Banger", aka: ["бангер", "бэнгер", "бенгер"], look: "чёрная банка, жёлтые ленты с крупной стилизованной буквой «B» и надписью BANGER, вкус в кавычках на жёлтой ленте", lines: "" },
   { name: "Overdose", aka: ["овердоз", "over dose"], look: "чёрная банка, цветная лента (часто фиолетовая) со звёздочками-искрами по краям, «с ароматом» и вкус в кавычках («Мята», «Пако Рабан»)", lines: "" },
   { name: "Element", aka: ["элемент"], look: "банка со знаком стихии; цвет по линейке: Вода — синий, Воздух — светлый, Земля — коричнево-зелёный, Огонь — красный", lines: "Вода, Воздух (мягче), Земля, Огонь (крепче)" },
-  { name: "Spectrum", aka: ["спектрум"], look: "белая банка, логотип SPECTRUM tobacco, вкус крупно на цветной наклейке («мощная мята»)", lines: "Classic (мягче), Hard Line (крепче), Kitchen Line (гастрономичные вкусы)" },
+  { name: "Spectrum", aka: ["спектрум"], look: "логотип SPECTRUM tobacco, вкус крупно на цветной наклейке («мощная мята»); на ленте надпись линейки — CLASSIC LINE, HARD LINE или KITCHEN LINE", lines: "Classic Line (светлая банка, мягче), Hard Line (тёмная банка, крепче), Kitchen Line (гастрономичные вкусы)" },
   { name: "NАШ", aka: ["nash", "наш"], look: "белая банка, лента с геометрическим узором, надпись «NАШ с ароматом …», вкус по-русски («бузина», «черника ромашка»)", lines: "" },
   { name: "Северный", aka: ["severny", "северный табак", "север"], look: "цветные ленты с рисунком-скетчем, надпись СЕВЕРНЫЙ или СЕВЕР", lines: "" },
   { name: "Timeline", aka: ["таймлайн", "timelime"], look: "белая банка, надпись TIMELINE, вкус на цветной ленте («лайм»)", lines: "" },
-  { name: "Deus", aka: ["деус"], look: "серебристая лента с надписью DEUS, ниже «аромат …» мелко; название вкуса — на верхней наклейке крышки («ORANGE TIC TAC»)", lines: "" },
-  { name: "Sarma", aka: ["сарма"], look: "надпись САРМА или SARMA на ленте, вкус по-русски", lines: "" },
-  { name: "Trofimoff", aka: ["trofimoff's", "трофимов", "трофимофф", "terror", "террор"], look: "надпись TROFIMOFF'S; на ленте часто только название линейки. TERROR — это линейка Trofimoff's Terror (brand = Trofimoff, line = Terror), не отдельная марка. Красная банка — линейка Burley", lines: "Classic, Burley (красная банка, крепче), Terror (крепкая)" },
+  { name: "Deus", aka: ["деус"], look: "серебристая лента с надписью DEUS, ниже «аромат …» мелко; название вкуса — на верхней наклейке крышки («ORANGE TIC TAC»); линейка PERFUME — парфюмированная, вкусы по мотивам духов (Balenciaga 100%, Varanasi, Buio, Ganymede, Black Afgano, But Not Today, Last Season, Vanilla Blend, Oud for Happiness)", lines: "обычная, Perfume (парфюмная)" },
+  { name: "Sarma", aka: ["сарма"], look: "надпись САРМА или SARMA на ленте, вкус по-русски; линейка 360 подписана «360»", lines: "обычная, 360" },
+  { name: "Trofimoff's", aka: ["trofimoff", "trofimoffs", "трофимов", "трофимофф", "terror", "террор"], look: "надпись TROFIMOFF'S; на ленте часто только название линейки. TERROR — это линейка Trofimoff's Terror (brand = Trofimoff's, line = Terror), не отдельная марка. Красная банка — линейка Burley", lines: "Classic, Burley (красная банка, крепче), Terror (крепкая)" },
   { name: "Bonche", aka: ["бонче", "бонш", "бонч"], look: "крафтовая банка цвета бумаги, надпись BONCHE, вкус крупно латиницей (SALAMI, SESAME)", lines: "" },
   { name: "Dogma", aka: ["догма"], look: "надпись DOGMA, тёмная банка", lines: "" },
-  { name: "Хулиган", aka: ["hooligan", "huligan"], look: "надпись ХУЛИГАН / HOOLIGAN, дерзкий рисунок", lines: "Hard (крепче)" },
-  { name: "Sebero", aka: ["себеро"], look: "надпись SEBERO", lines: "Classic, Black (крепче)" },
-  { name: "Duft", aka: ["дуфт"], look: "надпись DUFT", lines: "Pheromone, Strong (крепче), All-in" },
+  { name: "Хулиган", aka: ["hooligan", "huligan"], look: "надпись ХУЛИГАН / HOOLIGAN, дерзкий рисунок; линейка Hard подписана HARD", lines: "обычная, Hard (крепче)" },
+  { name: "Sebero", aka: ["себеро"], look: "надпись SEBERO; у линейки Black — тёмное оформление и надпись BLACK", lines: "Classic, Black (тёмная банка, крепче)" },
+  { name: "Duft", aka: ["дуфт"], look: "надпись DUFT; линейка подписана на ленте (STRONG, PHEROMONE, ALL-IN)", lines: "Pheromone, Strong (крепче), All-in" },
   { name: "Satyr", aka: ["сатир"], look: "надпись SATYR, рисунок сатира", lines: "" },
-  { name: "Jent", aka: ["джент"], look: "надпись JENT", lines: "Cigar (крепче)" },
+  { name: "Jent", aka: ["джент"], look: "надпись JENT; линейка Cigar подписана CIGAR", lines: "Cigar (крепче)" },
   { name: "Tangiers", aka: ["танжирс", "noir", "нуар"], look: "простая банка или жестянка с наклейкой Tangiers и названием вкуса; надпись NOIR — это линейка Tangiers Noir", lines: "Noir, Birquq, F-Line (очень крепкие)" },
   { name: "WTO", aka: ["вто", "world tobacco original"], look: "надпись WTO / World Tobacco Original, линейки по странам листа", lines: "" },
   { name: "Blanch", aka: ["бланш", "бланч"], look: "светлая банка, надпись BLANCH", lines: "" },
@@ -55,11 +55,11 @@ const BRANDS = [
   { name: "Original Virginia", aka: ["ориджинал вирджиния"], look: "надпись ORIGINAL VIRGINIA", lines: "" },
   { name: "Frigate", aka: ["фригат", "фрегат"], look: "надпись FRIGATE — сухой табак без глицерина для крепости, вкуса часто нет", lines: "" },
   { name: "Al Fakher", aka: ["alfakher", "аль факер", "альфакер"], look: "яркая банка или коробка с надписью AL FAKHER и рисунком фрукта", lines: "" },
-  { name: "Adalya", aka: ["адалия", "адалья"], look: "яркая банка с надписью ADALYA и рисунком фруктов, вкусы латиницей («Love 66», «Lady Killer»)", lines: "" },
+  { name: "Adalya", aka: ["адалия", "адалья"], look: "яркая банка с надписью ADALYA и рисунком фруктов, вкусы латиницей («Love 66», «Lady Killer»)", lines: "обычная; Black — тёмная упаковка с надписью BLACK, крепче" },
   { name: "Serbetli", aka: ["щербетли", "шербетли"], look: "надпись SERBETLI, рисунок фрукта", lines: "" },
   { name: "Fumari", aka: ["фумари"], look: "надпись FUMARI", lines: "" },
   { name: "Starbuzz", aka: ["старбаз"], look: "надпись STARBUZZ со звездой", lines: "" },
-  { name: "Nakhla", aka: ["нахла"], look: "надпись NAKHLA, зелёные тона", lines: "" },
+  { name: "Nakhla", aka: ["нахла"], look: "надпись NAKHLA, зелёные тона; линейки подписаны (MIZO, MIX)", lines: "классика, Mizo, Mix (мягче)" },
 ];
 
 // Из каталога кассы: известные банки, все марки с синонимами и видом
@@ -135,7 +135,7 @@ function kindOf(brand) {
 }
 
 /** Правка ответа ИИ по базе: марка к одному написанию, пустая марка — по известному вкусу. */
-/** Линейка из надписи марки: «TERROR» → Trofimoff, линейка Terror; «Darkside Shot» → Shot. */
+/** Линейка из надписи марки: «TERROR» → Trofimoff's, линейка Terror; «Darkside Shot» → Shot. */
 function lineFromBrand(raw, brand) {
   const t = ` ${String(raw || "").toLowerCase().replace(/ё/g, "е")} `;
   for (const l of ((db.lines || {})[brand] || [])) {

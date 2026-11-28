@@ -603,3 +603,22 @@ a.order-link .ic-wrap .i { width: 28px; height: 28px; }
 .upsell-name { font-size: 13px; line-height: 1.3; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .upsell-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: auto; font-size: 13px; }
 .upsell-foot button { width: 32px; height: 32px; min-height: 0; padding: 0; border-radius: 50%; border: 0; background: var(--primary); color: var(--on-primary, #fff); font-size: 18px; line-height: 1; flex: none; }
+
+/* Афиша: карточки с фото из меню */
+.story-row { display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 0 0 16px; padding: 0 0 4px; scrollbar-width: none; }
+.story-row::-webkit-scrollbar { display: none; }
+.story { position: relative; flex: 0 0 82%; max-width: 340px; min-height: 220px; border-radius: 22px; overflow: hidden; scroll-snap-align: start;
+  display: flex; align-items: flex-end; border: 1px solid var(--border);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 22%, var(--surface)), var(--surface)); }
+.story-row.one .story { flex-basis: 100%; max-width: none; }
+.story[role="button"] { cursor: pointer; }
+.story img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.story.has-img { border-color: transparent; }
+.story.has-img::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,0) 25%, rgba(0,0,0,.8)); }
+.story-body { position: relative; z-index: 1; padding: 16px 18px; }
+.story-title { font-family: var(--serif, "Cormorant Garamond", Georgia, serif); font-size: 25px; line-height: 1.05; font-weight: 600; margin-bottom: 6px; }
+.story-text { font-size: 13.5px; line-height: 1.3; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.story.has-img .story-title { color: #fff; }
+.story.has-img .story-text { color: rgba(255,255,255,.86); }
+.story-cta { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; padding: 7px 14px; border-radius: 40px; background: var(--primary); color: var(--on-primary); font-weight: 700; font-size: 13px; }
+.story-cta svg { width: 16px; height: 16px; }

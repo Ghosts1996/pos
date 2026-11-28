@@ -603,9 +603,19 @@ class _EmployeeDrawerState extends State<EmployeeDrawer> {
       child: SafeArea(
         child: LayoutBuilder(
           builder: (context, box) {
-            // Низкий экран (телефон на боку, крупный шрифт) — меню
-            // прокручивается целиком, иначе шапка и смены вытесняли пункты.
-            // Высокий — «Обновления» и «Сменить сотрудника» прижаты к низу.
+            // SaaS: меню — одна лента, подвал в её конце. Прижатый к низу
+            // подвал на телефоне занимал пятую часть экрана, не листался
+            // пальцем и обрезал последний пункт («Ассистент зала») —
+            // казалось, что меню зависло (видео владельца 28.11.2026).
+            // Низкий экран в hookah-pos — тоже одной лентой; высокий —
+            // «Обновления» и «Сменить сотрудника» прижаты к низу, как было.
+            if (kSaasMode) {
+              return ListView(
+                padding: EdgeInsets.zero,
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [...top, const SizedBox(height: 8), ...bottom],
+              );
+            }
             if (box.maxHeight < 560) {
               return ListView(padding: EdgeInsets.zero, children: [...top, ...bottom]);
             }

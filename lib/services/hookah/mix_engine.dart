@@ -21,6 +21,11 @@ class TobaccoCan {
   /// Линейка марки, если видна по банке: «Core», «Base», «Hard», «Земля».
   final String line;
 
+  /// Вид банки словами («чёрная жестянка, красная лента») — из распознавания.
+  /// Уходит в общий каталог вместе с маркой и линейкой: ИИ учится узнавать
+  /// линейку по цвету и форме банки.
+  final String look;
+
   const TobaccoCan({
     required this.id,
     required this.brand,
@@ -29,6 +34,7 @@ class TobaccoCan {
     this.strength = '',
     this.inStock = true,
     this.line = '',
+    this.look = '',
   });
 
   String get label {
@@ -41,7 +47,7 @@ class TobaccoCan {
     final raw = (m['flavors'] is List) ? [for (final f in m['flavors'] as List) '$f'] : const <String>[];
     final keys = [for (final f in raw) if (kFlavorByKey.containsKey(f)) f];
     // Марка к одному написанию; старые записи с линейкой вместо марки
-    // («Terror» → Trofimoff, линейка Terror) показываются правильно.
+    // («Terror» → Trofimoff's, линейка Terror) показываются правильно.
     final rawBrand = '${m['brand'] ?? ''}'.trim();
     final brand = rawBrand.isEmpty ? '' : canonicalBrand(rawBrand);
     var line = '${m['line'] ?? ''}'.trim();
@@ -55,6 +61,7 @@ class TobaccoCan {
       strength: '${m['strength'] ?? ''}',
       inStock: m['inStock'] != false,
       line: line,
+      look: '${m['look'] ?? ''}'.trim(),
     );
   }
 
@@ -64,6 +71,7 @@ class TobaccoCan {
         'flavors': flavors,
         if (strength.isNotEmpty) 'strength': strength,
         if (line.isNotEmpty) 'line': line,
+        if (look.isNotEmpty) 'look': look,
         'inStock': inStock,
       };
 }
@@ -108,8 +116,10 @@ class MixRequest {
     'выпеч': 'десертный',
     'прян': 'пряный',
     'цвет': 'цветочный',
-    'парфюм': 'цветочный',
-    'духи': 'цветочный',
+    'парфюм': 'парфюмный',
+    'духи': 'парфюмный',
+    'духов': 'парфюмный',
+    'одеколон': 'парфюмный',
     'трав': 'травяной',
     'напит': 'напиток',
     'газиров': 'напиток',
@@ -461,7 +471,9 @@ class MixSession {
     }
     _last = req;
     _shown.addAll(picks.map((p) => p.mix.name));
-    final body = engine.render(picks, forGuest: forGuest, req: req);
+    var body = engine.render(picks, forGuest: forGuest, req: req);
+    // «Парфюмное» — первый раз объясняем, что это за вкус.
+    if (req.tags.contains('парфюмный') && _shown.length <= picks.length) body = '$kPerfumeNote\n\n$body';
     return again ? 'Другие варианты под эту просьбу закончились — показываю сначала.\n\n$body' : body;
   }
 
@@ -470,6 +482,12 @@ class MixSession {
     _shown.clear();
   }
 }
+
+/// Что такое парфюмный вкус — для гостя и персонала.
+const String kPerfumeNote = 'Парфюмный вкус — табак, который пахнет как духи: ноты бергамота, розы, лаванды, '
+    'жасмина, фиалки, ванили и «парфюмерные» — уд, ладан, мускус, амбра, сандал, пачули. '
+    'Он нежный и необычный, обычно для вечера. Миксы собирают на цветочных и цитрусовых вкусах '
+    'с ягодой или ванилью; парфюмные банки кладут акцентом — 2–4 части из 10.';
 
 String _cap(String s) => s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';
 

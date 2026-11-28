@@ -28,6 +28,64 @@ class TobaccoShelf {
     return id.length > 80 ? id.substring(0, 80) : (id.isEmpty ? 'can' : id);
   }
 
+  /// Ключ для сравнения названий: без регистра, пробелов и знаков
+  /// («Orange Tic Tac» = «ORANGE TICTAC»), без марки и линейки в начале
+  /// («Trofimoff's Terror Kriek» = «Kriek»).
+  static String sameKey(String brand, String line, String name) {
+    String k(String s) => s.toLowerCase().replaceAll('ё', 'е').replaceAll(RegExp(r'[^a-zа-я0-9]'), '');
+    var n = k(name);
+    final lines = {k(line), for (final l in linesOf(brand)) k(l)};
+    for (final p in [k(brand), ...lines, for (final l in lines) k(brand) + l]) {
+      if (p.length >= 3 && n.startsWith(p) && n.length > p.length + 2) n = n.substring(p.length);
+    }
+    return n;
+  }
+
+  /// Та же банка: одинаковое название (по [sameKey]), а марки совпадают
+  /// или одна из них не распознана.
+  static bool sameCan(TobaccoCan a, TobaccoCan b) {
+    final ka = sameKey(a.brand, a.line, a.name);
+    if (ka.isEmpty || ka != sameKey(b.brand, b.line, b.name)) return false;
+    return a.brand.isEmpty || b.brand.isEmpty || canonicalBrand(a.brand) == canonicalBrand(b.brand);
+  }
+
+  /// Повторное фото не плодит копий: одинаковые банки из снимка сводятся в
+  /// одну, а банка, которая уже стоит на полке, получает её номер; марка,
+  /// линейка и вид — что известно, вкусы — без повторов.
+  static List<TobaccoCan> dedupe(List<TobaccoCan> scanned, {List<TobaccoCan> shelf = const []}) {
+    TobaccoCan merge(TobaccoCan keep, TobaccoCan add, {String? id}) => TobaccoCan(
+          id: id ?? keep.id,
+          brand: keep.brand.isNotEmpty ? keep.brand : add.brand,
+          name: keep.name.isNotEmpty ? keep.name : add.name,
+          flavors: [...{...keep.flavors, ...add.flavors}],
+          strength: keep.strength.isNotEmpty ? keep.strength : add.strength,
+          inStock: true,
+          line: keep.line.isNotEmpty ? keep.line : add.line,
+          look: keep.look.isNotEmpty ? keep.look : add.look,
+        );
+    final out = <TobaccoCan>[];
+    for (final c in scanned) {
+      final i = out.indexWhere((x) => x.id == c.id || sameCan(x, c));
+      if (i >= 0) {
+        // Банка с маркой главнее банки без марки.
+        out[i] = out[i].brand.isEmpty && c.brand.isNotEmpty ? merge(c, out[i]) : merge(out[i], c);
+      } else {
+        out.add(c);
+      }
+    }
+    for (var i = 0; i < out.length; i++) {
+      final c = out[i];
+      final onShelf = shelf.where((s) => s.id == c.id || sameCan(s, c)).toList();
+      if (onShelf.isEmpty) continue;
+      // На полке уже стоит — тот же номер; что на полке поправили руками
+      // (марка, название), остаётся, а новое со снимка дополняет.
+      out[i] = merge(onShelf.first, c, id: onShelf.first.id);
+    }
+    // Две банки со снимка могли совпасть с одной на полке.
+    final seen = <String>{};
+    return [for (final c in out) if (seen.add(c.id)) c];
+  }
+
   static List<TobaccoCan> _parse(QuerySnapshot<Map<String, dynamic>> s) {
     final list = [for (final d in s.docs) TobaccoCan.fromMap(d.id, d.data())];
     list.sort((a, b) => '${a.brand} ${a.name}'.toLowerCase().compareTo('${b.brand} ${b.name}'.toLowerCase()));
@@ -62,7 +120,9 @@ class TobaccoShelf {
     final flavors = flavorsOfCan(brand, name, words);
     var strength = '${m['strength'] ?? ''}';
     if (!const {'light', 'medium', 'strong'}.contains(strength)) strength = brandOf(brand)?.strength ?? '';
-    return TobaccoCan(id: idOf(brand, name), brand: brand, name: name, flavors: flavors, strength: strength, line: line);
+    var look = '${m['look'] ?? ''}'.trim();
+    if (look.length > 80) look = look.substring(0, 80);
+    return TobaccoCan(id: idOf(brand, name), brand: brand, name: name, flavors: flavors, strength: strength, line: line, look: look);
   }
 
   /// Исправить банку вручную: марка, название, вкусы словами. Поменялись
@@ -77,7 +137,7 @@ class TobaccoShelf {
     var strength = old.strength;
     if (b != old.brand) strength = brandOf(b)?.strength ?? '';
     final l = (line ?? old.line).trim();
-    final can = TobaccoCan(id: idOf(b, n), brand: b, name: n, flavors: flavors, strength: strength, inStock: old.inStock, line: l);
+    final can = TobaccoCan(id: idOf(b, n), brand: b, name: n, flavors: flavors, strength: strength, inStock: old.inStock, line: l, look: old.look);
     final batch = AppDb.instance.batch();
     batch.set(_col().doc(can.id), {...can.toMap(), 'line': can.line, 'manual': true, 'updatedAt': FieldValue.serverTimestamp()});
     if (can.id != old.id) batch.delete(_col().doc(old.id));
@@ -179,6 +239,12 @@ class TobaccoShelf {
   /// и пополнить общий каталог вкусов — так база узнаёт о новинках.
   static Future<void> saveAll(List<TobaccoCan> cans) async {
     if (cans.isEmpty) return;
+    // Сверка с полкой: та же банка — та же запись, без копий.
+    try {
+      cans = dedupe(cans, shelf: _parse(await _col().get()));
+    } catch (_) {
+      cans = dedupe(cans);
+    }
     final batch = AppDb.instance.batch();
     for (final c in cans) {
       batch.set(_col().doc(c.id), {...c.toMap(), 'inStock': true, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
@@ -187,7 +253,15 @@ class TobaccoShelf {
     unawaited(GatewayApi.post('tobaccoShelf', {
       'action': 'learn',
       'items': [
-        for (final c in cans) {'brand': c.brand, 'name': c.name, 'flavors': [for (final f in c.flavors) kFlavorByKey[f]?.name ?? f], 'strength': c.strength},
+        for (final c in cans)
+          {
+            'brand': c.brand,
+            'name': c.name,
+            'flavors': [for (final f in c.flavors) kFlavorByKey[f]?.name ?? f],
+            'strength': c.strength,
+            if (c.line.isNotEmpty) 'line': c.line,
+            if (c.look.isNotEmpty) 'look': c.look,
+          },
       ],
     }).catchError((Object _) => const <String, dynamic>{}));
   }

@@ -15,6 +15,14 @@ class RemoteSale {
   );
   static final _extraTobacco = RegExp(r'чаш[аи]|забивк', caseSensitive: false);
 
+  /// Похоже на алкоголь (включая пиво): для ленты и рекламы — реклама
+  /// алкоголя в интернете ограничена (ст. 21 закона № 38-ФЗ).
+  static bool looksAlcohol(String text) {
+    final t = text.toLowerCase();
+    if (t.contains('безалк')) return false;
+    return _alcohol.hasMatch(t);
+  }
+
   /// [categoryKind] — цех категории: всё из категории кальянного цеха
   /// (`hookah`) — кальяны, как бы ни назывались позиции.
   static bool banned(MenuItem item, {String categoryName = '', String categoryKind = ''}) {

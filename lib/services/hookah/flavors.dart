@@ -131,6 +131,9 @@ const List<Flavor> kFlavors = [
   Flavor('hibiscus', 'каркаде', FlavorFamily.floral, ['каркаде', 'гибискус', 'hibiscus'], sour: true),
   Flavor('sakura', 'сакура', FlavorFamily.floral, ['сакура', 'вишневый цвет', 'cherry blossom', 'sakura']),
   Flavor('violet', 'фиалка', FlavorFamily.floral, ['фиалка', 'фиалки', 'violet']),
+  // Парфюмный: табак с ароматом как у духов — ноты уда, ладана, мускуса,
+  // амбры, сандала, пачули, кожи (Deus Perfume и похожие).
+  Flavor('perfume', 'парфюмный', FlavorFamily.floral, ['парфюм', 'духи', 'духов', 'одеколон', 'perfume', 'parfum', 'cologne', 'oud', 'удовый', 'ладан', 'incense', 'мускус', 'musk', 'амбра', 'амбры', 'amber', 'сандал', 'sandal', 'пачули', 'patchouli', 'нероли', 'neroli', 'ветивер', 'vetiver', 'фужер', 'fougere', 'шипр']),
   // Орехи и прочее
   Flavor('pistachio', 'фисташка', FlavorFamily.nut, ['фисташка', 'фисташки', 'pistachio']),
   Flavor('hazelnut', 'фундук', FlavorFamily.nut, ['фундук', 'лесной орех', 'hazelnut', 'нутелла', 'nutella']),

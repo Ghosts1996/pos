@@ -120,7 +120,7 @@ void main() {
 
     test('у каждой марки из каталога, кроме редких, есть профиль; цифры в пределах', () {
       for (final b in ['Darkside', 'Musthave', 'Black Burn', 'Bonche', 'Dogma', 'Северный', 'Banger', 'Spectrum', 'Sarma',
-        'Overdose', 'Blanch', 'Noir', 'WTO', 'Trofimoff', 'Deus', 'Element']) {
+        'Overdose', 'Blanch', 'Noir', 'WTO', "Trofimoff's", 'Deus', 'Element']) {
         final p = profileOf(b);
         expect(p, isNotNull, reason: b);
         expect(p!.strength, inInclusiveRange(1, 10));
@@ -227,16 +227,19 @@ void main() {
       expect(brandInText('второй стол просит кислое'), isNull);
     });
 
-    test('Terror — линейка Trofimoff, а не марка; линейку можно поправить', () {
+    test("Terror — линейка Trofimoff's, а не марка; линейку можно поправить", () {
       final c = TobaccoShelf.fromScan({'brand': 'TERROR', 'name': 'Kriek', 'flavors': ['вишня']});
-      expect(c.brand, 'Trofimoff');
+      expect(c.brand, "Trofimoff's");
       expect(c.line, 'Terror');
-      expect(c.label, 'Trofimoff Terror «Kriek»');
+      expect(c.label, "Trofimoff's Terror «Kriek»");
       expect(canProfileLine(c.brand, line: c.line), contains('крепость 8/10'));
       expect(TobaccoShelf.fromScan({'brand': "Trofimoff's", 'name': 'Apricot', 'line': 'Burley'}).line, 'Burley');
-      // Старая запись на полке с маркой «Terror» показывается как Trofimoff Terror.
+      final seen = TobaccoShelf.fromScan({'brand': "Trofimoff's", 'name': 'Apricot', 'line': 'Burley', 'look': 'красная жестянка'});
+      expect(seen.look, 'красная жестянка');
+      expect(TobaccoCan.fromMap('x', seen.toMap()).look, 'красная жестянка');
+      // Старая запись на полке с маркой «Terror» показывается как Trofimoff's Terror.
       final old = TobaccoCan.fromMap('x', {'brand': 'Terror', 'name': 'Dark Plum', 'flavors': ['plum']});
-      expect(old.brand, 'Trofimoff');
+      expect(old.brand, "Trofimoff's");
       expect(old.line, 'Terror');
       expect(linesOf('Trofimoff'), ['Burley', 'Classic', 'Terror']);
       expect(linesOf('Tangiers'), containsAll(['Birquq', 'Noir', 'F-line']));
@@ -300,10 +303,59 @@ void main() {
       expect(first(b), isNot(first(d)));
       expect(MixRequest.parse('другое').more, isTrue);
       expect(MixRequest.parse('что-нибудь интереснее').tags, contains('необычный'));
-      expect(MixRequest.parse('парфюмное').tags, contains('цветочный'));
+      expect(MixRequest.parse('парфюмное').tags, contains('парфюмный'));
       // Новая просьба — память сбрасывается.
       final x = s.answer(e, 'сладкое');
       expect(x, isNot(contains('закончились')));
+    });
+
+    test('«парфюмное» — объясняем и даём парфюмные миксы; Deus Perfume знаем', () {
+      final shelf = [
+        for (final n in ['Raspberry', 'Rose', 'Lavender', 'Bergamot', 'Vanilla', 'Lemon', 'Mint', 'Lychee'])
+          TobaccoCan(id: n, brand: 'Musthave', name: n, flavors: flavorsInText(n)),
+      ];
+      final e = MixEngine(shelf);
+      final s = MixSession();
+      final a = s.answer(e, 'давай парфюмное что то', forGuest: true);
+      expect(a, startsWith('Парфюмный вкус'));
+      final picks = e.pick(MixRequest.parse('давай парфюмное что то'));
+      expect(picks, isNotEmpty);
+      for (final p in picks) {
+        expect(p.mix.tags, contains('парфюмный'));
+      }
+      // Второй раз объяснение не повторяем.
+      expect(s.answer(e, 'ещё', forGuest: true), isNot(startsWith('Парфюмный вкус')));
+      expect(flavorsOfCan('Deus', 'Varanasi', ''), contains('perfume'));
+      expect(flavorsInText('с ароматом сандала и мускуса'), contains('perfume'));
+      expect(flavorsInText('удивите меня'), isNot(contains('perfume')));
+      expect(linesOf('Deus'), contains('Perfume'));
+    });
+
+    test('повторное фото той же банки — без копий и без повторов вкусов', () {
+      final first = TobaccoShelf.fromScan({'brand': '', 'name': 'Kriek', 'flavors': ['вишня']});
+      final shelf = [first];
+      // Второй снимок: та же банка с маркой, название другим регистром, вкус повторяется.
+      final again = TobaccoShelf.fromScan({'brand': 'TERROR', 'name': 'KRIEK', 'flavors': ['вишня', 'вишня'], 'look': 'чёрная жестянка'});
+      final twice = TobaccoShelf.fromScan({'brand': "Trofimoff's", 'name': 'Terror Kriek', 'flavors': ['вишня']});
+      final out = TobaccoShelf.dedupe([again, twice], shelf: shelf);
+      expect(out, hasLength(1));
+      expect(out.single.id, first.id);
+      expect(out.single.brand, "Trofimoff's");
+      expect(out.single.line, 'Terror');
+      expect(out.single.flavors, ['cherry']);
+      expect(out.single.look, 'чёрная жестянка');
+      // Разные вкусы одной марки — разные банки.
+      final two = TobaccoShelf.dedupe([
+        TobaccoShelf.fromScan({'brand': 'Musthave', 'name': 'Pinkman'}),
+        TobaccoShelf.fromScan({'brand': 'Musthave', 'name': 'Lemon'}),
+        TobaccoShelf.fromScan({'brand': 'Musthave', 'name': 'Pinkman'}),
+      ]);
+      expect(two, hasLength(2));
+      // Одинаковое название у разных марок — разные банки.
+      expect(TobaccoShelf.dedupe([
+        TobaccoShelf.fromScan({'brand': 'Darkside', 'name': 'Мята'}),
+        TobaccoShelf.fromScan({'brand': 'Overdose', 'name': 'Мята'}),
+      ]), hasLength(2));
     });
 
     test('табачный и солёный вкус не подменяют фрукт', () {

@@ -40,7 +40,7 @@ const List<TobaccoBrand> kTobaccoBrands = [
   TobaccoBrand('Bonche', ['бонче', 'бонш', 'бонч'], 'strong'),
   TobaccoBrand('Jent', ['джент', 'jent cigar'], 'medium'),
   // Terror — линейка Trofimoff's, а не марка (поправка владельца 28.11.2026).
-  TobaccoBrand('Trofimoff', ["trofimoff's", 'трофимов', 'трофимофф', 'trofimoffs', 'terror', 'террор', 'trofimoff terror', 'trofimoff burley'], 'medium'),
+  TobaccoBrand("Trofimoff's", ['trofimoff', 'trofimoff`s', 'трофимов', 'трофимофф', 'trofimoffs', 'terror', 'террор', 'trofimoff terror', 'trofimoff burley'], 'medium'),
   TobaccoBrand('Deus', ['деус'], 'medium'),
   TobaccoBrand('Dogma', ['догма'], 'strong'),
   TobaccoBrand('Banger', ['бангер', 'бэнгер', 'бенгер'], 'medium'),
@@ -380,6 +380,16 @@ const List<String> kKnownCanLines = [
   'NАШ|Crazy Green|kiwi',
   'NАШ|Бубльгум; Bubblegum; Бабл гам|candy',
   'Deus|Orange Tic Tac; Апельсиновый Тик Так; Апельсиновое драже|orange, candy',
+  // Deus Perfume — парфюмированная линейка по мотивам духов (deustobacco.ru/perfume).
+  'Deus|Balenciaga 100%; Balenciaga; Баленсиага|perfume, rose',
+  'Deus|Varanasi; Варанаси|perfume, cinnamon',
+  'Deus|Buio; Буио|perfume',
+  'Deus|Ganymede; Ганимед|perfume',
+  'Deus|Black Afgano; Блэк Афгано|perfume',
+  'Deus|But Not Today; Бат Нот Тудей|perfume, bergamot',
+  'Deus|Last Season; Ласт Сизон|perfume, vanilla',
+  'Deus|Vanilla Blend; Ванилла Бленд|vanilla, perfume',
+  'Deus|Oud for Happiness; Уд фор Хэппинесс|perfume',
   // Полка владельца 28.11.2026: банки, у которых марку часто не видно.
   'Spectrum|Мощная мята|mint',
   'Overdose|Мята|mint',

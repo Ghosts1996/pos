@@ -146,7 +146,7 @@ const List<BrandProfile> kBrandProfiles = [
   // ---- Смешанный лист: средние, универсальные основы
   BrandProfile('Musthave', Leaf.mixed, 5, 4, Pack.fluffy, 16, 18, 5,
       'Универсальная основа миксов: средняя крепость, держит жар. Сочетается почти со всеми марками.'),
-  BrandProfile('Trofimoff', Leaf.mixed, 6, 4, Pack.edges, 15, 17, 6,
+  BrandProfile("Trofimoff's", Leaf.mixed, 6, 4, Pack.edges, 15, 17, 6,
       'Средне-крепкий, у линеек крепость разная. Насыщенные вкусы, ровно держит жар.'),
   BrandProfile('Deus', Leaf.mixed, 5, 4, Pack.fluffy, 16, 18, 5,
       'Средняя крепость, сочные фруктовые и десертные вкусы. Хорошая основа для гостей среднего уровня.'),
@@ -238,9 +238,10 @@ const Map<String, Map<String, int>> kLineStrength = {
   'Sebero': {'black': 7, 'classic': 5},
   'Duft': {'strong': 7, 'pheromone': 6, 'all-in': 5, 'all in': 5},
   'Хулиган': {'hard': 8},
-  'Trofimoff': {'burley': 7, 'classic': 5, 'terror': 8, 'террор': 8},
+  "Trofimoff's": {'burley': 7, 'classic': 5, 'terror': 8, 'террор': 8},
   'Tangiers': {'birquq': 7, 'noir': 9, 'нуар': 9, 'f-line': 9},
   'Jent': {'cigar': 8},
+  'Deus': {'classic': 5, 'perfume': 5},
 };
 
 /// Линейки марки для подсказки в окне правки банки: «Classic, Burley, Terror».

@@ -66,7 +66,7 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     assert.equal(db.canonicalBrand("HLGN"), "Хулиган");
     // Terror — линейка Trofimoff's, а не марка (поправка владельца).
     const tr = itemsFromAi({ items: [{ brand: "TERROR", name: "Kriek", flavors: ["вишня"] }, { brand: "Trofimoff's", name: "Apricot", flavors: [], line: "Burley" }] });
-    assert.equal(tr[0].brand, "Trofimoff");
+    assert.equal(tr[0].brand, "Trofimoff's");
     assert.equal(tr[0].line, "Terror");
     assert.equal(tr[1].line, "Burley");
     assert.ok(/МАРКА И ЛИНЕЙКА — РАЗНЫЕ ПОЛЯ/.test(prompt) && /красная банка — линейка Burley/i.test(prompt));
@@ -109,7 +109,7 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
       { brand: "", name: "СМЕРТЬ", flavors: [] },
     ] });
     assert.deepEqual(items.map((i) => [i.brand, i.name, i.flavors.join("|")]), [
-      ["Trofimoff", "Вишня", "вишня"],
+      ["Trofimoff's", "Вишня", "вишня"],
       ["", "Kriek", "вишня"],
       ["Lastochka", "Ласточка вишня", "вишня"],
       ["Lastochka", "Бессмертник", "бессмертник|мёд"],
@@ -176,6 +176,18 @@ const ok = async (name, fn) => { await fn(); n++; console.log(`✓ ${name}`); };
     assert.equal(again.fresh().total, 3);
   });
 
-  console.log(`tobacco: ${n} из 9 проверок`);
+  await ok("вид банок с линейкой учится и попадает в подсказку ИИ", async () => {
+    tob.learn([
+      { brand: "TERROR", name: "Kriek", flavors: ["вишня"], look: "Чёрная жестянка, белая лента" },
+      { brand: "Trofimoff's", name: "Apricot", line: "Burley", look: "красная жестянка" },
+      { brand: "Trofimoff's", name: "Plum", line: "Burley", look: "красная жестянка" },
+    ]);
+    const text = tob.learnedLooks();
+    assert.match(text, /Trofimoff's Burley — красная жестянка/);
+    assert.match(text, /Trofimoff's Terror — чёрная жестянка, белая лента/);
+    assert.ok(!/• Terror/.test(text), "Terror — линейка, не марка");
+  });
+
+  console.log(`tobacco: ${n} из 10 проверок`);
   fs.rmSync(dir, { recursive: true, force: true });
 })().catch((e) => { console.error(e); process.exit(1); });
